@@ -7,28 +7,34 @@
 初期段階では、以下を重視します。
 
 - wiki の正本を安定して保持できること
-- index.md と lexical search だけで中規模まで回ること
+- index.md と system pages を入口に中規模まで回ること
 - 後から vector retrieval を追加できること
 - full rebuild ではなく差分更新できること
+- CLI や外部ツール互換ではなく、agent が使う wiki canister 自身の自然な API を先に固めること
 
 ## 2. 採用判断
 
-`ic-hybrid-sqlite` は採用します。
-ただし、wiki システム本体ではなく retrieval subsystem として使います。
+まず app schema と system pages を完成させ、agent が `index.md` を入口に wiki を運用できる状態を優先します。
 
 理由:
 
-- README 上の責務が明確で、検索エンジンとしての境界が良い
-- FTS5 keyword retrieval、sqlite-vec vector retrieval、fusion、migration、consistency check がすでにある
-- 一方で chunking、embedding 生成、queue/worker、LLM 連携はスコープ外で、wiki 本体の責務と分離しやすい
-- 現状 API は insert/search 中心で、差分更新に必要な stable key ベースの upsert/delete が不足している
+- この wiki は agent-first の運用を前提としており、最初に固定すべきなのは検索 API よりも wiki の正本構造と運用規約である
+- `index.md` / `log.md` を入口にすれば、中規模までは専用検索エンジンなしでも十分に回せる
+- `documents` のような検索 projection を先に入れると、正本と派生物の二重管理が増え、設計の重心が wiki から検索基盤へずれる
+- vector retrieval は必要性が実測で出てから追加すればよく、初期からそれに引きずられる必要はない
 
 結論:
 
 - 正本: app 独自の wiki tables
-- 検索: `ic-hybrid-sqlite` の `documents` を projection として利用
-- 初期: lexical only
-- 後期: current wiki sections のみ vector 化
+- 入口: `index.md` / `log.md`
+- 初期: agent が system pages と page 読み取り API を組み合わせて辿る
+- 後期: 必要になった時点で wiki 向け retrieval を追加する
+
+補足:
+
+- QMD のような外部ツールは参考にするが、QMD 互換自体は目標にしない
+- まずは canister の内部 service API を素直に設計し、その後に必要なら CLI / HTTP adapter を載せる
+- API は collection 指向ではなく、wiki page / system page / search / source の責務で切る
 
 ## 3. 全体アーキテクチャ
 
@@ -78,7 +84,6 @@ workspace/
   crates/
     wiki_types/
     wiki_store/
-    wiki_search/
     wiki_runtime/
     wiki_agent_schema/
 ```
@@ -88,13 +93,12 @@ workspace/
 純粋な型定義です。
 
 - `Source`
-- `SourceChunk`
+- `SourceBody`
 - `WikiPage`
 - `WikiRevision`
 - `WikiSection`
-- `Citation`
 - `LogEvent`
-- `SearchProjectionDoc`
+- `SystemPage`
 
 ### 4.2 `wiki_store`
 
@@ -106,21 +110,8 @@ workspace/
 - page/revision/section 管理
 - system page render
 - log 追記
-- citation 管理
-- jobs 管理
 
-### 4.3 `wiki_search`
-
-`ic-hybrid-sqlite` fork を隠す検索層です。
-
-役割:
-
-- projection doc の upsert/delete
-- lexical search
-- hybrid search
-- search result の page/section 集約
-
-### 4.4 `wiki_runtime`
+### 4.3 `wiki_runtime`
 
 ICP canister entrypoint です。
 
@@ -130,9 +121,11 @@ ICP canister entrypoint です。
 - payload 制約の管理
 - store と search の調停
 
-### 4.5 `wiki_agent_schema`
+### 4.4 `wiki_agent_schema`
 
 LLM 用の運用規約をまとめる層です。
+初期段階では独立 crate をまだ持たず、`AGENTS.md` と `LLM_WIKI_PLAN.md` で代替します。
+将来的には専用 crate または専用規約ファイル群として切り出します。
 
 役割:
 
@@ -152,80 +145,62 @@ LLM 用の運用規約をまとめる層です。
 - `wiki_revisions`
 - `wiki_sections`
 - `sources`
-- `source_chunks`
-- `revision_citations`
+- `source_bodies`
 - `log_events`
 - `system_pages`
-- `jobs`
 
 設計意図:
 
 - `wiki_pages` は logical page の安定 ID を持つ
 - `wiki_revisions` は履歴を持つ
-- `wiki_sections` は検索・差分更新の最小単位
+- `wiki_sections` は差分更新と将来の retrieval の最小単位
+- `source_bodies` は raw source 全文を 1 回だけ保持する
 - `system_pages` は `index.md` / `log.md` の materialized view
-- `jobs` は embedding などの非同期作業を管理
 
-## 6. Projection 方針
+source 設計では、同じテキストを二重保持しません。
+また、根拠の可視化は内部 metadata ではなく wiki 本文を優先します。
 
-検索対象は page 単位ではなく section 単位にします。
+- raw source 全文は `source_bodies.body_text` に 1 回だけ保存する
+- wiki の各ページや各主張の近くに、根拠 source と参照位置を明示的に書く
+- 参照位置は行番号固定より、見出し名・引用・アンカー・節名のような人間可読な形を優先する
 
-理由:
+これにより、
 
-- BM25 が効きやすい
-- wiki-only embedding を入れやすい
-- section hash 単位で差分更新できる
+- LLM には全文をそのまま読ませられる
+- 根拠が wiki 上でそのまま読める
+- agent と人間が同じ citation 表現を共有できる
+- 内部専用の citation metadata を初期段階で増やさずに済む
 
-検索 projection の logical key は以下です。
+## 6. ナビゲーション方針
 
-```text
-page:{page_id}:section:{section_path}
-page:{page_id}:index
-page:{page_id}:query_note:{section_path}
-sys:index.md
-sys:index/entities.md
-sys:log.md
-```
+初期段階では `documents` projection は持ちません。
+agent はまず `index.md` を読み、必要な page を開いて辿る運用を基本にします。
 
-`revision_id` は projection key に含めません。
-current wiki 用 projection と割り切ります。
+役割分担:
 
-## 7. `ic-hybrid-sqlite` に追加する最小 fork
+- `index.md`: 最初に読むナビ
+- `log.md`: 最近の更新と作業履歴を把握する入口
+- `get_page(slug)`: 本文を読む主 API
 
-差分更新のために、以下を追加します。
+必要になった場合のみ、後段で section 単位の retrieval を追加します。
+その場合でも正本は app tables のままです。
 
-### 7.1 schema 拡張
+## 7. 将来の retrieval 拡張方針
 
-`documents` に以下を追加します。
+専用検索エンジンは後段の任意拡張とします。
 
-- `external_id TEXT`
-- `kind TEXT NOT NULL DEFAULT 'wiki_section'`
-- `updated_at INTEGER NOT NULL DEFAULT 0`
+追加条件:
 
-index:
+- `index.md` と page 読み取りだけでは探索コストが高くなった
+- section 単位検索が回答品質に明確に効く
+- vector retrieval の価値が実測で確認できた
 
-- `UNIQUE INDEX idx_documents_external_id`
-- `INDEX idx_documents_kind_version_section_id`
-- `INDEX idx_documents_updated_at`
+追加する場合の原則:
 
-### 7.2 API 拡張
-
-最低限の追加 API:
-
-- `upsert_document_by_external_id`
-- `delete_document_by_external_id`
-- `delete_documents_by_prefix`
-
-### 7.3 filter 拡張
-
-現状 filter は `section` と `tags` のみなので、`kind` filter を追加します。
-
-想定:
-
-- `index_page`
-- `wiki_section`
-- `query_note`
-- `system_log`
+- 正本は app tables に置いたままにする
+- raw source 全量の埋め込みは行わない
+- current wiki sections のみを候補にする
+- まず lexical、その後に必要なら vector/hybrid を追加する
 
 ## 8. index.md / log.md 方針
 
@@ -272,34 +247,23 @@ vector は使いません。
 
 1. `index.md` または shard を読む
 2. exact title / slug / tag match
-3. FTS5 BM25 で `wiki_section` / `index_page` を引く
-4. page 単位に集約
-5. top page の current revision を読む
-6. 必要なら citation から raw source に飛ぶ
+3. 必要なら page title / summary / section text に対する単純検索を使う
+4. top page の current revision を読む
+5. 必要なら citation から raw source に飛ぶ
 
-投入対象:
-
-- `index.md`
-- current wiki sections
-- query note
-- comparison
-- overview
-- source summary
-
-投入しない対象:
-
-- raw source chunks 全量
-- old revisions
-- orphan draft pages
+この段階では検索 API は補助です。
+主要な探索導線は `index.md` と page 読み取りです。
 
 ### Phase 2
 
-current wiki sections だけ vector 化します。
+必要になったら current wiki sections だけを対象に retrieval を追加します。
 
 方針:
 
 - raw docs 全量 embedding はやらない
-- index page は無理に vector 化しない
+- `index.md` を置き換えず、その補助として使う
+- 最初の lexical retrieval は app DB 内の FTS5/BM25 を使う
+- FTS は `wiki_sections` の正本そのものではなく、current sections から作る派生 index とする
 - hybrid は lexical shortlist の補助として使う
 
 ### Phase 3
@@ -325,37 +289,55 @@ revision 更新時の流れ:
 2. 各 section の `content_hash` を計算
 3. 旧 current sections と比較
 4. unchanged は何もしない
-5. changed/new は projection を upsert
-6. removed は projection を delete
-7. embedding は changed/new だけ再計算
+5. changed/new を `wiki_sections` に反映する
+6. `index.md` / `log.md` を再描画する
+7. lexical retrieval を導入した段階では、changed/new だけ FTS index を更新し、removed は FTS から削除する
+8. embedding を導入する段階になったら changed/new だけ再計算する
 
 full rebuild はしません。
+FTS index を持つ場合も、正本更新と同じ transaction で更新してアトミックに保ちます。
 
 ## 11. ICP canister API 方針
 
 canister は wiki application service として切ります。
-`ic_hybrid_runtime` をそのまま app 本体にはしません。
+特定の retrieval runtime をそのまま app 本体にはしません。
+
+HTTP 公開を行う場合も、まず canister 内の service API を安定化させてから薄い transport adapter を載せます。
+先に CLI 互換や外部ツール互換を固定せず、ICP の `query` / `update` と `http_request` の両方に載せやすい DTO を優先します。
+
+### Phase 1 の読み取り API 優先順位
+
+初期段階で優先する読み取り API は以下です。
+
+- `get_page(slug)`
+- `get_system_page(slug)`
+- `get_recent_log(limit)`
+- `status()`
+
+理由:
+
+- `index.md` / `log.md` を読む導線を最初から成立させたい
+- page 取得と system pages だけで中規模まで運用する方針に合う
+- `status()` は query 系の主機能ではないが、canister の整合確認と運用確認に有用
+- 専用検索 API や batch 取得より、system page と log の参照を先に固める方がこの wiki の利用モデルに合う
 
 ### query
 
 - `get_page(slug)`
 - `get_system_page(slug)`
-- `search_lexical(req)`
-- `search_hybrid(req)`
 - `get_recent_log(limit)`
-- `get_page_sources(page_id)`
+- `search(req)`
 
 ### update
 
 - `create_source(input)`
-- `append_source_chunk(input)`
-- `finalize_source(source_id)`
 - `commit_page_revision(input)`
-- `render_system_pages()`
-- `enqueue_embedding_jobs(page_id)`
-- `run_job_step(job_id)`
 
-大きい raw docs は chunk upload 前提にします。
+初期段階の source ingest は `create_source(input)` で source 全文を 1 回保存する単純モデルにします。
+大きい raw docs の transport chunk upload は後段で専用レイヤとして追加します。
+
+論理的な citation は、まず wiki 本文に書かれた根拠表現を正本とします。
+raw source 側は、その確認用に保持します。
 
 ## 12. GitHub 風運用への発展
 
@@ -365,8 +347,8 @@ canister は wiki application service として切ります。
 
 順序:
 
-1. ICP 上の wiki 正本と検索を成立させる
-2. revision / projection / system pages の更新を安定化する
+1. ICP 上の wiki 正本と system pages を成立させる
+2. revision / system pages の更新を安定化する
 3. その後で push/pull 相当の同期モデルを設計する
 
 理由:
@@ -374,9 +356,413 @@ canister は wiki application service として切ります。
 - 先に GitHub 風同期を作ると、正本モデルが固まる前に外部契約が固まってしまう
 - まずは単一 canister 内で整合した wiki runtime を作る方が安全
 
+### 12.1 目指す利用モデル
+
+最終形は Git / GitHub に近い役割分担を目指します。
+
+- ローカル: 編集、差分確認、レビュー前の作業コピー
+- canister: 共有用の正本、履歴、検索、配布元
+
+利用イメージ:
+
+1. `clone` で canister の current wiki をローカルに取得する
+2. ローカルで markdown を編集する
+3. `diff` でローカル変更と canister 側 current を比較する
+4. `push` で changed pages / sections だけを送る
+5. canister 側で revision 化し、system pages を更新する
+
+ここで重要なのは、
+「ローカル作業コピーがあり、共有先へ安全に差分同期できる」操作感を作ることです。
+
+### 12.2 ローカル作業コピーの扱い
+
+ローカル clone は bare mirror ではなく、wiki 編集に特化した working copy とします。
+
+最低限必要なローカル状態:
+
+- page markdown files
+- `index.md` などの system pages の読み取り専用コピー
+- clone 時点の remote revision 情報
+- page / section ごとの stable id と hash を保持する manifest
+
+manifest の役割:
+
+- ローカル diff を高速に出す
+- push 時に changed / removed sections を判定する
+- optimistic concurrency の比較元に使う
+
+重要なのは、ローカルで人間が読む markdown と、
+同期のための機械向け metadata を分離することです。
+
+### 12.3 Source Ingest の考え方
+
+source ingest では、以下の 2 つを明確に分けます。
+
+- transport chunk
+- source body
+
+### transport chunk
+
+ICP の payload 制限を避けるための upload 単位です。
+
+- byte ベース
+- 目安は 1.9MB 未満
+- canister に source を送るためだけに使う
+
+これは保存上の都合であり、wiki 作成や citation の論理単位にはしません。
+初期実装ではこのレイヤはまだ導入せず、後段の API 追加として扱います。
+
+### source body
+
+LLM やユーザーが読む raw source の本体です。
+
+- `source_bodies.body_text`
+- source 全文を 1 回だけ保持する
+- wiki 作成時は基本的にこれを読む
+
+初期実装:
+
+- `create_source(input)` に `body_text` を含めて一発登録する
+- DB には transport chunk を残さない
+
+将来拡張:
+
+- `begin_source_upload`
+- `append_source_chunk`
+- `finalize_source_upload`
+
+のような upload 専用 API を別レイヤとして追加し、
+`finalize` 時に chunk を結合して `source_bodies.body_text` へ 1 回だけ保存します。
+この時も wiki の正本は `source_bodies` の全文であり、chunk 自体は永続正本にしません。
+
+### root citation の書き方
+
+根拠は wiki に直接書きます。
+
+基本方針:
+
+- 各ページや各主張の近くに source を書く
+- 可能なら該当 section 名や見出し名を書く
+- 必要なら短い引用を添える
+- 行番号固定より、人間が見て辿れる記述を優先する
+
+例:
+
+```text
+Sources:
+- [source: Article A, section "Results"]
+- [source: Paper B, heading "Discussion", quote: "..." ]
+```
+
+初期段階では、この可視的な citation を正本とします。
+厳密な offset や span ID は後から必要になった場合のみ追加します。
+
+### 12.4 同期単位
+
+同期の最小単位は page ではなく section を基本にします。
+
+理由:
+
+- 小さい変更で再送量を減らせる
+- embedding 再計算範囲を最小化できる
+
+ただし commit 単位の整合性は page revision で管理します。
+
+つまり:
+
+- 転送差分は section basis
+- 正本の履歴確定は page revision basis
+
+この二層に分けると、転送効率と履歴の単純さを両立しやすいです。
+
+### 12.5 `clone / fetch / diff / push` の対応
+
+将来的な同期 API は以下の責務に分けるのが自然です。
+
+`clone`
+
+- current wiki pages
+- system pages
+- remote manifest
+- clone 基準 revision
+
+`fetch`
+
+- remote 側で更新された page revisions
+- changed system pages
+- remote manifest の更新分
+
+`diff`
+
+- local file vs local manifest
+- 必要なら local base vs remote head
+
+`push`
+
+- changed pages の candidate revision を送る
+- base revision が一致した場合のみ commit する
+- 成功時に page revision / section hash / system pages を返す
+
+実質的には `push` より `compare-and-commit` に近い API になります。
+Git の fast-forward 制約に相当するものを、page revision の一致確認で表現します。
+
+### 12.6 競合モデル
+
+初期は単純な衝突検出を優先します。
+
+基本方針:
+
+- push 時に `base_revision_id` を必須にする
+- remote head が変わっていたら reject する
+- 利用者は `fetch` して再 diff する
+
+理由:
+
+- markdown wiki は衝突時に人間か LLM が再編集した方が安全
+- canister 側の責務を同期判定と revision 確定に絞れる
+
+### 12.7 設計原則
+
+同期モデルでは以下を採用します。
+
+- `clone/fetch/diff/push` の操作語彙
+- content hash ベースの差分判定
+- local base と remote head の比較
+- manifest による同期状態の管理
+- `base_revision_id` を使った compare-and-commit
+
+### 12.8 導入順
+
+同期モデルは以下の順で導入するのが安全です。
+
+1. canister 内の revision / system page 更新を安定化する
+2. export API を作り、`clone` 相当を成立させる
+3. local manifest を定義し、`diff` を成立させる
+4. `base_revision_id` 付き `push` を入れる
+5. 同期後の revision / system page 更新結果をローカルへ反映する
+
+この順なら、途中段階でも「読む」「ローカルで編集する」「安全に push する」が成立します。
+
+### 12.9 canister sync API 案
+
+同期専用 API は、通常の page API とは分けて定義します。
+
+最小構成:
+
+- `export_wiki_snapshot(req)`
+- `fetch_wiki_updates(req)`
+- `commit_wiki_changes(req)`
+
+`clone` は `export_wiki_snapshot`、
+`fetch` は `fetch_wiki_updates`、
+`push` は `commit_wiki_changes` に対応させます。
+
+### 12.10 `export_wiki_snapshot`
+
+用途:
+
+- 初回 clone
+- ローカル working copy の再構築
+
+request:
+
+```text
+{
+  include_system_pages: bool,
+  page_slugs: Option<Vec<String>>,
+}
+```
+
+response:
+
+```text
+{
+  snapshot_revision: String,
+  pages: Vec<WikiPageSnapshot>,
+  system_pages: Vec<SystemPageSnapshot>,
+  manifest: WikiSyncManifest,
+}
+```
+
+`WikiPageSnapshot`:
+
+```text
+{
+  page_id: String,
+  slug: String,
+  title: String,
+  revision_id: String,
+  markdown: String,
+  section_hashes: Vec<SectionHashEntry>,
+}
+```
+
+意図:
+
+- ローカルで人間が読む markdown を直接持てること
+- clone 直後に diff と push の基準情報を揃えられること
+
+### 12.11 `fetch_wiki_updates`
+
+用途:
+
+- clone 後の remote 更新追従
+- push 前の base 確認
+
+request:
+
+```text
+{
+  known_snapshot_revision: String,
+  known_page_revisions: Vec<KnownPageRevision>,
+  include_system_pages: bool,
+}
+```
+
+response:
+
+```text
+{
+  snapshot_revision: String,
+  changed_pages: Vec<WikiPageSnapshot>,
+  removed_page_ids: Vec<String>,
+  system_pages: Vec<SystemPageSnapshot>,
+  manifest_delta: WikiSyncManifestDelta,
+}
+```
+
+`known_page_revisions` は、
+ローカルが持っている `page_id -> revision_id` の組です。
+
+意図:
+
+- remote 全量を毎回取り直さないこと
+- local base と remote head の差を API で明示できること
+
+### 12.12 `commit_wiki_changes`
+
+用途:
+
+- local diff を remote revision として確定する
+
+request:
+
+```text
+{
+  base_snapshot_revision: String,
+  page_changes: Vec<PageChangeInput>,
+}
+```
+
+`PageChangeInput`:
+
+```text
+{
+  page_id: String,
+  base_revision_id: String,
+  new_markdown: String,
+}
+```
+
+response:
+
+```text
+{
+  committed_pages: Vec<CommittedPageResult>,
+  rejected_pages: Vec<RejectedPageResult>,
+  snapshot_revision: String,
+  system_pages: Vec<SystemPageSnapshot>,
+  manifest_delta: WikiSyncManifestDelta,
+}
+```
+
+`CommittedPageResult`:
+
+```text
+{
+  page_id: String,
+  revision_id: String,
+  section_hashes: Vec<SectionHashEntry>,
+}
+```
+
+`RejectedPageResult`:
+
+```text
+{
+  page_id: String,
+  current_revision_id: String,
+  reason: String,
+}
+```
+
+基本動作:
+
+1. `base_revision_id` が current と一致する page だけ commit する
+2. canister 側で markdown を section 分割し、hash を再計算する
+3. page revision 確定後に system pages を更新する
+4. 成功した page の新しい revision と manifest 差分を返す
+
+### 12.13 manifest の最小項目
+
+manifest は local diff と optimistic concurrency のための機械向け index です。
+
+最小項目:
+
+```text
+{
+  snapshot_revision: String,
+  pages: Vec<ManifestPageEntry>,
+}
+```
+
+`ManifestPageEntry`:
+
+```text
+{
+  page_id: String,
+  slug: String,
+  revision_id: String,
+  content_hash: String,
+  section_hashes: Vec<SectionHashEntry>,
+}
+```
+
+`SectionHashEntry`:
+
+```text
+{
+  section_path: String,
+  content_hash: String,
+}
+```
+
+役割:
+
+- local file の変更有無を即座に判定する
+- push 対象 page を絞る
+- push 成功後に local manifest を更新する
+
+### 12.14 ローカル CLI の責務
+
+CLI 側は以下だけを担当します。
+
+- clone 時に snapshot と manifest を保存する
+- local markdown から page ごとの差分を作る
+- push 前に `fetch_wiki_updates` を呼んで競合を確認する
+- `commit_wiki_changes` の結果で local manifest を更新する
+
+canister 側に持たせない責務:
+
+- ローカルファイル監視
+- 汎用 merge
+- diff 表示 UI
+
+この分離で、canister は正本と同期判定に集中できます。
+
 ## 13. 実装フェーズ
 
-### Phase A: 正本と lexical retrieval
+### Phase A: 正本と system pages
 
 やること:
 
@@ -384,31 +770,28 @@ canister は wiki application service として切ります。
 - page revision / section split
 - `index.md` render
 - `log.md` render
-- lexical projection
-- exact + BM25 search
+- `index.md` 主導のナビ
+- exact title / slug / tag lookup
 - query note file back
 
 完了条件:
 
-- current wiki sections を lexical 検索できる
 - index/log が自動更新される
-- page revision 更新で projection が追随する
+- page revision 更新で system pages が追随する
+- agent が `index.md` から relevant pages を辿れる
 
-### Phase B: search engine fork
+### Phase B: optional retrieval layer
 
 やること:
 
-- `external_id`
-- `kind`
-- `updated_at`
-- upsert/delete API
-- `kind` filter
-- diff refresh の接続
+- page title / summary / section text に対する単純検索
+- current wiki sections を対象にした lexical retrieval
+- 検索条件と ranking の最小 API 設計
 
 完了条件:
 
-- full rebuild なしで projection を差分更新できる
-- remove section が search index から確実に消える
+- `index.md` を補助する検索 API が追加される
+- retrieval を入れても正本モデルが崩れない
 
 ### Phase C: wiki-only embeddings
 
@@ -417,11 +800,13 @@ canister は wiki application service として切ります。
 - changed sections のみ embedding enqueue
 - hybrid retrieval
 - lexical shortlist + vector shortlist + fusion
+- large source upload 用 transport API の追加
 
 完了条件:
 
 - vector 導入後も raw docs 全量埋め込みなしで運用できる
 - changed section だけ再埋め込みされる
+- 大きい raw source も `source_bodies` 正本を崩さず取り込める
 
 ### Phase D: lint / health check
 
@@ -436,11 +821,28 @@ canister は wiki application service として切ります。
 
 - wiki の保守作業を LLM が継続的に提案できる
 
+### Phase E: local sync
+
+やること:
+
+- clone/export API
+- local manifest format
+- local diff
+- `base_revision_id` 付き push
+- conflict reject と再同期フロー
+
+完了条件:
+
+- canister からローカル working copy を作れる
+- changed pages / sections だけを push できる
+- remote 競合時に安全に reject される
+
 ## 14. やらないこと
 
 初期にやらないことを明確に固定します。
 
 - `documents` を wiki 正本にする
+- 初期段階で `documents` projection を作る
 - raw chunks 全量を最初から vector 化する
 - old revisions を検索対象にする
 - page 単位で毎回再埋め込みする
@@ -456,171 +858,95 @@ canister は wiki application service として切ります。
 3. `commit_page_revision` の入出力を固定する
 4. markdown -> sections 変換と `content_hash` を実装する
 5. `system_pages` の render を入れる
-6. lexical projection を接続する
-7. その後で `ic-hybrid-sqlite` の fork 変更に入る
+6. `index.md` 主導の読み取り導線を固める
+7. 必要になった時点で retrieval を追加する
 
-## 16. ライブラリ修正の実装計画
+## 16. 将来の retrieval 追加計画
 
-ここでは `ic-hybrid-sqlite` を wiki 用 retrieval engine として成立させるための最小変更を定義します。
-
-### 16.1 変更方針
-
-方針は「既存の insert/search を壊さずに、stable key ベースの更新能力を追加する」です。
-
-守ること:
-
-- 既存の `insert_document` / `insert_documents` は維持する
-- 既存の lexical/hybrid ranking は基本維持する
-- migration は追加方式で行う
-- wiki 用途に必要な列と API だけ足す
+ここでは、規模拡大後に retrieval が必要になった場合の追加方針だけを定義します。
 
 ### 16.2 変更対象
 
-対象 crate:
+対象は後段で確定します。
 
-- `ic_hybrid_types`
-- `ic_hybrid_engine`
-- `ic_hybrid_runtime`
+候補:
 
-主な修正ファイル:
-
-- `crates/ic_hybrid_types/src/lib.rs`
-- `crates/ic_hybrid_engine/src/lib.rs`
-- `crates/ic_hybrid_engine/src/document.rs`
-- `crates/ic_hybrid_engine/src/query.rs`
-- `crates/ic_hybrid_engine/src/schema.rs`
-- `crates/ic_hybrid_engine/migrations/*.sql`
-- `crates/ic_hybrid_runtime/src/service.rs`
-- `crates/ic_hybrid_runtime/src/canister.rs`
+- app DB 上の単純検索追加
+- 外部 retrieval engine の導入
 
 ### 16.3 ステップ 1: 型拡張
 
 目的:
 
-- logical key と検索種別を API 契約に出す
+- 最小限の検索要求と検索結果を API 契約に出す
 
 追加候補:
 
-- `IndexedDocument.external_id: Option<String>`
-- `IndexedDocument.kind: Option<String>`
-- `IndexedDocument.updated_at: Option<i64>`
-- `SearchDocument.external_id: Option<String>`
-- `SearchDocument.kind: Option<String>`
-- `HybridQueryFilters.kinds: Vec<String>`
+- `SearchRequest.query_text`
+- `SearchRequest.tags`
+- `SearchRequest.page_types`
+- `SearchRequest.top_k`
+- `SearchHit.slug`
+- `SearchHit.section_path`
+- `SearchHit.score`
 
-判断:
-
-- 後方互換優先なら `Option`
-- wiki 用の内部利用を優先するなら engine 内部で required 扱い
-
-初期実装では wire 互換を保つため `Option` で入れ、wiki 側で必須にします。
+検索エンジン固有の型は、この段階では持ち込みません。
 
 ### 16.4 ステップ 2: migration 追加
 
 目的:
 
-- `documents` に stable key と分類情報を持たせる
+- retrieval に必要な最小インデックスだけを追加する
 
-追加 migration:
+内容の例:
 
-- `002_external_document_keys.sql`
+- `wiki_pages.slug` の検索補助 index
+- `wiki_sections.page_id, is_current, ordinal` の見直し
+- `wiki_sections` current view に対する FTS5 virtual table の追加
+- `title`, `slug`, `section_path`, `text` を検索対象に含める
 
-内容:
+どの方式にするかは、実測のボトルネックが出てから決めます。
+初回の lexical retrieval は、外部検索基盤ではなく app DB 内の FTS5/BM25 を優先します。
 
-- `ALTER TABLE documents ADD COLUMN external_id TEXT`
-- `ALTER TABLE documents ADD COLUMN kind TEXT NOT NULL DEFAULT 'wiki_section'`
-- `ALTER TABLE documents ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`
-- `CREATE UNIQUE INDEX ... external_id`
-- `CREATE INDEX ... kind, version, section, id`
-- `CREATE INDEX ... updated_at`
-
-併せて `schema.rs` の更新が必要です。
-
-更新内容:
-
-- `REQUIRED_DOCUMENT_COLUMNS` に新列を反映
-- legacy 判定を新スキーマ基準に寄せる
-- derived rebuild が新列追加後も壊れないことを確認
-
-### 16.5 ステップ 3: document 操作の抽象化
+### 16.5 ステップ 3: 検索実装の追加
 
 目的:
 
-- insert/update/delete で FTS/tag/vector を一貫更新する
+- `index.md` 主導の運用を壊さない検索だけを足す
+- agent が使いやすい小さい API にとどめる
+- 正本と検索 index を同じ SQLite transaction で更新できる構成にする
 
-`document.rs` で整理する内容:
+候補:
 
-- `insert_indexed_document_in_tx`
-- `upsert_document_by_external_id_in_tx`
-- `delete_document_by_external_id_in_tx`
-- `delete_documents_by_prefix_in_tx`
-- `replace_document_indexes_in_tx`
-- `delete_document_indexes_in_tx`
+- `find_pages(req)`
+- `search_sections(req)`
+- `search_hybrid(req)`
 
-要点:
+初期の lexical retrieval 方針:
 
-- `documents`
-- `documents_fts`
-- `document_tags`
-- vector index
+- `wiki_sections_fts` のような FTS5 テーブルを app DB 内に持つ
+- これは正本ではなく `wiki_sections` current rows から作る派生 index とする
+- `MATCH` + `bm25()` で section 単位の順位付けを行う
+- return は `slug`, `title`, `section_path`, `snippet`, `score` を最小とする
+- `wiki_sections` の差分結果から、FTS の upsert/delete 対象も自動決定する
 
-この 4 つを必ず同一 transaction で扱います。
-
-### 16.6 ステップ 4: public API 追加
-
-`HybridEngine` に以下を追加します。
-
-- `upsert_document_by_external_id`
-- `delete_document_by_external_id`
-- `delete_documents_by_prefix`
-
-runtime にも必要なら同名メソッドを追加します。
-
-ただし canister entrypoint は、wiki app canister を別で作る前提なら無理に広げなくてよいです。
-
-### 16.7 ステップ 5: query filter 拡張
-
-目的:
-
-- `index_page`、`wiki_section`、`query_note` を検索時に分けられるようにする
-
-変更内容:
-
-- `HybridQueryFilters` に `kinds: Vec<String>` を追加
-- lexical candidate query に `kind` filter を追加
-- fallback candidate query に `kind` filter を追加
-- vector candidate 後の document filter に `kind` filter を追加
-
-`kind` の semantics は OR にします。
-
-例:
-
-- `["index_page", "wiki_section"]` は両方許可
-
-### 16.8 ステップ 6: テスト追加
+### 16.6 ステップ 4: テスト追加
 
 最低限の追加テスト:
 
-- same `external_id` の upsert で置換される
-- upsert 後に FTS hit が新内容へ切り替わる
-- upsert 後に tags が古い値から更新される
-- delete で FTS/tag/vector が全て消える
-- prefix delete で複数 section が消える
-- `kind` filter が lexical/hybrid/fallback で効く
-- migration 後も既存 insert/search が動く
+- section 更新後に検索結果が current revision を指す
+- old revision が検索対象に残らない
+- retrieval がなくても `index.md` だけで主要導線が成立する
+- vector 追加後も raw source 全量は対象に入らない
 
-### 16.9 実装順
+### 16.7 実装順
 
 ライブラリ修正の具体的な順序:
 
-1. `ic_hybrid_types` 拡張
-2. migration 追加
-3. `schema.rs` 更新
-4. `document.rs` に upsert/delete 実装
-5. `lib.rs` に public API 追加
-6. `query.rs` に `kind` filter 追加
-7. engine test 追加
-8. runtime surface は必要最小限で追従
+1. 実測で探索上のボトルネックを確認する
+2. app DB 上の最小検索を追加する
+3. それでも不足する場合のみ外部 retrieval engine を検討する
+4. vector/hybrid は最後に追加する
 
 ## 17. API 契約
 
@@ -629,14 +955,13 @@ runtime にも必要なら同名メソッドを追加します。
 理由:
 
 - section 差分更新の入出力がここで決まる
-- search projection の key 設計がここで固定される
 - canister/query/update の責務分離がここで固まる
 
 結論:
 
 - `commit_page_revision`
-- `search_lexical`
-- `search_hybrid`
+- `get_page`
+- `get_system_page`
 
 この 3 つは先に固定した方がよいです。
 
@@ -647,7 +972,7 @@ runtime にも必要なら同名メソッドを追加します。
 - 新しい page revision を登録する
 - markdown を section 分割する
 - current revision を切り替える
-- search projection を差分更新する
+- `index.md` / `log.md` を再描画する
 - 必要なら embedding job を積む
 
 初版契約:
@@ -660,18 +985,8 @@ pub struct CommitPageRevisionInput {
     pub markdown: String,
     pub change_reason: String,
     pub author_type: String,
-    pub citations: Vec<RevisionCitationInput>,
     pub tags: Vec<String>,
     pub updated_at: i64,
-}
-```
-
-```rust
-pub struct RevisionCitationInput {
-    pub source_id: String,
-    pub chunk_id: Option<String>,
-    pub evidence_kind: String,
-    pub note: Option<String>,
 }
 ```
 
@@ -680,6 +995,7 @@ pub struct RevisionCitationInput {
 - `page_id` は既存 page を指す
 - `markdown` は空不可
 - `expected_current_revision_id` が不一致なら競合で失敗
+- 根拠 source と参照位置は markdown 本文に含める
 
 出力契約:
 
@@ -689,9 +1005,8 @@ pub struct CommitPageRevisionOutput {
     pub revision_no: u64,
     pub section_count: u32,
     pub unchanged_section_count: u32,
-    pub upserted_projection_ids: Vec<String>,
-    pub deleted_projection_ids: Vec<String>,
-    pub enqueued_job_ids: Vec<String>,
+    pub changed_section_paths: Vec<String>,
+    pub removed_section_paths: Vec<String>,
     pub rendered_system_pages: Vec<String>,
 }
 ```
@@ -704,25 +1019,20 @@ pub struct CommitPageRevisionOutput {
 4. `content_hash` 計算
 5. 旧 current sections と比較
 6. `wiki_sections` 更新
-7. search projection upsert/delete
-8. `index.md` / `log.md` 再描画
-9. changed section の embedding jobs を enqueue
+7. `index.md` / `log.md` 再描画
 
-### 17.2 `search_lexical`
+### 17.2 `search(req)`
 
 役割:
 
-- Phase 1 の主検索 API
+- `index.md` 主導の運用を補助する検索 API
 
 初版契約:
 
 ```rust
-pub struct LexicalSearchRequest {
+pub struct SearchRequest {
     pub query_text: String,
-    pub kinds: Vec<String>,
-    pub page_ids: Vec<String>,
-    pub tags: Vec<String>,
-    pub section: Option<String>,
+    pub page_types: Vec<WikiPageType>,
     pub top_k: u32,
 }
 ```
@@ -731,15 +1041,11 @@ pub struct LexicalSearchRequest {
 
 ```rust
 pub struct SearchHit {
-    pub external_id: String,
-    pub kind: String,
-    pub page_id: String,
-    pub revision_id: String,
-    pub section_path: String,
+    pub slug: String,
     pub title: String,
+    pub page_type: WikiPageType,
+    pub section_path: Option<String>,
     pub snippet: String,
-    pub citation: String,
-    pub tags: Vec<String>,
     pub score: f32,
     pub match_reasons: Vec<String>,
 }
@@ -747,53 +1053,12 @@ pub struct SearchHit {
 
 挙動:
 
-- exact title / slug / tag match は app 層で先に補助判定してよい
-- その後 FTS BM25 を適用する
-- ranking は page 集約前の section hit を返す
-- page 集約は app 層で実施する
-- `kinds` が空なら `wiki_section` と `index_page` を既定対象にする
-- `page_ids` が空なら page 制限なし
+- `index.md` を置き換えるものではなく補助とする
+- exact title / slug match を優先してよい
+- 実装方式は後段で選ぶ
+- 対象は current wiki pages / current wiki sections のみとする
 
-初期の `kinds` 推奨値:
-
-- `index_page`
-- `wiki_section`
-- `query_note`
-
-### 17.3 `search_hybrid`
-
-役割:
-
-- Phase 2 以降の検索 API
-
-初版契約:
-
-```rust
-pub struct HybridSearchRequest {
-    pub query_text: String,
-    pub query_embedding: Vec<f32>,
-    pub kinds: Vec<String>,
-    pub page_ids: Vec<String>,
-    pub tags: Vec<String>,
-    pub section: Option<String>,
-    pub top_k: u32,
-    pub keyword_candidate_limit: Option<u32>,
-    pub vector_candidate_limit: Option<u32>,
-}
-```
-
-出力契約:
-
-- `SearchHit` と同一
-
-挙動:
-
-- lexical shortlist と vector shortlist を fuse
-- raw source ではなく current wiki sections を対象にする
-- embedding がない section は lexical 側だけで残れる
-- `kinds` が空なら `wiki_section` のみを既定対象にする
-
-### 17.4 `get_page`
+### 17.3 `get_page`
 
 検索結果の着地点として、この API も早めに固定してよいです。
 
@@ -816,7 +1081,6 @@ pub struct PageBundle {
     pub current_revision_id: String,
     pub markdown: String,
     pub sections: Vec<PageSectionView>,
-    pub citations: Vec<PageCitationView>,
     pub updated_at: i64,
 }
 ```
@@ -826,24 +1090,24 @@ pub struct PageBundle {
 着手前にまだ決める必要がある点です。
 
 - `page_type` の列挙
-- `SearchDocKind` の列挙
 - `section_path` の正規化ルール
-- citation の最小粒度
+- citation の markdown 表現をどう統一するか
 - query note を通常 page に昇格させる基準
 - 1 canister に載せるサイズ上限をどう見るか
 - 将来の push model で conflict をどう扱うか
+- retrieval を導入する閾値をどう決めるか
 
 ## 19. 現時点の結論
 
 現時点の採用方針は以下です。
 
-- `ic-hybrid-sqlite` は使う
-- ただし retrieval subsystem として使う
 - 正本は app tables に置く
-- projection は current wiki sections のみ
-- 初期は lexical only
+- 初期は `documents` projection を持たない
+- `index.md` / `log.md` を agent の主入口にする
+- 初期は page 読み取り中心で運用する
+- retrieval は必要になった時点で追加する
 - 後で wiki-only embeddings
 - raw docs embedding は最後まで避ける
 - 差分更新は section hash 単位
 
-この方針で進めるのが、責務分離・拡張性・ICP 上の実装容易性のバランスが最も良いです。
+この方針で進めるのが、wiki を主役に保ちつつ、必要な時だけ検索を足すという意味で最も自然です。

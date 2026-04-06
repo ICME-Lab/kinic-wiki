@@ -60,7 +60,12 @@ pub fn split_markdown(markdown: &str) -> Result<Vec<ParsedSection>, String> {
     Ok(sections)
 }
 
-fn build_section(path: String, ordinal: i64, heading: Option<String>, text: String) -> ParsedSection {
+fn build_section(
+    path: String,
+    ordinal: i64,
+    heading: Option<String>,
+    text: String,
+) -> ParsedSection {
     let hash_input = heading
         .as_deref()
         .map(|title| format!("{title}\n{text}"))
@@ -112,7 +117,10 @@ fn build_section_paths(boundaries: &[HeadingBoundary]) -> Vec<String> {
     let mut sibling_counts = HashMap::<String, usize>::new();
     let mut paths = Vec::with_capacity(boundaries.len());
     for boundary in boundaries {
-        while stack.last().is_some_and(|(level, _)| *level >= boundary.level) {
+        while stack
+            .last()
+            .is_some_and(|(level, _)| *level >= boundary.level)
+        {
             stack.pop();
         }
         let parent = stack
@@ -122,7 +130,10 @@ fn build_section_paths(boundaries: &[HeadingBoundary]) -> Vec<String> {
             .join("/");
         let slug = slugify(&boundary.title);
         let key = format!("{parent}|{slug}");
-        let count = sibling_counts.entry(key).and_modify(|value| *value += 1).or_insert(1);
+        let count = sibling_counts
+            .entry(key)
+            .and_modify(|value| *value += 1)
+            .or_insert(1);
         let segment = if *count == 1 {
             slug
         } else {

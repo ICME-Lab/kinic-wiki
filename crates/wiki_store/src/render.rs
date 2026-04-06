@@ -14,7 +14,10 @@ const DATE_FORMAT: &[BorrowedFormatItem<'static>] =
 pub fn render_index_page(pages: &[WikiPage], updated_at: i64) -> SystemPage {
     let mut groups = BTreeMap::<&str, Vec<&WikiPage>>::new();
     for page in pages {
-        groups.entry(page.page_type.group_label()).or_default().push(page);
+        groups
+            .entry(page.page_type.group_label())
+            .or_default()
+            .push(page);
     }
     let mut markdown = String::from("# Index\n");
     for (label, pages) in groups {
@@ -34,7 +37,9 @@ pub fn render_log_page(entries: &[(i64, String, String, String)], updated_at: i6
             .ok()
             .and_then(|time| time.format(DATE_FORMAT).ok())
             .unwrap_or_else(|| "1970-01-01".to_string());
-        markdown.push_str(&format!("\n## [{stamp}] {event_type} | {title}\n\n{body}\n"));
+        markdown.push_str(&format!(
+            "\n## [{stamp}] {event_type} | {title}\n\n{body}\n"
+        ));
     }
     build_system_page("log.md", markdown, updated_at)
 }
@@ -49,5 +54,7 @@ pub fn build_system_page(slug: &str, markdown: String, updated_at: i64) -> Syste
 }
 
 pub fn summary_from_title(title: &str, page_type: &WikiPageType) -> String {
-    format!("{} {}", page_type.group_label(), title).trim().to_string()
+    format!("{} {}", page_type.group_label(), title)
+        .trim()
+        .to_string()
 }

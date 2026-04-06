@@ -1,29 +1,19 @@
 // Where: crates/wiki_store/src/commit.rs
-// What: Revision commit flow, section diffing, projection refresh, and system page updates.
-// Why: The wiki's compounding behavior depends on deterministic revision storage plus search projection maintenance.
+// What: Revision commit flow, section diffing, and system page updates.
+// Why: The wiki should update its source-of-truth tables and rendered system pages atomically.
 use rusqlite::{Connection, params};
 use uuid::Uuid;
-use wiki_search::WikiSearch;
-use wiki_types::{
-    CommitPageRevisionInput, CommitPageRevisionOutput, RevisionCitationInput, SystemPage,
-};
+use wiki_types::{CommitPageRevisionInput, CommitPageRevisionOutput, SystemPage};
 
 use crate::{
     markdown::{ParsedSection, split_markdown},
-    projection::build_projection_changes,
     render,
+    search::replace_page_sections_in_fts_tx,
     store::{WikiStore, load_page_by_id},
-    system_pages::{
-        refresh_system_pages_tx, render_index_page_now, render_log_page_now, system_pages_to_docs,
-    },
+    system_pages::{refresh_system_pages_tx, render_index_page_now, render_log_page_now},
 };
 
 impl WikiStore {
-    pub fn commit_page_revision(&self, input: CommitPageRevisionInput) -> Result<CommitPageRevisionOutput, String> {
-        let mut conn = self.open()?;
-        commit_revision_tx(&mut conn, &input)
-    }
-
     pub fn render_index_page(&self, updated_at: i64) -> Result<SystemPage, String> {
         let conn = self.open()?;
         render_index_page_now(&conn, updated_at)
@@ -33,26 +23,15 @@ impl WikiStore {
         let conn = self.open()?;
         render_log_page_now(&conn, limit, updated_at)
     }
-
-    pub fn refresh_system_pages(&self, updated_at: i64) -> Result<Vec<SystemPage>, String> {
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let pages = refresh_system_pages_tx(&tx, updated_at)?;
-        let projection_docs = system_pages_to_docs(&pages);
-        if !projection_docs.is_empty() {
-            WikiSearch::upsert_docs_in_tx(&tx, &projection_docs)?;
-        }
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(pages)
-    }
 }
 
-fn commit_revision_tx(
+pub(crate) fn commit_revision_tx(
     conn: &mut Connection,
     input: &CommitPageRevisionInput,
 ) -> Result<CommitPageRevisionOutput, String> {
     let tx = conn.transaction().map_err(|error| error.to_string())?;
-    let mut page = load_page_by_id(&tx, &input.page_id)?.ok_or_else(|| "page does not exist".to_string())?;
+    let mut page =
+        load_page_by_id(&tx, &input.page_id)?.ok_or_else(|| "page does not exist".to_string())?;
     if input.markdown.trim().is_empty() {
         return Err("markdown must not be empty".to_string());
     }
@@ -93,7 +72,6 @@ fn commit_revision_tx(
     )
     .map_err(|error| error.to_string())?;
     store_sections(&tx, &page.id, &revision_id, &new_sections)?;
-    replace_citations(&tx, &revision_id, &input.citations)?;
 
     page.current_revision_id = Some(revision_id.clone());
     page.title = input.title.clone();
@@ -103,38 +81,44 @@ fn commit_revision_tx(
         "UPDATE wiki_pages
          SET title = ?1, current_revision_id = ?2, summary_1line = ?3, updated_at = ?4
          WHERE id = ?5",
-        params![page.title, revision_id, page.summary_1line, page.updated_at, page.id],
+        params![
+            page.title,
+            revision_id,
+            page.summary_1line,
+            page.updated_at,
+            page.id
+        ],
     )
     .map_err(|error| error.to_string())?;
+    replace_page_sections_in_fts_tx(
+        &tx,
+        &page,
+        &new_sections
+            .iter()
+            .map(|section| {
+                (
+                    section.section_path.clone(),
+                    section.heading.clone(),
+                    section.text.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )?;
 
     append_log_event(&tx, &page.id, revision_no, &input.title, input.updated_at)?;
-    let (projection_docs, deleted_ids, unchanged_count) =
-        build_projection_changes(&page, &revision_id, &new_sections, &old_by_path, input.updated_at);
+    let (changed_section_paths, removed_section_paths, unchanged_count) =
+        diff_section_paths(&new_sections, &old_by_path);
     let system_pages = refresh_system_pages_tx(&tx, input.updated_at)?;
-    if !projection_docs.is_empty() {
-        WikiSearch::upsert_docs_in_tx(&tx, &projection_docs)?;
-    }
-    if !deleted_ids.is_empty() {
-        WikiSearch::delete_docs_by_external_ids_in_tx(&tx, &deleted_ids)?;
-    }
-    let system_projection_docs = system_pages_to_docs(&system_pages);
-    if !system_projection_docs.is_empty() {
-        WikiSearch::upsert_docs_in_tx(&tx, &system_projection_docs)?;
-    }
     tx.commit().map_err(|error| error.to_string())?;
 
-    let mut upserted_ids = projection_docs
-        .iter()
-        .map(|doc| doc.external_id.clone())
-        .collect::<Vec<_>>();
-    upserted_ids.push(format!("page:{}:index", page.id));
     Ok(CommitPageRevisionOutput {
         revision_id,
-        revision_no,
+        revision_no: u64::try_from(revision_no)
+            .map_err(|_| "revision_no must not be negative".to_string())?,
         section_count: new_sections.len() as u32,
         unchanged_section_count: unchanged_count,
-        upserted_projection_ids: upserted_ids,
-        deleted_projection_ids: deleted_ids,
+        changed_section_paths,
+        removed_section_paths,
         rendered_system_pages: system_pages.iter().map(|page| page.slug.clone()).collect(),
     })
 }
@@ -145,7 +129,10 @@ struct StoredSection {
     content_hash: String,
 }
 
-fn load_current_section_rows(conn: &Connection, page_id: &str) -> Result<Vec<StoredSection>, String> {
+fn load_current_section_rows(
+    conn: &Connection,
+    page_id: &str,
+) -> Result<Vec<StoredSection>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT section_path, content_hash
@@ -200,31 +187,33 @@ fn store_sections(
     Ok(())
 }
 
-fn replace_citations(conn: &Connection, revision_id: &str, citations: &[RevisionCitationInput]) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM revision_citations WHERE revision_id = ?1",
-        params![revision_id],
-    )
-    .map_err(|error| error.to_string())?;
-    for citation in citations {
-        conn.execute(
-            "INSERT INTO revision_citations (id, revision_id, source_id, chunk_id, evidence_kind, note)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![
-                format!("citation_{}", Uuid::new_v4()),
-                revision_id,
-                citation.source_id,
-                citation.chunk_id,
-                citation.evidence_kind,
-                citation.note,
-            ],
-        )
-        .map_err(|error| error.to_string())?;
+fn diff_section_paths(
+    new_sections: &[ParsedSection],
+    old_by_path: &std::collections::HashMap<String, String>,
+) -> (Vec<String>, Vec<String>, u32) {
+    let mut changed = Vec::new();
+    let mut removed = old_by_path.keys().cloned().collect::<Vec<_>>();
+    let mut unchanged = 0_u32;
+
+    for section in new_sections {
+        if old_by_path.get(&section.section_path) == Some(&section.content_hash) {
+            unchanged += 1;
+        } else {
+            changed.push(section.section_path.clone());
+        }
+        removed.retain(|path| path != &section.section_path);
     }
-    Ok(())
+
+    (changed, removed, unchanged)
 }
 
-fn append_log_event(conn: &Connection, page_id: &str, revision_no: i64, title: &str, created_at: i64) -> Result<(), String> {
+fn append_log_event(
+    conn: &Connection,
+    page_id: &str,
+    revision_no: i64,
+    title: &str,
+    created_at: i64,
+) -> Result<(), String> {
     conn.execute(
         "INSERT INTO log_events (id, event_type, title, body_markdown, related_page_id, created_at)
          VALUES (?1, 'commit_page_revision', ?2, ?3, ?4, ?5)",

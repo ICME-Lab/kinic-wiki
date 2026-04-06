@@ -2,7 +2,6 @@
 members = [
     "crates/wiki_types",
     "crates/wiki_store",
-    "crates/wiki_search",
     "crates/wiki_runtime",
 ]
 resolver = "2"

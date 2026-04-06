@@ -33,15 +33,6 @@ CREATE TABLE wiki_sections (
     UNIQUE(page_id, revision_id, section_path, ordinal)
 );
 
-CREATE TABLE revision_citations (
-    id TEXT PRIMARY KEY,
-    revision_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
-    chunk_id TEXT,
-    evidence_kind TEXT NOT NULL,
-    note TEXT
-);
-
 CREATE TABLE log_events (
     id TEXT PRIMARY KEY,
     event_type TEXT NOT NULL,

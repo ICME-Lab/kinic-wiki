@@ -1,6 +1,6 @@
 // Where: crates/wiki_types/src/lib.rs
-// What: Shared wiki domain types and cross-crate contracts.
-// Why: Keep the store, search, and runtime crates aligned on one schema and API surface.
+// What: Shared wiki domain types and public runtime contracts.
+// Why: Keep store and runtime aligned on the source-of-truth model from LLM_WIKI_PLAN.md.
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,32 +50,6 @@ impl WikiPageType {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SearchDocKind {
-    IndexPage,
-    WikiSection,
-    SystemLog,
-}
-
-impl SearchDocKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::IndexPage => "index_page",
-            Self::WikiSection => "wiki_section",
-            Self::SystemLog => "system_log",
-        }
-    }
-
-    pub fn from_str(value: &str) -> Option<Self> {
-        match value {
-            "index_page" => Some(Self::IndexPage),
-            "wiki_section" => Some(Self::WikiSection),
-            "system_log" => Some(Self::SystemLog),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WikiPage {
     pub id: String,
     pub slug: String,
@@ -112,11 +86,21 @@ pub struct WikiSection {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RevisionCitationInput {
+pub struct Source {
+    pub id: String,
+    pub source_type: String,
+    pub title: Option<String>,
+    pub canonical_uri: Option<String>,
+    pub sha256: String,
+    pub mime_type: Option<String>,
+    pub imported_at: i64,
+    pub metadata_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceBody {
     pub source_id: String,
-    pub chunk_id: Option<String>,
-    pub evidence_kind: String,
-    pub note: Option<String>,
+    pub body_text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,27 +112,23 @@ pub struct SystemPage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchProjectionDoc {
-    pub external_id: String,
-    pub kind: SearchDocKind,
-    pub page_id: Option<String>,
-    pub revision_id: Option<String>,
-    pub section_path: Option<String>,
-    pub title: String,
-    pub snippet: String,
-    pub citation: String,
-    pub content: String,
-    pub section: Option<String>,
-    pub tags: Vec<String>,
-    pub updated_at: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CreatePageInput {
     pub slug: String,
     pub page_type: WikiPageType,
     pub title: String,
     pub created_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CreateSourceInput {
+    pub source_type: String,
+    pub title: Option<String>,
+    pub canonical_uri: Option<String>,
+    pub sha256: String,
+    pub mime_type: Option<String>,
+    pub imported_at: i64,
+    pub metadata_json: String,
+    pub body_text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,7 +139,6 @@ pub struct CommitPageRevisionInput {
     pub markdown: String,
     pub change_reason: String,
     pub author_type: String,
-    pub citations: Vec<RevisionCitationInput>,
     pub tags: Vec<String>,
     pub updated_at: i64,
 }
@@ -167,64 +146,12 @@ pub struct CommitPageRevisionInput {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitPageRevisionOutput {
     pub revision_id: String,
-    pub revision_no: i64,
+    pub revision_no: u64,
     pub section_count: u32,
     pub unchanged_section_count: u32,
-    pub upserted_projection_ids: Vec<String>,
-    pub deleted_projection_ids: Vec<String>,
+    pub changed_section_paths: Vec<String>,
+    pub removed_section_paths: Vec<String>,
     pub rendered_system_pages: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LexicalSearchRequest {
-    pub query_text: String,
-    pub kinds: Vec<SearchDocKind>,
-    pub section: Option<String>,
-    pub tags: Vec<String>,
-    pub top_k: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SearchHit {
-    pub external_id: String,
-    pub kind: SearchDocKind,
-    pub title: String,
-    pub snippet: String,
-    pub citation: String,
-    pub section: Option<String>,
-    pub tags: Vec<String>,
-    pub score_bits: u32,
-    pub match_reasons: Vec<String>,
-}
-
-impl SearchHit {
-    pub fn score(&self) -> f32 {
-        f32::from_bits(self.score_bits)
-    }
-
-    pub fn new(
-        external_id: String,
-        kind: SearchDocKind,
-        title: String,
-        snippet: String,
-        citation: String,
-        section: Option<String>,
-        tags: Vec<String>,
-        score: f32,
-        match_reasons: Vec<String>,
-    ) -> Self {
-        Self {
-            external_id,
-            kind,
-            title,
-            snippet,
-            citation,
-            section,
-            tags,
-            score_bits: score.to_bits(),
-            match_reasons,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,7 +163,46 @@ pub struct PageSectionView {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PageBundle {
-    pub page: WikiPage,
-    pub revision: WikiRevision,
+    pub page_id: String,
+    pub slug: String,
+    pub title: String,
+    pub page_type: String,
+    pub current_revision_id: String,
+    pub markdown: String,
     pub sections: Vec<PageSectionView>,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogEvent {
+    pub event_type: String,
+    pub title: String,
+    pub body_markdown: String,
+    pub related_page_id: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Status {
+    pub page_count: u64,
+    pub source_count: u64,
+    pub system_page_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchRequest {
+    pub query_text: String,
+    pub page_types: Vec<WikiPageType>,
+    pub top_k: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub slug: String,
+    pub title: String,
+    pub page_type: WikiPageType,
+    pub section_path: Option<String>,
+    pub snippet: String,
+    pub score: f32,
+    pub match_reasons: Vec<String>,
 }

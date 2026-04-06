@@ -3,16 +3,18 @@
 // Why: Runtime code should interact with one store object instead of raw SQL calls.
 use std::path::{Path, PathBuf};
 
-use ic_hybrid_engine::{
-    configure_vector_dimension_connection, consistency_report_connection, migrate_connection,
-    register_sqlite_vec,
-};
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
-use wiki_search::WikiSearch;
-use wiki_types::{CreatePageInput, PageBundle, PageSectionView, WikiPage, WikiPageType, WikiRevision};
+use wiki_types::{
+    CommitPageRevisionInput, CommitPageRevisionOutput, CreatePageInput, CreateSourceInput,
+    LogEvent, PageBundle, PageSectionView, SearchHit, SearchRequest, Status, SystemPage, WikiPage,
+    WikiPageType, WikiRevision,
+};
 
-use crate::{render, schema};
+use crate::{
+    render, schema,
+    source::{count_sources, create_source_row, load_system_page},
+};
 
 pub struct WikiStore {
     database_path: PathBuf,
@@ -29,16 +31,7 @@ impl WikiStore {
 
     pub fn run_migrations(&self) -> Result<(), String> {
         let mut conn = self.open()?;
-        schema::run_migrations(&mut conn)?;
-        migrate_connection(&mut conn).map_err(|error| error.to_string())?;
-        if consistency_report_connection(&conn)
-            .map_err(|error| error.to_string())?
-            .configured_dimension
-            .is_none()
-        {
-            configure_vector_dimension_connection(&conn, 1).map_err(|error| error.to_string())?;
-        }
-        Ok(())
+        schema::run_migrations(&mut conn)
     }
 
     pub fn create_page(&self, input: CreatePageInput) -> Result<String, String> {
@@ -62,6 +55,27 @@ impl WikiStore {
         Ok(page_id)
     }
 
+    pub fn create_source(&self, input: CreateSourceInput) -> Result<String, String> {
+        let conn = self.open()?;
+        create_source_row(&conn, input)
+    }
+
+    pub fn commit_page_revision(
+        &self,
+        input: CommitPageRevisionInput,
+    ) -> Result<CommitPageRevisionOutput, String> {
+        let mut conn = self.open()?;
+        crate::commit::commit_revision_tx(&mut conn, &input)
+    }
+
+    pub fn refresh_system_pages(&self, updated_at: i64) -> Result<Vec<SystemPage>, String> {
+        let mut conn = self.open()?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let pages = crate::system_pages::refresh_system_pages_tx(&tx, updated_at)?;
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(pages)
+    }
+
     pub fn get_page_by_slug(&self, slug: &str) -> Result<Option<PageBundle>, String> {
         let conn = self.open()?;
         let page = load_page_by_slug(&conn, slug)?;
@@ -82,27 +96,50 @@ impl WikiStore {
             })
             .collect();
         Ok(Some(PageBundle {
-            page,
-            revision,
+            page_id: page.id.clone(),
+            slug: page.slug.clone(),
+            title: page.title.clone(),
+            page_type: page.page_type.as_str().to_string(),
+            current_revision_id: revision.id.clone(),
+            markdown: revision.markdown,
             sections,
+            updated_at: page.updated_at,
         }))
     }
 
-    pub fn search_lexical(
-        &self,
-        request: wiki_types::LexicalSearchRequest,
-    ) -> Result<Vec<wiki_types::SearchHit>, String> {
+    pub fn get_system_page(&self, slug: &str) -> Result<Option<SystemPage>, String> {
         let conn = self.open()?;
-        WikiSearch::lexical_search(&conn, request)
+        load_system_page(&conn, slug)
+    }
+
+    pub fn search(&self, request: SearchRequest) -> Result<Vec<SearchHit>, String> {
+        let conn = self.open()?;
+        crate::search::search_sections(&conn, request)
+    }
+
+    pub fn get_recent_log(&self, limit: usize) -> Result<Vec<LogEvent>, String> {
+        let conn = self.open()?;
+        crate::system_pages::load_recent_log_events(&conn, Some(limit))
+    }
+
+    pub fn status(&self) -> Result<Status, String> {
+        let conn = self.open()?;
+        Ok(Status {
+            page_count: count_table_rows(&conn, "wiki_pages")?,
+            source_count: count_sources(&conn)?,
+            system_page_count: count_table_rows(&conn, "system_pages")?,
+        })
     }
 
     pub(crate) fn open(&self) -> Result<Connection, String> {
-        register_sqlite_vec().map_err(|error| error.to_string())?;
         Connection::open(&self.database_path).map_err(|error| error.to_string())
     }
 }
 
-pub(crate) fn load_page_by_id(conn: &Connection, page_id: &str) -> Result<Option<WikiPage>, String> {
+pub(crate) fn load_page_by_id(
+    conn: &Connection,
+    page_id: &str,
+) -> Result<Option<WikiPage>, String> {
     conn.query_row(
         "SELECT id, slug, page_type, title, current_revision_id, summary_1line, created_at, updated_at
          FROM wiki_pages WHERE id = ?1",
@@ -124,7 +161,10 @@ fn load_page_by_slug(conn: &Connection, slug: &str) -> Result<Option<WikiPage>, 
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn load_revision(conn: &Connection, revision_id: &str) -> Result<Option<WikiRevision>, String> {
+pub(crate) fn load_revision(
+    conn: &Connection,
+    revision_id: &str,
+) -> Result<Option<WikiRevision>, String> {
     conn.query_row(
         "SELECT id, page_id, revision_no, markdown, change_reason, author_type, created_at
          FROM wiki_revisions WHERE id = ?1",
@@ -177,4 +217,13 @@ fn map_page(row: &rusqlite::Row<'_>) -> rusqlite::Result<WikiPage> {
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
     })
+}
+
+fn count_table_rows(conn: &Connection, table: &str) -> Result<u64, String> {
+    let sql = format!("SELECT COUNT(*) FROM {table}");
+    conn.query_row(&sql, [], |row| row.get::<_, i64>(0))
+        .map_err(|error| error.to_string())
+        .and_then(|value| {
+            u64::try_from(value).map_err(|_| "count must not be negative".to_string())
+        })
 }

@@ -3,8 +3,24 @@
 // Why: The app schema should evolve through explicit one-time migrations, not IF NOT EXISTS DDL.
 use rusqlite::{Connection, OptionalExtension, params};
 
-const MIGRATIONS: &[(&str, &str)] =
-    &[("wiki_store:000_initial", include_str!("../migrations/000_initial.sql"))];
+const MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "wiki_store:000_initial",
+        include_str!("../migrations/000_initial.sql"),
+    ),
+    (
+        "wiki_store:001_sources",
+        include_str!("../migrations/001_sources.sql"),
+    ),
+    (
+        "wiki_store:002_plan_alignment",
+        include_str!("../migrations/002_plan_alignment.sql"),
+    ),
+    (
+        "wiki_store:003_section_search",
+        include_str!("../migrations/003_section_search.sql"),
+    ),
+];
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
     include_str!("../migrations/000_schema_migrations.sql");
 pub fn run_migrations(conn: &mut Connection) -> Result<(), String> {

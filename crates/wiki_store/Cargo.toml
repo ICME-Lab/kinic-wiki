@@ -5,13 +5,11 @@ edition = "2024"
 
 [dependencies]
 hex = "0.4.3"
-ic-hybrid-engine = { path = "../../../llm-wiki/ic-hybrid-sqlite/crates/ic_hybrid_engine" }
 pulldown-cmark = "0.13.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 sha2 = "0.10.9"
 time = { version = "0.3.44", features = ["formatting", "macros"] }
 uuid = { version = "1.18.1", features = ["v4"] }
-wiki-search = { path = "../wiki_search" }
 wiki-types = { path = "../wiki_types" }
 
 [dev-dependencies]

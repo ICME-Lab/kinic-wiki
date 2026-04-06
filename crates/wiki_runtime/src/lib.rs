@@ -1,12 +1,12 @@
 // Where: crates/wiki_runtime/src/lib.rs
-// What: Service-level orchestration for the wiki store and lexical search.
-// Why: Higher layers need one object that coordinates source-of-truth writes and search projection refresh.
+// What: Service-level orchestration for the wiki store.
+// Why: Higher layers need one object that coordinates source-of-truth writes and rendered system pages.
 use std::path::PathBuf;
 
 use wiki_store::WikiStore;
 use wiki_types::{
-    CommitPageRevisionInput, CommitPageRevisionOutput, CreatePageInput, LexicalSearchRequest,
-    PageBundle, SearchHit,
+    CommitPageRevisionInput, CommitPageRevisionOutput, CreatePageInput, CreateSourceInput,
+    LogEvent, PageBundle, SearchHit, SearchRequest, Status, SystemPage,
 };
 
 pub struct WikiService {
@@ -28,6 +28,10 @@ impl WikiService {
         self.store.create_page(input)
     }
 
+    pub fn create_source(&self, input: CreateSourceInput) -> Result<String, String> {
+        self.store.create_source(input)
+    }
+
     pub fn commit_page_revision(
         &self,
         input: CommitPageRevisionInput,
@@ -35,11 +39,23 @@ impl WikiService {
         self.store.commit_page_revision(input)
     }
 
-    pub fn search_lexical(&self, request: LexicalSearchRequest) -> Result<Vec<SearchHit>, String> {
-        self.store.search_lexical(request)
+    pub fn get_page(&self, slug: &str) -> Result<Option<PageBundle>, String> {
+        self.store.get_page_by_slug(slug)
     }
 
-    pub fn get_page_by_slug(&self, slug: &str) -> Result<Option<PageBundle>, String> {
-        self.store.get_page_by_slug(slug)
+    pub fn get_system_page(&self, slug: &str) -> Result<Option<SystemPage>, String> {
+        self.store.get_system_page(slug)
+    }
+
+    pub fn search(&self, request: SearchRequest) -> Result<Vec<SearchHit>, String> {
+        self.store.search(request)
+    }
+
+    pub fn get_recent_log(&self, limit: usize) -> Result<Vec<LogEvent>, String> {
+        self.store.get_recent_log(limit)
+    }
+
+    pub fn status(&self) -> Result<Status, String> {
+        self.store.status()
     }
 }

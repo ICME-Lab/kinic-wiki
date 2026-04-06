@@ -4,9 +4,10 @@
 mod commit;
 mod hashing;
 mod markdown;
-mod projection;
 mod render;
 mod schema;
+mod search;
+mod source;
 mod store;
 mod system_pages;
 
