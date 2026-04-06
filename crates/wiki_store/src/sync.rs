@@ -10,7 +10,7 @@ use wiki_types::{
     CommittedPageResult, ExportWikiSnapshotRequest, ExportWikiSnapshotResponse,
     FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, PageChangeInput, PageChangeType,
     RejectedPageResult, SectionHashEntry, SystemPageSnapshot, WikiPageSnapshot, WikiSyncManifest,
-    WikiSyncManifestDelta, WikiSyncManifestEntry,
+    WikiPageType, WikiSyncManifestDelta, WikiSyncManifestEntry,
 };
 
 use crate::{
@@ -365,20 +365,21 @@ fn load_page_snapshot_by_slug(
 ) -> Result<Option<WikiPageSnapshot>, String> {
     let page_row = conn
         .query_row(
-            "SELECT id, slug, title, current_revision_id FROM wiki_pages WHERE slug = ?1",
+            "SELECT id, slug, page_type, title, current_revision_id FROM wiki_pages WHERE slug = ?1",
             params![slug],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
         .optional()
         .map_err(|error| error.to_string())?;
-    let Some((page_id, slug, title, revision_id)) = page_row else {
+    let Some((page_id, slug, page_type, title, revision_id)) = page_row else {
         return Ok(None);
     };
     let revision_id = revision_id.ok_or_else(|| "page has no current revision".to_string())?;
@@ -388,6 +389,7 @@ fn load_page_snapshot_by_slug(
         page_id: page_id.clone(),
         slug,
         title,
+        page_type: WikiPageType::from_str(&page_type).unwrap_or(WikiPageType::Overview),
         revision_id,
         updated_at: current_page_updated_at(conn, &page_id)?,
         markdown: revision.markdown,

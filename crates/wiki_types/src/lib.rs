@@ -12,6 +12,7 @@ pub use sync::*;
 pub use upload::*;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WikiPageType {
     Entity,
     Concept,

@@ -1,0 +1,23 @@
+{
+  "name": "kinic-wiki",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint . --ignore-pattern main.js",
+    "lint:fix": "eslint . --ignore-pattern main.js --fix",
+    "check": "npm run typecheck && npm run lint && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@types/node": "^22.13.10",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.24.0",
+    "globals": "^16.0.0",
+    "obsidian": "^1.8.7",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.29.0"
+  }
+}

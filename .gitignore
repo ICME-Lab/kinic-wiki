@@ -22,5 +22,9 @@
 /tmp/
 *.tmp
 
+# Obsidian plugin artifacts
+/plugins/kinic-wiki/node_modules/
+/plugins/kinic-wiki/main.js
+
 # Keep ic-hybrid-sqlite as its own repo for now
 /ic-hybrid-sqlite/

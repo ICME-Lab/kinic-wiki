@@ -162,6 +162,7 @@ fn export_fetch_and_commit_sync_flow_work() {
         })
         .expect("snapshot should export");
     assert_eq!(snapshot.pages.len(), 1);
+    assert_eq!(snapshot.pages[0].page_type, WikiPageType::Overview);
     assert!(!snapshot.system_pages.is_empty());
 
     let no_updates = service

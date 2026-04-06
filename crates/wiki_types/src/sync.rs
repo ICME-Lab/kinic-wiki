@@ -3,6 +3,8 @@
 // Why: Local working copies need explicit contracts for clone/fetch/push-style workflows.
 use serde::{Deserialize, Serialize};
 
+use crate::WikiPageType;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SectionHashEntry {
     pub section_path: String,
@@ -14,6 +16,7 @@ pub struct WikiPageSnapshot {
     pub page_id: String,
     pub slug: String,
     pub title: String,
+    pub page_type: WikiPageType,
     pub revision_id: String,
     pub updated_at: i64,
     pub markdown: String,

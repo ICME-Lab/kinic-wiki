@@ -1,0 +1,65 @@
+// Where: plugins/kinic-wiki/settings.ts
+// What: Plugin settings UI for the Kinic mirror workflow.
+// Why: Users need a minimal configuration surface without editing JSON by hand.
+import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+
+import { PluginSettings } from "./types";
+
+export type SettingsOwner = Plugin & {
+  settings: PluginSettings;
+  saveSettings(): Promise<void>;
+};
+
+export class KinicWikiSettingTab extends PluginSettingTab {
+  constructor(app: App, private readonly owner: SettingsOwner) {
+    super(app, owner);
+  }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Adapter base URL")
+      .setDesc("Local HTTP adapter base URL. The plugin calls /export_wiki_snapshot and related JSON endpoints.")
+      .addText((text) =>
+        text
+          .setPlaceholder("http://127.0.0.1:8787")
+          .setValue(this.owner.settings.adapterBaseUrl)
+          .onChange(async (value) => {
+            this.owner.settings.adapterBaseUrl = value.trim();
+            await this.owner.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Mirror root")
+      .setDesc("Vault folder where the mirror will be written.")
+      .addText((text) =>
+        text.setValue(this.owner.settings.mirrorRoot).onChange(async (value) => {
+          this.owner.settings.mirrorRoot = value.trim() || "Wiki";
+          await this.owner.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Auto pull on startup")
+      .setDesc("Pull updates automatically when Obsidian starts and the plugin is configured.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.owner.settings.autoPullOnStartup).onChange(async (value) => {
+          this.owner.settings.autoPullOnStartup = value;
+          await this.owner.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Open index after initial sync")
+      .setDesc("Open Wiki/index.md after the first successful sync.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.owner.settings.openIndexAfterInitialSync).onChange(async (value) => {
+          this.owner.settings.openIndexAfterInitialSync = value;
+          await this.owner.saveSettings();
+        })
+      );
+  }
+}
