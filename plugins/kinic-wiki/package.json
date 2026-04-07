@@ -5,7 +5,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "dev": "node esbuild.config.mjs --watch",
-    "test": "node --test --import tsx ./candid.test.ts",
+    "test": "node --test --import tsx ./*.test.ts",
     "typecheck": "tsc -p tsconfig.json",
     "lint": "eslint . --ignore-pattern main.js",
     "lint:fix": "eslint . --ignore-pattern main.js --fix",

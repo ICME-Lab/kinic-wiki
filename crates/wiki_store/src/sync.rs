@@ -9,8 +9,8 @@ use wiki_types::{
     CommitPageRevisionInput, CommitWikiChangesRequest, CommitWikiChangesResponse,
     CommittedPageResult, ExportWikiSnapshotRequest, ExportWikiSnapshotResponse,
     FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, PageChangeInput, PageChangeType,
-    RejectedPageResult, SectionHashEntry, SystemPageSnapshot, WikiPageSnapshot, WikiSyncManifest,
-    WikiPageType, WikiSyncManifestDelta, WikiSyncManifestEntry,
+    RejectedPageResult, SectionHashEntry, SystemPageSnapshot, WikiPageSnapshot, WikiPageType,
+    WikiSyncManifest, WikiSyncManifestDelta, WikiSyncManifestEntry,
 };
 
 use crate::{

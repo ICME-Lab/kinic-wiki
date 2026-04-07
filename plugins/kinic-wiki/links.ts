@@ -32,6 +32,6 @@ function canonicalSlug(input: string): string {
     .trim()
     .replace(/^\.?\/*Wiki\/pages\//, "")
     .replace(/^pages\//, "")
-    .replace(/\.md$/, "")
-    .replace(/\|.*$/, "");
+    .replace(/\|.*$/, "")
+    .replace(/\.md$/, "");
 }

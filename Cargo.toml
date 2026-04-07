@@ -1,7 +1,8 @@
 [workspace]
 members = [
     "crates/wiki_agent_schema",
-    "crates/wiki_http_adapter",
+    "crates/wiki_cli",
+    "crates/wiki_canister",
     "crates/wiki_types",
     "crates/wiki_store",
     "crates/wiki_runtime",

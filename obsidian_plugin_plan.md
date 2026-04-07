@@ -145,7 +145,8 @@ mirror 側の内部リンクは必ず `[[slug]]` に正規化する。
 
 最小設定:
 
-- `adapterBaseUrl`
+- `replicaHost`
+- `canisterId`
 - `mirrorRoot`
   - 既定値: `Wiki`
 - `autoPullOnStartup`
@@ -182,7 +183,8 @@ mirror 側の内部リンクは必ず `[[slug]]` に正規化する。
 
 - `lastSnapshotRevision`
 - `lastSyncedAt`
-- `adapterBaseUrl`
+- `replicaHost`
+- `canisterId`
 - `mirrorRoot`
 
 保持しないもの:
@@ -204,8 +206,6 @@ mirror 側の内部リンクは必ず `[[slug]]` に正規化する。
 
 - `export_wiki_snapshot`
 - `fetch_wiki_updates`
-- `get_system_page("index.md")`
-- `get_system_page("log.md")`
 - `status`
 
 ### Phase 2
