@@ -73,6 +73,10 @@ impl WikiService {
         self.store.search(request)
     }
 
+    pub fn refresh_system_pages(&self, updated_at: i64) -> Result<Vec<SystemPage>, String> {
+        self.store.refresh_system_pages(updated_at)
+    }
+
     pub fn get_recent_log(&self, limit: usize) -> Result<Vec<LogEvent>, String> {
         self.store.get_recent_log(limit)
     }

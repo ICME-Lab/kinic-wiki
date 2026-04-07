@@ -1,0 +1,7 @@
+canisters:
+  - name: wiki
+    build:
+      steps:
+        - type: script
+          commands:
+            - bash scripts/build-wiki-canister.sh

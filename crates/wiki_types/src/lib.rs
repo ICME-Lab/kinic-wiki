@@ -5,13 +5,15 @@ mod health;
 mod sync;
 mod upload;
 
+use candid::CandidType;
 use serde::{Deserialize, Serialize};
 
 pub use health::*;
 pub use sync::*;
 pub use upload::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
 pub enum WikiPageType {
     Entity,
     Concept,
@@ -57,7 +59,7 @@ impl WikiPageType {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct WikiPage {
     pub id: String,
     pub slug: String,
@@ -69,7 +71,7 @@ pub struct WikiPage {
     pub updated_at: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct WikiRevision {
     pub id: String,
     pub page_id: String,
@@ -80,7 +82,7 @@ pub struct WikiRevision {
     pub created_at: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct WikiSection {
     pub id: String,
     pub page_id: String,
@@ -93,7 +95,7 @@ pub struct WikiSection {
     pub is_current: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct Source {
     pub id: String,
     pub source_type: String,
@@ -105,13 +107,13 @@ pub struct Source {
     pub metadata_json: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct SourceBody {
     pub source_id: String,
     pub body_text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct SystemPage {
     pub slug: String,
     pub markdown: String,
@@ -119,7 +121,7 @@ pub struct SystemPage {
     pub etag: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreatePageInput {
     pub slug: String,
     pub page_type: WikiPageType,
@@ -127,7 +129,7 @@ pub struct CreatePageInput {
     pub created_at: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateSourceInput {
     pub source_type: String,
     pub title: Option<String>,
@@ -139,7 +141,7 @@ pub struct CreateSourceInput {
     pub body_text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CommitPageRevisionInput {
     pub page_id: String,
     pub expected_current_revision_id: Option<String>,
@@ -151,7 +153,7 @@ pub struct CommitPageRevisionInput {
     pub updated_at: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CommitPageRevisionOutput {
     pub revision_id: String,
     pub revision_no: u64,
@@ -162,14 +164,14 @@ pub struct CommitPageRevisionOutput {
     pub rendered_system_pages: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct PageSectionView {
     pub section_path: String,
     pub heading: Option<String>,
     pub text: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct PageBundle {
     pub page_id: String,
     pub slug: String,
@@ -181,7 +183,7 @@ pub struct PageBundle {
     pub updated_at: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct LogEvent {
     pub event_type: String,
     pub title: String,
@@ -190,21 +192,21 @@ pub struct LogEvent {
     pub created_at: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct Status {
     pub page_count: u64,
     pub source_count: u64,
     pub system_page_count: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct SearchRequest {
     pub query_text: String,
     pub page_types: Vec<WikiPageType>,
     pub top_k: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, CandidType)]
 pub struct SearchHit {
     pub slug: String,
     pub title: String,
