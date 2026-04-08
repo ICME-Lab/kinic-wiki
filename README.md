@@ -1,6 +1,6 @@
 # llm-wiki
 
-remote wiki を正本にし、Obsidian vault 内の `Wiki/` を working copy として使う構成のメモリ基盤です。
+remote node store を正本にし、Obsidian vault 内の `Wiki/` を working copy として使う FS-first のメモリ基盤です。
 
 ## 現在の構成
 
@@ -18,17 +18,18 @@ canister 実装は [crates/wiki_canister/src/lib.rs](/Users/0xhude/Desktop/work/
 - `WikiService` 直結
 - SQLite は WASI 上で開く
 - build は `wasm32-wasip1` + `wasi2ic`
-- `init` / `post_upgrade` では migration を走らせ、`index.md` / `log.md` が欠けているときだけ system page を生成
+- `init` / `post_upgrade` では FS migration のみを走らせる
 
 公開 API:
 
 - `status`
-- `search`
-- `get_page`
-- `get_system_page`
-- `export_wiki_snapshot`
-- `fetch_wiki_updates`
-- `commit_wiki_changes`
+- `read_node`
+- `list_nodes`
+- `write_node`
+- `delete_node`
+- `search_nodes`
+- `export_snapshot`
+- `fetch_updates`
 
 Candid は [crates/wiki_canister/wiki.did](/Users/0xhude/Desktop/work/llm-wiki/crates/wiki_canister/wiki.did) にあります。
 
@@ -36,9 +37,9 @@ Candid は [crates/wiki_canister/wiki.did](/Users/0xhude/Desktop/work/llm-wiki/c
 
 検索実装は 1 つだけです。
 
-- 実装: [crates/wiki_store/src/search.rs](/Users/0xhude/Desktop/work/llm-wiki/crates/wiki_store/src/search.rs)
+- 実装: [crates/wiki_store/src/fs_store.rs](/Users/0xhude/Desktop/work/llm-wiki/crates/wiki_store/src/fs_store.rs)
 - backend: SQLite FTS
-- canister の `search` はこの既存実装をそのまま公開
+- canister の `search_nodes` はこの既存実装をそのまま公開
 
 別の検索実装や canister 専用検索は置いていません。
 
@@ -48,17 +49,15 @@ Obsidian vault 内の `Wiki/` を working copy として使います。
 
 主な mirror 仕様:
 
-- `Wiki/pages/<slug>.md`
-- `Wiki/index.md`
-- `Wiki/log.md`
-- `Wiki/conflicts/<slug>.conflict.md`
+- remote `/Wiki/foo.md` -> local `Wiki/foo.md`
+- remote `/Wiki/nested/bar.md` -> local `Wiki/nested/bar.md`
+- conflict file -> `Wiki/conflicts/<basename>.conflict.md`
 
-managed page の frontmatter:
+tracked local mirror file の frontmatter:
 
-- `page_id`
-- `slug`
-- `page_type`
-- `revision_id`
+- `path`
+- `kind`
+- `etag`
 - `updated_at`
 - `mirror: true`
 
@@ -68,16 +67,20 @@ agent 用 CLI は [crates/wiki_cli](/Users/0xhude/Desktop/work/llm-wiki/crates/w
 
 主なコマンド:
 
+- `read-node`
+- `list-nodes`
+- `write-node`
+- `delete-node`
 - `search-remote`
-- `get-page`
-- `get-system-page`
 - `status`
+- `lint-local`
 - `pull`
 - `push`
 
 役割:
 
-- remote の page / system page / search を読む
+- remote の node / search を読む
+- local `Wiki/` working copy の構造を点検する
 - vault 内 `Wiki/` へ pull する
 - local 変更を remote に push する
 

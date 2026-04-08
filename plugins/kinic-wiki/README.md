@@ -1,11 +1,10 @@
 # Kinic Wiki Plugin
 
-Obsidian desktop plugin that mirrors a Kinic wiki canister into your vault under `Wiki/`.
+Obsidian desktop plugin that mirrors a Kinic FS-first canister into your vault under `Wiki/`.
 
 ## What it does
 
-- mirrors `index.md`, `log.md`, and wiki pages into the vault
-- normalizes internal links to `[[slug]]`
+- mirrors remote `/Wiki/...` paths directly into the vault
 - supports pull, push, delete, and conflict notes
 - calls the canister directly with `query` / `update`
 
@@ -102,7 +101,6 @@ The plugin requires these settings:
 - `Canister ID`
 - `Mirror root`
 - `Auto pull on startup`
-- `Open index after initial sync`
 
 Example local replica host:
 
@@ -113,9 +111,13 @@ http://127.0.0.1:8000
 The plugin calls these canister methods directly:
 
 - `status`
-- `export_wiki_snapshot`
-- `fetch_wiki_updates`
-- `commit_wiki_changes`
+- `read_node`
+- `list_nodes`
+- `write_node`
+- `delete_node`
+- `search_nodes`
+- `export_snapshot`
+- `fetch_updates`
 
 When the host is `localhost` or `127.0.0.1`, the plugin automatically fetches the local root key before the first request.
 
@@ -127,7 +129,7 @@ The canister interface is defined in:
 crates/wiki_canister/wiki.did
 ```
 
-The plugin keeps its local IDL in `candid.ts`, matching the same four methods.
+The plugin keeps its local IDL in `candid.ts`, matching the same FS-first methods.
 
 ## Manual E2E checklist
 
@@ -136,12 +138,11 @@ The plugin keeps its local IDL in `candid.ts`, matching the same four methods.
 3. Build the plugin and place it in `<Vault>/.obsidian/plugins/kinic-wiki/`.
 4. Set `Replica Host` and `Canister ID`.
 5. Run `Wiki: Initial Sync`.
-6. Confirm `Wiki/index.md`, `Wiki/log.md`, and `Wiki/pages/*.md` are created.
-7. Confirm `[[slug]]` links resolve and Graph View / Backlinks / Search work.
-8. Run `Wiki: Pull Updates` after a remote change.
-9. Edit a mirrored page and run `Wiki: Push Current Note`.
-10. Run `Wiki: Delete Current Wiki Page`.
-11. Force a conflict and confirm `Wiki/conflicts/*.conflict.md` is created.
+6. Confirm remote `/Wiki/...` paths are created directly under the configured mirror root.
+7. Run `Wiki: Pull Updates` after a remote change.
+8. Edit a mirrored file and run `Wiki: Push Current Note`.
+9. Run `Wiki: Delete Current Wiki Page`.
+10. Force a conflict and confirm `Wiki/conflicts/*.conflict.md` is created.
 
 ## Notes
 

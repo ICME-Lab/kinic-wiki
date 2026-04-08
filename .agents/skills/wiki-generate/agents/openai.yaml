@@ -1,0 +1,4 @@
+version: 1
+display_name: Wiki Generate
+short_description: Generate and refine draft wiki pages for the canister-backed llm-wiki workflow.
+default_prompt: Generate or expand draft wiki pages from local source material, keep output compatible with the Obsidian working copy, and prepare reviewed changes for wiki-cli push.

@@ -1,23 +1,25 @@
 // Where: plugins/kinic-wiki/sync.ts
-// What: Mirror, pull, push, and delete workflows for the Obsidian plugin.
-// Why: Commands should delegate to one service that owns wiki sync behavior end to end.
-import { App, Notice, TFile, normalizePath } from "obsidian";
+// What: Mirror, pull, push, and delete workflows for the FS-first plugin.
+// Why: Commands should delegate to one service that owns node-based sync behavior end to end.
+import { App, Notice, TFile } from "obsidian";
 
 import { KinicCanisterClient } from "./client";
 import {
-  collectChangedManagedPageFiles,
-  collectKnownPages,
-  currentManagedPageFile,
-  managedPagePayload,
+  collectChangedManagedNodeFiles,
+  currentManagedNodeFile,
+  deletedTrackedNodes,
+  mergeTrackedNodes,
+  managedNodePayload,
   openMirrorFile,
-  removeManagedPagesByIds,
-  removeStaleManagedPages,
-  updateLocalRevisionMetadata,
+  removeMirrorPaths,
+  removeStaleManagedFiles,
+  trackedNodesFromSnapshot,
+  updateLocalNodeMetadata,
   writeConflictFile,
-  writePageMirror,
   writeSnapshotMirror
 } from "./mirror";
-import { CommitPageChange, PluginSettings } from "./types";
+import { shouldSkipPush } from "./sync_logic";
+import { PluginSettings, TrackedNodeState } from "./types";
 
 export class WikiSyncService {
   constructor(
@@ -31,101 +33,82 @@ export class WikiSyncService {
   }
 
   async initialSync(): Promise<void> {
-    const client = this.client();
-    const snapshot = await client.exportWikiSnapshot();
-    await writeSnapshotMirror(this.app, this.settings.mirrorRoot, snapshot.pages, snapshot.system_pages);
-    await removeStaleManagedPages(
+    const snapshot = await this.client().exportSnapshot();
+    await writeSnapshotMirror(this.app, this.settings.mirrorRoot, snapshot.nodes);
+    await removeStaleManagedFiles(
       this.app,
       this.settings.mirrorRoot,
-      new Set(snapshot.pages.map((page) => page.page_id))
+      new Set(snapshot.nodes.map((node) => node.path))
     );
-    await this.markSynced(snapshot.snapshot_revision);
-    if (this.settings.openIndexAfterInitialSync) {
-      await openMirrorFile(this.app, `${this.settings.mirrorRoot}/index.md`);
-    }
-    new Notice(`Initial sync completed: ${snapshot.pages.length} pages`);
+    await this.markSynced(snapshot.snapshot_revision, trackedNodesFromSnapshot(snapshot.nodes));
+    new Notice(`Initial sync completed: ${snapshot.nodes.length} nodes`);
   }
 
   async pullUpdates(): Promise<void> {
     const client = this.client();
-    const knownPages = await collectKnownPages(this.app, this.settings.mirrorRoot);
-    const updates = await client.fetchWikiUpdates(this.settings.lastSnapshotRevision, knownPages);
-    const knownSlugs = new Set([
-      ...knownPages.map((page) => page.slug),
-      ...updates.changed_pages.map((page) => page.slug)
-    ]);
-    for (const page of updates.changed_pages) {
-      await writePageMirror(this.app, this.settings.mirrorRoot, page, knownSlugs);
-    }
-    await removeManagedPagesByIds(this.app, this.settings.mirrorRoot, updates.removed_page_ids);
-    await writeSnapshotMirror(this.app, this.settings.mirrorRoot, [], updates.system_pages);
-    await this.markSynced(updates.snapshot_revision);
-    new Notice(`Pull complete: ${updates.changed_pages.length} changed, ${updates.removed_page_ids.length} removed`);
-  }
-
-  async openIndex(): Promise<void> {
-    await openMirrorFile(this.app, `${this.settings.mirrorRoot}/index.md`);
-  }
-
-  async openLog(): Promise<void> {
-    await openMirrorFile(this.app, `${this.settings.mirrorRoot}/log.md`);
+    const updates = await client.fetchUpdates(this.settings.lastSnapshotRevision);
+    await writeSnapshotMirror(this.app, this.settings.mirrorRoot, updates.changed_nodes);
+    await removeMirrorPaths(this.app, this.settings.mirrorRoot, updates.removed_paths);
+    await this.markSynced(
+      updates.snapshot_revision,
+      mergeTrackedNodes(this.settings.trackedNodes, updates.changed_nodes, updates.removed_paths)
+    );
+    new Notice(`Pull complete: ${updates.changed_nodes.length} changed, ${updates.removed_paths.length} removed`);
   }
 
   async showStatus(): Promise<void> {
     const status = await this.client().status();
-    new Notice(`Pages ${status.page_count}, Sources ${status.source_count}, System ${status.system_page_count}`);
+    new Notice(`Files ${status.file_count}, Sources ${status.source_count}, Deleted ${status.deleted_count}`);
   }
 
   async pushCurrentNote(): Promise<void> {
-    const file = currentManagedPageFile(this.app, this.settings.mirrorRoot);
+    const file = currentManagedNodeFile(this.app, this.settings.mirrorRoot);
     if (file === null) {
-      new Notice("Current note is not a managed wiki page");
+      new Notice("Current note is not a tracked local mirror node");
       return;
     }
     await this.pushFiles([file]);
   }
 
   async pushChangedNotes(): Promise<void> {
-    const files = await collectChangedManagedPageFiles(
+    const files = await collectChangedManagedNodeFiles(
       this.app,
       this.settings.mirrorRoot,
       this.settings.lastSyncedAt
     );
-    if (files.length === 0) {
-      new Notice("No changed wiki notes found");
+    const deletedNodes = await deletedTrackedNodes(
+      this.app,
+      this.settings.mirrorRoot,
+      this.settings.trackedNodes
+    );
+    if (shouldSkipPush(files.length, deletedNodes.length)) {
+      new Notice("No changed wiki files found");
       return;
     }
-    await this.pushFiles(files);
+    await this.pushFiles(files, deletedNodes);
   }
 
   async deleteCurrentNote(): Promise<void> {
-    const file = currentManagedPageFile(this.app, this.settings.mirrorRoot);
+    const file = currentManagedNodeFile(this.app, this.settings.mirrorRoot);
     if (file === null) {
-      new Notice("Current note is not a managed wiki page");
+      new Notice("Current note is not a tracked local mirror node");
       return;
     }
-    const payload = await managedPagePayload(this.app, file);
+    const payload = await managedNodePayload(this.app, file);
     if (payload === null) {
-      new Notice("Current note is missing managed frontmatter");
+      new Notice("Current note is missing tracked mirror frontmatter");
       return;
     }
-    const response = await this.client().commitWikiChanges(this.settings.lastSnapshotRevision, [
-      { change_type: "Delete", page_id: payload.metadata.page_id, base_revision_id: payload.metadata.revision_id, new_markdown: null }
-    ]);
-    await this.afterCommit(response);
-    const deletedRemotely = response.manifest_delta.removed_page_ids.includes(payload.metadata.page_id);
-    if (!deletedRemotely) {
-      new Notice("Delete was rejected by the remote wiki");
-      return;
-    }
+    await this.client().deleteNode(payload.metadata.path, payload.metadata.etag);
     if (this.app.vault.getAbstractFileByPath(file.path) instanceof TFile) {
       await this.app.vault.delete(file, true);
     }
-    new Notice("Deleted current wiki page");
+    await this.syncTrackedState();
+    new Notice("Deleted current wiki node");
   }
 
   async showConflicts(): Promise<void> {
-    const prefix = `${normalizePath(this.settings.mirrorRoot)}/conflicts/`;
+    const prefix = `${this.settings.mirrorRoot}/conflicts/`;
     const conflict = this.app.vault.getMarkdownFiles().find((file) => file.path.startsWith(prefix));
     if (conflict === undefined) {
       new Notice("No conflict notes found");
@@ -134,58 +117,65 @@ export class WikiSyncService {
     await openMirrorFile(this.app, conflict.path);
   }
 
-  private async pushFiles(files: TFile[]): Promise<void> {
-    const changes: CommitPageChange[] = [];
-    const payloads = new Map<string, { slug: string }>();
+  private async pushFiles(files: TFile[], deletedNodes?: TrackedNodeState[]): Promise<void> {
+    const client = this.client();
+    let writes = 0;
+    let conflicts = 0;
     for (const file of files) {
-      const payload = await managedPagePayload(this.app, file);
+      const payload = await managedNodePayload(this.app, file);
       if (payload === null) {
         continue;
       }
-      changes.push({
-        change_type: "Update",
-        page_id: payload.metadata.page_id,
-        base_revision_id: payload.metadata.revision_id,
-        new_markdown: payload.markdown
-      });
-      payloads.set(payload.metadata.page_id, { slug: payload.metadata.slug });
-    }
-    if (changes.length === 0) {
-      new Notice("No valid managed notes selected for push");
-      return;
-    }
-    const response = await this.client().commitWikiChanges(this.settings.lastSnapshotRevision, changes);
-    await this.afterCommit(response);
-    for (const conflict of response.rejected_pages) {
-      const slug = payloads.get(conflict.page_id)?.slug ?? conflict.page_id;
-      if (conflict.conflict_markdown !== null) {
-        await writeConflictFile(this.app, this.settings.mirrorRoot, slug, conflict.conflict_markdown);
+      try {
+        const result = await client.writeNode(
+          payload.metadata.path,
+          payload.metadata.kind,
+          payload.content,
+          payload.metadata.etag
+        );
+        await updateLocalNodeMetadata(this.app, this.settings.mirrorRoot, result.node);
+        writes += 1;
+      } catch (error: unknown) {
+        conflicts += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        await writeConflictFile(this.app, this.settings.mirrorRoot, payload.metadata.path, payload.content);
+        new Notice(`Push conflict for ${payload.metadata.path}: ${message}`);
       }
     }
-    new Notice(`Push complete: ${response.committed_pages.length} committed, ${response.rejected_pages.length} rejected`);
+
+    const pendingDeletes = deletedNodes ?? await deletedTrackedNodes(
+      this.app,
+      this.settings.mirrorRoot,
+      this.settings.trackedNodes
+    );
+    for (const tracked of pendingDeletes) {
+      try {
+        await client.deleteNode(tracked.path, tracked.etag);
+      } catch (error: unknown) {
+        conflicts += 1;
+        const message = error instanceof Error ? error.message : String(error);
+        new Notice(`Delete conflict for ${tracked.path}: ${message}`);
+      }
+    }
+
+    await this.syncTrackedState();
+    new Notice(`Push complete: ${writes} written, ${conflicts} conflicts`);
   }
 
-  private async afterCommit(response: Awaited<ReturnType<KinicCanisterClient["commitWikiChanges"]>>): Promise<void> {
-    for (const entry of response.manifest_delta.upserted_pages) {
-      await updateLocalRevisionMetadata(
-        this.app,
-        this.settings.mirrorRoot,
-        entry.page_id,
-        entry.revision_id,
-        entry.updated_at
-      );
-    }
-    await removeManagedPagesByIds(this.app, this.settings.mirrorRoot, response.manifest_delta.removed_page_ids);
-    await writeSnapshotMirror(this.app, this.settings.mirrorRoot, [], response.system_pages);
-    await this.markSynced(response.snapshot_revision);
-    if (response.snapshot_was_stale) {
-      new Notice("Remote had advanced, but non-conflicting changes were still applied");
-    }
+  private async syncTrackedState(): Promise<void> {
+    const updates = await this.client().fetchUpdates(this.settings.lastSnapshotRevision);
+    await writeSnapshotMirror(this.app, this.settings.mirrorRoot, updates.changed_nodes);
+    await removeMirrorPaths(this.app, this.settings.mirrorRoot, updates.removed_paths);
+    await this.markSynced(
+      updates.snapshot_revision,
+      mergeTrackedNodes(this.settings.trackedNodes, updates.changed_nodes, updates.removed_paths)
+    );
   }
 
-  private async markSynced(snapshotRevision: string): Promise<void> {
+  private async markSynced(snapshotRevision: string, trackedNodes: PluginSettings["trackedNodes"]): Promise<void> {
     this.settings.lastSnapshotRevision = snapshotRevision;
     this.settings.lastSyncedAt = Date.now();
+    this.settings.trackedNodes = trackedNodes;
     await this.saveSettings();
   }
 

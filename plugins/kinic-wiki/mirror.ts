@@ -1,118 +1,134 @@
 // Where: plugins/kinic-wiki/mirror.ts
-// What: Vault mirror reads and writes for Kinic wiki pages and system pages.
-// Why: The plugin needs one place that owns all file system interactions under Wiki/.
+// What: Vault mirror reads and writes for FS-first remote nodes.
+// Why: The plugin mirrors remote paths directly and tracks etags in file frontmatter.
 import { App, Notice, TFile, TFolder, normalizePath } from "obsidian";
 
-import { parseMirrorFrontmatter, serializeMirrorFile, stripManagedFrontmatter } from "./frontmatter";
-import { normalizePageMarkdown, normalizeSystemMarkdown } from "./links";
-import { MirrorFrontmatter, SystemPageSnapshot, WikiPageSnapshot } from "./types";
+import {
+  parseMirrorFrontmatter,
+  serializeMirrorFile,
+  stripManagedFrontmatter
+} from "./frontmatter";
+import { MirrorFrontmatter, NodeSnapshot, TrackedNodeState } from "./types";
 
-export async function collectKnownPages(app: App, mirrorRoot: string): Promise<MirrorFrontmatter[]> {
-  const results: MirrorFrontmatter[] = [];
-  for (const file of app.vault.getMarkdownFiles()) {
-    if (!isManagedPageFile(file.path, mirrorRoot)) {
+export async function collectManagedNodes(app: App, mirrorRoot: string): Promise<Array<{ file: TFile; metadata: MirrorFrontmatter }>> {
+  const root = managedRoot(mirrorRoot);
+  const conflictRoot = conflictRootPath(mirrorRoot);
+  const results: Array<{ file: TFile; metadata: MirrorFrontmatter }> = [];
+  for (const file of app.vault.getFiles()) {
+    if (!file.path.startsWith(root) || file.path.startsWith(conflictRoot) || file.path.endsWith(".wiki-fs-state.json")) {
       continue;
     }
-    const metadata = await readMirrorFrontmatterFromFile(app, file);
+    const metadata = parseMirrorFrontmatter(await app.vault.cachedRead(file));
     if (metadata !== null) {
-      results.push(metadata);
+      results.push({ file, metadata });
     }
   }
   return results;
 }
 
-export async function writeSnapshotMirror(
-  app: App,
-  mirrorRoot: string,
-  pages: WikiPageSnapshot[],
-  systemPages: SystemPageSnapshot[]
-): Promise<void> {
-  const knownSlugs = new Set(
-    pages.length > 0 ? pages.map((page) => page.slug) : (await collectKnownPages(app, mirrorRoot)).map((page) => page.slug)
-  );
-  await ensureFolder(app, mirrorRoot);
-  await ensureFolder(app, `${mirrorRoot}/pages`);
-  for (const systemPage of systemPages) {
-    const markdown = normalizeSystemMarkdown(systemPage.markdown, knownSlugs);
-    await upsertTextFile(app, `${mirrorRoot}/${systemPage.slug}`, markdown);
-  }
-  for (const page of pages) {
-    await writePageMirror(app, mirrorRoot, page, knownSlugs);
+export async function writeSnapshotMirror(app: App, mirrorRoot: string, nodes: NodeSnapshot[]): Promise<void> {
+  for (const node of nodes) {
+    await writeNodeMirror(app, mirrorRoot, node);
   }
 }
 
-export async function writePageMirror(
-  app: App,
-  mirrorRoot: string,
-  page: WikiPageSnapshot,
-  knownSlugs: Set<string>
-): Promise<void> {
+export async function writeNodeMirror(app: App, mirrorRoot: string, node: NodeSnapshot): Promise<void> {
+  const path = remoteToLocalPath(mirrorRoot, node.path);
   const frontmatter: MirrorFrontmatter = {
-    page_id: page.page_id,
-    slug: page.slug,
-    page_type: page.page_type,
-    revision_id: page.revision_id,
-    updated_at: page.updated_at,
+    path: node.path,
+    kind: node.kind,
+    etag: node.etag,
+    updated_at: node.updated_at,
     mirror: true
   };
-  const body = normalizePageMarkdown(page.markdown, knownSlugs);
-  await upsertTextFile(app, pagePath(mirrorRoot, page.slug), serializeMirrorFile(frontmatter, body));
+  await upsertTextFile(app, path, serializeMirrorFile(frontmatter, node.content));
 }
 
-export async function updateLocalRevisionMetadata(
-  app: App,
-  mirrorRoot: string,
-  pageId: string,
-  revisionId: string,
-  updatedAt: number
-): Promise<void> {
-  const file = await findManagedPageFileById(app, mirrorRoot, pageId);
-  if (file === null) {
-    return;
-  }
-  const metadata = await readMirrorFrontmatterFromFile(app, file);
-  if (metadata === null) {
-    return;
-  }
-  const body = stripManagedFrontmatter(await app.vault.read(file));
-  await upsertTextFile(
-    app,
-    file.path,
-    serializeMirrorFile({ ...metadata, revision_id: revisionId, updated_at: updatedAt }, body)
-  );
+export async function updateLocalNodeMetadata(app: App, mirrorRoot: string, node: NodeSnapshot): Promise<void> {
+  await writeNodeMirror(app, mirrorRoot, node);
 }
 
-export async function removeManagedPagesByIds(
-  app: App,
-  mirrorRoot: string,
-  removedPageIds: string[]
-): Promise<void> {
-  const removed = new Set(removedPageIds);
-  for (const file of app.vault.getMarkdownFiles()) {
-    if (!isManagedPageFile(file.path, mirrorRoot)) {
+export async function removeMirrorPaths(app: App, mirrorRoot: string, removedPaths: string[]): Promise<void> {
+  for (const remotePath of removedPaths) {
+    const existing = app.vault.getAbstractFileByPath(remoteToLocalPath(mirrorRoot, remotePath));
+    if (existing instanceof TFile) {
+      await app.vault.delete(existing, true);
+    }
+  }
+}
+
+export async function removeStaleManagedFiles(app: App, mirrorRoot: string, activePaths: Set<string>): Promise<void> {
+  for (const node of await collectManagedNodes(app, mirrorRoot)) {
+    if (!activePaths.has(node.metadata.path)) {
+      await app.vault.delete(node.file, true);
+    }
+  }
+}
+
+export async function collectChangedManagedNodeFiles(app: App, mirrorRoot: string, lastSyncedAt: number): Promise<TFile[]> {
+  const results: TFile[] = [];
+  for (const node of await collectManagedNodes(app, mirrorRoot)) {
+    if (node.file.stat.mtime > lastSyncedAt) {
+      results.push(node.file);
+    }
+  }
+  return results;
+}
+
+export async function managedNodePayload(app: App, file: TFile): Promise<{ metadata: MirrorFrontmatter; content: string } | null> {
+  const content = await app.vault.read(file);
+  const metadata = parseMirrorFrontmatter(content);
+  return metadata === null ? null : { metadata, content: stripManagedFrontmatter(content).trimStart() };
+}
+
+export function trackedNodesFromSnapshot(nodes: NodeSnapshot[]): TrackedNodeState[] {
+  return nodes.map((node) => ({
+    path: node.path,
+    kind: node.kind,
+    etag: node.etag
+  }));
+}
+
+export function mergeTrackedNodes(
+  trackedNodes: TrackedNodeState[],
+  changedNodes: NodeSnapshot[],
+  removedPaths: string[]
+): TrackedNodeState[] {
+  const removed = new Set(removedPaths);
+  const merged = trackedNodes
+    .filter((tracked) => !removed.has(tracked.path))
+    .map((tracked) => ({ ...tracked }));
+  for (const node of changedNodes) {
+    const existing = merged.find((tracked) => tracked.path === node.path);
+    if (existing !== undefined) {
+      existing.kind = node.kind;
+      existing.etag = node.etag;
       continue;
     }
-    const metadata = await readMirrorFrontmatterFromFile(app, file);
-    if (metadata !== null && removed.has(metadata.page_id)) {
-      await app.vault.delete(file, true);
-    }
+    merged.push({
+      path: node.path,
+      kind: node.kind,
+      etag: node.etag
+    });
   }
+  return merged.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export async function removeStaleManagedPages(
+export async function deletedTrackedNodes(
   app: App,
   mirrorRoot: string,
-  activePageIds: Set<string>
-): Promise<void> {
-  for (const file of app.vault.getMarkdownFiles()) {
-    if (!isManagedPageFile(file.path, mirrorRoot)) {
-      continue;
-    }
-    const metadata = await readMirrorFrontmatterFromFile(app, file);
-    if (metadata !== null && !activePageIds.has(metadata.page_id)) {
-      await app.vault.delete(file, true);
-    }
+  trackedNodes: TrackedNodeState[]
+): Promise<TrackedNodeState[]> {
+  const currentPaths = new Set((await collectManagedNodes(app, mirrorRoot)).map((node) => node.metadata.path));
+  return trackedNodes.filter((tracked) => !currentPaths.has(tracked.path));
+}
+
+export function currentManagedNodeFile(app: App, mirrorRoot: string): TFile | null {
+  const activeFile = app.workspace.getActiveFile();
+  if (activeFile === null) {
+    return null;
   }
+  return activeFile.path.startsWith(`${normalizePath(mirrorRoot)}/`) ? activeFile : null;
 }
 
 export async function openMirrorFile(app: App, path: string): Promise<void> {
@@ -124,49 +140,18 @@ export async function openMirrorFile(app: App, path: string): Promise<void> {
   }
 }
 
-export async function writeConflictFile(
-  app: App,
-  mirrorRoot: string,
-  slug: string,
-  conflictMarkdown: string
-): Promise<void> {
+export async function writeConflictFile(app: App, mirrorRoot: string, remotePath: string, conflictMarkdown: string): Promise<void> {
   await ensureFolder(app, `${mirrorRoot}/conflicts`);
-  await upsertTextFile(app, `${mirrorRoot}/conflicts/${slug}.conflict.md`, conflictMarkdown);
+  const basename = remotePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "conflict";
+  await upsertTextFile(app, `${mirrorRoot}/conflicts/${basename}.conflict.md`, conflictMarkdown);
 }
 
-export async function collectChangedManagedPageFiles(
-  app: App,
-  mirrorRoot: string,
-  lastSyncedAt: number
-): Promise<TFile[]> {
-  const files: TFile[] = [];
-  for (const file of app.vault.getMarkdownFiles()) {
-    if (!isManagedPageFile(file.path, mirrorRoot) || file.stat.mtime <= lastSyncedAt) {
-      continue;
-    }
-    if ((await readMirrorFrontmatterFromFile(app, file)) !== null) {
-      files.push(file);
-    }
+function remoteToLocalPath(mirrorRoot: string, remotePath: string): string {
+  const normalized = normalizePath(remotePath);
+  if (!normalized.startsWith("/Wiki")) {
+    throw new Error(`unsupported remote path outside /Wiki: ${remotePath}`);
   }
-  return files;
-}
-
-export function currentManagedPageFile(app: App, mirrorRoot: string): TFile | null {
-  const activeFile = app.workspace.getActiveFile();
-  return activeFile !== null && isManagedPageFile(activeFile.path, mirrorRoot) ? activeFile : null;
-}
-
-export async function managedPagePayload(app: App, file: TFile): Promise<{
-  metadata: MirrorFrontmatter;
-  markdown: string;
-} | null> {
-  const content = await app.vault.read(file);
-  const metadata = parseMirrorFrontmatter(content);
-  return metadata === null ? null : { metadata, markdown: stripManagedFrontmatter(content).trimStart() };
-}
-
-async function readMirrorFrontmatterFromFile(app: App, file: TFile): Promise<MirrorFrontmatter | null> {
-  return parseMirrorFrontmatter(await app.vault.cachedRead(file));
+  return normalizePath(`${mirrorRoot}/${normalized.replace(/^\/Wiki\/?/, "")}`);
 }
 
 async function ensureFolder(app: App, folderPath: string): Promise<void> {
@@ -193,23 +178,10 @@ async function upsertTextFile(app: App, path: string, content: string): Promise<
   await app.vault.create(normalized, content);
 }
 
-function isManagedPageFile(path: string, mirrorRoot: string): boolean {
-  return normalizePath(path).startsWith(`${normalizePath(mirrorRoot)}/pages/`);
+function managedRoot(mirrorRoot: string): string {
+  return `${normalizePath(mirrorRoot)}/`;
 }
 
-function pagePath(mirrorRoot: string, slug: string): string {
-  return `${normalizePath(mirrorRoot)}/pages/${slug}.md`;
-}
-
-async function findManagedPageFileById(app: App, mirrorRoot: string, pageId: string): Promise<TFile | null> {
-  for (const file of app.vault.getMarkdownFiles()) {
-    if (!isManagedPageFile(file.path, mirrorRoot)) {
-      continue;
-    }
-    const metadata = await readMirrorFrontmatterFromFile(app, file);
-    if (metadata?.page_id === pageId) {
-      return file;
-    }
-  }
-  return null;
+function conflictRootPath(mirrorRoot: string): string {
+  return `${normalizePath(mirrorRoot)}/conflicts/`;
 }

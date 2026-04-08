@@ -1,33 +1,22 @@
 // Where: crates/wiki_store/src/schema.rs
-// What: Versioned SQL-file migrations for the wiki source-of-truth schema.
-// Why: The app schema should evolve through explicit one-time migrations, not IF NOT EXISTS DDL.
+// What: Versioned SQL-file migrations for the FS-first SQLite schema.
+// Why: The repo now has one node-based schema, so migration history only tracks FS tables.
 use rusqlite::{Connection, OptionalExtension, params};
 
 const MIGRATIONS: &[(&str, &str)] = &[
     (
-        "wiki_store:000_initial",
-        include_str!("../migrations/000_initial.sql"),
+        "wiki_store:000_fs_nodes",
+        include_str!("../migrations/005_fs_nodes.sql"),
     ),
     (
-        "wiki_store:001_sources",
-        include_str!("../migrations/001_sources.sql"),
-    ),
-    (
-        "wiki_store:002_plan_alignment",
-        include_str!("../migrations/002_plan_alignment.sql"),
-    ),
-    (
-        "wiki_store:003_section_search",
-        include_str!("../migrations/003_section_search.sql"),
-    ),
-    (
-        "wiki_store:004_source_uploads",
-        include_str!("../migrations/004_source_uploads.sql"),
+        "wiki_store:001_fs_snapshot_nodes",
+        include_str!("../migrations/006_fs_snapshot_nodes.sql"),
     ),
 ];
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
     include_str!("../migrations/000_schema_migrations.sql");
-pub fn run_migrations(conn: &mut Connection) -> Result<(), String> {
+
+pub fn run_fs_migrations(conn: &mut Connection) -> Result<(), String> {
     ensure_schema_migrations_table(conn)?;
 
     let tx = conn.transaction().map_err(|error| error.to_string())?;

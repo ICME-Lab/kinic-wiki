@@ -1,21 +1,10 @@
 // Where: crates/wiki_store/src/hashing.rs
-// What: Stable hashing and normalization helpers for sections and rendered pages.
-// Why: Revision diffs and system page etags depend on deterministic text normalization.
+// What: Minimal hashing helpers shared by the FS-first store.
+// Why: Node etags and snapshot revisions need one deterministic SHA-256 encoder.
 use sha2::{Digest, Sha256};
 
-pub fn normalize_text(text: &str) -> String {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-pub fn sha256_hex(text: &str) -> String {
+pub fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    hex::encode(hasher.finalize())
+    hasher.update(input.as_bytes());
+    format!("{:x}", hasher.finalize())
 }

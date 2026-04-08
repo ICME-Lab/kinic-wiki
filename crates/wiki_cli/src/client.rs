@@ -1,34 +1,29 @@
 // Where: crates/wiki_cli/src/client.rs
-// What: Rust canister client for the wiki CLI.
-// Why: The CLI needs direct query/update access without routing through the Obsidian plugin.
+// What: Rust canister client for the FS-first CLI.
+// Why: The CLI needs direct access to node-based query and update methods.
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use candid::{Decode, Encode};
 use ic_agent::{Agent, export::Principal};
 use wiki_types::{
-    CommitWikiChangesRequest, CommitWikiChangesResponse, ExportWikiSnapshotRequest,
-    ExportWikiSnapshotResponse, FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, PageBundle,
-    SearchHit, SearchRequest, Status, SystemPage,
+    DeleteNodeRequest, DeleteNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
+    FetchUpdatesRequest, FetchUpdatesResponse, ListNodesRequest, Node, NodeEntry,
+    SearchNodeHit, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 #[async_trait]
 pub trait WikiApi {
     async fn status(&self) -> Result<Status>;
-    async fn search(&self, request: SearchRequest) -> Result<Vec<SearchHit>>;
-    async fn get_page(&self, slug: &str) -> Result<Option<PageBundle>>;
-    async fn get_system_page(&self, slug: &str) -> Result<Option<SystemPage>>;
-    async fn export_wiki_snapshot(
+    async fn read_node(&self, path: &str) -> Result<Option<Node>>;
+    async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>>;
+    async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult>;
+    async fn delete_node(&self, request: DeleteNodeRequest) -> Result<DeleteNodeResult>;
+    async fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>>;
+    async fn export_snapshot(
         &self,
-        request: ExportWikiSnapshotRequest,
-    ) -> Result<ExportWikiSnapshotResponse>;
-    async fn fetch_wiki_updates(
-        &self,
-        request: FetchWikiUpdatesRequest,
-    ) -> Result<FetchWikiUpdatesResponse>;
-    async fn commit_wiki_changes(
-        &self,
-        request: CommitWikiChangesRequest,
-    ) -> Result<CommitWikiChangesResponse>;
+        request: ExportSnapshotRequest,
+    ) -> Result<ExportSnapshotResponse>;
+    async fn fetch_updates(&self, request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse>;
 }
 
 pub struct CanisterWikiClient {
@@ -94,47 +89,43 @@ impl WikiApi for CanisterWikiClient {
         self.query("status", &()).await
     }
 
-    async fn search(&self, request: SearchRequest) -> Result<Vec<SearchHit>> {
-        let result: Result<Vec<SearchHit>, String> = self.query("search", &request).await?;
+    async fn read_node(&self, path: &str) -> Result<Option<Node>> {
+        let result: Result<Option<Node>, String> = self.query("read_node", &path.to_string()).await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn get_page(&self, slug: &str) -> Result<Option<PageBundle>> {
-        let result: Result<Option<PageBundle>, String> =
-            self.query("get_page", &slug.to_string()).await?;
+    async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+        let result: Result<Vec<NodeEntry>, String> = self.query("list_nodes", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn get_system_page(&self, slug: &str) -> Result<Option<SystemPage>> {
-        let result: Result<Option<SystemPage>, String> =
-            self.query("get_system_page", &slug.to_string()).await?;
+    async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
+        let result: Result<WriteNodeResult, String> = self.update("write_node", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn export_wiki_snapshot(
+    async fn delete_node(&self, request: DeleteNodeRequest) -> Result<DeleteNodeResult> {
+        let result: Result<DeleteNodeResult, String> = self.update("delete_node", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
+        let result: Result<Vec<SearchNodeHit>, String> = self.query("search_nodes", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn export_snapshot(
         &self,
-        request: ExportWikiSnapshotRequest,
-    ) -> Result<ExportWikiSnapshotResponse> {
-        let result: Result<ExportWikiSnapshotResponse, String> =
-            self.query("export_wiki_snapshot", &request).await?;
+        request: ExportSnapshotRequest,
+    ) -> Result<ExportSnapshotResponse> {
+        let result: Result<ExportSnapshotResponse, String> =
+            self.query("export_snapshot", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn fetch_wiki_updates(
-        &self,
-        request: FetchWikiUpdatesRequest,
-    ) -> Result<FetchWikiUpdatesResponse> {
-        let result: Result<FetchWikiUpdatesResponse, String> =
-            self.query("fetch_wiki_updates", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn commit_wiki_changes(
-        &self,
-        request: CommitWikiChangesRequest,
-    ) -> Result<CommitWikiChangesResponse> {
-        let result: Result<CommitWikiChangesResponse, String> =
-            self.update("commit_wiki_changes", &request).await?;
+    async fn fetch_updates(&self, request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse> {
+        let result: Result<FetchUpdatesResponse, String> =
+            self.query("fetch_updates", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 }

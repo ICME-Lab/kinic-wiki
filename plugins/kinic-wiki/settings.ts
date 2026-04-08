@@ -65,14 +65,5 @@ export class KinicWikiSettingTab extends PluginSettingTab {
         })
       );
 
-    new Setting(containerEl)
-      .setName("Open index after initial sync")
-      .setDesc("Open Wiki/index.md after the first successful sync.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.owner.settings.openIndexAfterInitialSync).onChange(async (value) => {
-          this.owner.settings.openIndexAfterInitialSync = value;
-          await this.owner.saveSettings();
-        })
-      );
   }
 }

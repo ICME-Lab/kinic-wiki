@@ -1,7 +1,7 @@
 // Where: plugins/kinic-wiki/frontmatter.ts
-// What: Minimal frontmatter parsing and serialization for mirror-managed notes.
-// Why: The plugin needs stable metadata without adding a markdown parsing dependency.
-import { MirrorFrontmatter, PluginPageType } from "./types";
+// What: Minimal frontmatter parsing and serialization for tracked mirror notes.
+// Why: The plugin stores remote path and etag in note metadata without extra dependencies.
+import { MirrorFrontmatter, NodeKind } from "./types";
 
 export function parseMirrorFrontmatter(content: string): MirrorFrontmatter | null {
   if (!content.startsWith("---\n")) {
@@ -18,30 +18,23 @@ export function parseMirrorFrontmatter(content: string): MirrorFrontmatter | nul
     if (separator <= 0) {
       continue;
     }
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    values.set(key, stripQuotes(value));
+    values.set(line.slice(0, separator).trim(), stripQuotes(line.slice(separator + 1).trim()));
   }
-  const pageType = values.get("page_type");
+  const kind = parseNodeKind(values.get("kind"));
+  const updatedAt = Number(values.get("updated_at"));
   if (
-    !isPageType(pageType)
+    kind === null
     || values.get("mirror") !== "true"
-    || !values.has("page_id")
-    || !values.has("slug")
-    || !values.has("revision_id")
-    || !values.has("updated_at")
+    || !values.has("path")
+    || !values.has("etag")
+    || !Number.isFinite(updatedAt)
   ) {
     return null;
   }
-  const updatedAt = Number(values.get("updated_at"));
-  if (!Number.isFinite(updatedAt)) {
-    return null;
-  }
   return {
-    page_id: values.get("page_id") ?? "",
-    slug: values.get("slug") ?? "",
-    page_type: pageType,
-    revision_id: values.get("revision_id") ?? "",
+    path: values.get("path") ?? "",
+    kind,
+    etag: values.get("etag") ?? "",
     updated_at: updatedAt,
     mirror: true
   };
@@ -56,18 +49,16 @@ export function stripManagedFrontmatter(content: string): string {
 }
 
 export function serializeMirrorFile(frontmatter: MirrorFrontmatter, body: string): string {
-  const cleanBody = body.replace(/^\s+/, "");
   return [
     "---",
-    `page_id: ${frontmatter.page_id}`,
-    `slug: ${frontmatter.slug}`,
-    `page_type: ${frontmatter.page_type}`,
-    `revision_id: ${frontmatter.revision_id}`,
+    `path: ${frontmatter.path}`,
+    `kind: ${frontmatter.kind}`,
+    `etag: ${frontmatter.etag}`,
     `updated_at: ${frontmatter.updated_at}`,
     "mirror: true",
     "---",
     "",
-    cleanBody
+    body.replace(/^\s+/, "")
   ].join("\n");
 }
 
@@ -75,7 +66,9 @@ function stripQuotes(value: string): string {
   return value.replace(/^"(.*)"$/, "$1");
 }
 
-function isPageType(value: string | undefined): value is PluginPageType {
-  return value !== undefined
-    && ["entity", "concept", "overview", "comparison", "query_note", "source_summary"].includes(value);
+function parseNodeKind(value: string | undefined): NodeKind | null {
+  if (value === "file" || value === "source") {
+    return value;
+  }
+  return null;
 }

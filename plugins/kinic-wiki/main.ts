@@ -35,16 +35,6 @@ export default class KinicWikiPlugin extends Plugin {
       callback: () => void this.run("Pull updates failed", async (service) => service.pullUpdates())
     });
     this.addCommand({
-      id: "wiki-open-index",
-      name: "Wiki: Open Index",
-      callback: () => void this.run("Open index failed", async (service) => service.openIndex())
-    });
-    this.addCommand({
-      id: "wiki-open-log",
-      name: "Wiki: Open Log",
-      callback: () => void this.run("Open log failed", async (service) => service.openLog())
-    });
-    this.addCommand({
       id: "wiki-show-status",
       name: "Wiki: Show Wiki Status",
       callback: () => void this.run("Status request failed", async (service) => service.showStatus())

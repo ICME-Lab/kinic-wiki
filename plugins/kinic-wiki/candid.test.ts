@@ -3,59 +3,49 @@ import assert from "node:assert/strict";
 
 import {
   localReplicaHost,
-  normalizeCommitResponse,
-  normalizePageType,
-  normalizeStatus
+  normalizeNodeKind,
+  normalizeStatus,
+  normalizeWriteNodeResult
 } from "./candid";
 
-test("normalizePageType maps candid variants to plugin strings", () => {
-  assert.equal(normalizePageType({ Entity: null }), "entity");
-  assert.equal(normalizePageType({ QueryNote: null }), "query_note");
+test("normalizeNodeKind maps candid variants to plugin strings", () => {
+  assert.equal(normalizeNodeKind({ File: null }), "file");
+  assert.equal(normalizeNodeKind({ Source: null }), "source");
 });
 
 test("normalizeStatus converts bigint counts to numbers", () => {
   const status = normalizeStatus({
-    page_count: 1n,
+    file_count: 1n,
     source_count: 0n,
-    system_page_count: 2n
+    deleted_count: 2n
   });
   assert.deepEqual(status, {
-    page_count: 1,
+    file_count: 1,
     source_count: 0,
-    system_page_count: 2
+    deleted_count: 2
   });
 });
 
-test("normalizeCommitResponse converts opt text and bigint manifest values", () => {
-  const response = normalizeCommitResponse({
+test("normalizeWriteNodeResult converts node timestamps and opt values", () => {
+  const result = normalizeWriteNodeResult({
     Ok: {
-      committed_pages: [],
-      rejected_pages: [{
-        page_id: "page_1",
-        reason: "conflict",
-        conflicting_section_paths: ["root"],
-        local_changed_section_paths: ["root"],
-        remote_changed_section_paths: ["root"],
-        conflict_markdown: ["<<<<<<< LOCAL"]
-      }],
-      snapshot_revision: "snapshot_2",
-      snapshot_was_stale: true,
-      system_pages: [],
-      manifest_delta: {
-        upserted_pages: [{
-          page_id: "page_1",
-          slug: "alpha",
-          revision_id: "rev_2",
-          updated_at: 42n
-        }],
-        removed_page_ids: []
+      created: false,
+      node: {
+        path: "/Wiki/foo.md",
+        kind: { File: null },
+        content: "# Foo",
+        created_at: 1n,
+        updated_at: 2n,
+        etag: "etag-1",
+        deleted_at: [],
+        metadata_json: "{}"
       }
     }
   });
 
-  assert.equal(response.rejected_pages[0].conflict_markdown, "<<<<<<< LOCAL");
-  assert.equal(response.manifest_delta.upserted_pages[0].updated_at, 42);
-  assert.equal(response.snapshot_was_stale, true);
+  assert.equal(result.node.kind, "file");
+  assert.equal(result.node.updated_at, 2);
+  assert.equal(result.node.deleted_at, null);
 });
 
 test("localReplicaHost detects localhost style hosts", () => {

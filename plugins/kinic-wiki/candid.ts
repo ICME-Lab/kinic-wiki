@@ -1,297 +1,267 @@
 // Where: plugins/kinic-wiki/candid.ts
-// What: Candid IDL and raw-to-plugin normalization for direct canister calls.
-// Why: The plugin should absorb bigint and variant details in one place instead of leaking Candid wire shapes into sync logic.
+// What: Candid IDL and raw-to-plugin normalization for FS-first canister calls.
+// Why: The plugin should normalize bigint and variant details once at the wire boundary.
 import { Actor } from "@dfinity/agent";
 
 import {
-  CommitPageChange,
-  CommitWikiChangesResponse,
-  ExportWikiSnapshotResponse,
-  FetchWikiUpdatesResponse,
-  PluginPageType,
+  DeleteNodeResult,
+  ExportSnapshotResponse,
+  FetchUpdatesResponse,
+  NodeEntry,
+  NodeEntryKind,
+  NodeKind,
+  NodeSnapshot,
+  SearchNodeHit,
   StatusResponse,
-  isCommitWikiChangesResponse,
+  WriteNodeResult,
+  isDeleteNodeResult,
   isExportSnapshotResponse,
-  isFetchWikiUpdatesResponse,
-  isStatusResponse
+  isFetchUpdatesResponse,
+  isNodeEntry,
+  isNodeSnapshot,
+  isSearchNodeHit,
+  isStatusResponse,
+  isWriteNodeResult
 } from "./types";
 
-type RawWikiPageType =
-  | { Entity: null }
-  | { Concept: null }
-  | { Overview: null }
-  | { Comparison: null }
-  | { QueryNote: null }
-  | { SourceSummary: null };
-
 type RawResult<T> = { Ok: T } | { Err: string };
-
-type RawSectionHashEntry = { section_path: string; content_hash: string };
-type RawManifestEntry = {
-  page_id: string;
-  slug: string;
-  revision_id: string;
+type RawNodeKind = { File: null } | { Source: null };
+type RawNodeEntryKind = { Directory: null } | RawNodeKind;
+type RawNode = {
+  path: string;
+  kind: RawNodeKind;
+  content: string;
+  created_at: bigint;
   updated_at: bigint;
+  etag: string;
+  deleted_at: [] | [bigint];
+  metadata_json: string;
 };
-type RawSystemPage = { slug: string; markdown: string; updated_at: bigint; etag: string };
-type RawPageSnapshot = {
-  page_id: string;
-  slug: string;
-  title: string;
-  page_type: RawWikiPageType;
-  revision_id: string;
+type RawNodeEntry = {
+  path: string;
+  kind: RawNodeEntryKind;
   updated_at: bigint;
-  markdown: string;
-  section_hashes: RawSectionHashEntry[];
+  etag: string;
+  deleted_at: [] | [bigint];
+  has_children: boolean;
 };
-type RawExportResponse = {
-  snapshot_revision: string;
-  pages: RawPageSnapshot[];
-  system_pages: RawSystemPage[];
-  manifest: unknown;
+type RawSearchNodeHit = {
+  path: string;
+  kind: RawNodeKind;
+  snippet: string;
+  score: number;
+  match_reasons: string[];
 };
-type RawFetchResponse = {
-  snapshot_revision: string;
-  changed_pages: RawPageSnapshot[];
-  removed_page_ids: string[];
-  system_pages: RawSystemPage[];
-  manifest_delta: {
-    upserted_pages: RawManifestEntry[];
-    removed_page_ids: string[];
-  };
-};
-type RawCommitResponse = {
-  committed_pages: Array<{
-    page_id: string;
-    revision_id: string;
-    section_hashes: RawSectionHashEntry[];
-  }>;
-  rejected_pages: Array<{
-    page_id: string;
-    reason: string;
-    conflicting_section_paths: string[];
-    local_changed_section_paths: string[];
-    remote_changed_section_paths: string[];
-    conflict_markdown: [] | [string];
-  }>;
-  snapshot_revision: string;
-  snapshot_was_stale: boolean;
-  system_pages: RawSystemPage[];
-  manifest_delta: {
-    upserted_pages: RawManifestEntry[];
-    removed_page_ids: string[];
-  };
-};
-type RawStatus = { page_count: bigint; source_count: bigint; system_page_count: bigint };
+type RawStatus = { file_count: bigint; source_count: bigint; deleted_count: bigint };
 
 export interface KinicCanisterApi {
   status: () => Promise<RawStatus>;
-  export_wiki_snapshot: (request: {
-    include_system_pages: boolean;
-    page_slugs: [] | [string[]];
-  }) => Promise<RawResult<RawExportResponse>>;
-  fetch_wiki_updates: (request: {
+  read_node: (path: string) => Promise<RawResult<[] | [RawNode]>>;
+  list_nodes: (request: {
+    prefix: string;
+    recursive: boolean;
+    include_deleted: boolean;
+  }) => Promise<RawResult<RawNodeEntry[]>>;
+  write_node: (request: {
+    path: string;
+    kind: RawNodeKind;
+    content: string;
+    metadata_json: string;
+    expected_etag: [] | [string];
+  }) => Promise<RawResult<{ node: RawNode; created: boolean }>>;
+  delete_node: (request: {
+    path: string;
+    expected_etag: [] | [string];
+  }) => Promise<RawResult<{ path: string; etag: string; deleted_at: bigint }>>;
+  search_nodes: (request: {
+    query_text: string;
+    prefix: [] | [string];
+    top_k: number;
+  }) => Promise<RawResult<RawSearchNodeHit[]>>;
+  export_snapshot: (request: {
+    prefix: [] | [string];
+    include_deleted: boolean;
+  }) => Promise<RawResult<{ snapshot_revision: string; nodes: RawNode[] }>>;
+  fetch_updates: (request: {
     known_snapshot_revision: string;
-    known_page_revisions: Array<{ page_id: string; revision_id: string }>;
-    include_system_pages: boolean;
-  }) => Promise<RawResult<RawFetchResponse>>;
-  commit_wiki_changes: (request: {
-    base_snapshot_revision: string;
-    page_changes: Array<{
-      change_type: { Update: null } | { Delete: null };
-      page_id: string;
-      base_revision_id: string;
-      new_markdown: [] | [string];
-    }>;
-  }) => Promise<RawResult<RawCommitResponse>>;
+    prefix: [] | [string];
+    include_deleted: boolean;
+  }) => Promise<RawResult<{ snapshot_revision: string; changed_nodes: RawNode[]; removed_paths: string[] }>>;
 }
 
 type ActorFactory = Parameters<typeof Actor.createActor<KinicCanisterApi>>[0];
 
 export const idlFactory: ActorFactory = ({ IDL: candid }) => {
-  const WikiPageType = candid.Variant({
-    Entity: candid.Null,
-    Concept: candid.Null,
-    Overview: candid.Null,
-    Comparison: candid.Null,
-    QueryNote: candid.Null,
-    SourceSummary: candid.Null
+  const NodeKind = candid.Variant({ File: candid.Null, Source: candid.Null });
+  const NodeEntryKind = candid.Variant({
+    Directory: candid.Null,
+    File: candid.Null,
+    Source: candid.Null
   });
-  const SectionHashEntry = candid.Record({
-    section_path: candid.Text,
-    content_hash: candid.Text
-  });
-  const WikiPageSnapshot = candid.Record({
-    page_id: candid.Text,
-    slug: candid.Text,
-    title: candid.Text,
-    page_type: WikiPageType,
-    revision_id: candid.Text,
+  const Node = candid.Record({
+    path: candid.Text,
+    kind: NodeKind,
+    content: candid.Text,
+    created_at: candid.Int64,
     updated_at: candid.Int64,
-    markdown: candid.Text,
-    section_hashes: candid.Vec(SectionHashEntry)
+    etag: candid.Text,
+    deleted_at: candid.Opt(candid.Int64),
+    metadata_json: candid.Text
   });
-  const SystemPageSnapshot = candid.Record({
-    slug: candid.Text,
-    markdown: candid.Text,
+  const NodeEntry = candid.Record({
+    path: candid.Text,
+    kind: NodeEntryKind,
     updated_at: candid.Int64,
-    etag: candid.Text
+    etag: candid.Text,
+    deleted_at: candid.Opt(candid.Int64),
+    has_children: candid.Bool
   });
-  const WikiSyncManifestEntry = candid.Record({
-    page_id: candid.Text,
-    slug: candid.Text,
-    revision_id: candid.Text,
-    updated_at: candid.Int64
-  });
-  const WikiSyncManifestDelta = candid.Record({
-    upserted_pages: candid.Vec(WikiSyncManifestEntry),
-    removed_page_ids: candid.Vec(candid.Text)
-  });
-  const ExportRequest = candid.Record({
-    include_system_pages: candid.Bool,
-    page_slugs: candid.Opt(candid.Vec(candid.Text))
-  });
-  const ExportResponse = candid.Record({
-    snapshot_revision: candid.Text,
-    pages: candid.Vec(WikiPageSnapshot),
-    system_pages: candid.Vec(SystemPageSnapshot),
-    manifest: candid.Record({
-      snapshot_revision: candid.Text,
-      pages: candid.Vec(WikiSyncManifestEntry)
-    })
-  });
-  const FetchRequest = candid.Record({
-    known_snapshot_revision: candid.Text,
-    known_page_revisions: candid.Vec(
-      candid.Record({ page_id: candid.Text, revision_id: candid.Text })
-    ),
-    include_system_pages: candid.Bool
-  });
-  const FetchResponse = candid.Record({
-    snapshot_revision: candid.Text,
-    changed_pages: candid.Vec(WikiPageSnapshot),
-    removed_page_ids: candid.Vec(candid.Text),
-    system_pages: candid.Vec(SystemPageSnapshot),
-    manifest_delta: WikiSyncManifestDelta
-  });
-  const CommitRequest = candid.Record({
-    base_snapshot_revision: candid.Text,
-    page_changes: candid.Vec(
-      candid.Record({
-        change_type: candid.Variant({ Update: candid.Null, Delete: candid.Null }),
-        page_id: candid.Text,
-        base_revision_id: candid.Text,
-        new_markdown: candid.Opt(candid.Text)
-      })
-    )
-  });
-  const CommitResponse = candid.Record({
-    committed_pages: candid.Vec(
-      candid.Record({
-        page_id: candid.Text,
-        revision_id: candid.Text,
-        section_hashes: candid.Vec(SectionHashEntry)
-      })
-    ),
-    rejected_pages: candid.Vec(
-      candid.Record({
-        page_id: candid.Text,
-        reason: candid.Text,
-        conflicting_section_paths: candid.Vec(candid.Text),
-        local_changed_section_paths: candid.Vec(candid.Text),
-        remote_changed_section_paths: candid.Vec(candid.Text),
-        conflict_markdown: candid.Opt(candid.Text)
-      })
-    ),
-    snapshot_revision: candid.Text,
-    snapshot_was_stale: candid.Bool,
-    system_pages: candid.Vec(SystemPageSnapshot),
-    manifest_delta: WikiSyncManifestDelta
+  const SearchNodeHit = candid.Record({
+    path: candid.Text,
+    kind: NodeKind,
+    snippet: candid.Text,
+    score: candid.Float32,
+    match_reasons: candid.Vec(candid.Text)
   });
   return candid.Service({
     status: candid.Func([], [candid.Record({
-      page_count: candid.Nat64,
+      file_count: candid.Nat64,
       source_count: candid.Nat64,
-      system_page_count: candid.Nat64
+      deleted_count: candid.Nat64
     })], ["query"]),
-    export_wiki_snapshot: candid.Func([ExportRequest], [candid.Variant({ Ok: ExportResponse, Err: candid.Text })], ["query"]),
-    fetch_wiki_updates: candid.Func([FetchRequest], [candid.Variant({ Ok: FetchResponse, Err: candid.Text })], ["query"]),
-    commit_wiki_changes: candid.Func([CommitRequest], [candid.Variant({ Ok: CommitResponse, Err: candid.Text })], [])
+    read_node: candid.Func([candid.Text], [candid.Variant({ Ok: candid.Opt(Node), Err: candid.Text })], ["query"]),
+    list_nodes: candid.Func([candid.Record({
+      prefix: candid.Text,
+      recursive: candid.Bool,
+      include_deleted: candid.Bool
+    })], [candid.Variant({ Ok: candid.Vec(NodeEntry), Err: candid.Text })], ["query"]),
+    write_node: candid.Func([candid.Record({
+      path: candid.Text,
+      kind: NodeKind,
+      content: candid.Text,
+      metadata_json: candid.Text,
+      expected_etag: candid.Opt(candid.Text)
+    })], [candid.Variant({ Ok: candid.Record({ node: Node, created: candid.Bool }), Err: candid.Text })], []),
+    delete_node: candid.Func([candid.Record({
+      path: candid.Text,
+      expected_etag: candid.Opt(candid.Text)
+    })], [candid.Variant({ Ok: candid.Record({ path: candid.Text, etag: candid.Text, deleted_at: candid.Int64 }), Err: candid.Text })], []),
+    search_nodes: candid.Func([candid.Record({
+      query_text: candid.Text,
+      prefix: candid.Opt(candid.Text),
+      top_k: candid.Nat32
+    })], [candid.Variant({ Ok: candid.Vec(SearchNodeHit), Err: candid.Text })], ["query"]),
+    export_snapshot: candid.Func([candid.Record({
+      prefix: candid.Opt(candid.Text),
+      include_deleted: candid.Bool
+    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, nodes: candid.Vec(Node) }), Err: candid.Text })], ["query"]),
+    fetch_updates: candid.Func([candid.Record({
+      known_snapshot_revision: candid.Text,
+      prefix: candid.Opt(candid.Text),
+      include_deleted: candid.Bool
+    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, changed_nodes: candid.Vec(Node), removed_paths: candid.Vec(candid.Text) }), Err: candid.Text })], ["query"])
   });
 };
 
 export function normalizeStatus(raw: RawStatus): StatusResponse {
   return validate("status", {
-    page_count: toNumber(raw.page_count),
+    file_count: toNumber(raw.file_count),
     source_count: toNumber(raw.source_count),
-    system_page_count: toNumber(raw.system_page_count)
+    deleted_count: toNumber(raw.deleted_count)
   }, isStatusResponse);
 }
 
-export function normalizeExportResponse(raw: RawResult<RawExportResponse>): ExportWikiSnapshotResponse {
+export function normalizeReadNode(raw: RawResult<[] | [RawNode]>): NodeSnapshot | null {
   const ok = unwrapResult(raw);
-  return validate("export_wiki_snapshot", {
+  return ok.length === 0 ? null : normalizeNode(ok[0]);
+}
+
+export function normalizeListNodes(raw: RawResult<RawNodeEntry[]>): NodeEntry[] {
+  return unwrapResult(raw).map(normalizeNodeEntry);
+}
+
+export function normalizeWriteNodeResult(raw: RawResult<{ node: RawNode; created: boolean }>): WriteNodeResult {
+  return validate("write_node", {
+    node: normalizeNode(unwrapResult(raw).node),
+    created: unwrapResult(raw).created
+  }, isWriteNodeResult);
+}
+
+export function normalizeDeleteNodeResult(raw: RawResult<{ path: string; etag: string; deleted_at: bigint }>): DeleteNodeResult {
+  const ok = unwrapResult(raw);
+  return validate("delete_node", {
+    path: ok.path,
+    etag: ok.etag,
+    deleted_at: toNumber(ok.deleted_at)
+  }, isDeleteNodeResult);
+}
+
+export function normalizeSearchNodeHits(raw: RawResult<RawSearchNodeHit[]>): SearchNodeHit[] {
+  return unwrapResult(raw).map((entry) =>
+    validate("search_nodes", {
+      path: entry.path,
+      kind: normalizeNodeKind(entry.kind),
+      snippet: entry.snippet,
+      score: entry.score,
+      match_reasons: entry.match_reasons
+    }, isSearchNodeHit)
+  );
+}
+
+export function normalizeExportResponse(raw: RawResult<{ snapshot_revision: string; nodes: RawNode[] }>): ExportSnapshotResponse {
+  const ok = unwrapResult(raw);
+  return validate("export_snapshot", {
     snapshot_revision: ok.snapshot_revision,
-    pages: ok.pages.map(normalizePageSnapshot),
-    system_pages: ok.system_pages.map(normalizeSystemPage)
+    nodes: ok.nodes.map(normalizeNode)
   }, isExportSnapshotResponse);
 }
 
-export function normalizeFetchResponse(raw: RawResult<RawFetchResponse>): FetchWikiUpdatesResponse {
+export function normalizeFetchResponse(raw: RawResult<{ snapshot_revision: string; changed_nodes: RawNode[]; removed_paths: string[] }>): FetchUpdatesResponse {
   const ok = unwrapResult(raw);
-  return validate("fetch_wiki_updates", {
+  return validate("fetch_updates", {
     snapshot_revision: ok.snapshot_revision,
-    changed_pages: ok.changed_pages.map(normalizePageSnapshot),
-    removed_page_ids: ok.removed_page_ids,
-    system_pages: ok.system_pages.map(normalizeSystemPage),
-    manifest_delta: {
-      upserted_pages: ok.manifest_delta.upserted_pages.map(normalizeManifestEntry),
-      removed_page_ids: ok.manifest_delta.removed_page_ids
-    }
-  }, isFetchWikiUpdatesResponse);
+    changed_nodes: ok.changed_nodes.map(normalizeNode),
+    removed_paths: ok.removed_paths
+  }, isFetchUpdatesResponse);
 }
 
-export function normalizeCommitResponse(raw: RawResult<RawCommitResponse>): CommitWikiChangesResponse {
-  const ok = unwrapResult(raw);
-  return validate("commit_wiki_changes", {
-    committed_pages: ok.committed_pages.map((entry) => ({
-      page_id: entry.page_id,
-      revision_id: entry.revision_id,
-      section_hashes: entry.section_hashes.map(normalizeSectionHashEntry)
-    })),
-    rejected_pages: ok.rejected_pages.map((entry) => ({
-      page_id: entry.page_id,
-      reason: entry.reason,
-      conflicting_section_paths: entry.conflicting_section_paths,
-      local_changed_section_paths: entry.local_changed_section_paths,
-      remote_changed_section_paths: entry.remote_changed_section_paths,
-      conflict_markdown: entry.conflict_markdown[0] ?? null
-    })),
-    snapshot_revision: ok.snapshot_revision,
-    snapshot_was_stale: ok.snapshot_was_stale,
-    system_pages: ok.system_pages.map(normalizeSystemPage),
-    manifest_delta: {
-      upserted_pages: ok.manifest_delta.upserted_pages.map(normalizeManifestEntry),
-      removed_page_ids: ok.manifest_delta.removed_page_ids
-    }
-  }, isCommitWikiChangesResponse);
-}
-
-export function toRawCommitChanges(baseSnapshotRevision: string, pageChanges: CommitPageChange[]) {
-  return {
-    base_snapshot_revision: baseSnapshotRevision,
-    page_changes: pageChanges.map((change) => ({
-      change_type: change.change_type === "Delete" ? { Delete: null } : { Update: null },
-      page_id: change.page_id,
-      base_revision_id: change.base_revision_id,
-      new_markdown: toOptionalText(change.new_markdown)
-    }))
-  };
+export function normalizeNodeKind(raw: RawNodeKind): NodeKind {
+  return "File" in raw ? "file" : "source";
 }
 
 export function localReplicaHost(host: string): boolean {
-  const url = new URL(host);
-  return ["localhost", "127.0.0.1"].includes(url.hostname);
+  return host.includes("127.0.0.1") || host.includes("localhost");
+}
+
+function normalizeNode(raw: RawNode): NodeSnapshot {
+  return validate("node", {
+    path: raw.path,
+    kind: normalizeNodeKind(raw.kind),
+    content: raw.content,
+    created_at: toNumber(raw.created_at),
+    updated_at: toNumber(raw.updated_at),
+    etag: raw.etag,
+    deleted_at: raw.deleted_at.length === 0 ? null : toNumber(raw.deleted_at[0]),
+    metadata_json: raw.metadata_json
+  }, isNodeSnapshot);
+}
+
+function normalizeNodeEntry(raw: RawNodeEntry): NodeEntry {
+  return validate("node_entry", {
+    path: raw.path,
+    kind: normalizeNodeEntryKind(raw.kind),
+    updated_at: toNumber(raw.updated_at),
+    etag: raw.etag,
+    deleted_at: raw.deleted_at.length === 0 ? null : toNumber(raw.deleted_at[0]),
+    has_children: raw.has_children
+  }, isNodeEntry);
+}
+
+function normalizeNodeEntryKind(raw: RawNodeEntryKind): NodeEntryKind {
+  if ("Directory" in raw) {
+    return "directory";
+  }
+  return normalizeNodeKind(raw);
 }
 
 function unwrapResult<T>(raw: RawResult<T>): T {
@@ -301,69 +271,17 @@ function unwrapResult<T>(raw: RawResult<T>): T {
   return raw.Ok;
 }
 
-function normalizePageSnapshot(raw: RawPageSnapshot) {
-  return {
-    page_id: raw.page_id,
-    slug: raw.slug,
-    title: raw.title,
-    page_type: normalizePageType(raw.page_type),
-    revision_id: raw.revision_id,
-    updated_at: toNumber(raw.updated_at),
-    markdown: raw.markdown,
-    section_hashes: raw.section_hashes.map(normalizeSectionHashEntry)
-  };
-}
-
-function normalizeSystemPage(raw: RawSystemPage) {
-  return {
-    slug: raw.slug,
-    markdown: raw.markdown,
-    updated_at: toNumber(raw.updated_at),
-    etag: raw.etag
-  };
-}
-
-function normalizeManifestEntry(raw: RawManifestEntry) {
-  return {
-    page_id: raw.page_id,
-    slug: raw.slug,
-    revision_id: raw.revision_id,
-    updated_at: toNumber(raw.updated_at)
-  };
-}
-
-function normalizeSectionHashEntry(raw: RawSectionHashEntry) {
-  return { section_path: raw.section_path, content_hash: raw.content_hash };
-}
-
-export function normalizePageType(raw: RawWikiPageType): PluginPageType {
-  const label = Object.keys(raw)[0];
-  switch (label) {
-    case "Entity": return "entity";
-    case "Concept": return "concept";
-    case "Overview": return "overview";
-    case "Comparison": return "comparison";
-    case "QueryNote": return "query_note";
-    case "SourceSummary": return "source_summary";
-    default: throw new Error(`Unknown page type: ${label}`);
-  }
-}
-
-function toNumber(value: bigint): number {
-  const asNumber = Number(value);
-  if (!Number.isSafeInteger(asNumber)) {
-    throw new Error(`Integer is outside JS safe range: ${value.toString()}`);
-  }
-  return asNumber;
-}
-
-function validate<T>(methodName: string, value: unknown, guard: (input: unknown) => input is T): T {
+function validate<T>(label: string, value: T, guard: (input: unknown) => input is T): T {
   if (!guard(value)) {
-    throw new Error(`Invalid normalized payload for ${methodName}`);
+    throw new Error(`invalid ${label} response`);
   }
   return value;
 }
 
-function toOptionalText(value: string | null): [] | [string] {
-  return value === null ? [] : [value];
+function toNumber(value: bigint): number {
+  const result = Number(value);
+  if (!Number.isFinite(result)) {
+    throw new Error(`bigint overflow: ${value.toString()}`);
+  }
+  return result;
 }
