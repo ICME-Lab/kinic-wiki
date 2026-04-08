@@ -79,7 +79,7 @@ export class WikiSyncService {
   async pushCurrentNote(): Promise<void> {
     const file = currentManagedPageFile(this.app, this.settings.mirrorRoot);
     if (file === null) {
-      new Notice("Current note is not a managed wiki page");
+      new Notice("Current note is not a tracked local mirror page");
       return;
     }
     await this.pushFiles([file]);
@@ -101,12 +101,12 @@ export class WikiSyncService {
   async deleteCurrentNote(): Promise<void> {
     const file = currentManagedPageFile(this.app, this.settings.mirrorRoot);
     if (file === null) {
-      new Notice("Current note is not a managed wiki page");
+      new Notice("Current note is not a tracked local mirror page");
       return;
     }
     const payload = await managedPagePayload(this.app, file);
     if (payload === null) {
-      new Notice("Current note is missing managed frontmatter");
+      new Notice("Current note is missing tracked local mirror frontmatter");
       return;
     }
     const response = await this.client().commitWikiChanges(this.settings.lastSnapshotRevision, [
@@ -151,7 +151,7 @@ export class WikiSyncService {
       payloads.set(payload.metadata.page_id, { slug: payload.metadata.slug });
     }
     if (changes.length === 0) {
-      new Notice("No valid managed notes selected for push");
+      new Notice("No valid tracked local mirror notes selected for push");
       return;
     }
     const response = await this.client().commitWikiChanges(this.settings.lastSnapshotRevision, changes);

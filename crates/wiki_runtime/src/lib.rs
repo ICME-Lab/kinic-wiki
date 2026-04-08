@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 use wiki_store::WikiStore;
 use wiki_types::{
-    AppendSourceChunkInput, BeginSourceUploadInput, CommitPageRevisionInput,
-    CommitPageRevisionOutput, CommitWikiChangesRequest, CommitWikiChangesResponse, CreatePageInput,
-    CreateSourceInput, ExportWikiSnapshotRequest, ExportWikiSnapshotResponse,
-    FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, FinalizeSourceUploadInput,
-    FinalizeSourceUploadOutput, HealthCheckReport, LogEvent, PageBundle, SearchHit, SearchRequest,
-    SourceUploadStatus, Status, SystemPage,
+    AdoptDraftPageInput, AdoptDraftPageOutput, AppendSourceChunkInput, BeginSourceUploadInput,
+    CommitPageRevisionInput, CommitPageRevisionOutput, CommitWikiChangesRequest,
+    CommitWikiChangesResponse, CreatePageInput, CreateSourceInput, ExportWikiSnapshotRequest,
+    ExportWikiSnapshotResponse, FetchWikiUpdatesRequest, FetchWikiUpdatesResponse,
+    FinalizeSourceUploadInput, FinalizeSourceUploadOutput, HealthCheckReport, LogEvent, PageBundle,
+    SearchHit, SearchRequest, SourceUploadStatus, Status, SystemPage,
 };
 
 pub struct WikiService {
@@ -30,6 +30,14 @@ impl WikiService {
 
     pub fn create_page(&self, input: CreatePageInput) -> Result<String, String> {
         self.store.create_page(input)
+    }
+
+    pub fn adopt_draft_page(
+        &self,
+        input: AdoptDraftPageInput,
+        adopted_at: i64,
+    ) -> Result<AdoptDraftPageOutput, String> {
+        self.store.adopt_draft_page(input, adopted_at)
     }
 
     pub fn create_source(&self, input: CreateSourceInput) -> Result<String, String> {

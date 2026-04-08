@@ -116,10 +116,56 @@ type CommitWikiChangesResponse = record {
   manifest_delta : WikiSyncManifestDelta;
 };
 
+type AdoptDraftPageInput = record {
+  slug : text;
+  title : text;
+  page_type : WikiPageType;
+  markdown : text;
+};
+
+type AdoptDraftPageOutput = record {
+  page_id : text;
+  slug : text;
+  revision_id : text;
+  updated_at : int64;
+  snapshot_revision : text;
+  index_markdown : text;
+  log_markdown : text;
+};
+
+type CreateSourceInput = record {
+  source_type : text;
+  title : opt text;
+  canonical_uri : opt text;
+  sha256 : text;
+  mime_type : opt text;
+  imported_at : int64;
+  metadata_json : text;
+  body_text : text;
+};
+
 type Status = record {
   page_count : nat64;
   source_count : nat64;
   system_page_count : nat64;
+};
+
+type HealthIssueKind = variant {
+  OrphanPage;
+  UnsupportedClaim;
+  Contradiction;
+  StaleClaim;
+};
+
+type HealthIssue = record {
+  kind : HealthIssueKind;
+  page_slug : opt text;
+  section_path : opt text;
+  message : text;
+};
+
+type HealthCheckReport = record {
+  issues : vec HealthIssue;
 };
 
 type SearchRequest = record {
@@ -167,7 +213,10 @@ service : {
   search : (SearchRequest) -> (variant { Ok : vec SearchHit; Err : text }) query;
   get_page : (text) -> (variant { Ok : opt PageBundle; Err : text }) query;
   get_system_page : (text) -> (variant { Ok : opt SystemPage; Err : text }) query;
+  lint_health : () -> (variant { Ok : HealthCheckReport; Err : text }) query;
   export_wiki_snapshot : (ExportWikiSnapshotRequest) -> (variant { Ok : ExportWikiSnapshotResponse; Err : text }) query;
   fetch_wiki_updates : (FetchWikiUpdatesRequest) -> (variant { Ok : FetchWikiUpdatesResponse; Err : text }) query;
+  adopt_draft_page : (AdoptDraftPageInput) -> (variant { Ok : AdoptDraftPageOutput; Err : text });
+  create_source : (CreateSourceInput) -> (variant { Ok : text; Err : text });
   commit_wiki_changes : (CommitWikiChangesRequest) -> (variant { Ok : CommitWikiChangesResponse; Err : text });
 }

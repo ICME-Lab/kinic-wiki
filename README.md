@@ -28,6 +28,8 @@ canister 実装は [crates/wiki_canister/src/lib.rs](/Users/0xhude/Desktop/work/
 - `get_system_page`
 - `export_wiki_snapshot`
 - `fetch_wiki_updates`
+- `adopt_draft_page`
+- `create_source`
 - `commit_wiki_changes`
 
 Candid は [crates/wiki_canister/wiki.did](/Users/0xhude/Desktop/work/llm-wiki/crates/wiki_canister/wiki.did) にあります。
@@ -53,7 +55,7 @@ Obsidian vault 内の `Wiki/` を working copy として使います。
 - `Wiki/log.md`
 - `Wiki/conflicts/<slug>.conflict.md`
 
-managed page の frontmatter:
+tracked local mirror page の frontmatter:
 
 - `page_id`
 - `slug`
@@ -61,6 +63,13 @@ managed page の frontmatter:
 - `revision_id`
 - `updated_at`
 - `mirror: true`
+
+draft page の review metadata:
+
+- `slug`
+- `title`
+- `page_type`
+- `draft: true`
 
 ## CLI
 
@@ -72,13 +81,27 @@ agent 用 CLI は [crates/wiki_cli](/Users/0xhude/Desktop/work/llm-wiki/crates/w
 - `get-page`
 - `get-system-page`
 - `status`
+- `lint`
+- `lint-local`
 - `pull`
+- `ingest-source`
+- `source-to-draft`
+- `generate-draft`
+- `query-to-page`
+- `adopt-draft`
 - `push`
 
 役割:
 
 - remote の page / system page / search を読む
+- remote wiki の health report を読む
+- local `Wiki/` working copy の構造を点検する
+- local markdown を raw source として remote に保存する
+- source material から review-ready local draft をまとめて作る
+- local markdown から page map ベースの draft を作る
+- query や比較の結果を local draft page に戻す
 - vault 内 `Wiki/` へ pull する
+- review 後の local draft を tracked local mirror page として採用する
 - local 変更を remote に push する
 
 ## Obsidian Plugin

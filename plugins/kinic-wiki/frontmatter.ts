@@ -1,5 +1,5 @@
 // Where: plugins/kinic-wiki/frontmatter.ts
-// What: Minimal frontmatter parsing and serialization for mirror-managed notes.
+// What: Minimal frontmatter parsing and serialization for tracked local mirror notes.
 // Why: The plugin needs stable metadata without adding a markdown parsing dependency.
 import { MirrorFrontmatter, PluginPageType } from "./types";
 

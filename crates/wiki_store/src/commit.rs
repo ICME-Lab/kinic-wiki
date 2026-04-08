@@ -1,7 +1,7 @@
 // Where: crates/wiki_store/src/commit.rs
 // What: Revision commit flow, section diffing, and system page updates.
 // Why: The wiki should update its source-of-truth tables and rendered system pages atomically.
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 use uuid::Uuid;
 use wiki_types::{CommitPageRevisionInput, CommitPageRevisionOutput, SystemPage};
 
@@ -30,8 +30,17 @@ pub(crate) fn commit_revision_tx(
     input: &CommitPageRevisionInput,
 ) -> Result<CommitPageRevisionOutput, String> {
     let tx = conn.transaction().map_err(|error| error.to_string())?;
+    let output = commit_revision_in_tx(&tx, input)?;
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(output)
+}
+
+pub(crate) fn commit_revision_in_tx(
+    tx: &Transaction<'_>,
+    input: &CommitPageRevisionInput,
+) -> Result<CommitPageRevisionOutput, String> {
     let mut page =
-        load_page_by_id(&tx, &input.page_id)?.ok_or_else(|| "page does not exist".to_string())?;
+        load_page_by_id(tx, &input.page_id)?.ok_or_else(|| "page does not exist".to_string())?;
     if input.markdown.trim().is_empty() {
         return Err("markdown must not be empty".to_string());
     }
@@ -39,13 +48,13 @@ pub(crate) fn commit_revision_tx(
         return Err("expected_current_revision_id does not match current revision".to_string());
     }
 
-    let revision_no = next_revision_no(&tx, &page.id)?;
+    let revision_no = next_revision_no(tx, &page.id)?;
     let revision_id = format!("revision_{}", Uuid::new_v4());
     let new_sections = split_markdown(&input.markdown)?;
     if new_sections.is_empty() {
         return Err("section split produced no sections".to_string());
     }
-    let old_sections = load_current_section_rows(&tx, &page.id)?;
+    let old_sections = load_current_section_rows(tx, &page.id)?;
     let old_by_path = old_sections
         .iter()
         .map(|section| (section.section_path.clone(), section.content_hash.clone()))
@@ -71,7 +80,7 @@ pub(crate) fn commit_revision_tx(
         params![page.id],
     )
     .map_err(|error| error.to_string())?;
-    store_sections(&tx, &page.id, &revision_id, &new_sections)?;
+    store_sections(tx, &page.id, &revision_id, &new_sections)?;
 
     page.current_revision_id = Some(revision_id.clone());
     page.title = input.title.clone();
@@ -91,7 +100,7 @@ pub(crate) fn commit_revision_tx(
     )
     .map_err(|error| error.to_string())?;
     replace_page_sections_in_fts_tx(
-        &tx,
+        tx,
         &page,
         &new_sections
             .iter()
@@ -105,11 +114,10 @@ pub(crate) fn commit_revision_tx(
             .collect::<Vec<_>>(),
     )?;
 
-    append_log_event(&tx, &page.id, revision_no, &input.title, input.updated_at)?;
+    append_log_event(tx, &page.id, revision_no, &input.title, input.updated_at)?;
     let (changed_section_paths, removed_section_paths, unchanged_count) =
         diff_section_paths(&new_sections, &old_by_path);
-    let system_pages = refresh_system_pages_tx(&tx, input.updated_at)?;
-    tx.commit().map_err(|error| error.to_string())?;
+    let system_pages = refresh_system_pages_tx(tx, input.updated_at)?;
 
     Ok(CommitPageRevisionOutput {
         revision_id,

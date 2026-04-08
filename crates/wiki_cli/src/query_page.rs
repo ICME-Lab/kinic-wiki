@@ -9,7 +9,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use wiki_types::{SearchHit, SearchRequest, WikiPageType};
+use wiki_types::{SearchRequest, WikiPageType};
 
 #[derive(Debug)]
 pub struct QueryToPageRequest {
@@ -29,6 +29,12 @@ pub struct QueryToPageResponse {
     pub path: PathBuf,
     pub action: String,
     pub open_questions: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedRemotePage {
+    slug: String,
+    title: String,
 }
 
 pub async fn query_to_page(
@@ -57,10 +63,15 @@ pub async fn query_to_page(
     let action = classify_local_draft_target(&existing_path, "query-to-page")?;
     let known_slugs = collect_known_slugs(&mirror_root, &slug)?;
     let mut open_questions = collect_local_open_questions(&mirror_root, &slug, &request.title)?;
-    let remote_hits = collect_remote_hits(client, &slug, &request.title).await?;
-    open_questions.extend(remote_open_questions(&slug, &request.title, &remote_hits));
+    let remote_pages = collect_remote_pages(client, &slug, &request.title).await?;
+    if remote_pages.iter().any(|page| page.slug == slug) {
+        return Err(anyhow!(
+            "remote page already exists with slug '{slug}'; review or update the existing page instead"
+        ));
+    }
+    open_questions.extend(remote_open_questions(&slug, &request.title, &remote_pages));
 
-    let markdown = render_query_page(&request.title, &input_markdown, &remote_hits);
+    let markdown = render_query_page(&request.title, &input_markdown, &remote_pages);
     let path = write_draft_page(
         &mirror_root,
         &slug,
@@ -162,11 +173,11 @@ fn collect_local_open_questions(
     Ok(questions)
 }
 
-async fn collect_remote_hits(
+async fn collect_remote_pages(
     client: &impl WikiApi,
     slug: &str,
     title: &str,
-) -> Result<Vec<SearchHit>> {
+) -> Result<Vec<ResolvedRemotePage>> {
     let slug_hits = client
         .search(SearchRequest {
             query_text: slug.to_string(),
@@ -185,33 +196,44 @@ async fn collect_remote_hits(
     let mut seen = HashSet::new();
     let mut merged = Vec::new();
     for hit in slug_hits.into_iter().chain(title_hits) {
-        if seen.insert(hit.slug.clone()) {
-            merged.push(hit);
+        if !seen.insert(hit.slug.clone()) {
+            continue;
+        }
+        if let Some(page) = client.get_page(&hit.slug).await? {
+            merged.push(ResolvedRemotePage {
+                slug: page.slug,
+                title: page.title,
+            });
+        } else {
+            merged.push(ResolvedRemotePage {
+                slug: hit.slug,
+                title: hit.title,
+            });
         }
     }
     Ok(merged)
 }
 
-fn remote_open_questions(slug: &str, title: &str, hits: &[SearchHit]) -> Vec<String> {
+fn remote_open_questions(slug: &str, title: &str, pages: &[ResolvedRemotePage]) -> Vec<String> {
     let mut questions = Vec::new();
-    if hits.iter().any(|hit| hit.slug == slug) {
+    if pages.iter().any(|page| page.slug == slug) {
         questions.push(format!("exact slug collision with remote page: {slug}"));
         return questions;
     }
-    if hits.iter().any(|hit| hit.title == title) {
+    if pages.iter().any(|page| page.title == title) {
         questions.push(format!("title collision with remote page: {title}"));
         return questions;
     }
-    if !hits.is_empty() {
+    if let Some(page) = pages.first() {
         questions.push(format!(
-            "possible overlap with remote pages near '{}' / '{}'",
-            slug, title
+            "possible overlap with remote page: {} ({})",
+            page.slug, page.title
         ));
     }
     questions
 }
 
-fn render_query_page(title: &str, input_markdown: &str, hits: &[SearchHit]) -> String {
+fn render_query_page(title: &str, input_markdown: &str, pages: &[ResolvedRemotePage]) -> String {
     let body = if let Some((_heading, remaining)) =
         crate::generate_helpers::split_first_heading(input_markdown)
     {
@@ -224,10 +246,10 @@ fn render_query_page(title: &str, input_markdown: &str, hits: &[SearchHit]) -> S
         "# {title}\n\nThis draft captures a query-driven synthesis that should be reviewed before adoption.\n\n## Query Result\n\n{}\n",
         body
     );
-    if !hits.is_empty() {
+    if !pages.is_empty() {
         markdown.push_str("\n## Related Pages\n\n");
-        for hit in hits {
-            markdown.push_str(&format!("- [[{}]] — {}\n", hit.slug, hit.title));
+        for page in pages {
+            markdown.push_str(&format!("- [[{}]] — {}\n", page.slug, page.title));
         }
     }
     markdown

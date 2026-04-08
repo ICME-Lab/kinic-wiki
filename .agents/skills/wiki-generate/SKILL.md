@@ -8,7 +8,9 @@ description: Generate or expand the llm-wiki knowledge base from local source ma
 Use this skill when the user wants to:
 
 - create draft wiki pages from local markdown, notes, docs, or folders
+- ingest local markdown as raw source material before drafting
 - convert research/source material into linked pages under `Wiki/`
+- turn query or comparison results into new draft pages under `Wiki/`
 - prepare content for human review in Obsidian before push
 - structure knowledge into overview/entity/concept/comparison/query/source-summary pages
 
@@ -23,6 +25,8 @@ Do not use this skill for:
 Follow these gates in order:
 
 1. **Source intake**
+   - prefer `wiki-cli source-to-draft` as the main source-oriented entry point
+   - add `--persist-sources` when the local markdown should also be stored as raw source material
    - inspect the input material
    - decide whether the job is small direct drafting or graph-assisted drafting
 2. **Page map**
@@ -35,6 +39,9 @@ Follow these gates in order:
    - leave the result ready for human review in Obsidian
 5. **Push gate**
    - only after review, use `wiki-cli push` or plugin push flows
+6. **Lint gate**
+   - after review or push, run `wiki-cli lint` and let the LLM decide what to fix next
+   - before adopt-draft or push, run `wiki-cli lint-local` on the working copy when you want a local structure pass
 
 For the exact phase contract and required outputs, read [references/phases.md](references/phases.md).
 
@@ -42,6 +49,7 @@ For the exact phase contract and required outputs, read [references/phases.md](r
 
 - Treat the canister as the source of truth.
 - Treat `Wiki/` as the shared human/agent working copy.
+- Keep raw source ingestion separate from draft generation.
 - Prefer producing a small number of coherent draft pages over many shallow stubs.
 - Reuse existing pages when possible instead of duplicating topics.
 - Treat graph-assisted tooling as optional page-map assistance, not as the source of truth.
@@ -56,6 +64,12 @@ For the exact phase contract and required outputs, read [references/phases.md](r
 ## Repo-Specific Contract
 
 - Working copy root: `Wiki/`
+- Preferred source-to-draft command: `wiki-cli source-to-draft --vault-path <path> --input <file>...`
+- Raw source ingest command: `wiki-cli ingest-source --input <file>...`
+- Source-only draft command: `wiki-cli generate-draft --vault-path <path> --input <file>...`
+- Query result draft command: `wiki-cli query-to-page --vault-path <path> --input <file> --title <title>`
+- Health report command: `wiki-cli lint [--json]`
+- Local health report command: `wiki-cli lint-local --vault-path <path> [--json]`
 - Managed pages: `Wiki/pages/<slug>.md`
 - System pages: `Wiki/index.md`, `Wiki/log.md`
 - Conflict pages: `Wiki/conflicts/<slug>.conflict.md`
@@ -96,3 +110,5 @@ When useful, also produce:
 - a note of which pages are safe to review first
 
 Do not invent a separate storage format. Keep drafts in the same markdown form that humans will inspect.
+Do not merge raw source ingest, draft adoption, and push into one hidden step unless the user explicitly asks for that workflow.
+Use `source-to-draft` for source-driven work and `query-to-page` for query/comparison-driven work.

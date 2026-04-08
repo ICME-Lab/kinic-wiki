@@ -1,12 +1,23 @@
 // Where: crates/wiki_cli/src/commands.rs
 // What: Command handlers for remote reads and local mirror sync.
 // Why: The CLI should keep subcommand behavior explicit and easy to test.
+use crate::adopt::adopt_draft;
 use crate::cli::{Cli, Command};
 use crate::client::WikiApi;
+use crate::generate::{GenerateDraftRequest, GenerateDraftResponse, generate_draft};
+use crate::ingest::{IngestSourcesRequest, IngestSourcesResponse, ingest_sources};
+use crate::lint::{lint, print_lint_report};
+use crate::lint_local::{lint_local, print_local_lint_report};
 use crate::mirror::{
     MirrorState, collect_changed_pages, collect_known_pages, load_state, now_millis,
     read_managed_page_markdown, remove_managed_pages_by_id, remove_stale_managed_pages, save_state,
     update_local_revision_metadata, write_conflict_file, write_snapshot_mirror,
+};
+use crate::query_page::{
+    QueryToPageRequest, QueryToPageResponse, print_query_to_page_response, query_to_page,
+};
+use crate::source_to_draft::{
+    SourceToDraftRequest, print_source_to_draft_response, source_to_draft,
 };
 use anyhow::{Result, anyhow};
 use std::collections::{HashMap, HashSet};
@@ -15,6 +26,75 @@ use wiki_types::{CommitWikiChangesRequest, PageChangeInput, PageChangeType, Sear
 
 pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
     match cli.command {
+        Command::SourceToDraft {
+            vault_path,
+            inputs,
+            mirror_root,
+            persist_sources,
+            json,
+        } => {
+            let response = source_to_draft(
+                client,
+                SourceToDraftRequest {
+                    vault_path,
+                    mirror_root,
+                    inputs,
+                    persist_sources,
+                },
+            )
+            .await?;
+            print_source_to_draft_response(&response, json)?;
+            if !response.rejected_sources.is_empty() {
+                return Err(anyhow!(
+                    "source ingestion completed with {} rejected input(s)",
+                    response.rejected_sources.len()
+                ));
+            }
+        }
+        Command::GenerateDraft {
+            vault_path,
+            inputs,
+            mirror_root,
+            mode,
+            output,
+            json,
+        } => {
+            let response = generate_draft(
+                client,
+                GenerateDraftRequest {
+                    vault_path,
+                    mirror_root,
+                    inputs,
+                    mode,
+                    output,
+                },
+            )
+            .await?;
+            print_generate_draft_response(&response, json)?;
+        }
+        Command::QueryToPage {
+            vault_path,
+            input,
+            title,
+            slug,
+            page_type,
+            mirror_root,
+            json,
+        } => {
+            let response = query_to_page(
+                client,
+                QueryToPageRequest {
+                    vault_path,
+                    mirror_root,
+                    input,
+                    title,
+                    slug,
+                    page_type: page_type.map(|value| value.to_wiki_page_type()),
+                },
+            )
+            .await?;
+            print_query_to_page_response(&response, json)?;
+        }
         Command::SearchRemote {
             query_text,
             page_types,
@@ -49,6 +129,18 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
             Some(page) => println!("{}", page.markdown),
             None => return Err(anyhow!("system page not found: {slug}")),
         },
+        Command::Lint { json } => {
+            let report = lint(client).await?;
+            print_lint_report(&report, json)?;
+        }
+        Command::LintLocal {
+            vault_path,
+            mirror_root,
+            json,
+        } => {
+            let report = lint_local(&vault_path.join(mirror_root))?;
+            print_local_lint_report(&report, json)?;
+        }
         Command::Status {
             vault_path,
             mirror_root,
@@ -66,10 +158,10 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
                     "remote: pages={} sources={} system={}",
                     remote.page_count, remote.source_count, remote.system_page_count
                 );
-                if let Some((state, managed_count)) = local {
+                if let Some((state, tracked_count)) = local {
                     println!(
-                        "local: snapshot_revision={} managed_pages={} last_synced_at={}",
-                        state.snapshot_revision, managed_count, state.last_synced_at
+                        "local: snapshot_revision={} tracked_pages={} last_synced_at={}",
+                        state.snapshot_revision, tracked_count, state.last_synced_at
                     );
                 }
             }
@@ -80,11 +172,110 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
         } => {
             pull(client, &vault_path.join(mirror_root)).await?;
         }
+        Command::IngestSource { inputs, json } => {
+            let response = ingest_sources(client, IngestSourcesRequest { inputs }).await?;
+            print_ingest_sources_response(&response, json)?;
+            if !response.rejected.is_empty() {
+                return Err(anyhow!(
+                    "source ingestion completed with {} rejected input(s)",
+                    response.rejected.len()
+                ));
+            }
+        }
+        Command::AdoptDraft {
+            vault_path,
+            slug,
+            page_type,
+            mirror_root,
+            json,
+        } => {
+            let response = adopt_draft(
+                client,
+                &vault_path.join(mirror_root),
+                &slug,
+                page_type.map(|value| value.to_wiki_page_type()),
+            )
+            .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            } else {
+                println!(
+                    "adopted {} -> {} ({})",
+                    response.slug,
+                    response.path.display(),
+                    response.action
+                );
+            }
+        }
         Command::Push {
             vault_path,
             mirror_root,
         } => {
             push(client, &vault_path.join(mirror_root)).await?;
+        }
+    }
+    Ok(())
+}
+
+fn print_generate_draft_response(response: &GenerateDraftResponse, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(response)?);
+        return Ok(());
+    }
+
+    println!("page map:");
+    for entry in &response.page_map {
+        println!(
+            "- {} ({}) [{}]",
+            entry.slug,
+            entry.title,
+            entry.page_type.as_str()
+        );
+    }
+    println!("draft results:");
+    for result in &response.draft_results {
+        println!(
+            "- {} -> {} ({})",
+            result.slug,
+            result.path.display(),
+            result.action
+        );
+    }
+    if response.open_questions.is_empty() {
+        println!("open questions: none");
+    } else {
+        println!("open questions:");
+        for question in &response.open_questions {
+            println!("- {question}");
+        }
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn _keep_query_to_page_response(_response: &QueryToPageResponse) {}
+
+fn print_ingest_sources_response(response: &IngestSourcesResponse, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(response)?);
+        return Ok(());
+    }
+
+    println!("ingested:");
+    for entry in &response.ingested {
+        println!(
+            "- {} -> {} ({})",
+            entry.input_path.display(),
+            entry.source_id,
+            entry.action
+        );
+    }
+    if response.rejected.is_empty() {
+        println!("rejected: none");
+    } else {
+        println!("rejected:");
+        for entry in &response.rejected {
+            println!("- {} ({})", entry.input_path.display(), entry.reason);
         }
     }
     Ok(())
@@ -211,6 +402,6 @@ pub async fn push(client: &impl WikiApi, mirror_root: &Path) -> Result<()> {
 
 fn read_local_status(mirror_root: &Path) -> Result<(MirrorState, usize)> {
     let state = load_state(mirror_root)?;
-    let managed_count = collect_known_pages(mirror_root)?.len();
-    Ok((state, managed_count))
+    let tracked_count = collect_known_pages(mirror_root)?.len();
+    Ok((state, tracked_count))
 }

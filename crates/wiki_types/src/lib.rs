@@ -1,6 +1,7 @@
 // Where: crates/wiki_types/src/lib.rs
 // What: Shared wiki domain types and public runtime contracts.
 // Why: Keep store and runtime aligned on the source-of-truth model from LLM_WIKI_PLAN.md.
+mod fs;
 mod health;
 mod sync;
 mod upload;
@@ -8,6 +9,7 @@ mod upload;
 use candid::CandidType;
 use serde::{Deserialize, Serialize};
 
+pub use fs::*;
 pub use health::*;
 pub use sync::*;
 pub use upload::*;
@@ -162,6 +164,25 @@ pub struct CommitPageRevisionOutput {
     pub changed_section_paths: Vec<String>,
     pub removed_section_paths: Vec<String>,
     pub rendered_system_pages: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct AdoptDraftPageInput {
+    pub slug: String,
+    pub title: String,
+    pub page_type: WikiPageType,
+    pub markdown: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct AdoptDraftPageOutput {
+    pub page_id: String,
+    pub slug: String,
+    pub revision_id: String,
+    pub updated_at: i64,
+    pub snapshot_revision: String,
+    pub index_markdown: String,
+    pub log_markdown: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

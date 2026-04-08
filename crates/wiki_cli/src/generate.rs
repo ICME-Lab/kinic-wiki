@@ -9,7 +9,7 @@ use crate::generate_helpers::{
 use crate::mirror::{classify_local_draft_target, write_draft_page};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use wiki_types::{SearchRequest, WikiPageType};
@@ -67,6 +67,7 @@ pub async fn generate_draft(
     let mirror_root = request.vault_path.join(&request.mirror_root);
     let documents = load_input_documents(&request.inputs)?;
     let page_map = build_page_map(&documents);
+    reject_duplicate_slugs(&page_map)?;
     let mut open_questions = collect_local_open_questions(&page_map);
     open_questions.extend(collect_remote_open_questions(client, &page_map).await?);
     let draft_results = write_drafts(&mirror_root, &page_map, &documents)?;
@@ -123,6 +124,43 @@ fn build_page_map(documents: &[InputDocument]) -> Vec<PageMapEntry> {
     }
 
     page_map
+}
+
+fn reject_duplicate_slugs(page_map: &[PageMapEntry]) -> Result<()> {
+    let mut entries_by_slug = BTreeMap::<String, Vec<Vec<PathBuf>>>::new();
+    for entry in page_map {
+        entries_by_slug
+            .entry(entry.slug.clone())
+            .or_default()
+            .push(entry.source_inputs.clone());
+    }
+
+    let collisions = entries_by_slug
+        .into_iter()
+        .filter_map(|(slug, groups)| {
+            (groups.len() > 1).then(|| {
+                let mut unique = groups.into_iter().flatten().collect::<Vec<_>>();
+                unique.sort();
+                unique.dedup();
+                format!(
+                    "{slug}: {}",
+                    unique
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    if collisions.is_empty() {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "duplicate slug generated from multiple inputs; resolve collisions before writing drafts: {}",
+        collisions.join("; ")
+    ))
 }
 
 fn collect_local_open_questions(page_map: &[PageMapEntry]) -> Vec<String> {

@@ -6,13 +6,17 @@ use async_trait::async_trait;
 use candid::{Decode, Encode};
 use ic_agent::{Agent, export::Principal};
 use wiki_types::{
-    CommitWikiChangesRequest, CommitWikiChangesResponse, ExportWikiSnapshotRequest,
-    ExportWikiSnapshotResponse, FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, PageBundle,
-    SearchHit, SearchRequest, Status, SystemPage,
+    AdoptDraftPageInput, AdoptDraftPageOutput, CommitWikiChangesRequest, CommitWikiChangesResponse,
+    CreateSourceInput, ExportWikiSnapshotRequest, ExportWikiSnapshotResponse,
+    FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, HealthCheckReport, PageBundle, SearchHit,
+    SearchRequest, Status, SystemPage,
 };
 
 #[async_trait]
 pub trait WikiApi {
+    async fn adopt_draft_page(&self, request: AdoptDraftPageInput) -> Result<AdoptDraftPageOutput>;
+    async fn create_source(&self, request: CreateSourceInput) -> Result<String>;
+    async fn lint_health(&self) -> Result<HealthCheckReport>;
     async fn status(&self) -> Result<Status>;
     async fn search(&self, request: SearchRequest) -> Result<Vec<SearchHit>>;
     async fn get_page(&self, slug: &str) -> Result<Option<PageBundle>>;
@@ -90,6 +94,22 @@ impl CanisterWikiClient {
 
 #[async_trait]
 impl WikiApi for CanisterWikiClient {
+    async fn adopt_draft_page(&self, request: AdoptDraftPageInput) -> Result<AdoptDraftPageOutput> {
+        let result: Result<AdoptDraftPageOutput, String> =
+            self.update("adopt_draft_page", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn create_source(&self, request: CreateSourceInput) -> Result<String> {
+        let result: Result<String, String> = self.update("create_source", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn lint_health(&self) -> Result<HealthCheckReport> {
+        let result: Result<HealthCheckReport, String> = self.query("lint_health", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn status(&self) -> Result<Status> {
         self.query("status", &()).await
     }

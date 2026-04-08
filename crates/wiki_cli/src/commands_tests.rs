@@ -248,7 +248,10 @@ async fn adopt_draft_promotes_local_page_into_managed_mirror() {
     assert!(mirror_root.join("log.md").exists());
     let adopted_requests = api.adopted_requests.lock().unwrap();
     assert_eq!(adopted_requests.len(), 1);
-    assert_eq!(adopted_requests[0].markdown, "# Draft Alpha\n\nSee [Index](../index.md).\n");
+    assert_eq!(
+        adopted_requests[0].markdown,
+        "# Draft Alpha\n\nSee [Index](../index.md).\n"
+    );
     assert_eq!(response.action, "adopted");
     assert_eq!(
         crate::mirror::load_state(&mirror_root)

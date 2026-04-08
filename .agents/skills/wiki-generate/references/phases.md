@@ -25,6 +25,7 @@ Understand what the source material is and what the user wants from it.
 
 - a short statement of scope
 - a list of source files or folders being used
+- whether raw source should first be persisted with `wiki-cli ingest-source`
 - optional note that graph assistance is justified
 
 ## Phase 2: Page Map
@@ -65,6 +66,8 @@ Write the initial markdown pages in the same form humans will inspect.
 ### Rules
 
 - write to `Wiki/pages/<slug>.md` when working directly in the local working copy
+- use `wiki-cli generate-draft` when the user wants the CLI to produce review-ready drafts
+- use `wiki-cli query-to-page` when the input is an LLM query/comparison result that should become a new page
 - prefer `[[slug]]` links
 - keep titles and intros clear
 - prefer synthesis over copy-paste
@@ -88,6 +91,7 @@ Make the draft ready for human review in Obsidian.
 - page types still make sense
 - duplicated pages are removed or merged
 - the page reads clearly without external hidden context
+- new draft pages have enough review metadata to be adopted with `wiki-cli adopt-draft`
 
 ### Output
 
@@ -107,9 +111,23 @@ Push only when the content is ready and the user wants publication.
 
 - do not push automatically unless the user asked for it
 - prefer review-first behavior
+- use `wiki-cli adopt-draft` before `wiki-cli push` when the page is still an unmanaged draft
 - use the existing `wiki-cli push` or plugin push path
 
 ### Output
 
 - pushed changes
 - or a clear statement that the result is review-ready but not pushed
+
+## Phase 6: Lint Gate
+
+### Objective
+
+Inspect the local or remote wiki health report and let the LLM choose the next repair action.
+
+### Rules
+
+- use `wiki-cli lint-local` for local working copy structure checks before adopt or push
+- use `wiki-cli lint` as a report-only command
+- do not expect the CLI to fix or draft pages automatically
+- use the report to decide whether to edit `Wiki/`, adopt a draft, or push another update

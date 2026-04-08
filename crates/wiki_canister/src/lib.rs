@@ -12,9 +12,10 @@ use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use wiki_runtime::WikiService;
 use wiki_types::{
-    CommitWikiChangesRequest, CommitWikiChangesResponse, ExportWikiSnapshotRequest,
-    ExportWikiSnapshotResponse, FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, PageBundle,
-    SearchHit, SearchRequest, Status, SystemPage,
+    AdoptDraftPageInput, AdoptDraftPageOutput, CommitWikiChangesRequest, CommitWikiChangesResponse,
+    CreateSourceInput, ExportWikiSnapshotRequest, ExportWikiSnapshotResponse,
+    FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, HealthCheckReport, PageBundle, SearchHit,
+    SearchRequest, Status, SystemPage,
 };
 
 const DB_PATH: &str = "./DB/wiki.sqlite3";
@@ -58,6 +59,11 @@ fn get_system_page(slug: String) -> Result<Option<SystemPage>, String> {
 }
 
 #[query]
+fn lint_health() -> Result<HealthCheckReport, String> {
+    with_service(|service| service.lint_health())
+}
+
+#[query]
 fn export_wiki_snapshot(
     request: ExportWikiSnapshotRequest,
 ) -> Result<ExportWikiSnapshotResponse, String> {
@@ -76,6 +82,16 @@ fn commit_wiki_changes(
     request: CommitWikiChangesRequest,
 ) -> Result<CommitWikiChangesResponse, String> {
     with_service(|service| service.commit_wiki_changes(request))
+}
+
+#[update]
+fn adopt_draft_page(request: AdoptDraftPageInput) -> Result<AdoptDraftPageOutput, String> {
+    with_service(|service| service.adopt_draft_page(request, now_millis()))
+}
+
+#[update]
+fn create_source(request: CreateSourceInput) -> Result<String, String> {
+    with_service(|service| service.create_source(request))
 }
 
 fn initialize_or_trap() {
@@ -138,6 +154,10 @@ fn initialize_wasi_storage() -> Result<(), String> {
     })
 }
 
+fn now_millis() -> i64 {
+    (ic_cdk::api::time() / 1_000_000) as i64
+}
+
 fn with_service<T, F>(f: F) -> Result<T, String>
 where
     F: FnOnce(&WikiService) -> Result<T, String>,
@@ -165,8 +185,8 @@ mod tests {
     use tempfile::tempdir;
     use wiki_runtime::WikiService;
     use wiki_types::{
-        CommitPageRevisionInput, CreatePageInput, ExportWikiSnapshotRequest, SearchRequest,
-        WikiPageType,
+        AdoptDraftPageInput, CommitPageRevisionInput, CreatePageInput, CreateSourceInput,
+        ExportWikiSnapshotRequest, HealthIssueKind, SearchRequest, WikiPageType,
     };
 
     fn create_service() -> WikiService {
@@ -245,6 +265,37 @@ mod tests {
     }
 
     #[test]
+    fn lint_health_uses_runtime_store() {
+        let service = create_service();
+        let page_id = service
+            .create_page(CreatePageInput {
+                slug: "orphan".to_string(),
+                page_type: WikiPageType::Entity,
+                title: "Orphan".to_string(),
+                created_at: 10,
+            })
+            .expect("page should create");
+        service
+            .commit_page_revision(CommitPageRevisionInput {
+                page_id,
+                expected_current_revision_id: None,
+                title: "Orphan".to_string(),
+                markdown: "# Orphan\n\nplain claim".to_string(),
+                change_reason: "seed".to_string(),
+                author_type: "test".to_string(),
+                tags: Vec::new(),
+                updated_at: 11,
+            })
+            .expect("revision should commit");
+
+        let report = service.lint_health().expect("lint should succeed");
+        assert!(report.issues.iter().any(|issue| {
+            issue.kind == HealthIssueKind::OrphanPage
+                && issue.page_slug.as_deref() == Some("orphan")
+        }));
+    }
+
+    #[test]
     fn snapshot_api_runs_against_sqlite_store() {
         let service = create_service();
 
@@ -289,5 +340,67 @@ mod tests {
             .expect("log should exist");
         assert_eq!(index_page.updated_at, 42);
         assert_eq!(log_page.updated_at, 42);
+    }
+
+    #[test]
+    fn adopt_draft_page_is_atomic_and_rejects_duplicate_slug() {
+        let service = create_service();
+
+        let adopted = service
+            .adopt_draft_page(
+                AdoptDraftPageInput {
+                    slug: "draft-alpha".to_string(),
+                    title: "Draft Alpha".to_string(),
+                    page_type: WikiPageType::Entity,
+                    markdown: "# Draft Alpha\n\nBody.".to_string(),
+                },
+                20,
+            )
+            .expect("draft should adopt");
+        assert_eq!(adopted.slug, "draft-alpha");
+        assert!(adopted.index_markdown.contains("draft-alpha"));
+        assert!(adopted.log_markdown.contains("Draft Alpha"));
+
+        let duplicate = service.adopt_draft_page(
+            AdoptDraftPageInput {
+                slug: "draft-alpha".to_string(),
+                title: "Duplicate".to_string(),
+                page_type: WikiPageType::Entity,
+                markdown: "# Duplicate\n\nBody.".to_string(),
+            },
+            21,
+        );
+        assert!(duplicate.is_err());
+    }
+
+    #[test]
+    fn create_source_uses_runtime_store_and_rejects_duplicate_sha() {
+        let service = create_service();
+
+        let source_id = service
+            .create_source(CreateSourceInput {
+                source_type: "markdown_note".to_string(),
+                title: Some("Alpha".to_string()),
+                canonical_uri: None,
+                sha256: "sha-alpha".to_string(),
+                mime_type: Some("text/markdown".to_string()),
+                imported_at: 10,
+                metadata_json: "{}".to_string(),
+                body_text: "# Alpha\n\nBody.".to_string(),
+            })
+            .expect("source should create");
+        assert!(!source_id.is_empty());
+
+        let duplicate = service.create_source(CreateSourceInput {
+            source_type: "markdown_note".to_string(),
+            title: Some("Alpha".to_string()),
+            canonical_uri: None,
+            sha256: "sha-alpha".to_string(),
+            mime_type: Some("text/markdown".to_string()),
+            imported_at: 11,
+            metadata_json: "{}".to_string(),
+            body_text: "# Alpha\n\nBody.".to_string(),
+        });
+        assert!(duplicate.is_err());
     }
 }

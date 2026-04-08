@@ -11,6 +11,14 @@ pub struct MirrorFrontmatter {
     pub mirror: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DraftFrontmatter {
+    pub slug: String,
+    pub title: String,
+    pub page_type: String,
+    pub draft: bool,
+}
+
 pub fn parse_mirror_frontmatter(content: &str) -> Option<MirrorFrontmatter> {
     if !content.starts_with("---\n") {
         return None;
@@ -48,6 +56,37 @@ pub fn parse_mirror_frontmatter(content: &str) -> Option<MirrorFrontmatter> {
     .filter(|metadata| metadata.mirror)
 }
 
+pub fn parse_draft_frontmatter(content: &str) -> Option<DraftFrontmatter> {
+    if !content.starts_with("---\n") {
+        return None;
+    }
+    let end = content.find("\n---\n")?;
+    let mut slug = None;
+    let mut title = None;
+    let mut page_type = None;
+    let mut draft = None;
+    for line in content[4..end].lines() {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"');
+        match key.trim() {
+            "slug" => slug = Some(value.to_string()),
+            "title" => title = Some(value.to_string()),
+            "page_type" => page_type = Some(value.to_string()),
+            "draft" => draft = Some(value == "true"),
+            _ => {}
+        }
+    }
+    Some(DraftFrontmatter {
+        slug: slug?,
+        title: title?,
+        page_type: page_type?,
+        draft: draft?,
+    })
+    .filter(|metadata| metadata.draft)
+}
+
 pub fn serialize_mirror_file(frontmatter: &MirrorFrontmatter, body: &str) -> String {
     [
         "---".to_string(),
@@ -64,6 +103,20 @@ pub fn serialize_mirror_file(frontmatter: &MirrorFrontmatter, body: &str) -> Str
     .join("\n")
 }
 
+pub fn serialize_draft_file(frontmatter: &DraftFrontmatter, body: &str) -> String {
+    [
+        "---".to_string(),
+        format!("slug: {}", frontmatter.slug),
+        format!("title: {}", frontmatter.title),
+        format!("page_type: {}", frontmatter.page_type),
+        "draft: true".to_string(),
+        "---".to_string(),
+        String::new(),
+        body.trim_start().to_string(),
+    ]
+    .join("\n")
+}
+
 pub fn strip_managed_frontmatter(content: &str) -> String {
     match content
         .strip_prefix("---\n")
@@ -72,4 +125,8 @@ pub fn strip_managed_frontmatter(content: &str) -> String {
         Some(end) => content[end..].to_string(),
         None => content.to_string(),
     }
+}
+
+pub fn strip_any_frontmatter(content: &str) -> String {
+    strip_managed_frontmatter(content)
 }

@@ -15,14 +15,14 @@ fn write_snapshot_mirror_matches_shared_golden_files() {
     let temp_dir = tempdir().expect("tempdir should create");
     let mirror_root = temp_dir.path().join("Wiki");
 
-    write_snapshot_mirror(&mirror_root, &pages, &system_pages).expect("mirror write should succeed");
+    write_snapshot_mirror(&mirror_root, &pages, &system_pages)
+        .expect("mirror write should succeed");
 
     assert_dirs_equal(&fixture_root.join("golden"), &mirror_root);
 }
 
 fn fixture_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/mirror_spec")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/mirror_spec")
 }
 
 fn load_pages(path: &Path) -> Vec<WikiPageSnapshot> {
@@ -38,14 +38,22 @@ fn load_system_pages(path: &Path) -> Vec<SystemPageSnapshot> {
 fn assert_dirs_equal(expected_root: &Path, actual_root: &Path) {
     let expected_files = collect_relative_files(expected_root, expected_root);
     let actual_files = collect_relative_files(actual_root, actual_root);
-    assert_eq!(expected_files, actual_files, "mirror file set should match golden");
+    assert_eq!(
+        expected_files, actual_files,
+        "mirror file set should match golden"
+    );
 
     for relative in expected_files {
-        let expected = fs::read_to_string(expected_root.join(&relative))
-            .expect("expected file should read");
-        let actual = fs::read_to_string(actual_root.join(&relative))
-            .expect("actual file should read");
-        assert_eq!(actual, expected, "content mismatch for {}", relative.display());
+        let expected =
+            fs::read_to_string(expected_root.join(&relative)).expect("expected file should read");
+        let actual =
+            fs::read_to_string(actual_root.join(&relative)).expect("actual file should read");
+        assert_eq!(
+            actual,
+            expected,
+            "content mismatch for {}",
+            relative.display()
+        );
     }
 }
 
@@ -58,7 +66,11 @@ fn collect_relative_files(root: &Path, current: &Path) -> Vec<PathBuf> {
             files.extend(collect_relative_files(root, &path));
             continue;
         }
-        files.push(path.strip_prefix(root).expect("relative path").to_path_buf());
+        files.push(
+            path.strip_prefix(root)
+                .expect("relative path")
+                .to_path_buf(),
+        );
     }
     files.sort();
     files

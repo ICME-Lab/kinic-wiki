@@ -27,6 +27,48 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    SourceToDraft {
+        #[arg(long)]
+        vault_path: PathBuf,
+        #[arg(long = "input", required = true)]
+        inputs: Vec<PathBuf>,
+        #[arg(long, default_value = "Wiki")]
+        mirror_root: String,
+        #[arg(long)]
+        persist_sources: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    GenerateDraft {
+        #[arg(long)]
+        vault_path: PathBuf,
+        #[arg(long = "input", required = true)]
+        inputs: Vec<PathBuf>,
+        #[arg(long, default_value = "Wiki")]
+        mirror_root: String,
+        #[arg(long, value_enum, default_value_t = GenerateModeArg::Direct)]
+        mode: GenerateModeArg,
+        #[arg(long, value_enum, default_value_t = GenerateOutputArg::LocalDraft)]
+        output: GenerateOutputArg,
+        #[arg(long)]
+        json: bool,
+    },
+    QueryToPage {
+        #[arg(long)]
+        vault_path: PathBuf,
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        slug: Option<String>,
+        #[arg(long = "page-type", value_enum)]
+        page_type: Option<PageTypeArg>,
+        #[arg(long, default_value = "Wiki")]
+        mirror_root: String,
+        #[arg(long)]
+        json: bool,
+    },
     SearchRemote {
         query_text: String,
         #[arg(long = "page-type", value_enum)]
@@ -46,6 +88,18 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    Lint {
+        #[arg(long)]
+        json: bool,
+    },
+    LintLocal {
+        #[arg(long)]
+        vault_path: PathBuf,
+        #[arg(long, default_value = "Wiki")]
+        mirror_root: String,
+        #[arg(long)]
+        json: bool,
+    },
     Status {
         #[arg(long)]
         vault_path: Option<PathBuf>,
@@ -60,12 +114,41 @@ pub enum Command {
         #[arg(long, default_value = "Wiki")]
         mirror_root: String,
     },
+    IngestSource {
+        #[arg(long = "input", required = true)]
+        inputs: Vec<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    AdoptDraft {
+        #[arg(long)]
+        vault_path: PathBuf,
+        #[arg(long)]
+        slug: String,
+        #[arg(long = "page-type", value_enum)]
+        page_type: Option<PageTypeArg>,
+        #[arg(long, default_value = "Wiki")]
+        mirror_root: String,
+        #[arg(long)]
+        json: bool,
+    },
     Push {
         #[arg(long)]
         vault_path: PathBuf,
         #[arg(long, default_value = "Wiki")]
         mirror_root: String,
     },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerateModeArg {
+    Direct,
+    GraphAssisted,
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerateOutputArg {
+    LocalDraft,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone)]

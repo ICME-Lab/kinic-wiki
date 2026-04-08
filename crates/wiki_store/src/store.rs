@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, params};
 use uuid::Uuid;
 use wiki_types::{
-    AppendSourceChunkInput, BeginSourceUploadInput, CommitPageRevisionInput,
-    CommitPageRevisionOutput, CommitWikiChangesRequest, CommitWikiChangesResponse, CreatePageInput,
-    CreateSourceInput, ExportWikiSnapshotRequest, ExportWikiSnapshotResponse,
-    FetchWikiUpdatesRequest, FetchWikiUpdatesResponse, FinalizeSourceUploadInput,
-    FinalizeSourceUploadOutput, HealthCheckReport, LogEvent, PageBundle, PageSectionView,
-    SearchHit, SearchRequest, SourceUploadStatus, Status, SystemPage, WikiPage, WikiPageType,
-    WikiRevision,
+    AdoptDraftPageInput, AdoptDraftPageOutput, AppendSourceChunkInput, BeginSourceUploadInput,
+    CommitPageRevisionInput, CommitPageRevisionOutput, CommitWikiChangesRequest,
+    CommitWikiChangesResponse, CreatePageInput, CreateSourceInput, ExportWikiSnapshotRequest,
+    ExportWikiSnapshotResponse, FetchWikiUpdatesRequest, FetchWikiUpdatesResponse,
+    FinalizeSourceUploadInput, FinalizeSourceUploadOutput, HealthCheckReport, LogEvent, PageBundle,
+    PageSectionView, SearchHit, SearchRequest, SourceUploadStatus, Status, SystemPage, WikiPage,
+    WikiPageType, WikiRevision,
 };
 
 use crate::{
@@ -60,6 +60,81 @@ impl WikiStore {
         )
         .map_err(|error| error.to_string())?;
         Ok(page_id)
+    }
+
+    pub fn adopt_draft_page(
+        &self,
+        input: AdoptDraftPageInput,
+        adopted_at: i64,
+    ) -> Result<AdoptDraftPageOutput, String> {
+        if input.slug.trim().is_empty() {
+            return Err("slug must not be empty".to_string());
+        }
+        if input.title.trim().is_empty() {
+            return Err("title must not be empty".to_string());
+        }
+        if input.markdown.trim().is_empty() {
+            return Err("markdown must not be empty".to_string());
+        }
+
+        let mut conn = self.open()?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        if load_page_by_slug(&tx, &input.slug)?.is_some() {
+            return Err(format!("page slug already exists: {}", input.slug));
+        }
+
+        let page_id = format!("page_{}", Uuid::new_v4());
+        tx.execute(
+            "INSERT INTO wiki_pages (
+                id, slug, page_type, title, current_revision_id, summary_1line, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7)",
+            params![
+                page_id,
+                input.slug,
+                input.page_type.as_str(),
+                input.title,
+                render::summary_from_title(&input.title, &input.page_type),
+                adopted_at,
+                adopted_at,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+
+        let revision = crate::commit::commit_revision_in_tx(
+            &tx,
+            &CommitPageRevisionInput {
+                page_id: page_id.clone(),
+                expected_current_revision_id: None,
+                title: input.title.clone(),
+                markdown: input.markdown,
+                change_reason: "adopt_draft_page".to_string(),
+                author_type: "agent".to_string(),
+                tags: Vec::new(),
+                updated_at: adopted_at,
+            },
+        )?;
+        tx.commit().map_err(|error| error.to_string())?;
+
+        let snapshot = export_snapshot(
+            &conn,
+            ExportWikiSnapshotRequest {
+                include_system_pages: false,
+                page_slugs: None,
+            },
+        )?;
+        let index_page = load_system_page(&conn, "index.md")?
+            .ok_or_else(|| "index.md is missing after draft adoption".to_string())?;
+        let log_page = load_system_page(&conn, "log.md")?
+            .ok_or_else(|| "log.md is missing after draft adoption".to_string())?;
+        Ok(AdoptDraftPageOutput {
+            page_id,
+            slug: input.slug,
+            revision_id: revision.revision_id,
+            updated_at: adopted_at,
+            snapshot_revision: snapshot.snapshot_revision,
+            index_markdown: index_page.markdown,
+            log_markdown: log_page.markdown,
+        })
     }
 
     pub fn create_source(&self, input: CreateSourceInput) -> Result<String, String> {
