@@ -1,120 +1,73 @@
 // Where: crates/wiki_runtime/src/lib.rs
-// What: Service-level orchestration for the wiki store.
-// Why: Higher layers need one object that coordinates source-of-truth writes and rendered system pages.
+// What: Service-level orchestration for the FS-first node store.
+// Why: Higher layers should depend on one node-oriented service boundary and nothing else.
 use std::path::PathBuf;
 
-use wiki_store::WikiStore;
+use wiki_store::FsStore;
 use wiki_types::{
-    AdoptDraftPageInput, AdoptDraftPageOutput, AppendSourceChunkInput, BeginSourceUploadInput,
-    CommitPageRevisionInput, CommitPageRevisionOutput, CommitWikiChangesRequest,
-    CommitWikiChangesResponse, CreatePageInput, CreateSourceInput, ExportWikiSnapshotRequest,
-    ExportWikiSnapshotResponse, FetchWikiUpdatesRequest, FetchWikiUpdatesResponse,
-    FinalizeSourceUploadInput, FinalizeSourceUploadOutput, HealthCheckReport, LogEvent, PageBundle,
-    SearchHit, SearchRequest, SourceUploadStatus, Status, SystemPage,
+    DeleteNodeRequest, DeleteNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
+    FetchUpdatesRequest, FetchUpdatesResponse, ListNodesRequest, Node, NodeEntry,
+    SearchNodeHit, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 pub struct WikiService {
-    store: WikiStore,
+    fs_store: FsStore,
 }
 
 impl WikiService {
     pub fn new(database_path: PathBuf) -> Self {
         Self {
-            store: WikiStore::new(database_path),
+            fs_store: FsStore::new(database_path),
         }
     }
 
-    pub fn run_migrations(&self) -> Result<(), String> {
-        self.store.run_migrations()
-    }
-
-    pub fn create_page(&self, input: CreatePageInput) -> Result<String, String> {
-        self.store.create_page(input)
-    }
-
-    pub fn adopt_draft_page(
-        &self,
-        input: AdoptDraftPageInput,
-        adopted_at: i64,
-    ) -> Result<AdoptDraftPageOutput, String> {
-        self.store.adopt_draft_page(input, adopted_at)
-    }
-
-    pub fn create_source(&self, input: CreateSourceInput) -> Result<String, String> {
-        self.store.create_source(input)
-    }
-
-    pub fn begin_source_upload(&self, input: BeginSourceUploadInput) -> Result<String, String> {
-        self.store.begin_source_upload(input)
-    }
-
-    pub fn append_source_chunk(
-        &self,
-        input: AppendSourceChunkInput,
-    ) -> Result<SourceUploadStatus, String> {
-        self.store.append_source_chunk(input)
-    }
-
-    pub fn finalize_source_upload(
-        &self,
-        input: FinalizeSourceUploadInput,
-    ) -> Result<FinalizeSourceUploadOutput, String> {
-        self.store.finalize_source_upload(input)
-    }
-
-    pub fn commit_page_revision(
-        &self,
-        input: CommitPageRevisionInput,
-    ) -> Result<CommitPageRevisionOutput, String> {
-        self.store.commit_page_revision(input)
-    }
-
-    pub fn get_page(&self, slug: &str) -> Result<Option<PageBundle>, String> {
-        self.store.get_page_by_slug(slug)
-    }
-
-    pub fn get_system_page(&self, slug: &str) -> Result<Option<SystemPage>, String> {
-        self.store.get_system_page(slug)
-    }
-
-    pub fn search(&self, request: SearchRequest) -> Result<Vec<SearchHit>, String> {
-        self.store.search(request)
-    }
-
-    pub fn refresh_system_pages(&self, updated_at: i64) -> Result<Vec<SystemPage>, String> {
-        self.store.refresh_system_pages(updated_at)
-    }
-
-    pub fn get_recent_log(&self, limit: usize) -> Result<Vec<LogEvent>, String> {
-        self.store.get_recent_log(limit)
+    pub fn run_fs_migrations(&self) -> Result<(), String> {
+        self.fs_store.run_fs_migrations()
     }
 
     pub fn status(&self) -> Result<Status, String> {
-        self.store.status()
+        self.fs_store.status()
     }
 
-    pub fn lint_health(&self) -> Result<HealthCheckReport, String> {
-        self.store.lint_health()
+    pub fn read_node(&self, path: &str) -> Result<Option<Node>, String> {
+        self.fs_store.read_node(path)
     }
 
-    pub fn export_wiki_snapshot(
+    pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
+        self.fs_store.list_nodes(request)
+    }
+
+    pub fn write_node(
         &self,
-        request: ExportWikiSnapshotRequest,
-    ) -> Result<ExportWikiSnapshotResponse, String> {
-        self.store.export_wiki_snapshot(request)
+        request: WriteNodeRequest,
+        now: i64,
+    ) -> Result<WriteNodeResult, String> {
+        self.fs_store.write_node(request, now)
     }
 
-    pub fn fetch_wiki_updates(
+    pub fn delete_node(
         &self,
-        request: FetchWikiUpdatesRequest,
-    ) -> Result<FetchWikiUpdatesResponse, String> {
-        self.store.fetch_wiki_updates(request)
+        request: DeleteNodeRequest,
+        now: i64,
+    ) -> Result<DeleteNodeResult, String> {
+        self.fs_store.delete_node(request, now)
     }
 
-    pub fn commit_wiki_changes(
+    pub fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, String> {
+        self.fs_store.search_nodes(request)
+    }
+
+    pub fn export_fs_snapshot(
         &self,
-        request: CommitWikiChangesRequest,
-    ) -> Result<CommitWikiChangesResponse, String> {
-        self.store.commit_wiki_changes(request)
+        request: ExportSnapshotRequest,
+    ) -> Result<ExportSnapshotResponse, String> {
+        self.fs_store.export_snapshot(request)
+    }
+
+    pub fn fetch_fs_updates(
+        &self,
+        request: FetchUpdatesRequest,
+    ) -> Result<FetchUpdatesResponse, String> {
+        self.fs_store.fetch_updates(request)
     }
 }

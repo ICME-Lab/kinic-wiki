@@ -1,222 +1,87 @@
-type WikiPageType = variant {
-  Entity;
-  Concept;
-  Overview;
-  Comparison;
-  QueryNote;
-  SourceSummary;
+type DeleteNodeRequest = record { path : text; expected_etag : opt text };
+type DeleteNodeResult = record { etag : text; path : text; deleted_at : int64 };
+type ExportSnapshotRequest = record {
+  include_deleted : bool;
+  prefix : opt text;
 };
-
-type SectionHashEntry = record {
-  section_path : text;
-  content_hash : text;
+type ExportSnapshotResponse = record {
+  snapshot_revision : text;
+  nodes : vec Node;
 };
-
-type WikiPageSnapshot = record {
-  page_id : text;
-  slug : text;
-  title : text;
-  page_type : WikiPageType;
-  revision_id : text;
+type FetchUpdatesRequest = record {
+  include_deleted : bool;
+  known_snapshot_revision : text;
+  prefix : opt text;
+};
+type FetchUpdatesResponse = record {
+  removed_paths : vec text;
+  snapshot_revision : text;
+  changed_nodes : vec Node;
+};
+type ListNodesRequest = record {
+  include_deleted : bool;
+  recursive : bool;
+  prefix : text;
+};
+type Node = record {
   updated_at : int64;
-  markdown : text;
-  section_hashes : vec SectionHashEntry;
+  content : text;
+  etag : text;
+  kind : NodeKind;
+  path : text;
+  created_at : int64;
+  metadata_json : text;
+  deleted_at : opt int64;
 };
-
-type SystemPageSnapshot = record {
-  slug : text;
-  markdown : text;
+type NodeEntry = record {
   updated_at : int64;
   etag : text;
+  kind : NodeEntryKind;
+  path : text;
+  has_children : bool;
+  deleted_at : opt int64;
 };
-
-type WikiSyncManifestEntry = record {
-  page_id : text;
-  slug : text;
-  revision_id : text;
-  updated_at : int64;
-};
-
-type WikiSyncManifest = record {
-  snapshot_revision : text;
-  pages : vec WikiSyncManifestEntry;
-};
-
-type WikiSyncManifestDelta = record {
-  upserted_pages : vec WikiSyncManifestEntry;
-  removed_page_ids : vec text;
-};
-
-type ExportWikiSnapshotRequest = record {
-  include_system_pages : bool;
-  page_slugs : opt vec text;
-};
-
-type ExportWikiSnapshotResponse = record {
-  snapshot_revision : text;
-  pages : vec WikiPageSnapshot;
-  system_pages : vec SystemPageSnapshot;
-  manifest : WikiSyncManifest;
-};
-
-type KnownPageRevision = record {
-  page_id : text;
-  revision_id : text;
-};
-
-type FetchWikiUpdatesRequest = record {
-  known_snapshot_revision : text;
-  known_page_revisions : vec KnownPageRevision;
-  include_system_pages : bool;
-};
-
-type FetchWikiUpdatesResponse = record {
-  snapshot_revision : text;
-  changed_pages : vec WikiPageSnapshot;
-  removed_page_ids : vec text;
-  system_pages : vec SystemPageSnapshot;
-  manifest_delta : WikiSyncManifestDelta;
-};
-
-type PageChangeType = variant { Update; Delete };
-
-type PageChangeInput = record {
-  change_type : PageChangeType;
-  page_id : text;
-  base_revision_id : text;
-  new_markdown : opt text;
-};
-
-type CommittedPageResult = record {
-  page_id : text;
-  revision_id : text;
-  section_hashes : vec SectionHashEntry;
-};
-
-type RejectedPageResult = record {
-  page_id : text;
-  reason : text;
-  conflicting_section_paths : vec text;
-  local_changed_section_paths : vec text;
-  remote_changed_section_paths : vec text;
-  conflict_markdown : opt text;
-};
-
-type CommitWikiChangesRequest = record {
-  base_snapshot_revision : text;
-  page_changes : vec PageChangeInput;
-};
-
-type CommitWikiChangesResponse = record {
-  committed_pages : vec CommittedPageResult;
-  rejected_pages : vec RejectedPageResult;
-  snapshot_revision : text;
-  snapshot_was_stale : bool;
-  system_pages : vec SystemPageSnapshot;
-  manifest_delta : WikiSyncManifestDelta;
-};
-
-type AdoptDraftPageInput = record {
-  slug : text;
-  title : text;
-  page_type : WikiPageType;
-  markdown : text;
-};
-
-type AdoptDraftPageOutput = record {
-  page_id : text;
-  slug : text;
-  revision_id : text;
-  updated_at : int64;
-  snapshot_revision : text;
-  index_markdown : text;
-  log_markdown : text;
-};
-
-type CreateSourceInput = record {
-  source_type : text;
-  title : opt text;
-  canonical_uri : opt text;
-  sha256 : text;
-  mime_type : opt text;
-  imported_at : int64;
-  metadata_json : text;
-  body_text : text;
-};
-
-type Status = record {
-  page_count : nat64;
-  source_count : nat64;
-  system_page_count : nat64;
-};
-
-type HealthIssueKind = variant {
-  OrphanPage;
-  UnsupportedClaim;
-  Contradiction;
-  StaleClaim;
-};
-
-type HealthIssue = record {
-  kind : HealthIssueKind;
-  page_slug : opt text;
-  section_path : opt text;
-  message : text;
-};
-
-type HealthCheckReport = record {
-  issues : vec HealthIssue;
-};
-
-type SearchRequest = record {
-  query_text : text;
-  page_types : vec WikiPageType;
-  top_k : nat32;
-};
-
-type SearchHit = record {
-  slug : text;
-  title : text;
-  page_type : WikiPageType;
-  section_path : opt text;
+type NodeEntryKind = variant { File; Source; Directory };
+type NodeKind = variant { File; Source };
+type Result = variant { Ok : DeleteNodeResult; Err : text };
+type Result_1 = variant { Ok : ExportSnapshotResponse; Err : text };
+type Result_2 = variant { Ok : FetchUpdatesResponse; Err : text };
+type Result_3 = variant { Ok : vec NodeEntry; Err : text };
+type Result_4 = variant { Ok : opt Node; Err : text };
+type Result_5 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_6 = variant { Ok : WriteNodeResult; Err : text };
+type SearchNodeHit = record {
+  kind : NodeKind;
+  path : text;
+  match_reasons : vec text;
   snippet : text;
   score : float32;
-  match_reasons : vec text;
 };
-
-type PageSectionView = record {
-  section_path : text;
-  heading : opt text;
-  text : text;
+type SearchNodesRequest = record {
+  top_k : nat32;
+  prefix : opt text;
+  query_text : text;
 };
-
-type PageBundle = record {
-  page_id : text;
-  slug : text;
-  title : text;
-  page_type : text;
-  current_revision_id : text;
-  markdown : text;
-  sections : vec PageSectionView;
-  updated_at : int64;
+type Status = record {
+  source_count : nat64;
+  deleted_count : nat64;
+  file_count : nat64;
 };
-
-type SystemPage = record {
-  slug : text;
-  markdown : text;
-  updated_at : int64;
-  etag : text;
+type WriteNodeRequest = record {
+  content : text;
+  kind : NodeKind;
+  path : text;
+  expected_etag : opt text;
+  metadata_json : text;
 };
-
-service : {
+type WriteNodeResult = record { created : bool; node : Node };
+service : () -> {
+  delete_node : (DeleteNodeRequest) -> (Result);
+  export_snapshot : (ExportSnapshotRequest) -> (Result_1) query;
+  fetch_updates : (FetchUpdatesRequest) -> (Result_2) query;
+  list_nodes : (ListNodesRequest) -> (Result_3) query;
+  read_node : (text) -> (Result_4) query;
+  search_nodes : (SearchNodesRequest) -> (Result_5) query;
   status : () -> (Status) query;
-  search : (SearchRequest) -> (variant { Ok : vec SearchHit; Err : text }) query;
-  get_page : (text) -> (variant { Ok : opt PageBundle; Err : text }) query;
-  get_system_page : (text) -> (variant { Ok : opt SystemPage; Err : text }) query;
-  lint_health : () -> (variant { Ok : HealthCheckReport; Err : text }) query;
-  export_wiki_snapshot : (ExportWikiSnapshotRequest) -> (variant { Ok : ExportWikiSnapshotResponse; Err : text }) query;
-  fetch_wiki_updates : (FetchWikiUpdatesRequest) -> (variant { Ok : FetchWikiUpdatesResponse; Err : text }) query;
-  adopt_draft_page : (AdoptDraftPageInput) -> (variant { Ok : AdoptDraftPageOutput; Err : text });
-  create_source : (CreateSourceInput) -> (variant { Ok : text; Err : text });
-  commit_wiki_changes : (CommitWikiChangesRequest) -> (variant { Ok : CommitWikiChangesResponse; Err : text });
+  write_node : (WriteNodeRequest) -> (Result_6);
 }

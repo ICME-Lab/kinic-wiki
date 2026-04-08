@@ -1,13 +1,13 @@
 // Where: crates/wiki_cli/src/cli.rs
-// What: clap definitions for the agent-facing wiki CLI.
-// Why: The CLI needs stable subcommands and shared connection arguments.
-use clap::{Args, Parser, Subcommand};
+// What: clap definitions for the FS-first CLI surface.
+// Why: Agents need direct node operations and path-based mirror sync commands.
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use wiki_types::WikiPageType;
+use wiki_types::NodeKind;
 
 #[derive(Parser, Debug)]
 #[command(name = "wiki-cli")]
-#[command(about = "Agent-facing CLI for the Kinic wiki")]
+#[command(about = "Agent-facing CLI for the Kinic FS-first wiki")]
 pub struct Cli {
     #[command(flatten)]
     pub connection: ConnectionArgs,
@@ -27,68 +27,50 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    SourceToDraft {
+    ReadNode {
         #[arg(long)]
-        vault_path: PathBuf,
-        #[arg(long = "input", required = true)]
-        inputs: Vec<PathBuf>,
-        #[arg(long, default_value = "Wiki")]
-        mirror_root: String,
-        #[arg(long)]
-        persist_sources: bool,
+        path: String,
         #[arg(long)]
         json: bool,
     },
-    GenerateDraft {
+    ListNodes {
+        #[arg(long, default_value = "/Wiki")]
+        prefix: String,
         #[arg(long)]
-        vault_path: PathBuf,
-        #[arg(long = "input", required = true)]
-        inputs: Vec<PathBuf>,
-        #[arg(long, default_value = "Wiki")]
-        mirror_root: String,
-        #[arg(long, value_enum, default_value_t = GenerateModeArg::Direct)]
-        mode: GenerateModeArg,
-        #[arg(long, value_enum, default_value_t = GenerateOutputArg::LocalDraft)]
-        output: GenerateOutputArg,
+        recursive: bool,
+        #[arg(long)]
+        include_deleted: bool,
         #[arg(long)]
         json: bool,
     },
-    QueryToPage {
+    WriteNode {
         #[arg(long)]
-        vault_path: PathBuf,
+        path: String,
+        #[arg(long, value_enum, default_value_t = NodeKindArg::File)]
+        kind: NodeKindArg,
         #[arg(long)]
         input: PathBuf,
+        #[arg(long, default_value = "{}")]
+        metadata_json: String,
         #[arg(long)]
-        title: String,
+        expected_etag: Option<String>,
         #[arg(long)]
-        slug: Option<String>,
-        #[arg(long = "page-type", value_enum)]
-        page_type: Option<PageTypeArg>,
-        #[arg(long, default_value = "Wiki")]
-        mirror_root: String,
+        json: bool,
+    },
+    DeleteNode {
+        #[arg(long)]
+        path: String,
+        #[arg(long)]
+        expected_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
     SearchRemote {
         query_text: String,
-        #[arg(long = "page-type", value_enum)]
-        page_types: Vec<PageTypeArg>,
+        #[arg(long, default_value = "/Wiki")]
+        prefix: String,
         #[arg(long, default_value_t = 10)]
         top_k: u32,
-        #[arg(long)]
-        json: bool,
-    },
-    GetPage {
-        slug: String,
-        #[arg(long)]
-        json: bool,
-    },
-    GetSystemPage {
-        slug: String,
-        #[arg(long)]
-        json: bool,
-    },
-    Lint {
         #[arg(long)]
         json: bool,
     },
@@ -114,24 +96,6 @@ pub enum Command {
         #[arg(long, default_value = "Wiki")]
         mirror_root: String,
     },
-    IngestSource {
-        #[arg(long = "input", required = true)]
-        inputs: Vec<PathBuf>,
-        #[arg(long)]
-        json: bool,
-    },
-    AdoptDraft {
-        #[arg(long)]
-        vault_path: PathBuf,
-        #[arg(long)]
-        slug: String,
-        #[arg(long = "page-type", value_enum)]
-        page_type: Option<PageTypeArg>,
-        #[arg(long, default_value = "Wiki")]
-        mirror_root: String,
-        #[arg(long)]
-        json: bool,
-    },
     Push {
         #[arg(long)]
         vault_path: PathBuf,
@@ -140,36 +104,17 @@ pub enum Command {
     },
 }
 
-#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GenerateModeArg {
-    Direct,
-    GraphAssisted,
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeKindArg {
+    File,
+    Source,
 }
 
-#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GenerateOutputArg {
-    LocalDraft,
-}
-
-#[derive(clap::ValueEnum, Debug, Clone)]
-pub enum PageTypeArg {
-    Entity,
-    Concept,
-    Overview,
-    Comparison,
-    QueryNote,
-    SourceSummary,
-}
-
-impl PageTypeArg {
-    pub fn to_wiki_page_type(&self) -> WikiPageType {
+impl NodeKindArg {
+    pub fn to_node_kind(self) -> NodeKind {
         match self {
-            Self::Entity => WikiPageType::Entity,
-            Self::Concept => WikiPageType::Concept,
-            Self::Overview => WikiPageType::Overview,
-            Self::Comparison => WikiPageType::Comparison,
-            Self::QueryNote => WikiPageType::QueryNote,
-            Self::SourceSummary => WikiPageType::SourceSummary,
+            Self::File => NodeKind::File,
+            Self::Source => NodeKind::Source,
         }
     }
 }

@@ -1,113 +1,110 @@
 // Where: crates/wiki_cli/src/commands.rs
-// What: Command handlers for remote reads and local mirror sync.
-// Why: The CLI should keep subcommand behavior explicit and easy to test.
-use crate::adopt::adopt_draft;
+// What: Command handlers for FS-first remote reads and local mirror sync.
+// Why: The CLI should mirror node paths directly and keep sync behavior explicit.
 use crate::cli::{Cli, Command};
 use crate::client::WikiApi;
-use crate::generate::{GenerateDraftRequest, GenerateDraftResponse, generate_draft};
-use crate::ingest::{IngestSourcesRequest, IngestSourcesResponse, ingest_sources};
-use crate::lint::{lint, print_lint_report};
 use crate::lint_local::{lint_local, print_local_lint_report};
 use crate::mirror::{
-    MirrorState, collect_changed_pages, collect_known_pages, load_state, now_millis,
-    read_managed_page_markdown, remove_managed_pages_by_id, remove_stale_managed_pages, save_state,
-    update_local_revision_metadata, write_conflict_file, write_snapshot_mirror,
-};
-use crate::query_page::{
-    QueryToPageRequest, QueryToPageResponse, print_query_to_page_response, query_to_page,
-};
-use crate::source_to_draft::{
-    SourceToDraftRequest, print_source_to_draft_response, source_to_draft,
+    MirrorState, collect_changed_nodes, collect_managed_nodes, deleted_tracked_nodes, load_state,
+    merge_tracked_nodes, now_millis, read_managed_node_content, remove_mirror_paths,
+    remove_stale_managed_files, save_state, tracked_nodes_from_snapshot, update_local_node_metadata,
+    write_conflict_file, write_snapshot_mirror,
 };
 use anyhow::{Result, anyhow};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
-use wiki_types::{CommitWikiChangesRequest, PageChangeInput, PageChangeType, SearchRequest};
+use wiki_types::{
+    DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, ListNodesRequest,
+    SearchNodesRequest, WriteNodeRequest,
+};
+const REMOTE_PREFIX: &str = "/Wiki";
 
 pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
     match cli.command {
-        Command::SourceToDraft {
-            vault_path,
-            inputs,
-            mirror_root,
-            persist_sources,
-            json,
-        } => {
-            let response = source_to_draft(
-                client,
-                SourceToDraftRequest {
-                    vault_path,
-                    mirror_root,
-                    inputs,
-                    persist_sources,
-                },
-            )
-            .await?;
-            print_source_to_draft_response(&response, json)?;
-            if !response.rejected_sources.is_empty() {
-                return Err(anyhow!(
-                    "source ingestion completed with {} rejected input(s)",
-                    response.rejected_sources.len()
-                ));
+        Command::ReadNode { path, json } => {
+            let node = client
+                .read_node(&path)
+                .await?
+                .ok_or_else(|| anyhow!("node not found: {path}"))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&node)?);
+            } else {
+                println!("{}", node.content);
             }
         }
-        Command::GenerateDraft {
-            vault_path,
-            inputs,
-            mirror_root,
-            mode,
-            output,
+        Command::ListNodes {
+            prefix,
+            recursive,
+            include_deleted,
             json,
         } => {
-            let response = generate_draft(
-                client,
-                GenerateDraftRequest {
-                    vault_path,
-                    mirror_root,
-                    inputs,
-                    mode,
-                    output,
-                },
-            )
-            .await?;
-            print_generate_draft_response(&response, json)?;
+            let entries = client
+                .list_nodes(ListNodesRequest {
+                    prefix,
+                    recursive,
+                    include_deleted,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                for entry in entries {
+                    println!("{}\t{:?}\t{}", entry.path, entry.kind, entry.etag);
+                }
+            }
         }
-        Command::QueryToPage {
-            vault_path,
+        Command::WriteNode {
+            path,
+            kind,
             input,
-            title,
-            slug,
-            page_type,
-            mirror_root,
+            metadata_json,
+            expected_etag,
             json,
         } => {
-            let response = query_to_page(
-                client,
-                QueryToPageRequest {
-                    vault_path,
-                    mirror_root,
-                    input,
-                    title,
-                    slug,
-                    page_type: page_type.map(|value| value.to_wiki_page_type()),
-                },
-            )
-            .await?;
-            print_query_to_page_response(&response, json)?;
+            let content = fs::read_to_string(&input)?;
+            let result = client
+                .write_node(WriteNodeRequest {
+                    path,
+                    kind: kind.to_node_kind(),
+                    content,
+                    metadata_json,
+                    expected_etag,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("{}", result.node.etag);
+            }
+        }
+        Command::DeleteNode {
+            path,
+            expected_etag,
+            json,
+        } => {
+            let result = client
+                .delete_node(DeleteNodeRequest {
+                    path,
+                    expected_etag,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("{}", result.etag);
+            }
         }
         Command::SearchRemote {
             query_text,
-            page_types,
+            prefix,
             top_k,
             json,
         } => {
             let hits = client
-                .search(SearchRequest {
+                .search_nodes(SearchNodesRequest {
                     query_text,
-                    page_types: page_types
-                        .into_iter()
-                        .map(|page_type| page_type.to_wiki_page_type())
-                        .collect(),
+                    prefix: Some(prefix),
                     top_k,
                 })
                 .await?;
@@ -115,23 +112,9 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&hits)?);
             } else {
                 for hit in hits {
-                    println!("{}\t{}\t{}", hit.slug, hit.title, hit.snippet);
+                    println!("{}\t{}", hit.path, hit.snippet);
                 }
             }
-        }
-        Command::GetPage { slug, json } => match client.get_page(&slug).await? {
-            Some(page) if json => println!("{}", serde_json::to_string_pretty(&page)?),
-            Some(page) => println!("{}", page.markdown),
-            None => return Err(anyhow!("page not found: {slug}")),
-        },
-        Command::GetSystemPage { slug, json } => match client.get_system_page(&slug).await? {
-            Some(page) if json => println!("{}", serde_json::to_string_pretty(&page)?),
-            Some(page) => println!("{}", page.markdown),
-            None => return Err(anyhow!("system page not found: {slug}")),
-        },
-        Command::Lint { json } => {
-            let report = lint(client).await?;
-            print_lint_report(&report, json)?;
         }
         Command::LintLocal {
             vault_path,
@@ -155,12 +138,12 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&(remote, local))?);
             } else {
                 println!(
-                    "remote: pages={} sources={} system={}",
-                    remote.page_count, remote.source_count, remote.system_page_count
+                    "remote: files={} sources={} deleted={}",
+                    remote.file_count, remote.source_count, remote.deleted_count
                 );
                 if let Some((state, tracked_count)) = local {
                     println!(
-                        "local: snapshot_revision={} tracked_pages={} last_synced_at={}",
+                        "local: snapshot_revision={} tracked_nodes={} last_synced_at={}",
                         state.snapshot_revision, tracked_count, state.last_synced_at
                     );
                 }
@@ -172,41 +155,6 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
         } => {
             pull(client, &vault_path.join(mirror_root)).await?;
         }
-        Command::IngestSource { inputs, json } => {
-            let response = ingest_sources(client, IngestSourcesRequest { inputs }).await?;
-            print_ingest_sources_response(&response, json)?;
-            if !response.rejected.is_empty() {
-                return Err(anyhow!(
-                    "source ingestion completed with {} rejected input(s)",
-                    response.rejected.len()
-                ));
-            }
-        }
-        Command::AdoptDraft {
-            vault_path,
-            slug,
-            page_type,
-            mirror_root,
-            json,
-        } => {
-            let response = adopt_draft(
-                client,
-                &vault_path.join(mirror_root),
-                &slug,
-                page_type.map(|value| value.to_wiki_page_type()),
-            )
-            .await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            } else {
-                println!(
-                    "adopted {} -> {} ({})",
-                    response.slug,
-                    response.path.display(),
-                    response.action
-                );
-            }
-        }
         Command::Push {
             vault_path,
             mirror_root,
@@ -217,125 +165,54 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
     Ok(())
 }
 
-fn print_generate_draft_response(response: &GenerateDraftResponse, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string_pretty(response)?);
-        return Ok(());
-    }
-
-    println!("page map:");
-    for entry in &response.page_map {
-        println!(
-            "- {} ({}) [{}]",
-            entry.slug,
-            entry.title,
-            entry.page_type.as_str()
-        );
-    }
-    println!("draft results:");
-    for result in &response.draft_results {
-        println!(
-            "- {} -> {} ({})",
-            result.slug,
-            result.path.display(),
-            result.action
-        );
-    }
-    if response.open_questions.is_empty() {
-        println!("open questions: none");
-    } else {
-        println!("open questions:");
-        for question in &response.open_questions {
-            println!("- {question}");
-        }
-    }
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn _keep_query_to_page_response(_response: &QueryToPageResponse) {}
-
-fn print_ingest_sources_response(response: &IngestSourcesResponse, json: bool) -> Result<()> {
-    if json {
-        println!("{}", serde_json::to_string_pretty(response)?);
-        return Ok(());
-    }
-
-    println!("ingested:");
-    for entry in &response.ingested {
-        println!(
-            "- {} -> {} ({})",
-            entry.input_path.display(),
-            entry.source_id,
-            entry.action
-        );
-    }
-    if response.rejected.is_empty() {
-        println!("rejected: none");
-    } else {
-        println!("rejected:");
-        for entry in &response.rejected {
-            println!("- {} ({})", entry.input_path.display(), entry.reason);
-        }
-    }
-    Ok(())
-}
-
 pub async fn pull(client: &impl WikiApi, mirror_root: &Path) -> Result<()> {
     let state = load_state(mirror_root)?;
     if state.snapshot_revision.is_empty() {
         let snapshot = client
-            .export_wiki_snapshot(wiki_types::ExportWikiSnapshotRequest {
-                include_system_pages: true,
-                page_slugs: None,
+            .export_snapshot(ExportSnapshotRequest {
+                prefix: Some(REMOTE_PREFIX.to_string()),
+                include_deleted: false,
             })
             .await?;
-        write_snapshot_mirror(mirror_root, &snapshot.pages, &snapshot.system_pages)?;
-        remove_stale_managed_pages(
+        write_snapshot_mirror(mirror_root, &snapshot.nodes)?;
+        remove_stale_managed_files(
             mirror_root,
-            &snapshot
-                .pages
-                .iter()
-                .map(|page| page.page_id.clone())
-                .collect::<HashSet<_>>(),
+            &snapshot.nodes.iter().map(|node| node.path.clone()).collect::<HashSet<_>>(),
         )?;
         save_state(
             mirror_root,
             &MirrorState {
                 snapshot_revision: snapshot.snapshot_revision,
                 last_synced_at: now_millis(),
+                tracked_nodes: tracked_nodes_from_snapshot(&snapshot.nodes),
             },
         )?;
-        println!("pull complete: {} pages", snapshot.pages.len());
+        println!("pull complete: {} nodes", snapshot.nodes.len());
         return Ok(());
     }
 
     let updates = client
-        .fetch_wiki_updates(wiki_types::FetchWikiUpdatesRequest {
+        .fetch_updates(FetchUpdatesRequest {
             known_snapshot_revision: state.snapshot_revision.clone(),
-            known_page_revisions: collect_known_pages(mirror_root)?,
-            include_system_pages: true,
+            prefix: Some(REMOTE_PREFIX.to_string()),
+            include_deleted: false,
         })
         .await?;
-    let known_slugs = collect_known_pages(mirror_root)?
-        .into_iter()
-        .map(|entry| entry.page_id)
-        .collect::<HashSet<_>>();
-    let _ = known_slugs;
-    write_snapshot_mirror(mirror_root, &updates.changed_pages, &updates.system_pages)?;
-    remove_managed_pages_by_id(mirror_root, &updates.removed_page_ids)?;
+    write_snapshot_mirror(mirror_root, &updates.changed_nodes)?;
+    remove_mirror_paths(mirror_root, &updates.removed_paths)?;
     save_state(
         mirror_root,
         &MirrorState {
             snapshot_revision: updates.snapshot_revision,
             last_synced_at: now_millis(),
+            tracked_nodes: merge_tracked_nodes(
+                &state.tracked_nodes,
+                &updates.changed_nodes,
+                &updates.removed_paths,
+            ),
         },
     )?;
-    println!(
-        "pull complete: {} changed, {} removed",
-        updates.changed_pages.len(),
-        updates.removed_page_ids.len()
-    );
+    println!("pull complete: {} changed, {} removed", updates.changed_nodes.len(), updates.removed_paths.len());
     Ok(())
 }
 
@@ -344,64 +221,85 @@ pub async fn push(client: &impl WikiApi, mirror_root: &Path) -> Result<()> {
     if state.snapshot_revision.is_empty() {
         return Err(anyhow!("mirror state is missing; run pull first"));
     }
-    let changed_pages = collect_changed_pages(mirror_root, state.last_synced_at)?;
-    if changed_pages.is_empty() {
-        println!("push skipped: no changed wiki pages");
+    let changed_nodes = collect_changed_nodes(mirror_root, state.last_synced_at)?;
+    let deleted_nodes = deleted_tracked_nodes(mirror_root, &state.tracked_nodes)?;
+    if changed_nodes.is_empty() && deleted_nodes.is_empty() {
+        println!("push skipped: no changed wiki files");
         return Ok(());
     }
-    let mut payloads = HashMap::<String, String>::new();
-    let mut page_changes = Vec::new();
-    for page in &changed_pages {
-        page_changes.push(PageChangeInput {
-            change_type: PageChangeType::Update,
-            page_id: page.metadata.page_id.clone(),
-            base_revision_id: page.metadata.revision_id.clone(),
-            new_markdown: Some(read_managed_page_markdown(page)?),
-        });
-        payloads.insert(page.metadata.page_id.clone(), page.metadata.slug.clone());
-    }
-    let response = client
-        .commit_wiki_changes(CommitWikiChangesRequest {
-            base_snapshot_revision: state.snapshot_revision,
-            page_changes,
-        })
-        .await?;
-    for entry in &response.manifest_delta.upserted_pages {
-        update_local_revision_metadata(
-            mirror_root,
-            &entry.page_id,
-            &entry.revision_id,
-            entry.updated_at,
-        )?;
-    }
-    remove_managed_pages_by_id(mirror_root, &response.manifest_delta.removed_page_ids)?;
-    write_snapshot_mirror(mirror_root, &[], &response.system_pages)?;
-    for rejected in &response.rejected_pages {
-        if let Some(conflict) = &rejected.conflict_markdown {
-            let slug = payloads
-                .get(&rejected.page_id)
-                .cloned()
-                .unwrap_or_else(|| rejected.page_id.clone());
-            write_conflict_file(mirror_root, &slug, conflict)?;
+    let mut conflicts = 0usize;
+    let mut writes = 0usize;
+    for node in &changed_nodes {
+        let result = client
+            .write_node(WriteNodeRequest {
+                path: node.metadata.path.clone(),
+                kind: node.metadata.kind.clone(),
+                content: read_managed_node_content(node)?,
+                metadata_json: "{}".to_string(),
+                expected_etag: Some(node.metadata.etag.clone()),
+            })
+            .await;
+        match result {
+            Ok(updated) => {
+                update_local_node_metadata(mirror_root, &updated.node)?;
+                writes += 1;
+            }
+            Err(error) => {
+                conflicts += 1;
+                write_conflict_file(
+                    mirror_root,
+                    &node.metadata.path,
+                    &read_managed_node_content(node)?,
+                )?;
+                eprintln!("write conflict for {}: {error}", node.metadata.path);
+            }
         }
     }
+
+    let mut deletes = 0usize;
+    for tracked in &deleted_nodes {
+        let result = client
+            .delete_node(DeleteNodeRequest {
+                path: tracked.path.clone(),
+                expected_etag: Some(tracked.etag.clone()),
+            })
+            .await;
+        match result {
+            Ok(_) => deletes += 1,
+            Err(error) => {
+                conflicts += 1;
+                eprintln!("delete conflict for {}: {error}", tracked.path);
+            }
+        }
+    }
+
+    let updates = client
+        .fetch_updates(FetchUpdatesRequest {
+            known_snapshot_revision: state.snapshot_revision,
+            prefix: Some(REMOTE_PREFIX.to_string()),
+            include_deleted: false,
+        })
+        .await?;
+    write_snapshot_mirror(mirror_root, &updates.changed_nodes)?;
+    remove_mirror_paths(mirror_root, &updates.removed_paths)?;
     save_state(
         mirror_root,
         &MirrorState {
-            snapshot_revision: response.snapshot_revision,
+            snapshot_revision: updates.snapshot_revision,
             last_synced_at: now_millis(),
+            tracked_nodes: merge_tracked_nodes(
+                &state.tracked_nodes,
+                &updates.changed_nodes,
+                &updates.removed_paths,
+            ),
         },
     )?;
-    println!(
-        "push complete: {} committed, {} rejected",
-        response.committed_pages.len(),
-        response.rejected_pages.len()
-    );
+    println!("push complete: {} written, {} deleted, {} conflicts", writes, deletes, conflicts);
     Ok(())
 }
 
 fn read_local_status(mirror_root: &Path) -> Result<(MirrorState, usize)> {
     let state = load_state(mirror_root)?;
-    let tracked_count = collect_known_pages(mirror_root)?.len();
+    let tracked_count = collect_managed_nodes(mirror_root)?.len();
     Ok((state, tracked_count))
 }
