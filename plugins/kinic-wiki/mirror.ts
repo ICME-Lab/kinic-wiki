@@ -8,7 +8,7 @@ import {
   serializeMirrorFile,
   stripManagedFrontmatter
 } from "./frontmatter";
-import { findDeletedTrackedNodes } from "./mirror_logic";
+import { conflictFilePath, findDeletedTrackedNodes } from "./mirror_logic";
 import { MirrorFrontmatter, NodeSnapshot, TrackedNodeState } from "./types";
 
 export async function collectManagedNodes(app: App, mirrorRoot: string): Promise<Array<{ file: TFile; metadata: MirrorFrontmatter }>> {
@@ -146,8 +146,7 @@ export async function openMirrorFile(app: App, path: string): Promise<void> {
 
 export async function writeConflictFile(app: App, mirrorRoot: string, remotePath: string, conflictMarkdown: string): Promise<void> {
   await ensureFolder(app, `${mirrorRoot}/conflicts`);
-  const basename = remotePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "conflict";
-  await upsertTextFile(app, `${mirrorRoot}/conflicts/${basename}.conflict.md`, conflictMarkdown);
+  await upsertTextFile(app, conflictFilePath(mirrorRoot, remotePath), conflictMarkdown);
 }
 
 function remoteToLocalPath(mirrorRoot: string, remotePath: string): string {

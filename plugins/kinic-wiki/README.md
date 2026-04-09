@@ -142,7 +142,7 @@ The plugin keeps its local IDL in `candid.ts`, matching the same FS-first method
 7. Run `Wiki: Pull Updates` after a remote change.
 8. Edit a mirrored file and run `Wiki: Push Current Note`.
 9. Run `Wiki: Delete Current Wiki Page`.
-10. Force a conflict and confirm `Wiki/conflicts/*.conflict.md` is created.
+10. Force conflicts for two same-name pages under different paths and confirm separate files such as `Wiki/conflicts/a__foo--<hash>.conflict.md` and `Wiki/conflicts/b__foo--<hash>.conflict.md` are created.
 
 ## Notes
 

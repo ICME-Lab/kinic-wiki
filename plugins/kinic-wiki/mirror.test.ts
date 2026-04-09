@@ -6,7 +6,7 @@ import {
   serializeMirrorFile,
   stripManagedFrontmatter
 } from "./frontmatter";
-import { findDeletedTrackedNodes } from "./mirror_logic";
+import { conflictFilePath, findDeletedTrackedNodes } from "./mirror_logic";
 import { parsePluginSettings, TrackedNodeState } from "./types";
 
 test("managed mirror frontmatter roundtrips path and etag", () => {
@@ -90,6 +90,31 @@ test("deletedTrackedNodes keeps normal mirror files out of delete set", () => {
   );
 
   assert.deepEqual(deleted, []);
+});
+
+test("conflictFilePath keeps same basenames from different paths separate", () => {
+  const first = conflictFilePath("Wiki", "/Wiki/a/foo.md");
+  const second = conflictFilePath("Wiki", "/Wiki/b/foo.md");
+
+  assert.match(first, /^Wiki\/conflicts\/a__foo--[0-9a-f]{16}\.conflict\.md$/);
+  assert.match(second, /^Wiki\/conflicts\/b__foo--[0-9a-f]{16}\.conflict\.md$/);
+  assert.notEqual(first, second);
+});
+
+test("conflictFilePath keeps a readable short stem when unicode segments collapse", () => {
+  assert.match(conflictFilePath("Wiki", "/Wiki/日本/foo.md"), /^Wiki\/conflicts\/foo--[0-9a-f]{16}\.conflict\.md$/);
+  assert.match(conflictFilePath("Wiki", "/Wiki/emoji/😀.md"), /^Wiki\/conflicts\/emoji--[0-9a-f]{16}\.conflict\.md$/);
+});
+
+test("conflictFilePath stays inside filesystem component limits", () => {
+  const longParent = "deep".repeat(100);
+  const longName = "emoji😀".repeat(100);
+  const result = conflictFilePath("Wiki", `/Wiki/${longParent}/${longName}.md`);
+  const fileName = result.split("/").pop();
+
+  assert.ok(fileName);
+  assert.ok(Buffer.byteLength(fileName, "utf8") <= 255);
+  assert.match(fileName, /^[a-z0-9-]+(?:__[a-z0-9-]+)?--[0-9a-f]{16}\.conflict\.md$/);
 });
 
 function remoteToLocalPath(mirrorRoot: string, remotePath: string): string {

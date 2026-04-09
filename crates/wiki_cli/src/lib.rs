@@ -10,6 +10,8 @@ pub mod commands;
 #[cfg(test)]
 mod commands_fs_tests;
 #[cfg(test)]
+mod commands_sync_tests;
+#[cfg(test)]
 mod commands_vfs_tests;
 pub mod lint_local;
 pub mod mirror;
