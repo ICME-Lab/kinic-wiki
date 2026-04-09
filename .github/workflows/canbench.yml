@@ -26,6 +26,8 @@ jobs:
         run: rustup default stable
       - name: Add wasm target
         run: rustup target add wasm32-wasip1
+      - name: Install WASI sysroot
+        run: sudo apt-get update && sudo apt-get install -y wasi-libc
       - name: Install wasm tooling
         run: cargo install wasi2ic ic-wasm --locked
       - name: Provision fixed canbench toolchain

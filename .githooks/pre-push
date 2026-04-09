@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Where: .githooks/pre-push
+# What: Run the full local CI entrypoint before pushing.
+# Why: Push is the right boundary for heavier checks such as clippy, plugin build, and release canister wasm build.
+
+exec ./.local/check.sh

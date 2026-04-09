@@ -11,6 +11,10 @@ TARGET_DIR="${REPO_ROOT}/target/wasm32-wasip1/release"
 INPUT_WASM="${TARGET_DIR}/wiki_canister.wasm"
 OUTPUT_WASM="${REPO_ROOT}/target/canbench/wiki_canister_canbench.wasm"
 
+# shellcheck source=./wasi-env.sh
+source "${SCRIPT_DIR}/wasi-env.sh"
+configure_wasi_cc_env
+
 mkdir -p "$(dirname "${OUTPUT_WASM}")"
 
 cargo build \

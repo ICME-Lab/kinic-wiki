@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Where: .githooks/pre-commit
+# What: Run fast local checks before creating a commit.
+# Why: Commit hooks should stay fast enough for normal iteration, while heavier CI-like checks can run at push time.
+
+exec ./.local/pre-commit.sh
