@@ -217,10 +217,10 @@ fn short_conflict_stem(relative_path: &str) -> String {
         .filter(|segment| !segment.is_empty())
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-    if let Some(last) = segments.last_mut() {
-        if let Some(stem) = Path::new(last).file_stem().and_then(|value| value.to_str()) {
-            *last = stem.to_string();
-        }
+    if let Some(last) = segments.last_mut()
+        && let Some(stem) = Path::new(last).file_stem().and_then(|value| value.to_str())
+    {
+        *last = stem.to_string();
     }
     let start = segments.len().saturating_sub(CONFLICT_STEM_SEGMENTS);
     let stem = segments[start..]

@@ -253,7 +253,7 @@ fn parse_codex_answer(events: &[Value]) -> Result<String> {
         .filter_map(|event| event.get("item"))
         .filter(|item| item.get("type").and_then(Value::as_str) == Some("agent_message"))
         .filter_map(|item| item.get("text").and_then(Value::as_str))
-        .last()
+        .next_back()
         .ok_or_else(|| anyhow!("Codex output did not include an agent_message"))?;
     let value: Value =
         serde_json::from_str(text).with_context(|| "Codex agent_message was not JSON")?;
