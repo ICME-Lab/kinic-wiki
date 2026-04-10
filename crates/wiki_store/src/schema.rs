@@ -107,7 +107,7 @@ fn fs_nodes_has_rowid_primary_key(conn: &Connection) -> Result<bool, String> {
         .find(|(name, _, _)| name == "id")
         .map(|(_, ty, pk)| ty.eq_ignore_ascii_case("INTEGER") && *pk == 1)
         .unwrap_or(false);
-    let path_column = columns.iter().find(|(name, _, _)| name == "path").is_some();
+    let path_column = columns.iter().any(|(name, _, _)| name == "path");
 
     Ok(id_column && path_column)
 }
