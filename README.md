@@ -117,6 +117,41 @@ The validation split is:
 - external filesystem-style benchmarks: `fio`, `smallfile`, `SQLite`
 - deployed canister benchmarks: `run_canister_vfs_workload.sh`, `run_canister_vfs_latency.sh`
 - VFS-native scaling benchmarks: `canbench` for `write`, `append`, `move`, `search`, `export_snapshot`, `fetch_updates`
+- memory-quality benchmark harness: `wiki-cli beam-bench` for BEAM-style retrieval evaluation over imported wiki notes
+
+## BEAM Benchmark Harness
+
+`wiki-cli beam-bench` is separate from `canbench`.
+
+- `canbench` measures canister-side API scale and instructions
+- `beam-bench` measures retrieval quality after importing long conversations into `/Wiki/beam/...`
+
+The BEAM harness currently targets two providers:
+
+- `codex` provider: Codex CLI e2e over `wiki-cli` read-only commands
+- `openai` provider: OpenAI Responses API via `OPENAI_API_KEY`
+- read-only tool/command access only
+- artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `report.md`
+
+Example:
+
+```bash
+cargo run -p wiki-cli -- \
+  --replica-host http://127.0.0.1:4943 \
+  --canister-id aaaaa-aa \
+  beam-bench \
+  --dataset-path fixtures/beam/beam_sample.json \
+  --split 100K \
+  --model gpt-4.1 \
+  --output-dir artifacts/beam-sample \
+  --provider codex \
+  --codex-sandbox danger-full-access \
+  --limit 1 \
+  --questions-per-conversation 1 \
+  --parallelism 1
+```
+
+The harness imports each conversation under a namespaced prefix such as `/Wiki/beam/beam-run-<timestamp>/<conversation_id>/` and keeps probing answers out of the wiki notes. The `codex` provider defaults to `danger-full-access` so the child Codex process can reach the local PocketIC gateway. This command is intended for manual or dedicated benchmark runs rather than normal CI.
 
 Optional external VFS benchmarks:
 
@@ -145,14 +180,37 @@ These runs target an already deployed canister through `ic-agent`. They are not 
 The deployed benchmark artifacts are written to `.benchmarks/results/<tool>/<timestamp>/` and always include:
 
 - `summary.txt` for the human-facing summary
-- `config.json` for the true benchmark settings
-- `environment.json` for the execution environment plus `replica_host`, `canister_id`, `bench_transport`
-- `raw/*.json` for scenario-level aggregated source data
+- `config.txt` for the true benchmark settings as JSON text
+- `environment.txt` for the execution environment plus `replica_host`, `canister_id`, `bench_transport`, `canister_status_source`
+- `raw/*.txt` for scenario-level aggregated source data as JSON text
 
 The deployed canister benchmark split is:
 
-- `run_canister_vfs_workload.sh`: smallfile-like workload inputs over `write_node`, `move_node`, `delete_node`, `read_node`, `list_nodes`
+- `run_canister_vfs_workload.sh`: API-centric repeated request benchmarks over `create`, `update`, `append`, `edit`, `move`, `delete`, `read`, `list`, `search`
 - `run_canister_vfs_latency.sh`: single-update mutation latency over `write_node` and `append_node`
+
+The deployed canister benchmark focus is:
+
+- primary metrics: `cycles + latency + wire IO`
+- payload sizes: `1k`, `10k`, `100k`, `1MB`
+- cycles source: `icp canister status --json`
+- update-heavy scenarios default to `isolated_single_op`
+- query and fallback scenarios keep `scenario_total`
+- update response contract: `write / append / edit / move / delete / multi_edit` return a lightweight ACK, not full node content
+
+Interpretation notes:
+
+- `isolated_single_op` writes seed data only in setup and measures only the pure API calls in the measure phase
+- `isolated_single_op` saves `setup_cycles_delta` plus `measured_cycles_delta`
+- `cycles_per_measured_request` is the primary cost field for isolated update scenarios
+- `scenario_total` remains as a compatibility metric for query-style scenarios and legacy comparisons
+- `WIKI_CANISTER_DIAGNOSTIC_PROFILE=fts_disabled_for_bench` excludes `search` from the default workload matrix because FTS maintenance is intentionally disabled and the resulting search behavior is not comparable to baseline
+
+Validation boundary for the current benchmark changes:
+
+- benchmark success is currently checked with `cargo test -p wiki-cli --bin vfs_bench`
+- the Codex schema-path guard is checked with `cargo test -p wiki-cli beam_bench::model::tests::codex_schema_paths_are_unique`
+- `cargo test -p wiki-cli` currently has a separate known failure in `commands_fs_tests::push_uses_expected_etag_from_frontmatter`; treat that as an unrelated FS push issue, not a blocker for benchmark-only changes
 
 ## Core operations
 
@@ -408,7 +466,7 @@ Main tables:
 
 ## Conflict model
 
-Concurrency is controlled with `etag`, not revision IDs.
+Concurrency is controlled with `etag`, which is a content digest for the current node state.
 
 - create: `expected_etag = None`
 - update: current `etag` must match
@@ -473,6 +531,11 @@ Build flow:
 1. `cargo build --target wasm32-wasip1 -p wiki-canister`
 2. `wasi2ic`
 3. `ic-wasm` embeds `candid:service`
+
+Diagnostic profiles:
+
+- `WIKI_CANISTER_DIAGNOSTIC_PROFILE=baseline`
+- `WIKI_CANISTER_DIAGNOSTIC_PROFILE=fts_disabled_for_bench`
 
 Project build config:
 [`icp.yaml`](icp.yaml)

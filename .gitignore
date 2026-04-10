@@ -21,6 +21,8 @@
 # Temp files
 /tmp/
 *.tmp
+__pycache__/
+*.pyc
 
 # Obsidian plugin artifacts
 /plugins/kinic-wiki/node_modules/
