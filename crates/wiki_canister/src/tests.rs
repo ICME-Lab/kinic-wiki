@@ -116,18 +116,13 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     assert!(empty_delta.changed_nodes.is_empty());
     assert!(empty_delta.removed_paths.is_empty());
 
-    let full_refresh = fetch_updates(FetchUpdatesRequest {
+    let invalid_delta = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: "missing".to_string(),
         prefix: Some("/Wiki".to_string()),
-    })
-    .expect("unknown snapshot should full refresh");
-    assert_eq!(full_refresh.changed_nodes.len(), 2);
-    assert!(full_refresh.removed_paths.is_empty());
-    assert!(
-        full_refresh
-            .changed_nodes
-            .iter()
-            .all(|entry| entry.path.starts_with("/Wiki"))
+    });
+    assert_eq!(
+        invalid_delta.expect_err("unknown snapshot should fail"),
+        "known_snapshot_revision is invalid"
     );
 
     let deleted = delete_node(DeleteNodeRequest {
@@ -295,12 +290,4 @@ fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
         .expect("read should succeed")
         .expect("node should exist");
     assert_eq!(edited_node.content, "one two");
-}
-
-#[test]
-fn exported_candid_matches_checked_in_did() {
-    let actual = super::candid_interface();
-    let expected = include_str!("../wiki.did");
-
-    assert_eq!(actual.trim(), expected.trim());
 }

@@ -10,6 +10,10 @@ export function shouldSkipAutoPull(hasDirtyManagedNodes: boolean): boolean {
   return hasDirtyManagedNodes;
 }
 
+export function hasStoredSnapshotRevision(snapshotRevision: string): boolean {
+  return snapshotRevision.trim().length > 0;
+}
+
 export function excludeCleanRemotePaths(dirtyPaths: Set<string>, cleanRemotePaths: Set<string>): Set<string> {
   const filtered = new Set(dirtyPaths);
   for (const path of cleanRemotePaths) {

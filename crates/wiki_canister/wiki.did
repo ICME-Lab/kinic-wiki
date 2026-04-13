@@ -45,6 +45,7 @@ type GlobNodesRequest = record {
   path : opt text;
 };
 type ListNodesRequest = record { recursive : bool; prefix : text };
+type MkdirNodeRequest = record { path : text };
 type MkdirNodeResult = record { created : bool; path : text };
 type MoveNodeRequest = record {
   from_path : text;
@@ -140,7 +141,7 @@ service : () -> {
   fetch_updates : (FetchUpdatesRequest) -> (Result_4) query;
   glob_nodes : (GlobNodesRequest) -> (Result_5) query;
   list_nodes : (ListNodesRequest) -> (Result_6) query;
-  mkdir_node : (DeleteNodeResult) -> (Result_7) query;
+  mkdir_node : (MkdirNodeRequest) -> (Result_7) query;
   move_node : (MoveNodeRequest) -> (Result_8);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_2);
   read_node : (text) -> (Result_9) query;

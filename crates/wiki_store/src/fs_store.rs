@@ -32,7 +32,6 @@ const SEARCH_SNIPPET_ELLIPSIS: &str = "...";
 // Keep this in sync with the FTS schema if additional indexed columns are ever added.
 const FS_NODES_FTS_CONTENT_COLUMN_INDEX: i32 = 0;
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
-const MAX_RETAINED_REVISIONS: i64 = 256;
 
 // Where: crates/wiki_store/src/fs_store.rs
 // What: Change-log semantics used by delta sync visibility checks.
@@ -109,7 +108,6 @@ impl FsStore {
         node.etag = compute_node_etag(&node);
         let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
         sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
-        compact_change_log(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(WriteNodeResult {
             node: node_ack(&node),
@@ -135,7 +133,6 @@ impl FsStore {
         node.etag = compute_node_etag(&node);
         let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
         sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
-        compact_change_log(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(WriteNodeResult {
             node: node_ack(&node),
@@ -168,7 +165,6 @@ impl FsStore {
         node.etag = compute_node_etag(&node);
         save_node(&tx, Some(current.row_id), &node)?;
         sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
-        compact_change_log(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(EditNodeResult {
             node: node_ack(&node),
@@ -215,7 +211,6 @@ impl FsStore {
         moved.etag = compute_node_etag(&moved);
         save_node(&tx, Some(current.row_id), &moved)?;
         sync_node_fts(&tx, Some(&current), Some((current.row_id, &moved)))?;
-        compact_change_log(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(MoveNodeResult {
             node: node_ack(&moved),
@@ -318,7 +313,6 @@ impl FsStore {
         node.etag = compute_node_etag(&node);
         save_node(&tx, Some(current.row_id), &node)?;
         sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
-        compact_change_log(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(MultiEditNodeResult {
             node: node_ack(&node),
@@ -341,7 +335,6 @@ impl FsStore {
         }
         record_path_removal(&tx, &path)?;
         delete_node_row(&tx, &current)?;
-        compact_change_log(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(DeleteNodeResult { path })
     }
@@ -487,25 +480,17 @@ impl FsStore {
             });
         }
         let Some(known_snapshot) = known_snapshot else {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: load_scoped_nodes(&conn, &prefix)?,
-                removed_paths: Vec::new(),
-            });
+            return Err("known_snapshot_revision is invalid".to_string());
         };
-        if known_snapshot.prefix != prefix || known_snapshot.revision > current_change_revision {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: load_scoped_nodes(&conn, &prefix)?,
-                removed_paths: Vec::new(),
-            });
+        if known_snapshot.prefix != prefix {
+            return Err("known_snapshot_revision prefix does not match request prefix".to_string());
         }
-        if known_snapshot.revision < min_retained_revision(current_change_revision) {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: load_scoped_nodes(&conn, &prefix)?,
-                removed_paths: Vec::new(),
-            });
+        if known_snapshot.revision > current_change_revision {
+            return Err("known_snapshot_revision is newer than current revision".to_string());
+        }
+        let oldest_change_revision = oldest_snapshot_revision_number(&conn)?;
+        if known_snapshot.revision < oldest_change_revision.saturating_sub(1) {
+            return Err("known_snapshot_revision is no longer available".to_string());
         }
         let mut changed_nodes = Vec::new();
         let mut removed_paths = Vec::new();
@@ -555,21 +540,12 @@ fn current_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
     .map_err(|error| error.to_string())
 }
 
-fn min_retained_revision(current_revision: i64) -> i64 {
-    if current_revision <= 0 {
-        return 0;
-    }
-    (current_revision - MAX_RETAINED_REVISIONS + 1).max(0)
-}
-
-fn compact_change_log(tx: &Transaction<'_>) -> Result<(), String> {
-    let current_revision = current_snapshot_revision_number(tx)?;
-    let retained_revision = min_retained_revision(current_revision);
-    tx.execute(
-        "DELETE FROM fs_change_log WHERE revision < ?1",
-        params![retained_revision],
+fn oldest_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COALESCE(MIN(revision), 0) FROM fs_change_log",
+        [],
+        |row| row.get::<_, i64>(0),
     )
-    .map(|_| ())
     .map_err(|error| error.to_string())
 }
 

@@ -151,8 +151,11 @@ section hash や manifest は持ちません。
 - `known_snapshot_revision` が一致する場合、`fetch_updates` は空差分を返す
 - 不一致の場合、`fetch_updates` は `changed_nodes` と `removed_paths` を返す
 - `removed_paths` は削除済み node 本体ではなく path のみ返す
-- `known_snapshot_revision` が未登録でも error にはせず、full refresh と同じ返し方をする
-- `known_snapshot_revision` が change log の保持下限より古い場合も error にはせず、delta ではなく full refresh を返す
+- `fetch_updates` は差分専用であり、full refresh は返さない
+- `known_snapshot_revision` が不正、scope 不一致、または current revision より未来の場合は error を返す
+- change log は SQLite storage の実上限まで保持し、古い valid revision でも差分取得を試行する
+- 既存 DB で過去の change log が欠損している場合、取得可能範囲より古い revision は error を返す
+- 初回同期と scope 変更は `export_snapshot` で snapshot を取得してから `fetch_updates` に移行する
 - `move_node` のような物理 rename では旧 path を `removed_paths` に、新 path を `changed_nodes` に返す
 
 ## 検索契約

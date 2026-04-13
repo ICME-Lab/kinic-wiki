@@ -458,10 +458,15 @@ Sync uses:
 - `export_snapshot` for full export
 - `fetch_updates` for delta sync
 
-If the client does not know a valid snapshot revision, or the revision is older than the retained
-change-log floor, `fetch_updates` returns a full refresh instead of erroring.
+`fetch_updates` only returns deltas. If the client does not know a valid snapshot revision, changes
+scope, or sends a future revision, `fetch_updates` returns an error instead of a full refresh.
+Change-log rows are retained in SQLite until storage is exhausted, so old valid revisions can still
+produce deltas.
+If an existing database has already lost historical change-log rows, revisions before the available
+log floor also return an error.
 
-Scope changes compare the known snapshot scope against the current scope:
+Initial sync and scope changes must use `export_snapshot` first, then continue with
+`fetch_updates` for the same scope:
 
 - deleted paths appear in `removed_paths`
 - moved old paths appear in `removed_paths`

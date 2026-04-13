@@ -21,6 +21,7 @@ import {
 import { partitionPullUpdates } from "./mirror_logic";
 import {
   excludeCleanRemotePaths,
+  hasStoredSnapshotRevision,
   initialSyncStalePaths,
   mergeDirtyPaths,
   shouldSkipPush,
@@ -47,21 +48,7 @@ export class WikiSyncService {
   }
 
   async initialSync(): Promise<void> {
-    const snapshot = await this.client().exportSnapshot();
-    const managedNodes = await collectManagedNodes(this.app, this.settings.mirrorRoot);
-    const remotePaths = new Set(snapshot.nodes.map((node) => node.path));
-    const dirtyPaths = dirtyPathsFromManagedNodes(managedNodes, this.settings.lastSyncedAt);
-    const stalePaths = initialSyncStalePaths(
-      managedNodes.map((node) => node.metadata.path),
-      this.settings.trackedNodes.map((node) => node.path),
-      remotePaths
-    );
-    const result = await this.applyRemoteChanges(
-      snapshot.snapshot_revision,
-      snapshot.nodes,
-      stalePaths,
-      dirtyPaths
-    );
+    const result = await this.applyInitialSnapshot();
     new Notice(
       `Initial sync completed: ${result.appliedChanges} changed, ${result.appliedRemovals} removed, ${result.conflictChanges + result.conflictRemovals} conflicts`
     );
@@ -75,6 +62,9 @@ export class WikiSyncService {
   }
 
   async pullUpdatesWithDirtyPaths(dirtyPaths: Set<string>): Promise<SyncApplyResult> {
+    if (!hasStoredSnapshotRevision(this.settings.lastSnapshotRevision)) {
+      return this.applyInitialSnapshot(dirtyPaths);
+    }
     const client = this.client();
     const updates = await client.fetchUpdates(this.settings.lastSnapshotRevision);
     return this.applyFetchedUpdates(updates, dirtyPaths);
@@ -191,6 +181,23 @@ export class WikiSyncService {
 
     const syncResult = await this.syncTrackedState(cleanRemotePaths, unresolvedConflictPaths);
     new Notice(`Push complete: ${writes} written, ${conflicts} conflicts${formatSyncConflictSuffix(syncResult)}`);
+  }
+
+  private async applyInitialSnapshot(dirtyPaths?: Set<string>): Promise<SyncApplyResult> {
+    const snapshot = await this.client().exportSnapshot();
+    const managedNodes = await collectManagedNodes(this.app, this.settings.mirrorRoot);
+    const remotePaths = new Set(snapshot.nodes.map((node) => node.path));
+    const stalePaths = initialSyncStalePaths(
+      managedNodes.map((node) => node.metadata.path),
+      this.settings.trackedNodes.map((node) => node.path),
+      remotePaths
+    );
+    return this.applyRemoteChanges(
+      snapshot.snapshot_revision,
+      snapshot.nodes,
+      stalePaths,
+      dirtyPaths ?? dirtyPathsFromManagedNodes(managedNodes, this.settings.lastSyncedAt)
+    );
   }
 
   private async syncTrackedState(

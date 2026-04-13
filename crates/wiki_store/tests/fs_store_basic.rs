@@ -193,10 +193,10 @@ fn status_counts_live_files_and_sources() {
 }
 
 #[test]
-fn change_log_compaction_keeps_recent_revisions_only() {
+fn change_log_retains_all_recorded_revisions() {
     let (_dir, store) = new_store();
     for now in 10..=270 {
-        let path = format!("/Wiki/compact-{now}.md");
+        let path = format!("/Wiki/history-{now}.md");
         write_file(&store, &path, None, now);
     }
 
@@ -217,8 +217,8 @@ fn change_log_compaction_keeps_recent_revisions_only() {
         })
         .expect("max revision should succeed");
 
-    assert_eq!(revision_count, 256);
-    assert_eq!(oldest_revision, 6);
+    assert_eq!(revision_count, 261);
+    assert_eq!(oldest_revision, 1);
     assert_eq!(newest_revision, 261);
 }
 

@@ -80,16 +80,17 @@ fn fetch_updates_returns_empty_when_snapshot_matches() {
 }
 
 #[test]
-fn fetch_updates_full_refreshes_when_known_revision_falls_below_retention_floor() {
+fn fetch_updates_returns_delta_from_old_retained_revision() {
     let (_dir, store) = new_store();
     write_node(&store, "/Wiki/base.md", "base", None, 10);
+    write_node(&store, "/Wiki/unchanged.md", "unchanged", None, 11);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             prefix: Some("/Wiki".to_string()),
         })
         .expect("base snapshot should succeed");
 
-    for now in 11..=270 {
+    for now in 12..=320 {
         let path = format!("/Wiki/history-{now}.md");
         let content = format!("revision {now}");
         write_node(&store, &path, &content, None, now);
@@ -102,13 +103,13 @@ fn fetch_updates_full_refreshes_when_known_revision_falls_below_retention_floor(
         })
         .expect("updates should succeed");
 
-    assert_eq!(updates.changed_nodes.len(), 261);
+    assert_eq!(updates.changed_nodes.len(), 309);
     assert!(updates.removed_paths.is_empty());
     assert!(
-        updates
+        !updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Wiki/base.md")
+            .any(|node| node.path == "/Wiki/unchanged.md")
     );
     assert!(
         updates
@@ -119,7 +120,36 @@ fn fetch_updates_full_refreshes_when_known_revision_falls_below_retention_floor(
 }
 
 #[test]
-fn fetch_updates_returns_delta_while_known_revision_stays_within_retention_floor() {
+fn fetch_updates_rejects_revision_before_available_change_log() {
+    let (_dir, store) = new_store();
+    write_node(&store, "/Wiki/base.md", "base", None, 10);
+    let base = store
+        .export_snapshot(ExportSnapshotRequest {
+            prefix: Some("/Wiki".to_string()),
+        })
+        .expect("base snapshot should succeed");
+
+    for now in 11..=20 {
+        let path = format!("/Wiki/history-{now}.md");
+        let content = format!("revision {now}");
+        write_node(&store, &path, &content, None, now);
+    }
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [6_i64])
+        .expect("manual compaction should succeed");
+
+    let error = store
+        .fetch_updates(FetchUpdatesRequest {
+            known_snapshot_revision: base.snapshot_revision,
+            prefix: Some("/Wiki".to_string()),
+        })
+        .expect_err("missing historical change log should fail");
+
+    assert_eq!(error, "known_snapshot_revision is no longer available");
+}
+
+#[test]
+fn fetch_updates_returns_delta_from_recent_revision() {
     let (_dir, store) = new_store();
     for now in 10..=19 {
         let path = format!("/Wiki/seed-{now}.md");
@@ -235,7 +265,7 @@ fn fetch_updates_returns_only_changed_nodes_since_known_snapshot() {
 }
 
 #[test]
-fn fetch_updates_full_refreshes_for_unknown_snapshot_revision() {
+fn fetch_updates_rejects_invalid_snapshot_revision() {
     let (_dir, store) = new_store();
     write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     write_node(&store, "/Wiki/beta.md", "beta", None, 11);
@@ -244,27 +274,32 @@ fn fetch_updates_full_refreshes_for_unknown_snapshot_revision() {
         "unknown".to_string(),
         "v3:1:0:2f57696b69:old-state-hash".to_string(),
     ] {
-        let updates = store
+        let error = store
             .fetch_updates(FetchUpdatesRequest {
                 known_snapshot_revision,
                 prefix: Some("/Wiki".to_string()),
             })
-            .expect("unknown snapshot should full refresh");
-        assert_eq!(updates.changed_nodes.len(), 2);
-        assert!(
-            updates
-                .changed_nodes
-                .iter()
-                .any(|node| node.path == "/Wiki/alpha.md")
-        );
-        assert!(
-            updates
-                .changed_nodes
-                .iter()
-                .any(|node| node.path == "/Wiki/beta.md")
-        );
-        assert!(updates.removed_paths.is_empty());
+            .expect_err("invalid snapshot should fail");
+        assert_eq!(error, "known_snapshot_revision is invalid");
     }
+}
+
+#[test]
+fn fetch_updates_rejects_future_snapshot_revision() {
+    let (_dir, store) = new_store();
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+
+    let error = store
+        .fetch_updates(FetchUpdatesRequest {
+            known_snapshot_revision: "v5:999999:2f57696b69".to_string(),
+            prefix: Some("/Wiki".to_string()),
+        })
+        .expect_err("future snapshot should fail");
+
+    assert_eq!(
+        error,
+        "known_snapshot_revision is newer than current revision"
+    );
 }
 
 #[test]
@@ -324,7 +359,7 @@ fn snapshot_revision_changes_when_scope_changes_without_new_writes() {
 }
 
 #[test]
-fn fetch_updates_full_refreshes_when_prefix_changes_without_new_writes() {
+fn fetch_updates_rejects_prefix_change_without_new_writes() {
     let (_dir, store) = new_store();
     write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     write_node(&store, "/Wiki/nested/beta.md", "beta", None, 11);
@@ -334,31 +369,21 @@ fn fetch_updates_full_refreshes_when_prefix_changes_without_new_writes() {
             prefix: Some("/Wiki/nested".to_string()),
         })
         .expect("nested snapshot should succeed");
-    let updates = store
+    let error = store
         .fetch_updates(FetchUpdatesRequest {
             known_snapshot_revision: nested_snapshot.snapshot_revision,
             prefix: Some("/Wiki".to_string()),
         })
-        .expect("updates should succeed");
+        .expect_err("prefix change should fail");
 
-    assert_eq!(updates.changed_nodes.len(), 2);
-    assert!(
-        updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Wiki/alpha.md")
+    assert_eq!(
+        error,
+        "known_snapshot_revision prefix does not match request prefix"
     );
-    assert!(
-        updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Wiki/nested/beta.md")
-    );
-    assert!(updates.removed_paths.is_empty());
 }
 
 #[test]
-fn fetch_updates_full_refreshes_when_prefix_shrinks_without_new_writes() {
+fn fetch_updates_rejects_prefix_shrink_without_new_writes() {
     let (_dir, store) = new_store();
     write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     write_node(&store, "/Wiki/nested/beta.md", "beta", None, 11);
@@ -368,20 +393,21 @@ fn fetch_updates_full_refreshes_when_prefix_shrinks_without_new_writes() {
             prefix: Some("/Wiki".to_string()),
         })
         .expect("root snapshot should succeed");
-    let updates = store
+    let error = store
         .fetch_updates(FetchUpdatesRequest {
             known_snapshot_revision: root_snapshot.snapshot_revision,
             prefix: Some("/Wiki/nested".to_string()),
         })
-        .expect("updates should succeed");
+        .expect_err("prefix shrink should fail");
 
-    assert_eq!(updates.changed_nodes.len(), 1);
-    assert_eq!(updates.changed_nodes[0].path, "/Wiki/nested/beta.md");
-    assert!(updates.removed_paths.is_empty());
+    assert_eq!(
+        error,
+        "known_snapshot_revision prefix does not match request prefix"
+    );
 }
 
 #[test]
-fn fetch_updates_scope_change_reports_moved_node_without_removed_path() {
+fn fetch_updates_rejects_scope_change_after_move() {
     let (_dir, store) = new_store();
     let source = write_node(&store, "/Wiki/a.md", "alpha", None, 10);
     store
@@ -401,16 +427,17 @@ fn fetch_updates_scope_change_reports_moved_node_without_removed_path() {
             prefix: Some("/Wiki".to_string()),
         })
         .expect("snapshot should succeed");
-    let updates = store
+    let error = store
         .fetch_updates(FetchUpdatesRequest {
             known_snapshot_revision: known.snapshot_revision,
             prefix: Some("/Wiki/archive".to_string()),
         })
-        .expect("updates should succeed");
+        .expect_err("scope change should fail");
 
-    assert_eq!(updates.changed_nodes.len(), 1);
-    assert_eq!(updates.changed_nodes[0].path, "/Wiki/archive/a.md");
-    assert!(updates.removed_paths.is_empty());
+    assert_eq!(
+        error,
+        "known_snapshot_revision prefix does not match request prefix"
+    );
 }
 
 #[test]

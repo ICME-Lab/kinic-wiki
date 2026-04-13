@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   excludeCleanRemotePaths,
+  hasStoredSnapshotRevision,
   initialSyncStalePaths,
   mergeDirtyPaths,
   shouldSkipAutoPull,
@@ -19,6 +20,12 @@ test("push does not skip remote deletions when only deletions are pending", () =
 test("auto pull skips when dirty managed nodes exist", () => {
   assert.equal(shouldSkipAutoPull(false), false);
   assert.equal(shouldSkipAutoPull(true), true);
+});
+
+test("empty snapshot revision requires initial snapshot flow", () => {
+  assert.equal(hasStoredSnapshotRevision(""), false);
+  assert.equal(hasStoredSnapshotRevision("   "), false);
+  assert.equal(hasStoredSnapshotRevision("v5:1:2f57696b69"), true);
 });
 
 test("successful push paths are removed from dirty paths before follow-up pull", () => {

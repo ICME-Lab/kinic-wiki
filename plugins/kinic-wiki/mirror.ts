@@ -9,7 +9,7 @@ import {
   stripManagedFrontmatter
 } from "./frontmatter";
 import { conflictFilePath, findDeletedTrackedNodes } from "./mirror_logic";
-import { MirrorFrontmatter, NodeSnapshot, TrackedNodeState } from "./types";
+import { MirrorFrontmatter, NodeMutationAck, NodeSnapshot, TrackedNodeState } from "./types";
 
 export async function collectManagedNodes(app: App, mirrorRoot: string): Promise<Array<{ file: TFile; metadata: MirrorFrontmatter }>> {
   const root = managedRoot(mirrorRoot);
@@ -45,8 +45,25 @@ export async function writeNodeMirror(app: App, mirrorRoot: string, node: NodeSn
   await upsertTextFile(app, path, serializeMirrorFile(frontmatter, node.content));
 }
 
-export async function updateLocalNodeMetadata(app: App, mirrorRoot: string, node: NodeSnapshot): Promise<void> {
-  await writeNodeMirror(app, mirrorRoot, node);
+export async function updateLocalNodeMetadata(
+  app: App,
+  mirrorRoot: string,
+  node: NodeMutationAck
+): Promise<void> {
+  const localPath = remoteToLocalPath(mirrorRoot, node.path);
+  const existing = app.vault.getAbstractFileByPath(localPath);
+  if (!(existing instanceof TFile)) {
+    throw new Error(`managed mirror file is missing: ${localPath}`);
+  }
+  const current = await app.vault.read(existing);
+  const frontmatter: MirrorFrontmatter = {
+    path: node.path,
+    kind: node.kind,
+    etag: node.etag,
+    updated_at: node.updated_at,
+    mirror: true
+  };
+  await app.vault.modify(existing, serializeMirrorFile(frontmatter, stripManagedFrontmatter(current).trimStart()));
 }
 
 export async function removeMirrorPaths(app: App, mirrorRoot: string, removedPaths: string[]): Promise<void> {

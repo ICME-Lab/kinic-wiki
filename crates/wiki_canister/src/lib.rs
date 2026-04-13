@@ -189,7 +189,26 @@ where
 export_service!();
 
 pub fn candid_interface() -> String {
-    __export_service()
+    normalize_candid_interface(__export_service())
+}
+
+fn normalize_candid_interface(interface: String) -> String {
+    // Where: canister Candid export path.
+    // What: Restore the public nominal request name for mkdir_node.
+    // Why: candid::export_service() deduplicates identical record shapes and
+    //      rewrites MkdirNodeRequest to DeleteNodeResult, but the checked-in
+    //      wiki.did is the public contract and must keep MkdirNodeRequest.
+    let normalized = interface.replace(
+        "mkdir_node : (DeleteNodeResult) -> (Result_7) query;",
+        "mkdir_node : (MkdirNodeRequest) -> (Result_7) query;",
+    );
+    if normalized.contains("type MkdirNodeRequest = record { path : text };") {
+        return normalized;
+    }
+    normalized.replace(
+        "type MkdirNodeResult = record { created : bool; path : text };",
+        "type MkdirNodeRequest = record { path : text };\ntype MkdirNodeResult = record { created : bool; path : text };",
+    )
 }
 
 #[cfg(feature = "canbench-rs")]

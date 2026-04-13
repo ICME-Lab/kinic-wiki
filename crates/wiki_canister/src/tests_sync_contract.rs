@@ -1,6 +1,6 @@
 // Where: crates/wiki_canister/src/tests_sync_contract.rs
-// What: Additional entry-point tests for search and sync scope behavior.
-// Why: The VFS validation phase needs API-boundary coverage for deleted visibility and prefix scoping.
+// What: Additional entry-point tests for search/sync behavior and Candid contract integrity.
+// Why: The VFS validation phase needs API-boundary coverage for behavior and interface drift.
 use tempfile::tempdir;
 use wiki_runtime::WikiService;
 use wiki_types::{
@@ -114,7 +114,7 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
 }
 
 #[test]
-fn canister_fetch_updates_full_refreshes_when_prefix_scope_changes() {
+fn canister_fetch_updates_rejects_prefix_scope_changes() {
     install_test_service();
 
     write_node(WriteNodeRequest {
@@ -141,20 +141,97 @@ fn canister_fetch_updates_full_refreshes_when_prefix_scope_changes() {
     let widened = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: narrow.snapshot_revision,
         prefix: Some("/Wiki".to_string()),
+    });
+    assert_eq!(
+        widened.expect_err("prefix scope change should fail"),
+        "known_snapshot_revision prefix does not match request prefix"
+    );
+}
+
+#[test]
+fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
+    install_test_service();
+
+    write_node(WriteNodeRequest {
+        path: "/Wiki/base.md".to_string(),
+        kind: NodeKind::File,
+        content: "base".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
     })
-    .expect("updates should succeed");
-    assert_eq!(widened.changed_nodes.len(), 2);
+    .expect("base write should succeed");
+    write_node(WriteNodeRequest {
+        path: "/Wiki/unchanged.md".to_string(),
+        kind: NodeKind::File,
+        content: "unchanged".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect("unchanged write should succeed");
+
+    let base = export_snapshot(ExportSnapshotRequest {
+        prefix: Some("/Wiki".to_string()),
+    })
+    .expect("snapshot should succeed");
+
+    for index in 0..300 {
+        write_node(WriteNodeRequest {
+            path: format!("/Wiki/history-{index}.md"),
+            kind: NodeKind::File,
+            content: format!("revision {index}"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("history write should succeed");
+    }
+
+    let updates = fetch_updates(FetchUpdatesRequest {
+        known_snapshot_revision: base.snapshot_revision,
+        prefix: Some("/Wiki".to_string()),
+    })
+    .expect("old snapshot delta should succeed");
+
+    assert_eq!(updates.changed_nodes.len(), 300);
+    assert!(updates.removed_paths.is_empty());
     assert!(
-        widened
+        !updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Wiki/a/one.md")
+            .any(|node| node.path == "/Wiki/unchanged.md")
     );
     assert!(
-        widened
+        updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Wiki/b/two.md")
+            .all(|node| node.path.starts_with("/Wiki/history-"))
     );
-    assert!(widened.removed_paths.is_empty());
+}
+
+#[test]
+fn exported_candid_matches_checked_in_wiki_did() {
+    assert_eq!(
+        super::candid_interface().trim_end(),
+        include_str!("../wiki.did").trim_end()
+    );
+}
+
+#[test]
+fn mkdir_node_request_type_is_fixed_at_interface_boundary() {
+    let generated = super::candid_interface();
+    let checked_in = include_str!("../wiki.did");
+
+    for did in [generated.as_str(), checked_in] {
+        assert!(
+            did.contains("type MkdirNodeRequest = record { path : text };"),
+            "mkdir_node request type must stay nominal in the public interface",
+        );
+        assert!(
+            did.contains("mkdir_node : (MkdirNodeRequest) -> (Result_7) query;"),
+            "mkdir_node must consume MkdirNodeRequest at the interface boundary",
+        );
+        assert!(
+            !did.contains("mkdir_node : (DeleteNodeResult) -> (Result_7) query;"),
+            "mkdir_node must not collapse to DeleteNodeResult",
+        );
+    }
 }
