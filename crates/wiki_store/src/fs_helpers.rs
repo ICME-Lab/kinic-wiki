@@ -1,10 +1,10 @@
 // Where: crates/wiki_store/src/fs_helpers.rs
-// What: Shared FS-first helpers for path validation, row loading, and snapshot hashing.
+// What: Shared FS-first helpers for path validation, row loading, etags, and sync cursors.
 // Why: FsStore behavior must stay deterministic across CRUD, list, search, and sync flows.
 use std::collections::BTreeMap;
 
 use rusqlite::{Connection, OptionalExtension, params};
-use wiki_types::{Node, NodeEntry, NodeEntryKind, NodeKind};
+use wiki_types::{Node, NodeEntry, NodeEntryKind, NodeKind, NodeMutationAck};
 
 use crate::hashing::sha256_hex;
 
@@ -37,44 +37,74 @@ pub(crate) fn normalize_node_path(path: &str, allow_root: bool) -> Result<String
 }
 
 pub(crate) fn compute_node_etag(node: &Node) -> String {
-    let deleted_at = node
-        .deleted_at
-        .map(|value| value.to_string())
-        .unwrap_or_default();
-    sha256_hex(&format!(
-        "{}\n{}\n{}\n{}\n{}",
+    let payload = format!(
+        "{}\n{}\n{}\n{}",
         node.path,
-        node_kind_to_db(&node.kind),
+        node_kind_tag(&node.kind),
         node.content,
         node.metadata_json,
-        deleted_at
-    ))
+    );
+    format!("v4h:{}", sha256_hex(&payload))
+}
+
+pub(crate) fn node_ack(node: &Node) -> NodeMutationAck {
+    NodeMutationAck {
+        path: node.path.clone(),
+        kind: node.kind.clone(),
+        updated_at: node.updated_at,
+        etag: node.etag.clone(),
+    }
+}
+
+pub(crate) struct StoredNode {
+    pub(crate) row_id: i64,
+    pub(crate) node: Node,
+}
+
+#[derive(Clone)]
+pub(crate) struct ScopedEntryRow {
+    pub(crate) path: String,
+    pub(crate) kind: NodeKind,
+    pub(crate) updated_at: i64,
+    pub(crate) etag: String,
+}
+
+#[derive(Clone, Copy, Default)]
+struct DirectoryStats {
+    updated_at: i64,
+}
+
+fn node_kind_tag(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::File => "file",
+        NodeKind::Source => "source",
+    }
 }
 
 pub(crate) fn load_node(conn: &Connection, path: &str) -> Result<Option<Node>, String> {
+    Ok(load_stored_node(conn, path)?.map(|stored| stored.node))
+}
+
+pub(crate) fn load_stored_node(
+    conn: &Connection,
+    path: &str,
+) -> Result<Option<StoredNode>, String> {
     conn.query_row(
-        "SELECT path, kind, content, created_at, updated_at, etag, deleted_at, metadata_json
+        "SELECT id, path, kind, content, created_at, updated_at, etag, metadata_json
          FROM fs_nodes WHERE path = ?1",
         params![path],
-        map_node,
+        map_stored_node,
     )
     .optional()
     .map_err(|error| error.to_string())
 }
 
-pub(crate) fn load_scoped_nodes(
-    conn: &Connection,
-    prefix: &str,
-    include_deleted: bool,
-) -> Result<Vec<Node>, String> {
+pub(crate) fn load_scoped_nodes(conn: &Connection, prefix: &str) -> Result<Vec<Node>, String> {
     let mut sql = String::from(
-        "SELECT path, kind, content, created_at, updated_at, etag, deleted_at, metadata_json
+        "SELECT path, kind, content, created_at, updated_at, etag, metadata_json
          FROM fs_nodes WHERE 1 = 1",
     );
     let mut values = Vec::new();
-    if !include_deleted {
-        sql.push_str(" AND deleted_at IS NULL");
-    }
     if prefix != "/" {
         let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
         sql.push_str(&scope_sql);
@@ -88,55 +118,84 @@ pub(crate) fn load_scoped_nodes(
         .map_err(|error| error.to_string())
 }
 
-pub(crate) fn build_entries(nodes: &[Node], prefix: &str, recursive: bool) -> Vec<NodeEntry> {
+pub(crate) fn load_scoped_entry_rows(
+    conn: &Connection,
+    prefix: &str,
+) -> Result<Vec<ScopedEntryRow>, String> {
+    let mut sql = String::from(
+        "SELECT path, kind, updated_at, etag
+         FROM fs_nodes WHERE 1 = 1",
+    );
+    let mut values = Vec::new();
+    if prefix != "/" {
+        let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
+        sql.push_str(&scope_sql);
+        values.extend(scope_values);
+    }
+    sql.push_str(" ORDER BY path ASC");
+    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    stmt.query_map(
+        rusqlite::params_from_iter(values.iter()),
+        map_scoped_entry_row,
+    )
+    .map_err(|error| error.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| error.to_string())
+}
+
+pub(crate) fn build_entries_from_rows(
+    rows: &[ScopedEntryRow],
+    prefix: &str,
+    recursive: bool,
+) -> Vec<NodeEntry> {
+    let directory_stats = directory_stats_by_path(rows, prefix);
     if recursive {
-        return nodes
+        return rows
             .iter()
-            .map(|node| NodeEntry {
-                path: node.path.clone(),
-                kind: entry_kind_from_node_kind(&node.kind),
-                updated_at: node.updated_at,
-                etag: node.etag.clone(),
-                deleted_at: node.deleted_at,
-                has_children: has_visible_descendants(nodes, &node.path),
+            .map(|row| NodeEntry {
+                path: row.path.clone(),
+                kind: entry_kind_from_node_kind(&row.kind),
+                updated_at: row.updated_at,
+                etag: row.etag.clone(),
+                has_children: directory_stats.contains_key(&row.path),
             })
             .collect();
     }
 
     let mut entries = BTreeMap::new();
-    for node in nodes {
-        if let Some(child_path) = direct_child_path(prefix, &node.path) {
-            if child_path != node.path && node.deleted_at.is_some() {
-                continue;
-            }
+    for row in rows {
+        if let Some(child_path) = direct_child_path(prefix, &row.path) {
             entries
                 .entry(child_path.clone())
                 .and_modify(|entry: &mut NodeEntry| {
-                    if child_path == node.path {
-                        entry.kind = entry_kind_from_node_kind(&node.kind);
-                        entry.updated_at = node.updated_at;
-                        entry.etag = node.etag.clone();
-                        entry.deleted_at = node.deleted_at;
+                    if child_path == row.path {
+                        entry.kind = entry_kind_from_node_kind(&row.kind);
+                        entry.updated_at = row.updated_at;
+                        entry.etag = row.etag.clone();
                     } else if entry.kind == NodeEntryKind::Directory {
-                        entry.updated_at = entry.updated_at.max(node.updated_at);
+                        entry.updated_at = directory_stats
+                            .get(&child_path)
+                            .map(|stats| stats.updated_at)
+                            .unwrap_or(entry.updated_at);
                     }
-                    entry.has_children = has_visible_descendants(nodes, &child_path);
+                    entry.has_children = directory_stats.contains_key(&child_path);
                 })
-                .or_insert_with(|| match child_path == node.path {
+                .or_insert_with(|| match child_path == row.path {
                     true => NodeEntry {
-                        path: node.path.clone(),
-                        kind: entry_kind_from_node_kind(&node.kind),
-                        updated_at: node.updated_at,
-                        etag: node.etag.clone(),
-                        deleted_at: node.deleted_at,
-                        has_children: has_visible_descendants(nodes, &node.path),
+                        path: row.path.clone(),
+                        kind: entry_kind_from_node_kind(&row.kind),
+                        updated_at: row.updated_at,
+                        etag: row.etag.clone(),
+                        has_children: directory_stats.contains_key(&row.path),
                     },
                     false => NodeEntry {
                         path: child_path.clone(),
                         kind: NodeEntryKind::Directory,
-                        updated_at: directory_updated_at(nodes, &child_path),
+                        updated_at: directory_stats
+                            .get(&child_path)
+                            .map(|stats| stats.updated_at)
+                            .unwrap_or(0),
                         etag: String::new(),
-                        deleted_at: None,
                         has_children: true,
                     },
                 });
@@ -146,29 +205,34 @@ pub(crate) fn build_entries(nodes: &[Node], prefix: &str, recursive: bool) -> Ve
     entries.into_values().collect()
 }
 
-pub(crate) fn build_glob_entries(nodes: &[Node], prefix: &str) -> Vec<NodeEntry> {
+pub(crate) fn build_glob_entries_from_rows(
+    rows: &[ScopedEntryRow],
+    prefix: &str,
+) -> Vec<NodeEntry> {
+    let directory_stats = directory_stats_by_path(rows, prefix);
     let mut entries = BTreeMap::new();
-    for node in nodes {
+    for row in rows {
         entries.insert(
-            node.path.clone(),
+            row.path.clone(),
             NodeEntry {
-                path: node.path.clone(),
-                kind: entry_kind_from_node_kind(&node.kind),
-                updated_at: node.updated_at,
-                etag: node.etag.clone(),
-                deleted_at: node.deleted_at,
-                has_children: has_visible_descendants(nodes, &node.path),
+                path: row.path.clone(),
+                kind: entry_kind_from_node_kind(&row.kind),
+                updated_at: row.updated_at,
+                etag: row.etag.clone(),
+                has_children: directory_stats.contains_key(&row.path),
             },
         );
-        for directory_path in ancestor_directory_paths(prefix, &node.path) {
+        for directory_path in ancestor_directory_paths(prefix, &row.path) {
             entries
                 .entry(directory_path.clone())
                 .or_insert_with(|| NodeEntry {
                     path: directory_path.clone(),
                     kind: NodeEntryKind::Directory,
-                    updated_at: directory_updated_at(nodes, &directory_path),
+                    updated_at: directory_stats
+                        .get(&directory_path)
+                        .map(|stats| stats.updated_at)
+                        .unwrap_or(0),
                     etag: String::new(),
-                    deleted_at: None,
                     has_children: true,
                 });
         }
@@ -176,25 +240,9 @@ pub(crate) fn build_glob_entries(nodes: &[Node], prefix: &str) -> Vec<NodeEntry>
     entries.into_values().collect()
 }
 
-pub(crate) fn snapshot_state_hash(nodes: &[Node]) -> String {
-    let payload = nodes
-        .iter()
-        .map(snapshot_line)
-        .collect::<Vec<_>>()
-        .join("\n");
-    sha256_hex(&payload)
-}
-
-pub(crate) fn snapshot_revision_token(
-    prefix: &str,
-    include_deleted: bool,
-    revision: i64,
-    nodes: &[Node],
-) -> String {
-    let include_deleted_flag = if include_deleted { "1" } else { "0" };
+pub(crate) fn snapshot_revision_token(prefix: &str, revision: i64) -> String {
     let prefix_hex = hex_encode(prefix.as_bytes());
-    let state_hash = snapshot_state_hash(nodes);
-    format!("v3:{revision}:{include_deleted_flag}:{prefix_hex}:{state_hash}")
+    format!("v5:{revision}:{prefix_hex}")
 }
 
 pub(crate) fn relative_to_prefix(prefix: &str, path: &str) -> Option<String> {
@@ -225,10 +273,18 @@ pub(crate) fn prefix_filter_sql(
     prefix: &str,
     start_index: usize,
 ) -> (String, Vec<rusqlite::types::Value>) {
+    prefix_filter_sql_for_column("path", prefix, start_index)
+}
+
+pub(crate) fn prefix_filter_sql_for_column(
+    column_name: &str,
+    prefix: &str,
+    start_index: usize,
+) -> (String, Vec<rusqlite::types::Value>) {
     let equal_index = start_index;
     let like_index = start_index + 1;
     (
-        format!(" AND (path = ?{equal_index} OR path LIKE ?{like_index})"),
+        format!(" AND ({column_name} = ?{equal_index} OR {column_name} LIKE ?{like_index})"),
         vec![
             rusqlite::types::Value::from(prefix.to_string()),
             rusqlite::types::Value::from(format!("{prefix}/%")),
@@ -263,8 +319,31 @@ fn map_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
         created_at: row.get(3)?,
         updated_at: row.get(4)?,
         etag: row.get(5)?,
-        deleted_at: row.get(6)?,
-        metadata_json: row.get(7)?,
+        metadata_json: row.get(6)?,
+    })
+}
+
+fn map_stored_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredNode> {
+    Ok(StoredNode {
+        row_id: row.get(0)?,
+        node: Node {
+            path: row.get(1)?,
+            kind: node_kind_from_db(&row.get::<_, String>(2)?)?,
+            content: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            etag: row.get(6)?,
+            metadata_json: row.get(7)?,
+        },
+    })
+}
+
+fn map_scoped_entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScopedEntryRow> {
+    Ok(ScopedEntryRow {
+        path: row.get(0)?,
+        kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
+        updated_at: row.get(2)?,
+        etag: row.get(3)?,
     })
 }
 
@@ -314,6 +393,26 @@ fn ancestor_directory_paths(prefix: &str, path: &str) -> Vec<String> {
     directories
 }
 
+fn directory_stats_by_path(
+    rows: &[ScopedEntryRow],
+    prefix: &str,
+) -> BTreeMap<String, DirectoryStats> {
+    let mut stats_by_path = BTreeMap::new();
+    for row in rows {
+        for directory_path in ancestor_directory_paths(prefix, &row.path) {
+            stats_by_path
+                .entry(directory_path)
+                .and_modify(|stats: &mut DirectoryStats| {
+                    stats.updated_at = stats.updated_at.max(row.updated_at);
+                })
+                .or_insert(DirectoryStats {
+                    updated_at: row.updated_at,
+                });
+        }
+    }
+    stats_by_path
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut encoded = String::with_capacity(bytes.len() * 2);
@@ -322,35 +421,6 @@ fn hex_encode(bytes: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
-}
-
-fn directory_updated_at(nodes: &[Node], child_prefix: &str) -> i64 {
-    nodes
-        .iter()
-        .filter(|node| node.path.starts_with(&format!("{child_prefix}/")))
-        .map(|node| node.updated_at)
-        .max()
-        .unwrap_or(0)
-}
-
-fn has_visible_descendants(nodes: &[Node], child_prefix: &str) -> bool {
-    nodes
-        .iter()
-        .any(|node| node.path.starts_with(&format!("{child_prefix}/")))
-}
-
-fn snapshot_line(node: &Node) -> String {
-    format!(
-        "{}\n{}\n{}\n{}\n{}\n{}",
-        node.path,
-        node_kind_to_db(&node.kind),
-        node.content,
-        node.etag,
-        node.deleted_at
-            .map(|value| value.to_string())
-            .unwrap_or_default(),
-        node.metadata_json
-    )
 }
 
 fn entry_kind_from_node_kind(kind: &NodeKind) -> NodeEntryKind {

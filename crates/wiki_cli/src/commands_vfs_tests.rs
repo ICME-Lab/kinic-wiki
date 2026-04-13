@@ -143,7 +143,6 @@ async fn recent_node_command_calls_canister_recent() {
         test_cli(Command::RecentNodes {
             limit: 5,
             path: "/Wiki".to_string(),
-            include_deleted: true,
             json: false,
         }),
     )
@@ -153,7 +152,7 @@ async fn recent_node_command_calls_canister_recent() {
     let recents = client.recents.lock().expect("recents should lock");
     assert_eq!(recents.len(), 1);
     assert_eq!(recents[0].limit, 5);
-    assert!(recents[0].include_deleted);
+    assert_eq!(recents[0].path.as_deref(), Some("/Wiki"));
 }
 
 #[tokio::test]
@@ -182,4 +181,30 @@ async fn multi_edit_node_command_calls_canister_multi_edit() {
     let edits = client.multi_edits.lock().expect("multi edits should lock");
     assert_eq!(edits.len(), 1);
     assert_eq!(edits[0].edits.len(), 2);
+}
+
+#[tokio::test]
+async fn search_path_command_calls_canister_path_search() {
+    let client = MockClient::default();
+
+    run_command(
+        &client,
+        test_cli(Command::SearchPathRemote {
+            query_text: "nested".to_string(),
+            prefix: "/Wiki".to_string(),
+            top_k: 7,
+            json: false,
+        }),
+    )
+    .await
+    .expect("search path command should succeed");
+
+    let searches = client
+        .path_searches
+        .lock()
+        .expect("path searches should lock");
+    assert_eq!(searches.len(), 1);
+    assert_eq!(searches[0].query_text, "nested");
+    assert_eq!(searches[0].prefix.as_deref(), Some("/Wiki"));
+    assert_eq!(searches[0].top_k, 7);
 }

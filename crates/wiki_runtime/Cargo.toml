@@ -3,6 +3,9 @@ name = "wiki-runtime"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+bench-disable-fts = ["wiki-store/bench-disable-fts"]
+
 [dependencies]
 wiki-store = { path = "../wiki_store" }
 wiki-types = { path = "../wiki_types" }

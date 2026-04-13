@@ -21,6 +21,8 @@
 # Temp files
 /tmp/
 *.tmp
+__pycache__/
+*.pyc
 
 # Obsidian plugin artifacts
 /plugins/kinic-wiki/node_modules/
@@ -30,6 +32,12 @@
 /.icp/cache/
 /.canbench/
 /.canbench-tools/
+/canbench_results.yml
+/canbench_results.csv
+/.benchmarks/
+/artifacts/canbench/
+/artifacts/.DS_Store
+/artifacts/beam-*/
 
 # Keep ic-hybrid-sqlite as its own repo for now
 /ic-hybrid-sqlite/

@@ -8,8 +8,8 @@ import {
   serializeMirrorFile,
   stripManagedFrontmatter
 } from "./frontmatter";
-import { findDeletedTrackedNodes } from "./mirror_logic";
-import { MirrorFrontmatter, NodeSnapshot, TrackedNodeState } from "./types";
+import { conflictFilePath, findDeletedTrackedNodes } from "./mirror_logic";
+import { MirrorFrontmatter, NodeMutationAck, NodeSnapshot, TrackedNodeState } from "./types";
 
 export async function collectManagedNodes(app: App, mirrorRoot: string): Promise<Array<{ file: TFile; metadata: MirrorFrontmatter }>> {
   const root = managedRoot(mirrorRoot);
@@ -45,8 +45,25 @@ export async function writeNodeMirror(app: App, mirrorRoot: string, node: NodeSn
   await upsertTextFile(app, path, serializeMirrorFile(frontmatter, node.content));
 }
 
-export async function updateLocalNodeMetadata(app: App, mirrorRoot: string, node: NodeSnapshot): Promise<void> {
-  await writeNodeMirror(app, mirrorRoot, node);
+export async function updateLocalNodeMetadata(
+  app: App,
+  mirrorRoot: string,
+  node: NodeMutationAck
+): Promise<void> {
+  const localPath = remoteToLocalPath(mirrorRoot, node.path);
+  const existing = app.vault.getAbstractFileByPath(localPath);
+  if (!(existing instanceof TFile)) {
+    throw new Error(`managed mirror file is missing: ${localPath}`);
+  }
+  const current = await app.vault.read(existing);
+  const frontmatter: MirrorFrontmatter = {
+    path: node.path,
+    kind: node.kind,
+    etag: node.etag,
+    updated_at: node.updated_at,
+    mirror: true
+  };
+  await app.vault.modify(existing, serializeMirrorFile(frontmatter, stripManagedFrontmatter(current).trimStart()));
 }
 
 export async function removeMirrorPaths(app: App, mirrorRoot: string, removedPaths: string[]): Promise<void> {
@@ -66,10 +83,30 @@ export async function removeStaleManagedFiles(app: App, mirrorRoot: string, acti
   }
 }
 
-export async function collectChangedManagedNodeFiles(app: App, mirrorRoot: string, lastSyncedAt: number): Promise<TFile[]> {
+export async function collectDirtyManagedNodePaths(
+  app: App,
+  mirrorRoot: string,
+  lastSyncedAt: number,
+  pendingConflictPaths = new Set<string>()
+): Promise<Set<string>> {
+  const dirtyPaths = new Set<string>();
+  for (const node of await collectManagedNodes(app, mirrorRoot)) {
+    if (node.file.stat.mtime > lastSyncedAt || pendingConflictPaths.has(node.metadata.path)) {
+      dirtyPaths.add(node.metadata.path);
+    }
+  }
+  return dirtyPaths;
+}
+
+export async function collectChangedManagedNodeFiles(
+  app: App,
+  mirrorRoot: string,
+  lastSyncedAt: number,
+  pendingConflictPaths = new Set<string>()
+): Promise<TFile[]> {
   const results: TFile[] = [];
   for (const node of await collectManagedNodes(app, mirrorRoot)) {
-    if (node.file.stat.mtime > lastSyncedAt) {
+    if (node.file.stat.mtime > lastSyncedAt || pendingConflictPaths.has(node.metadata.path)) {
       results.push(node.file);
     }
   }
@@ -146,8 +183,22 @@ export async function openMirrorFile(app: App, path: string): Promise<void> {
 
 export async function writeConflictFile(app: App, mirrorRoot: string, remotePath: string, conflictMarkdown: string): Promise<void> {
   await ensureFolder(app, `${mirrorRoot}/conflicts`);
-  const basename = remotePath.split("/").pop()?.replace(/\.[^.]+$/, "") ?? "conflict";
-  await upsertTextFile(app, `${mirrorRoot}/conflicts/${basename}.conflict.md`, conflictMarkdown);
+  await upsertTextFile(app, conflictFilePath(mirrorRoot, remotePath), conflictMarkdown);
+}
+
+export async function writeRemoteUpdateConflictFile(app: App, mirrorRoot: string, node: NodeSnapshot): Promise<void> {
+  const body = [
+    "# Remote update conflict",
+    "",
+    `Remote path: ${node.path}`,
+    `Remote etag: ${node.etag}`,
+    `Remote updated_at: ${node.updated_at}`,
+    "",
+    "## Remote content",
+    "",
+    node.content
+  ].join("\n");
+  await writeConflictFile(app, mirrorRoot, node.path, body);
 }
 
 function remoteToLocalPath(mirrorRoot: string, remotePath: string): string {

@@ -1,40 +1,38 @@
 CREATE TABLE fs_nodes (
-    path TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
     kind TEXT NOT NULL,
     content TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     etag TEXT NOT NULL,
-    deleted_at INTEGER,
     metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE VIRTUAL TABLE fs_nodes_fts USING fts5(
-    path,
-    kind,
-    content
+    content,
+    content='fs_nodes',
+    content_rowid='id'
 );
 
-INSERT INTO fs_nodes_fts (path, kind, content)
-SELECT path, kind, content
-FROM fs_nodes
-WHERE deleted_at IS NULL;
+INSERT INTO fs_nodes_fts (rowid, content)
+SELECT id, content
+FROM fs_nodes;
 
 CREATE TABLE fs_change_log (
     revision INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL,
-    deleted_at INTEGER,
     change_kind TEXT NOT NULL
-        CHECK (change_kind IN ('upsert', 'tombstone', 'path_removal'))
+        CHECK (change_kind IN ('upsert', 'path_removal'))
 );
 
-INSERT INTO fs_change_log (path, deleted_at, change_kind)
-SELECT
-    path,
-    deleted_at,
-    CASE
-        WHEN deleted_at IS NULL THEN 'upsert'
-        ELSE 'tombstone'
-    END
+INSERT INTO fs_change_log (path, change_kind)
+SELECT path, 'upsert'
 FROM fs_nodes
 ORDER BY path ASC;
+
+CREATE INDEX fs_nodes_path_covering_idx
+ON fs_nodes (path, kind, updated_at, etag);
+
+CREATE INDEX fs_nodes_recent_covering_idx
+ON fs_nodes (updated_at DESC, path ASC, kind, etag);

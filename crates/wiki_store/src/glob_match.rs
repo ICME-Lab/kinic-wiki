@@ -68,26 +68,34 @@ fn matches_segment(pattern: &str, segment: &str) -> bool {
 }
 
 fn matches_chars(pattern: &[char], segment: &[char]) -> bool {
-    if pattern.is_empty() {
-        return segment.is_empty();
-    }
-    match pattern[0] {
-        '*' => (0..=segment.len()).any(|index| matches_chars(&pattern[1..], &segment[index..])),
-        '?' => {
-            if segment.is_empty() {
-                false
-            } else {
-                matches_chars(&pattern[1..], &segment[1..])
-            }
+    let mut pattern_index = 0usize;
+    let mut segment_index = 0usize;
+    let mut star_index = None;
+    let mut star_match_index = 0usize;
+
+    while segment_index < segment.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == '?' || pattern[pattern_index] == segment[segment_index])
+        {
+            pattern_index += 1;
+            segment_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+            star_index = Some(pattern_index);
+            pattern_index += 1;
+            star_match_index = segment_index;
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            star_match_index += 1;
+            segment_index = star_match_index;
+        } else {
+            return false;
         }
-        other => {
-            if segment.first().copied() != Some(other) {
-                false
-            } else {
-                matches_chars(&pattern[1..], &segment[1..])
-            }
-        }
     }
+
+    while pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
 }
 
 #[cfg(test)]
@@ -116,5 +124,18 @@ mod tests {
     fn allows_long_paths_to_match_without_failing_the_whole_query() {
         let long_path = format!("{}/note.md", "nested".repeat(1024));
         assert!(matches_path("**/*.md", &long_path).expect("long path should still match"));
+    }
+
+    #[test]
+    fn segment_wildcards_handle_backtracking_without_recursive_blowup() {
+        let long_segment = format!("{}b", "a".repeat(4096));
+        assert!(
+            matches_path("*a*a*a*b", &long_segment)
+                .expect("segment wildcard match should remain bounded")
+        );
+        assert!(
+            !matches_path("*a*a*a*c", &long_segment)
+                .expect("segment wildcard mismatch should remain bounded")
+        );
     }
 }

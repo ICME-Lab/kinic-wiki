@@ -4,11 +4,14 @@
 pub mod agent_tools;
 #[cfg(test)]
 mod agent_tools_tests;
+pub mod beam_bench;
 pub mod cli;
 pub mod client;
 pub mod commands;
 #[cfg(test)]
 mod commands_fs_tests;
+#[cfg(test)]
+mod commands_sync_tests;
 #[cfg(test)]
 mod commands_vfs_tests;
 pub mod lint_local;

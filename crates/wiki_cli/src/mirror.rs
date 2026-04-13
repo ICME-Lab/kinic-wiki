@@ -16,6 +16,13 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiki_types::{Node, NodeKind};
 
+const CONFLICT_FILE_SUFFIX: &str = ".conflict.md";
+const CONFLICT_HASH_SEPARATOR: &str = "--";
+const CONFLICT_HASH_HEX_LEN: usize = 16;
+const CONFLICT_MAX_COMPONENT_BYTES: usize = 255;
+const CONFLICT_STEM_SEGMENTS: usize = 2;
+const CONFLICT_FALLBACK_STEM: &str = "conflict";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManagedNode {
     pub path: PathBuf,
@@ -175,12 +182,94 @@ pub fn deleted_tracked_nodes(
 pub fn write_conflict_file(mirror_root: &Path, remote_path: &str, markdown: &str) -> Result<()> {
     let dir = mirror_root.join("conflicts");
     fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
-    let name = Path::new(remote_path)
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("conflict");
-    let path = dir.join(format!("{name}.conflict.md"));
+    let path = conflict_file_path(mirror_root, remote_path)?;
     fs::write(&path, markdown).with_context(|| format!("failed to write {}", path.display()))
+}
+
+pub fn conflict_file_path(mirror_root: &Path, remote_path: &str) -> Result<PathBuf> {
+    let normalized = normalize_remote_path(remote_path)?;
+    let relative = normalized
+        .strip_prefix("/Wiki")
+        .ok_or_else(|| anyhow!("unsupported remote path outside /Wiki: {remote_path}"))?
+        .trim_start_matches('/');
+    let stem = short_conflict_stem(relative);
+    let hash = short_conflict_hash(&normalized);
+    let file_name = format!("{stem}{CONFLICT_HASH_SEPARATOR}{hash}{CONFLICT_FILE_SUFFIX}");
+    Ok(mirror_root.join("conflicts").join(file_name))
+}
+
+fn normalize_remote_path(remote_path: &str) -> Result<String> {
+    let segments = remote_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.first().copied() != Some("Wiki") {
+        return Err(anyhow!(
+            "unsupported remote path outside /Wiki: {remote_path}"
+        ));
+    }
+    Ok(format!("/{}", segments.join("/")))
+}
+
+fn short_conflict_stem(relative_path: &str) -> String {
+    let mut segments = relative_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    if let Some(last) = segments.last_mut()
+        && let Some(stem) = Path::new(last).file_stem().and_then(|value| value.to_str())
+    {
+        *last = stem.to_string();
+    }
+    let start = segments.len().saturating_sub(CONFLICT_STEM_SEGMENTS);
+    let stem = segments[start..]
+        .iter()
+        .map(|segment| sanitize_conflict_segment(segment))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("__");
+    truncate_conflict_stem(if stem.is_empty() {
+        CONFLICT_FALLBACK_STEM.to_string()
+    } else {
+        stem
+    })
+}
+
+fn sanitize_conflict_segment(segment: &str) -> String {
+    segment
+        .chars()
+        .fold((String::new(), false), |(mut out, last_was_dash), ch| {
+            if ch.is_ascii_alphanumeric() {
+                out.push(ch.to_ascii_lowercase());
+                (out, false)
+            } else if last_was_dash {
+                (out, true)
+            } else {
+                out.push('-');
+                (out, true)
+            }
+        })
+        .0
+        .trim_matches('-')
+        .to_string()
+}
+
+fn truncate_conflict_stem(stem: String) -> String {
+    let max_stem_bytes = CONFLICT_MAX_COMPONENT_BYTES
+        - CONFLICT_HASH_SEPARATOR.len()
+        - CONFLICT_HASH_HEX_LEN
+        - CONFLICT_FILE_SUFFIX.len();
+    stem.chars().take(max_stem_bytes).collect()
+}
+
+fn short_conflict_hash(normalized_remote_path: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in normalized_remote_path.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:0width$x}", width = CONFLICT_HASH_HEX_LEN)
 }
 
 pub fn read_managed_node_content(node: &ManagedNode) -> Result<String> {

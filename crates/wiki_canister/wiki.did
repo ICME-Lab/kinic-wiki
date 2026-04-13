@@ -7,7 +7,7 @@ type AppendNodeRequest = record {
   metadata_json : opt text;
 };
 type DeleteNodeRequest = record { path : text; expected_etag : opt text };
-type DeleteNodeResult = record { etag : text; path : text; deleted_at : int64 };
+type DeleteNodeResult = record { path : text };
 type EditNodeRequest = record {
   path : text;
   old_text : text;
@@ -15,17 +15,16 @@ type EditNodeRequest = record {
   expected_etag : opt text;
   new_text : text;
 };
-type EditNodeResult = record { node : Node; replacement_count : nat32 };
-type ExportSnapshotRequest = record {
-  include_deleted : bool;
-  prefix : opt text;
+type EditNodeResult = record {
+  node : NodeMutationAck;
+  replacement_count : nat32;
 };
+type ExportSnapshotRequest = record { prefix : opt text };
 type ExportSnapshotResponse = record {
   snapshot_revision : text;
   nodes : vec Node;
 };
 type FetchUpdatesRequest = record {
-  include_deleted : bool;
   known_snapshot_revision : text;
   prefix : opt text;
 };
@@ -45,11 +44,7 @@ type GlobNodesRequest = record {
   pattern : text;
   path : opt text;
 };
-type ListNodesRequest = record {
-  include_deleted : bool;
-  recursive : bool;
-  prefix : text;
-};
+type ListNodesRequest = record { recursive : bool; prefix : text };
 type MkdirNodeRequest = record { path : text };
 type MkdirNodeResult = record { created : bool; path : text };
 type MoveNodeRequest = record {
@@ -60,7 +55,7 @@ type MoveNodeRequest = record {
 };
 type MoveNodeResult = record {
   from_path : text;
-  node : Node;
+  node : NodeMutationAck;
   overwrote : bool;
 };
 type MultiEdit = record { old_text : text; new_text : text };
@@ -77,7 +72,6 @@ type Node = record {
   path : text;
   created_at : int64;
   metadata_json : text;
-  deleted_at : opt int64;
 };
 type NodeEntry = record {
   updated_at : int64;
@@ -85,22 +79,22 @@ type NodeEntry = record {
   kind : NodeEntryKind;
   path : text;
   has_children : bool;
-  deleted_at : opt int64;
 };
 type NodeEntryKind = variant { File; Source; Directory };
 type NodeKind = variant { File; Source };
+type NodeMutationAck = record {
+  updated_at : int64;
+  etag : text;
+  kind : NodeKind;
+  path : text;
+};
 type RecentNodeHit = record {
   updated_at : int64;
   etag : text;
   kind : NodeKind;
   path : text;
-  deleted_at : opt int64;
 };
-type RecentNodesRequest = record {
-  include_deleted : bool;
-  path : opt text;
-  limit : nat32;
-};
+type RecentNodesRequest = record { path : opt text; limit : nat32 };
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_10 = variant { Ok : vec RecentNodeHit; Err : text };
@@ -120,16 +114,17 @@ type SearchNodeHit = record {
   snippet : text;
   score : float32;
 };
+type SearchNodePathsRequest = record {
+  top_k : nat32;
+  prefix : opt text;
+  query_text : text;
+};
 type SearchNodesRequest = record {
   top_k : nat32;
   prefix : opt text;
   query_text : text;
 };
-type Status = record {
-  source_count : nat64;
-  deleted_count : nat64;
-  file_count : nat64;
-};
+type Status = record { source_count : nat64; file_count : nat64 };
 type WriteNodeRequest = record {
   content : text;
   kind : NodeKind;
@@ -137,7 +132,7 @@ type WriteNodeRequest = record {
   expected_etag : opt text;
   metadata_json : text;
 };
-type WriteNodeResult = record { created : bool; node : Node };
+type WriteNodeResult = record { created : bool; node : RecentNodeHit };
 service : () -> {
   append_node : (AppendNodeRequest) -> (Result);
   delete_node : (DeleteNodeRequest) -> (Result_1);
@@ -151,6 +146,7 @@ service : () -> {
   multi_edit_node : (MultiEditNodeRequest) -> (Result_2);
   read_node : (text) -> (Result_9) query;
   recent_nodes : (RecentNodesRequest) -> (Result_10) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_11) query;
   search_nodes : (SearchNodesRequest) -> (Result_11) query;
   status : () -> (Status) query;
   write_node : (WriteNodeRequest) -> (Result);

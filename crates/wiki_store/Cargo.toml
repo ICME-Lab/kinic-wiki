@@ -3,6 +3,9 @@ name = "wiki-store"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+bench-disable-fts = []
+
 [dependencies]
 hex = "0.4.3"
 pulldown-cmark = "0.13.0"

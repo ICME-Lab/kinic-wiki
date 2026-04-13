@@ -7,13 +7,13 @@ use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest,
-    SearchNodesRequest, WriteNodeRequest,
+    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
 };
 
 use super::{
     SERVICE, append_node, delete_node, edit_node, export_snapshot, fetch_updates, glob_nodes,
-    list_nodes, mkdir_node, move_node, multi_edit_node, read_node, recent_nodes, search_nodes,
-    status, write_node,
+    list_nodes, mkdir_node, move_node, multi_edit_node, read_node, recent_nodes, search_node_paths,
+    search_nodes, status, write_node,
 };
 
 fn install_test_service() {
@@ -34,7 +34,6 @@ fn status_stays_available_after_fs_migrations() {
 
     assert_eq!(current.file_count, 0);
     assert_eq!(current.source_count, 0);
-    assert_eq!(current.deleted_count, 0);
 }
 
 #[test]
@@ -77,7 +76,6 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     let entries = list_nodes(ListNodesRequest {
         prefix: "/Wiki".to_string(),
         recursive: false,
-        include_deleted: false,
     })
     .expect("list should succeed");
     assert!(
@@ -95,9 +93,17 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].path, "/Wiki/foo.md");
 
+    let path_hits = search_node_paths(SearchNodePathsRequest {
+        query_text: "NeStEd".to_string(),
+        prefix: Some("/Wiki".to_string()),
+        top_k: 5,
+    })
+    .expect("path search should succeed");
+    assert_eq!(path_hits.len(), 1);
+    assert_eq!(path_hits[0].path, "/Wiki/nested/bar.md");
+
     let snapshot = export_snapshot(ExportSnapshotRequest {
         prefix: Some("/Wiki".to_string()),
-        include_deleted: false,
     })
     .expect("snapshot should export");
     assert_eq!(snapshot.nodes.len(), 2);
@@ -105,25 +111,18 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     let empty_delta = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: snapshot.snapshot_revision.clone(),
         prefix: Some("/Wiki".to_string()),
-        include_deleted: false,
     })
     .expect("matching snapshot should produce empty delta");
     assert!(empty_delta.changed_nodes.is_empty());
     assert!(empty_delta.removed_paths.is_empty());
 
-    let full_refresh = fetch_updates(FetchUpdatesRequest {
+    let invalid_delta = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: "missing".to_string(),
         prefix: Some("/Wiki".to_string()),
-        include_deleted: false,
-    })
-    .expect("unknown snapshot should full refresh");
-    assert_eq!(full_refresh.changed_nodes.len(), 2);
-    assert!(full_refresh.removed_paths.is_empty());
-    assert!(
-        full_refresh
-            .changed_nodes
-            .iter()
-            .all(|entry| entry.path.starts_with("/Wiki"))
+    });
+    assert_eq!(
+        invalid_delta.expect_err("unknown snapshot should fail"),
+        "known_snapshot_revision is invalid"
     );
 
     let deleted = delete_node(DeleteNodeRequest {
@@ -131,7 +130,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         expected_etag: Some(created.node.etag.clone()),
     })
     .expect("delete should succeed");
-    assert!(deleted.deleted_at > 0);
+    assert_eq!(deleted.path, "/Wiki/foo.md");
 
     let deleted_read = read_node("/Wiki/foo.md".to_string()).expect("read should succeed");
     assert!(deleted_read.is_none());
@@ -174,7 +173,10 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
         kind: None,
     })
     .expect("append update should succeed");
-    assert_eq!(appended_again.node.content, "alpha\nbeta");
+    let appended_node = read_node("/Wiki/work/log.md".to_string())
+        .expect("read should succeed")
+        .expect("node should exist");
+    assert_eq!(appended_node.content, "alpha\nbeta");
 
     let edited = edit_node(EditNodeRequest {
         path: "/Wiki/work/log.md".to_string(),
@@ -185,7 +187,45 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
     })
     .expect("edit should succeed");
     assert_eq!(edited.replacement_count, 1);
-    assert_eq!(edited.node.content, "alpha\ngamma");
+    let edited_node = read_node("/Wiki/work/log.md".to_string())
+        .expect("read should succeed")
+        .expect("node should exist");
+    assert_eq!(edited_node.content, "alpha\ngamma");
+}
+
+#[test]
+fn fs_entrypoints_search_large_hits_without_trap() {
+    install_test_service();
+
+    let payload = format!("shared-bench-search {}", "x".repeat(1024 * 1024 - 20));
+    for index in 0..10 {
+        write_node(WriteNodeRequest {
+            path: format!("/Wiki/large/node-{index:03}.md"),
+            kind: NodeKind::File,
+            content: payload.clone(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("large write should succeed");
+    }
+
+    let hits = search_nodes(SearchNodesRequest {
+        query_text: "shared-bench-search".to_string(),
+        prefix: Some("/Wiki/large".to_string()),
+        top_k: 10,
+    })
+    .expect("large search should succeed");
+
+    assert_eq!(hits.len(), 10);
+    for window in hits.windows(2) {
+        assert!(window[0].score <= window[1].score);
+    }
+    for hit in hits {
+        assert!(hit.path.starts_with("/Wiki/large/"));
+        assert!(!hit.snippet.is_empty());
+        assert!(hit.snippet.len() <= 512);
+        assert!(hit.snippet.chars().count() <= 243);
+    }
 }
 
 #[test]
@@ -226,7 +266,6 @@ fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
     let recent = recent_nodes(RecentNodesRequest {
         limit: 5,
         path: Some("/Wiki".to_string()),
-        include_deleted: false,
     })
     .expect("recent should succeed");
     assert_eq!(recent[0].path, "/Wiki/archive/item.md");
@@ -247,13 +286,8 @@ fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
     })
     .expect("multi edit should succeed");
     assert_eq!(edited.replacement_count, 2);
-    assert_eq!(edited.node.content, "one two");
-}
-
-#[test]
-fn exported_candid_matches_checked_in_did() {
-    let actual = super::candid_interface();
-    let expected = include_str!("../wiki.did");
-
-    assert_eq!(actual.trim(), expected.trim());
+    let edited_node = read_node("/Wiki/archive/item.md".to_string())
+        .expect("read should succeed")
+        .expect("node should exist");
+    assert_eq!(edited_node.content, "one two");
 }

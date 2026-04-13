@@ -9,8 +9,8 @@ use wiki_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodesRequest, Status, WriteNodeRequest,
-    WriteNodeResult,
+    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    Status, WriteNodeRequest, WriteNodeResult,
 };
 
 pub struct WikiService {
@@ -94,6 +94,13 @@ impl WikiService {
 
     pub fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, String> {
         self.fs_store.search_nodes(request)
+    }
+
+    pub fn search_node_paths(
+        &self,
+        request: SearchNodePathsRequest,
+    ) -> Result<Vec<SearchNodeHit>, String> {
+        self.fs_store.search_node_paths(request)
     }
 
     pub fn export_fs_snapshot(

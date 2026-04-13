@@ -12,5 +12,4 @@ pub use fs::*;
 pub struct Status {
     pub file_count: u64,
     pub source_count: u64,
-    pub deleted_count: u64,
 }

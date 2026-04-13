@@ -18,6 +18,7 @@ export interface PluginSettings {
   autoPullOnStartup: boolean;
   lastSnapshotRevision: string;
   lastSyncedAt: number;
+  pendingConflictPaths: string[];
   trackedNodes: TrackedNodeState[];
 }
 
@@ -28,7 +29,6 @@ export interface NodeSnapshot {
   created_at: number;
   updated_at: number;
   etag: string;
-  deleted_at: number | null;
   metadata_json: string;
 }
 
@@ -37,7 +37,6 @@ export interface NodeEntry {
   kind: NodeEntryKind;
   updated_at: number;
   etag: string;
-  deleted_at: number | null;
   has_children: boolean;
 }
 
@@ -60,13 +59,20 @@ export interface FetchUpdatesResponse {
   removed_paths: string[];
 }
 
+export interface NodeMutationAck {
+  path: string;
+  kind: NodeKind;
+  updated_at: number;
+  etag: string;
+}
+
 export interface WriteNodeResult {
-  node: NodeSnapshot;
+  node: NodeMutationAck;
   created: boolean;
 }
 
 export interface EditNodeResult {
-  node: NodeSnapshot;
+  node: NodeMutationAck;
   replacement_count: number;
 }
 
@@ -76,7 +82,7 @@ export interface MkdirNodeResult {
 }
 
 export interface MoveNodeResult {
-  node: NodeSnapshot;
+  node: NodeMutationAck;
   from_path: string;
   overwrote: boolean;
 }
@@ -92,7 +98,6 @@ export interface RecentNodeHit {
   kind: NodeKind;
   updated_at: number;
   etag: string;
-  deleted_at: number | null;
 }
 
 export interface MultiEdit {
@@ -101,20 +106,17 @@ export interface MultiEdit {
 }
 
 export interface MultiEditNodeResult {
-  node: NodeSnapshot;
+  node: NodeMutationAck;
   replacement_count: number;
 }
 
 export interface DeleteNodeResult {
   path: string;
-  etag: string;
-  deleted_at: number;
 }
 
 export interface StatusResponse {
   file_count: number;
   source_count: number;
-  deleted_count: number;
 }
 
 export interface MirrorFrontmatter {
@@ -132,11 +134,12 @@ const DEFAULTS: PluginSettings = {
   autoPullOnStartup: true,
   lastSnapshotRevision: "",
   lastSyncedAt: 0,
+  pendingConflictPaths: [],
   trackedNodes: []
 };
 
 export function defaultPluginSettings(): PluginSettings {
-  return { ...DEFAULTS, trackedNodes: [] };
+  return { ...DEFAULTS, pendingConflictPaths: [], trackedNodes: [] };
 }
 
 export function parsePluginSettings(input: unknown): PluginSettings {
@@ -150,6 +153,7 @@ export function parsePluginSettings(input: unknown): PluginSettings {
     autoPullOnStartup: readBoolean(input, "autoPullOnStartup", DEFAULTS.autoPullOnStartup),
     lastSnapshotRevision: readString(input, "lastSnapshotRevision", DEFAULTS.lastSnapshotRevision),
     lastSyncedAt: readNumber(input, "lastSyncedAt", DEFAULTS.lastSyncedAt),
+    pendingConflictPaths: readStringArray(input, "pendingConflictPaths"),
     trackedNodes: readTrackedNodes(input.trackedNodes)
   };
 }
@@ -157,8 +161,7 @@ export function parsePluginSettings(input: unknown): PluginSettings {
 export function isStatusResponse(input: unknown): input is StatusResponse {
   return isRecord(input)
     && isNumberValue(input.file_count)
-    && isNumberValue(input.source_count)
-    && isNumberValue(input.deleted_count);
+    && isNumberValue(input.source_count);
 }
 
 export function isNodeSnapshot(input: unknown): input is NodeSnapshot {
@@ -169,7 +172,6 @@ export function isNodeSnapshot(input: unknown): input is NodeSnapshot {
     && isNumberValue(input.created_at)
     && isNumberValue(input.updated_at)
     && isString(input.etag)
-    && (input.deleted_at === null || isNumberValue(input.deleted_at))
     && isString(input.metadata_json);
 }
 
@@ -179,7 +181,6 @@ export function isNodeEntry(input: unknown): input is NodeEntry {
     && isNodeEntryKind(input.kind)
     && isNumberValue(input.updated_at)
     && isString(input.etag)
-    && (input.deleted_at === null || isNumberValue(input.deleted_at))
     && isBooleanValue(input.has_children);
 }
 
@@ -209,13 +210,13 @@ export function isFetchUpdatesResponse(input: unknown): input is FetchUpdatesRes
 
 export function isWriteNodeResult(input: unknown): input is WriteNodeResult {
   return isRecord(input)
-    && isNodeSnapshot(input.node)
+    && isNodeMutationAck(input.node)
     && isBooleanValue(input.created);
 }
 
 export function isEditNodeResult(input: unknown): input is EditNodeResult {
   return isRecord(input)
-    && isNodeSnapshot(input.node)
+    && isNodeMutationAck(input.node)
     && isNumberValue(input.replacement_count);
 }
 
@@ -227,7 +228,7 @@ export function isMkdirNodeResult(input: unknown): input is MkdirNodeResult {
 
 export function isMoveNodeResult(input: unknown): input is MoveNodeResult {
   return isRecord(input)
-    && isNodeSnapshot(input.node)
+    && isNodeMutationAck(input.node)
     && isString(input.from_path)
     && isBooleanValue(input.overwrote);
 }
@@ -244,8 +245,7 @@ export function isRecentNodeHit(input: unknown): input is RecentNodeHit {
     && isString(input.path)
     && isNodeKind(input.kind)
     && isNumberValue(input.updated_at)
-    && isString(input.etag)
-    && (input.deleted_at === null || isNumberValue(input.deleted_at));
+    && isString(input.etag);
 }
 
 export function isMultiEdit(input: unknown): input is MultiEdit {
@@ -256,19 +256,29 @@ export function isMultiEdit(input: unknown): input is MultiEdit {
 
 export function isMultiEditNodeResult(input: unknown): input is MultiEditNodeResult {
   return isRecord(input)
-    && isNodeSnapshot(input.node)
+    && isNodeMutationAck(input.node)
     && isNumberValue(input.replacement_count);
+}
+
+export function isNodeMutationAck(input: unknown): input is NodeMutationAck {
+  return isRecord(input)
+    && isString(input.path)
+    && isNodeKind(input.kind)
+    && isNumberValue(input.updated_at)
+    && isString(input.etag);
 }
 
 export function isDeleteNodeResult(input: unknown): input is DeleteNodeResult {
   return isRecord(input)
-    && isString(input.path)
-    && isString(input.etag)
-    && isNumberValue(input.deleted_at);
+    && isString(input.path);
 }
 
 function readTrackedNodes(input: unknown): TrackedNodeState[] {
   return Array.isArray(input) ? input.filter(isTrackedNodeState) : [];
+}
+
+function readStringArray(input: Record<string, unknown>, key: string): string[] {
+  return isStringArray(input[key]) ? input[key] : [];
 }
 
 function isTrackedNodeState(input: unknown): input is TrackedNodeState {

@@ -5,6 +5,7 @@ import { Notice, Plugin } from "obsidian";
 
 import { KinicWikiSettingTab } from "./settings";
 import { WikiSyncService } from "./sync";
+import { shouldSkipAutoPull } from "./sync_logic";
 import { PluginSettings, parsePluginSettings } from "./types";
 
 export default class KinicWikiPlugin extends Plugin {
@@ -69,7 +70,17 @@ export default class KinicWikiPlugin extends Plugin {
     ) {
       return;
     }
-    await this.run("Auto pull failed", async (service) => service.pullUpdates(), false);
+    await this.run("Auto pull failed", async (service) => {
+      const dirtyPaths = await service.collectDirtyPaths();
+      if (shouldSkipAutoPull(dirtyPaths.size > 0)) {
+        new Notice("Auto pull skipped: unsynced local wiki changes exist");
+        return;
+      }
+      const result = await service.pullUpdatesWithDirtyPaths(dirtyPaths);
+      new Notice(
+        `Pull complete: ${result.appliedChanges} changed, ${result.appliedRemovals} removed, ${result.conflictChanges + result.conflictRemovals} conflicts`
+      );
+    }, false);
   }
 
   private async run(

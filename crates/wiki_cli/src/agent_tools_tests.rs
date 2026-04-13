@@ -6,9 +6,9 @@ use wiki_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodesRequest, Status, WriteNodeRequest,
-    WriteNodeResult,
+    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, NodeMutationAck, RecentNodeHit,
+    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 use crate::agent_tools::{
@@ -34,7 +34,6 @@ impl WikiApi for ToolMockClient {
         Ok(Status {
             file_count: 0,
             source_count: 0,
-            deleted_count: 0,
         })
     }
 
@@ -49,7 +48,7 @@ impl WikiApi for ToolMockClient {
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
         Ok(WriteNodeResult {
             created: false,
-            node: sample_node(&request.path, &request.content, "etag-write"),
+            node: sample_ack(&request.path, NodeKind::File, "etag-write"),
         })
     }
 
@@ -60,7 +59,11 @@ impl WikiApi for ToolMockClient {
             .push(request.clone());
         Ok(WriteNodeResult {
             created: false,
-            node: sample_node(&request.path, &request.content, "etag-append"),
+            node: sample_ack(
+                &request.path,
+                request.kind.unwrap_or(NodeKind::File),
+                "etag-append",
+            ),
         })
     }
 
@@ -73,17 +76,13 @@ impl WikiApi for ToolMockClient {
             return Err(anyhow::anyhow!("old_text not found"));
         }
         Ok(EditNodeResult {
-            node: sample_node(&request.path, &request.new_text, "etag-edit"),
+            node: sample_ack(&request.path, NodeKind::File, "etag-edit"),
             replacement_count: 1,
         })
     }
 
     async fn delete_node(&self, request: DeleteNodeRequest) -> Result<DeleteNodeResult> {
-        Ok(DeleteNodeResult {
-            path: request.path,
-            etag: "etag-delete".to_string(),
-            deleted_at: 1,
-        })
+        Ok(DeleteNodeResult { path: request.path })
     }
 
     async fn move_node(&self, request: MoveNodeRequest) -> Result<MoveNodeResult> {
@@ -92,7 +91,7 @@ impl WikiApi for ToolMockClient {
             .expect("move lock should succeed")
             .push(request.clone());
         Ok(MoveNodeResult {
-            node: sample_node(&request.to_path, "moved", "etag-move"),
+            node: sample_ack(&request.to_path, NodeKind::File, "etag-move"),
             from_path: request.from_path,
             overwrote: request.overwrite,
         })
@@ -130,8 +129,7 @@ impl WikiApi for ToolMockClient {
             path: "/Wiki/a.md".to_string(),
             kind: NodeKind::File,
             updated_at: 2,
-            etag: "etag-recent".to_string(),
-            deleted_at: None,
+            etag: "etag-a".to_string(),
         }])
     }
 
@@ -144,13 +142,26 @@ impl WikiApi for ToolMockClient {
             return Err(anyhow::anyhow!("multi_edit rollback"));
         }
         Ok(MultiEditNodeResult {
-            node: sample_node(&request.path, "after", "etag-multi-edit"),
+            node: sample_ack(&request.path, NodeKind::File, "etag-multi-edit"),
             replacement_count: 2,
         })
     }
 
     async fn search_nodes(&self, _request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
         Ok(Vec::new())
+    }
+
+    async fn search_node_paths(
+        &self,
+        _request: SearchNodePathsRequest,
+    ) -> Result<Vec<SearchNodeHit>> {
+        Ok(vec![SearchNodeHit {
+            path: "/Wiki/nested/beta.md".to_string(),
+            kind: NodeKind::File,
+            snippet: "/Wiki/nested/beta.md".to_string(),
+            score: 15.0,
+            match_reasons: vec!["path_substring".to_string()],
+        }])
     }
 
     async fn export_snapshot(
@@ -176,6 +187,8 @@ impl WikiApi for ToolMockClient {
 fn tool_schemas_include_minimal_vfs_tools() {
     let openai = create_openai_tools();
     let anthropic = create_anthropic_tools();
+    assert_eq!(openai.len(), 13);
+    assert_eq!(anthropic.len(), 13);
 
     let openai_names = tool_names(&openai, "function");
     let anthropic_names = tool_names(&anthropic, "name");
@@ -193,10 +206,31 @@ fn tool_schemas_include_minimal_vfs_tools() {
         "multi_edit",
         "rm",
         "search",
+        "search_paths",
     ] {
         assert!(openai_names.contains(&name.to_string()));
         assert!(anthropic_names.contains(&name.to_string()));
     }
+}
+
+#[test]
+fn tool_schemas_cap_query_result_limits() {
+    let openai = create_openai_tools();
+    let recent = openai_tool_parameters(&openai, "recent");
+    assert_eq!(recent["properties"]["limit"]["maximum"], 100);
+
+    let search = openai_tool_parameters(&openai, "search");
+    assert_eq!(search["properties"]["top_k"]["maximum"], 100);
+
+    let search_paths = openai_tool_parameters(&openai, "search_paths");
+    assert_eq!(search_paths["properties"]["top_k"]["maximum"], 100);
+}
+
+fn openai_tool_parameters<'a>(tools: &'a [Value], name: &str) -> &'a Value {
+    &tools
+        .iter()
+        .find(|tool| tool["function"]["name"] == name)
+        .expect("tool should exist")["function"]["parameters"]
 }
 
 #[tokio::test]
@@ -312,8 +346,7 @@ async fn anthropic_dispatch_routes_move_glob_recent_and_multi_edit() {
         "recent",
         serde_json::json!({
             "limit": 5,
-            "path": "/Wiki",
-            "include_deleted": false
+            "path": "/Wiki"
         }),
     )
     .await
@@ -379,6 +412,25 @@ async fn anthropic_dispatch_routes_move_glob_recent_and_multi_edit() {
     );
 }
 
+#[tokio::test]
+async fn anthropic_dispatch_routes_search_paths() {
+    let client = ToolMockClient::default();
+    let result = handle_anthropic_tool_call(
+        &client,
+        "search_paths",
+        serde_json::json!({
+            "query_text": "nested",
+            "prefix": "/Wiki",
+            "top_k": 5
+        }),
+    )
+    .await
+    .expect("search paths tool should succeed");
+    assert!(!result.is_error);
+    assert!(result.text.contains("/Wiki/nested/beta.md"));
+    assert!(result.text.contains("path_substring"));
+}
+
 fn sample_node(path: &str, content: &str, etag: &str) -> Node {
     Node {
         path: path.to_string(),
@@ -387,8 +439,16 @@ fn sample_node(path: &str, content: &str, etag: &str) -> Node {
         created_at: 1,
         updated_at: 2,
         etag: etag.to_string(),
-        deleted_at: None,
         metadata_json: "{}".to_string(),
+    }
+}
+
+fn sample_ack(path: &str, kind: NodeKind, etag: &str) -> NodeMutationAck {
+    NodeMutationAck {
+        path: path.to_string(),
+        kind,
+        updated_at: 2,
+        etag: etag.to_string(),
     }
 }
 

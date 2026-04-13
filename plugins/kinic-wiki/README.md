@@ -116,6 +116,7 @@ The plugin calls these canister methods directly:
 - `write_node`
 - `delete_node`
 - `search_nodes`
+- `search_node_paths`
 - `export_snapshot`
 - `fetch_updates`
 
@@ -130,22 +131,23 @@ crates/wiki_canister/wiki.did
 ```
 
 The plugin keeps its local IDL in `candid.ts`, matching the same FS-first methods.
+`main.js` is a generated artifact built from the TypeScript sources.
 
 ## Manual E2E checklist
 
 1. Start a local replica or target replica host.
 2. If using the local project network, run `icp network start -d` and `icp deploy -e local`.
-3. Build the plugin and place it in `<Vault>/.obsidian/plugins/kinic-wiki/`.
+3. Run `npm run typecheck && npm run build`, then place the plugin in `<Vault>/.obsidian/plugins/kinic-wiki/`.
 4. Set `Replica Host` and `Canister ID`.
 5. Run `Wiki: Initial Sync`.
 6. Confirm remote `/Wiki/...` paths are created directly under the configured mirror root.
 7. Run `Wiki: Pull Updates` after a remote change.
 8. Edit a mirrored file and run `Wiki: Push Current Note`.
 9. Run `Wiki: Delete Current Wiki Page`.
-10. Force a conflict and confirm `Wiki/conflicts/*.conflict.md` is created.
+10. Force conflicts for two same-name pages under different paths and confirm separate files such as `Wiki/conflicts/a__foo--<hash>.conflict.md` and `Wiki/conflicts/b__foo--<hash>.conflict.md` are created.
 
 ## Notes
 
 - The plugin does not currently install itself into a vault automatically.
 - Anonymous update calls must be allowed by the canister, otherwise push/delete will fail.
-- If the Candid interface changes, `plugins/kinic-wiki/candid.ts` must be updated to match.
+- If the Candid interface changes, update `plugins/kinic-wiki/candid.ts`, then run `npm run typecheck && npm run build` so `main.js` matches the current sources.

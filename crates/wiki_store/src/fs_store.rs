@@ -3,34 +3,42 @@
 // Why: The new agent-facing model needs file-like CRUD and sync without changing the old wiki store yet.
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use rusqlite::{Connection, Transaction, params};
 use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodesRequest, Status, WriteNodeRequest,
-    WriteNodeResult,
+    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 use crate::{
     fs_helpers::{
-        build_entries, build_fts_query, build_glob_entries, compute_node_etag, load_node,
-        load_scoped_nodes, node_kind_from_db, node_kind_to_db, normalize_node_path,
-        prefix_filter_sql, relative_to_prefix, snapshot_revision_token,
+        StoredNode, build_entries_from_rows, build_fts_query, build_glob_entries_from_rows,
+        compute_node_etag, load_node, load_scoped_entry_rows, load_scoped_nodes, load_stored_node,
+        node_ack, node_kind_from_db, node_kind_to_db, normalize_node_path, prefix_filter_sql,
+        prefix_filter_sql_for_column, relative_to_prefix, snapshot_revision_token,
     },
     glob_match::{matches_path, validate_pattern},
     schema,
 };
 
+const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
+const SEARCH_SNIPPET_MAX_BYTES: usize = 512;
+const SEARCH_SNIPPET_ELLIPSIS: &str = "...";
+// `fs_nodes_fts` is defined as `fts5(content, ...)`, so the searched content column is index 0.
+// Keep this in sync with the FTS schema if additional indexed columns are ever added.
+const FS_NODES_FTS_CONTENT_COLUMN_INDEX: i32 = 0;
+const QUERY_RESULT_LIMIT_MAX: u32 = 100;
+
 // Where: crates/wiki_store/src/fs_store.rs
 // What: Change-log semantics used by delta sync visibility checks.
-// Why: Tombstones and move removals need distinct history meanings.
+// Why: Upserts and physical removals need distinct history meanings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChangeKind {
     Upsert,
-    Tombstone,
     PathRemoval,
 }
 
@@ -38,17 +46,7 @@ impl ChangeKind {
     fn as_str(self) -> &'static str {
         match self {
             Self::Upsert => "upsert",
-            Self::Tombstone => "tombstone",
             Self::PathRemoval => "path_removal",
-        }
-    }
-
-    fn from_db(value: &str) -> Result<Self, String> {
-        match value {
-            "upsert" => Ok(Self::Upsert),
-            "tombstone" => Ok(Self::Tombstone),
-            "path_removal" => Ok(Self::PathRemoval),
-            _ => Err(format!("unknown fs_change_log.change_kind: {value}")),
         }
     }
 }
@@ -74,23 +72,22 @@ impl FsStore {
     pub fn status(&self) -> Result<Status, String> {
         let conn = self.open()?;
         Ok(Status {
-            file_count: count_nodes(&conn, "file", false)?,
-            source_count: count_nodes(&conn, "source", false)?,
-            deleted_count: count_deleted_nodes(&conn)?,
+            file_count: count_nodes(&conn, "file")?,
+            source_count: count_nodes(&conn, "source")?,
         })
     }
 
     pub fn read_node(&self, path: &str) -> Result<Option<Node>, String> {
         let normalized = normalize_node_path(path, false)?;
         let conn = self.open()?;
-        Ok(load_node(&conn, &normalized)?.filter(|node| node.deleted_at.is_none()))
+        load_node(&conn, &normalized)
     }
 
     pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
         let prefix = normalize_node_path(&request.prefix, true)?;
         let conn = self.open()?;
-        let nodes = load_scoped_nodes(&conn, &prefix, request.include_deleted)?;
-        Ok(build_entries(&nodes, &prefix, request.recursive))
+        let rows = load_scoped_entry_rows(&conn, &prefix)?;
+        Ok(build_entries_from_rows(&rows, &prefix, request.recursive))
     }
 
     pub fn write_node(
@@ -101,18 +98,21 @@ impl FsStore {
         let path = normalize_node_path(&request.path, false)?;
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let existing = load_node(&tx, &path)?;
+        let existing = load_stored_node(&tx, &path)?;
         let created = existing.is_none();
-        let mut node = match existing {
-            Some(current) => update_existing_node(current, request, now)?,
+        let mut node = match existing.as_ref() {
+            Some(current) => update_existing_node(current.node.clone(), request, now)?,
             None => create_new_node(path, request, now)?,
         };
-        node.etag = compute_node_etag(&node);
-        upsert_node(&tx, &node)?;
-        sync_node_fts(&tx, &node)?;
         record_change(&tx, &node)?;
+        node.etag = compute_node_etag(&node);
+        let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
+        sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
         tx.commit().map_err(|error| error.to_string())?;
-        Ok(WriteNodeResult { node, created })
+        Ok(WriteNodeResult {
+            node: node_ack(&node),
+            created,
+        })
     }
 
     pub fn append_node(
@@ -123,18 +123,21 @@ impl FsStore {
         let path = normalize_node_path(&request.path, false)?;
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let existing = load_node(&tx, &path)?;
+        let existing = load_stored_node(&tx, &path)?;
         let created = existing.is_none();
-        let mut node = match existing {
-            Some(current) => append_existing_node(current, request, now)?,
+        let mut node = match existing.as_ref() {
+            Some(current) => append_existing_node(current.node.clone(), request, now)?,
             None => create_appended_node(path, request, now)?,
         };
-        node.etag = compute_node_etag(&node);
-        upsert_node(&tx, &node)?;
-        sync_node_fts(&tx, &node)?;
         record_change(&tx, &node)?;
+        node.etag = compute_node_etag(&node);
+        let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
+        sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
         tx.commit().map_err(|error| error.to_string())?;
-        Ok(WriteNodeResult { node, created })
+        Ok(WriteNodeResult {
+            node: node_ack(&node),
+            created,
+        })
     }
 
     pub fn edit_node(&self, request: EditNodeRequest, now: i64) -> Result<EditNodeResult, String> {
@@ -145,29 +148,26 @@ impl FsStore {
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         let current =
-            load_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if current.deleted_at.is_some() {
-            return Err(format!("node is deleted: {path}"));
-        }
-        if current.etag != request.expected_etag.unwrap_or_default() {
+            load_stored_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
+        if current.node.etag != request.expected_etag.unwrap_or_default() {
             return Err(format!("expected_etag does not match current etag: {path}"));
         }
         let (content, replacement_count) = replace_text(
-            &current.content,
+            &current.node.content,
             &request.old_text,
             &request.new_text,
             request.replace_all,
         )?;
-        let mut node = current;
+        let mut node = current.node.clone();
         node.content = content;
         node.updated_at = now;
-        node.etag = compute_node_etag(&node);
-        upsert_node(&tx, &node)?;
-        sync_node_fts(&tx, &node)?;
         record_change(&tx, &node)?;
+        node.etag = compute_node_etag(&node);
+        save_node(&tx, Some(current.row_id), &node)?;
+        sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(EditNodeResult {
-            node,
+            node: node_ack(&node),
             replacement_count,
         })
     }
@@ -188,37 +188,32 @@ impl FsStore {
         }
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let current = load_node(&tx, &from_path)?
+        let current = load_stored_node(&tx, &from_path)?
             .ok_or_else(|| format!("node does not exist: {from_path}"))?;
-        if current.deleted_at.is_some() {
-            return Err(format!("node is deleted: {from_path}"));
-        }
-        if current.etag != request.expected_etag.unwrap_or_default() {
+        if current.node.etag != request.expected_etag.unwrap_or_default() {
             return Err(format!(
                 "expected_etag does not match current etag: {from_path}"
             ));
         }
-        let target = load_node(&tx, &to_path)?;
-        let overwrote = target
-            .as_ref()
-            .map(|node| node.deleted_at.is_none())
-            .unwrap_or(false);
+        let target = load_stored_node(&tx, &to_path)?;
+        let overwrote = target.is_some();
         if overwrote && !request.overwrite {
             return Err(format!("target node already exists: {to_path}"));
         }
-        let mut moved = current.clone();
+        if let Some(target) = target.as_ref() {
+            delete_node_row(&tx, target)?;
+        }
+        let mut moved = current.node.clone();
         moved.path = to_path.clone();
         moved.updated_at = now;
-        moved.deleted_at = None;
-        moved.etag = compute_node_etag(&moved);
-        upsert_node(&tx, &moved)?;
-        sync_node_fts(&tx, &moved)?;
-        delete_node_row(&tx, &from_path)?;
-        record_path_removal(&tx, &from_path, now)?;
+        record_path_removal(&tx, &from_path)?;
         record_change(&tx, &moved)?;
+        moved.etag = compute_node_etag(&moved);
+        save_node(&tx, Some(current.row_id), &moved)?;
+        sync_node_fts(&tx, Some(&current), Some((current.row_id, &moved)))?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(MoveNodeResult {
-            node: moved,
+            node: node_ack(&moved),
             from_path,
             overwrote,
         })
@@ -237,8 +232,8 @@ impl FsStore {
             .unwrap_or_else(|| "/Wiki".to_string());
         let node_type = request.node_type.unwrap_or(GlobNodeType::Any);
         let conn = self.open()?;
-        let nodes = load_scoped_nodes(&conn, &prefix, false)?;
-        let entries = build_glob_entries(&nodes, &prefix);
+        let rows = load_scoped_entry_rows(&conn, &prefix)?;
+        let entries = build_glob_entries_from_rows(&rows, &prefix);
         let mut hits = Vec::new();
         for entry in entries {
             if !glob_type_matches(&node_type, &entry.kind) {
@@ -267,19 +262,16 @@ impl FsStore {
             .unwrap_or_else(|| "/Wiki".to_string());
         let conn = self.open()?;
         let mut sql = String::from(
-            "SELECT path, kind, updated_at, etag, deleted_at
+            "SELECT path, kind, updated_at, etag
              FROM fs_nodes WHERE 1 = 1",
         );
         let mut values = Vec::new();
-        if !request.include_deleted {
-            sql.push_str(" AND deleted_at IS NULL");
-        }
         if prefix != "/" {
             let (scope_sql, scope_values) = prefix_filter_sql(&prefix, values.len() + 1);
             sql.push_str(&scope_sql);
             values.extend(scope_values);
         }
-        let limit = i64::from(request.limit.max(1));
+        let limit = capped_query_limit(request.limit);
         sql.push_str(&format!(
             " ORDER BY updated_at DESC, path ASC LIMIT {limit}"
         ));
@@ -290,7 +282,6 @@ impl FsStore {
                 kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
                 updated_at: row.get(2)?,
                 etag: row.get(3)?,
-                deleted_at: row.get(4)?,
             })
         })
         .map_err(|error| error.to_string())?
@@ -310,24 +301,21 @@ impl FsStore {
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         let current =
-            load_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if current.deleted_at.is_some() {
-            return Err(format!("node is deleted: {path}"));
-        }
-        if current.etag != request.expected_etag.unwrap_or_default() {
+            load_stored_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
+        if current.node.etag != request.expected_etag.unwrap_or_default() {
             return Err(format!("expected_etag does not match current etag: {path}"));
         }
-        let (content, replacement_count) = apply_multi_edit(&current.content, &request.edits)?;
-        let mut node = current;
+        let (content, replacement_count) = apply_multi_edit(&current.node.content, &request.edits)?;
+        let mut node = current.node.clone();
         node.content = content;
         node.updated_at = now;
-        node.etag = compute_node_etag(&node);
-        upsert_node(&tx, &node)?;
-        sync_node_fts(&tx, &node)?;
         record_change(&tx, &node)?;
+        node.etag = compute_node_etag(&node);
+        save_node(&tx, Some(current.row_id), &node)?;
+        sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(MultiEditNodeResult {
-            node,
+            node: node_ack(&node),
             replacement_count,
         })
     }
@@ -335,31 +323,20 @@ impl FsStore {
     pub fn delete_node(
         &self,
         request: DeleteNodeRequest,
-        now: i64,
+        _now: i64,
     ) -> Result<DeleteNodeResult, String> {
         let path = normalize_node_path(&request.path, false)?;
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let mut node =
-            load_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if node.deleted_at.is_some() {
-            return Err(format!("node is already deleted: {path}"));
-        }
-        if node.etag != request.expected_etag.unwrap_or_default() {
+        let current =
+            load_stored_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
+        if current.node.etag != request.expected_etag.unwrap_or_default() {
             return Err(format!("expected_etag does not match current etag: {path}"));
         }
-        node.updated_at = now;
-        node.deleted_at = Some(now);
-        node.etag = compute_node_etag(&node);
-        upsert_node(&tx, &node)?;
-        sync_node_fts(&tx, &node)?;
-        record_change(&tx, &node)?;
+        record_path_removal(&tx, &path)?;
+        delete_node_row(&tx, &current)?;
         tx.commit().map_err(|error| error.to_string())?;
-        Ok(DeleteNodeResult {
-            path,
-            etag: node.etag,
-            deleted_at: now,
-        })
+        Ok(DeleteNodeResult { path })
     }
 
     pub fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, String> {
@@ -371,26 +348,86 @@ impl FsStore {
         let query = build_fts_query(&request.query_text)
             .ok_or_else(|| "query_text must not be empty".to_string())?;
         let conn = self.open()?;
-        let top_k = i64::from(request.top_k.max(1));
-        let mut sql = String::from(
-            "SELECT path, kind, snippet(fs_nodes_fts, 2, '[', ']', '...', 12) AS snippet, bm25(fs_nodes_fts) AS score
-             FROM fs_nodes_fts WHERE fs_nodes_fts MATCH ?1",
+        let top_k = capped_query_limit(request.top_k);
+        let mut sql = format!(
+            "SELECT fs_nodes.path, fs_nodes.kind,
+                    snippet(fs_nodes_fts, {FS_NODES_FTS_CONTENT_COLUMN_INDEX}, '[', ']', '...', 12) AS snippet,
+                    bm25(fs_nodes_fts) AS score
+             FROM fs_nodes_fts
+             JOIN fs_nodes ON fs_nodes.id = fs_nodes_fts.rowid
+             WHERE fs_nodes_fts MATCH ?1",
         );
         let mut values = vec![rusqlite::types::Value::from(query)];
         if let Some(prefix) = prefix {
-            let (scope_sql, scope_values) = prefix_filter_sql(&prefix, 2);
+            let (scope_sql, scope_values) =
+                prefix_filter_sql_for_column("fs_nodes.path", &prefix, 2);
             sql.push_str(&scope_sql);
             values.extend(scope_values);
         }
         sql.push_str(&format!(" ORDER BY score ASC, path ASC LIMIT {top_k}"));
         let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
         stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+            let snippet = clamp_search_snippet(row.get(2)?);
             Ok(SearchNodeHit {
                 path: row.get(0)?,
                 kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-                snippet: row.get(2)?,
+                snippet,
                 score: row.get(3)?,
                 match_reasons: vec!["fts5_bm25".to_string()],
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+    }
+
+    pub fn search_node_paths(
+        &self,
+        request: SearchNodePathsRequest,
+    ) -> Result<Vec<SearchNodeHit>, String> {
+        let prefix = request
+            .prefix
+            .as_ref()
+            .map(|value| normalize_node_path(value, true))
+            .transpose()?;
+        let terms = split_path_search_terms(&request.query_text)
+            .ok_or_else(|| "query_text must not be empty".to_string())?;
+        let conn = self.open()?;
+        let top_k = capped_query_limit(request.top_k);
+        let mut sql = String::from(
+            "SELECT path,
+                    kind,
+                    instr(lower(path), ?1) AS first_match_position,
+                    length(path) AS path_length
+             FROM fs_nodes
+             WHERE 1 = 1",
+        );
+        let mut values = vec![rusqlite::types::Value::from(terms[0].clone())];
+        for term in &terms {
+            let index = values.len() + 1;
+            sql.push_str(&format!(" AND instr(lower(path), ?{index}) > 0"));
+            values.push(rusqlite::types::Value::from(term.clone()));
+        }
+        if let Some(prefix) = prefix {
+            let (scope_sql, scope_values) =
+                prefix_filter_sql_for_column("fs_nodes.path", &prefix, values.len() + 1);
+            sql.push_str(&scope_sql);
+            values.extend(scope_values);
+        }
+        sql.push_str(&format!(
+            " ORDER BY first_match_position ASC, path_length ASC, path ASC LIMIT {top_k}"
+        ));
+        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+        stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+            let path = row.get::<_, String>(0)?;
+            let first_match_position = row.get::<_, i64>(2)?;
+            let path_length = row.get::<_, i64>(3)?;
+            Ok(SearchNodeHit {
+                path: path.clone(),
+                kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
+                snippet: path,
+                score: path_match_score(first_match_position, path_length),
+                match_reasons: vec!["path_substring".to_string()],
             })
         })
         .map_err(|error| error.to_string())?
@@ -409,8 +446,9 @@ impl FsStore {
             .transpose()?;
         let prefix = prefix.unwrap_or_else(|| "/".to_string());
         let conn = self.open()?;
-        let nodes = load_scoped_nodes(&conn, &prefix, request.include_deleted)?;
-        let revision = scoped_snapshot_revision(&conn, &prefix, request.include_deleted, &nodes)?;
+        let current_change_revision = current_snapshot_revision_number(&conn)?;
+        let nodes = load_scoped_nodes(&conn, &prefix)?;
+        let revision = scoped_snapshot_revision(&prefix, current_change_revision);
         Ok(ExportSnapshotResponse {
             snapshot_revision: revision,
             nodes,
@@ -429,14 +467,12 @@ impl FsStore {
         let prefix = prefix.unwrap_or_else(|| "/".to_string());
         let conn = self.open()?;
         let current_change_revision = current_snapshot_revision_number(&conn)?;
-        let current = ExportSnapshotResponse {
-            nodes: load_scoped_nodes(&conn, &prefix, request.include_deleted)?,
-            snapshot_revision: String::new(),
-        };
-        let current_snapshot_revision =
-            scoped_snapshot_revision(&conn, &prefix, request.include_deleted, &current.nodes)?;
+        let current_snapshot_revision = scoped_snapshot_revision(&prefix, current_change_revision);
         let known_snapshot = parse_known_snapshot_revision(&request.known_snapshot_revision);
-        if current_snapshot_revision == request.known_snapshot_revision {
+        if let Some(known_snapshot) = known_snapshot.as_ref()
+            && known_snapshot.revision == current_change_revision
+            && known_snapshot.prefix == prefix
+        {
             return Ok(FetchUpdatesResponse {
                 snapshot_revision: current_snapshot_revision,
                 changed_nodes: Vec::new(),
@@ -444,68 +480,25 @@ impl FsStore {
             });
         }
         let Some(known_snapshot) = known_snapshot else {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: current.nodes,
-                removed_paths: Vec::new(),
-            });
+            return Err("known_snapshot_revision is invalid".to_string());
         };
-        if known_snapshot.prefix != prefix
-            || known_snapshot.include_deleted != request.include_deleted
-        {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: current.nodes,
-                removed_paths: load_removed_paths_for_scope_change(
-                    &conn,
-                    &known_snapshot.prefix,
-                    known_snapshot.include_deleted,
-                    known_snapshot.revision,
-                    &prefix,
-                    request.include_deleted,
-                )?,
-            });
+        if known_snapshot.prefix != prefix {
+            return Err("known_snapshot_revision prefix does not match request prefix".to_string());
         }
         if known_snapshot.revision > current_change_revision {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: current.nodes,
-                removed_paths: Vec::new(),
-            });
+            return Err("known_snapshot_revision is newer than current revision".to_string());
+        }
+        let oldest_change_revision = oldest_snapshot_revision_number(&conn)?;
+        if known_snapshot.revision < oldest_change_revision.saturating_sub(1) {
+            return Err("known_snapshot_revision is no longer available".to_string());
         }
         let mut changed_nodes = Vec::new();
         let mut removed_paths = Vec::new();
         for path in load_changed_paths_since(&conn, known_snapshot.revision, &prefix)? {
             let current_node = load_node(&conn, &path)?;
             match current_node {
-                Some(node) if node.deleted_at.is_none() => changed_nodes.push(node),
-                Some(node) => {
-                    if !request.include_deleted
-                        && path_was_visible_in_scope_at_revision(
-                            &conn,
-                            &path,
-                            &prefix,
-                            false,
-                            known_snapshot.revision,
-                        )?
-                    {
-                        removed_paths.push(path);
-                    }
-                    if request.include_deleted {
-                        changed_nodes.push(node);
-                    }
-                }
-                None => {
-                    if path_was_visible_in_scope_at_revision(
-                        &conn,
-                        &path,
-                        &prefix,
-                        false,
-                        known_snapshot.revision,
-                    )? {
-                        removed_paths.push(path);
-                    }
-                }
+                Some(node) => changed_nodes.push(node),
+                None => removed_paths.push(path),
             }
         }
         Ok(FetchUpdatesResponse {
@@ -520,24 +513,19 @@ impl FsStore {
     }
 }
 
-fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<(), String> {
-    let change_kind = if node.deleted_at.is_some() {
-        ChangeKind::Tombstone
-    } else {
-        ChangeKind::Upsert
-    };
+fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<i64, String> {
     tx.execute(
-        "INSERT INTO fs_change_log (path, deleted_at, change_kind) VALUES (?1, ?2, ?3)",
-        params![node.path, node.deleted_at, change_kind.as_str()],
+        "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, ?2)",
+        params![node.path, ChangeKind::Upsert.as_str()],
     )
-    .map(|_| ())
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(tx.last_insert_rowid())
 }
 
-fn record_path_removal(tx: &Transaction<'_>, path: &str, deleted_at: i64) -> Result<(), String> {
+fn record_path_removal(tx: &Transaction<'_>, path: &str) -> Result<(), String> {
     tx.execute(
-        "INSERT INTO fs_change_log (path, deleted_at, change_kind) VALUES (?1, ?2, ?3)",
-        params![path, deleted_at, ChangeKind::PathRemoval.as_str()],
+        "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, ?2)",
+        params![path, ChangeKind::PathRemoval.as_str()],
     )
     .map(|_| ())
     .map_err(|error| error.to_string())
@@ -552,47 +540,41 @@ fn current_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
     .map_err(|error| error.to_string())
 }
 
+fn oldest_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COALESCE(MIN(revision), 0) FROM fs_change_log",
+        [],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(|error| error.to_string())
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct KnownSnapshotRevision {
     revision: i64,
     prefix: String,
-    include_deleted: bool,
 }
 
-fn scoped_snapshot_revision(
-    conn: &Connection,
-    prefix: &str,
-    include_deleted: bool,
-    nodes: &[Node],
-) -> Result<String, String> {
-    let revision = current_snapshot_revision_number(conn)?;
-    Ok(snapshot_revision_token(
-        prefix,
-        include_deleted,
-        revision,
-        nodes,
-    ))
+fn scoped_snapshot_revision(prefix: &str, revision: i64) -> String {
+    snapshot_revision_token(prefix, revision)
 }
 
 fn parse_known_snapshot_revision(snapshot_revision: &str) -> Option<KnownSnapshotRevision> {
     let mut parts = snapshot_revision.split(':');
     let version = parts.next()?;
     let parsed = parts.next()?.parse::<i64>().ok()?;
-    let include_deleted = match parts.next()? {
-        "0" => false,
-        "1" => true,
-        _ => return None,
-    };
     let prefix = decode_hex_to_string(parts.next()?)?;
-    let _state_hash = parts.next()?;
-    if version != "v3" || parsed < 0 || parts.next().is_some() {
+    if version != "v5" || parsed < 0 || parts.next().is_some() {
         return None;
     }
     Some(KnownSnapshotRevision {
         revision: parsed,
         prefix,
-        include_deleted,
     })
+}
+
+fn capped_query_limit(requested: u32) -> i64 {
+    i64::from(requested.clamp(1, QUERY_RESULT_LIMIT_MAX))
 }
 
 fn load_changed_paths_since(
@@ -619,106 +601,6 @@ fn load_changed_paths_since(
         .map_err(|error| error.to_string())
 }
 
-fn load_removed_paths_for_scope_change(
-    conn: &Connection,
-    previous_prefix: &str,
-    previous_include_deleted: bool,
-    previous_revision: i64,
-    current_prefix: &str,
-    current_include_deleted: bool,
-) -> Result<Vec<String>, String> {
-    let candidate_paths = load_paths_seen_under_prefix(conn, previous_prefix)?;
-    let mut removed_paths = Vec::new();
-    for path in candidate_paths {
-        if !path_was_visible_in_scope_at_revision(
-            conn,
-            &path,
-            previous_prefix,
-            previous_include_deleted,
-            previous_revision,
-        )? {
-            continue;
-        }
-        if !path_is_visible_in_scope_now(conn, &path, current_prefix, current_include_deleted)? {
-            removed_paths.push(path);
-        }
-    }
-    Ok(removed_paths)
-}
-
-fn load_paths_seen_under_prefix(conn: &Connection, prefix: &str) -> Result<Vec<String>, String> {
-    let mut sql = String::from("SELECT DISTINCT path FROM fs_change_log WHERE 1 = 1");
-    let mut values = Vec::new();
-    if prefix != "/" {
-        let (scope_sql, scope_values) = prefix_filter_sql(prefix, 1);
-        sql.push_str(&scope_sql);
-        values.extend(scope_values);
-    }
-    sql.push_str(" ORDER BY path ASC");
-    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| row.get(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
-}
-
-fn path_was_visible_in_scope_at_revision(
-    conn: &Connection,
-    path: &str,
-    prefix: &str,
-    include_deleted: bool,
-    revision: i64,
-) -> Result<bool, String> {
-    if !path_matches_prefix(path, prefix) {
-        return Ok(false);
-    }
-    conn.query_row(
-        "SELECT deleted_at, change_kind
-         FROM fs_change_log
-         WHERE path = ?1 AND revision <= ?2
-         ORDER BY revision DESC
-         LIMIT 1",
-        params![path, revision],
-        |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, String>(1)?)),
-    )
-    .optional()
-    .map_err(|error| error.to_string())
-    .and_then(|state| {
-        Ok(match state {
-            Some((_, change_kind)) => match ChangeKind::from_db(&change_kind)? {
-                ChangeKind::Upsert => true,
-                ChangeKind::Tombstone => include_deleted,
-                ChangeKind::PathRemoval => false,
-            },
-            None => false,
-        })
-    })
-}
-
-fn path_is_visible_in_scope_now(
-    conn: &Connection,
-    path: &str,
-    prefix: &str,
-    include_deleted: bool,
-) -> Result<bool, String> {
-    if !path_matches_prefix(path, prefix) {
-        return Ok(false);
-    }
-    let current = load_node(conn, path)?;
-    Ok(match current {
-        Some(node) if node.deleted_at.is_none() => true,
-        Some(node) if include_deleted && node.deleted_at.is_some() => true,
-        _ => false,
-    })
-}
-
-fn path_matches_prefix(path: &str, prefix: &str) -> bool {
-    if prefix == "/" {
-        return path.starts_with('/');
-    }
-    path == prefix || path.starts_with(&format!("{prefix}/"))
-}
-
 fn decode_hex_to_string(value: &str) -> Option<String> {
     if !value.len().is_multiple_of(2) {
         return None;
@@ -733,20 +615,10 @@ fn decode_hex_to_string(value: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn count_nodes(conn: &Connection, kind: &str, deleted_only: bool) -> Result<u64, String> {
-    let sql = if deleted_only {
-        "SELECT COUNT(*) FROM fs_nodes WHERE kind = ?1 AND deleted_at IS NOT NULL"
-    } else {
-        "SELECT COUNT(*) FROM fs_nodes WHERE kind = ?1 AND deleted_at IS NULL"
-    };
-    conn.query_row(sql, params![kind], |row| row.get::<_, u64>(0))
-        .map_err(|error| error.to_string())
-}
-
-fn count_deleted_nodes(conn: &Connection) -> Result<u64, String> {
+fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
     conn.query_row(
-        "SELECT COUNT(*) FROM fs_nodes WHERE deleted_at IS NOT NULL",
-        [],
+        "SELECT COUNT(*) FROM fs_nodes WHERE kind = ?1",
+        params![kind],
         |row| row.get::<_, u64>(0),
     )
     .map_err(|error| error.to_string())
@@ -763,7 +635,6 @@ fn create_new_node(path: String, request: WriteNodeRequest, now: i64) -> Result<
         created_at: now,
         updated_at: now,
         etag: String::new(),
-        deleted_at: None,
         metadata_json: request.metadata_json,
     })
 }
@@ -783,7 +654,6 @@ fn create_appended_node(
         created_at: now,
         updated_at: now,
         etag: String::new(),
-        deleted_at: None,
         metadata_json: request.metadata_json.unwrap_or_else(|| "{}".to_string()),
     })
 }
@@ -793,9 +663,6 @@ fn append_existing_node(
     request: AppendNodeRequest,
     now: i64,
 ) -> Result<Node, String> {
-    if current.deleted_at.is_some() {
-        return Err(format!("node is deleted: {}", current.path));
-    }
     if current.etag != request.expected_etag.unwrap_or_default() {
         return Err(format!(
             "expected_etag does not match current etag: {}",
@@ -805,7 +672,6 @@ fn append_existing_node(
     let separator = request.separator.unwrap_or_default();
     current.content = format!("{}{}{}", current.content, separator, request.content);
     current.updated_at = now;
-    current.deleted_at = None;
     Ok(current)
 }
 
@@ -866,51 +732,151 @@ fn update_existing_node(
     current.kind = request.kind;
     current.content = request.content;
     current.updated_at = now;
-    current.deleted_at = None;
     current.metadata_json = request.metadata_json;
     Ok(current)
 }
 
-fn upsert_node(tx: &Transaction<'_>, node: &Node) -> Result<(), String> {
-    tx.execute(
-        "INSERT INTO fs_nodes (path, kind, content, created_at, updated_at, etag, deleted_at, metadata_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-         ON CONFLICT(path) DO UPDATE SET
-            kind = excluded.kind,
-            content = excluded.content,
-            created_at = excluded.created_at,
-            updated_at = excluded.updated_at,
-            etag = excluded.etag,
-            deleted_at = excluded.deleted_at,
-            metadata_json = excluded.metadata_json",
-        params![node.path, node_kind_to_db(&node.kind), node.content, node.created_at, node.updated_at, node.etag, node.deleted_at, node.metadata_json],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
+fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i64, String> {
+    match row_id {
+        Some(row_id) => {
+            tx.execute(
+                "UPDATE fs_nodes
+                 SET path = ?1,
+                     kind = ?2,
+                     content = ?3,
+                     created_at = ?4,
+                     updated_at = ?5,
+                     etag = ?6,
+                     metadata_json = ?7
+                 WHERE id = ?8",
+                params![
+                    node.path,
+                    node_kind_to_db(&node.kind),
+                    node.content,
+                    node.created_at,
+                    node.updated_at,
+                    node.etag,
+                    node.metadata_json,
+                    row_id
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(row_id)
+        }
+        None => {
+            tx.execute(
+                "INSERT INTO fs_nodes (path, kind, content, created_at, updated_at, etag, metadata_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    node.path,
+                    node_kind_to_db(&node.kind),
+                    node.content,
+                    node.created_at,
+                    node.updated_at,
+                    node.etag,
+                    node.metadata_json
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(tx.last_insert_rowid())
+        }
+    }
 }
 
-fn sync_node_fts(tx: &Transaction<'_>, node: &Node) -> Result<(), String> {
-    tx.execute(
-        "DELETE FROM fs_nodes_fts WHERE path = ?1",
-        params![node.path],
-    )
-    .map_err(|error| error.to_string())?;
-    if node.deleted_at.is_none() {
+// `snippet()` output can vary with token and marker placement, but the transport contract is fixed:
+// always return valid UTF-8 bounded by bytes first, with chars as a secondary UI-friendly limit.
+fn clamp_search_snippet(snippet: String) -> String {
+    let mut out = if snippet.chars().count() > SEARCH_SNIPPET_MAX_CHARS {
+        let mut shortened = snippet
+            .chars()
+            .take(SEARCH_SNIPPET_MAX_CHARS)
+            .collect::<String>();
+        shortened.push_str(SEARCH_SNIPPET_ELLIPSIS);
+        shortened
+    } else {
+        snippet
+    };
+
+    if out.len() <= SEARCH_SNIPPET_MAX_BYTES {
+        return out;
+    }
+
+    while out.len() + SEARCH_SNIPPET_ELLIPSIS.len() > SEARCH_SNIPPET_MAX_BYTES {
+        if out.pop().is_none() {
+            break;
+        }
+    }
+    out.push_str(SEARCH_SNIPPET_ELLIPSIS);
+    out
+}
+
+#[cfg(not(feature = "bench-disable-fts"))]
+fn sync_node_fts(
+    tx: &Transaction<'_>,
+    old: Option<&StoredNode>,
+    new: Option<(i64, &Node)>,
+) -> Result<(), String> {
+    let unchanged = match (old, new) {
+        (Some(stored), Some((row_id, node))) => {
+            stored.row_id == row_id && stored.node.content == node.content
+        }
+        _ => false,
+    };
+
+    if unchanged {
+        return Ok(());
+    }
+
+    if let Some(stored) = old {
         tx.execute(
-            "INSERT INTO fs_nodes_fts (path, kind, content) VALUES (?1, ?2, ?3)",
-            params![node.path, node_kind_to_db(&node.kind), node.content],
+            "INSERT INTO fs_nodes_fts(fs_nodes_fts, rowid, content) VALUES('delete', ?1, ?2)",
+            params![stored.row_id, stored.node.content],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if let Some((row_id, node)) = new {
+        tx.execute(
+            "INSERT INTO fs_nodes_fts(rowid, content) VALUES(?1, ?2)",
+            params![row_id, node.content],
         )
         .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
 
-fn delete_node_row(tx: &Transaction<'_>, path: &str) -> Result<(), String> {
-    tx.execute("DELETE FROM fs_nodes WHERE path = ?1", params![path])
-        .map_err(|error| error.to_string())?;
-    tx.execute("DELETE FROM fs_nodes_fts WHERE path = ?1", params![path])
+#[cfg(feature = "bench-disable-fts")]
+fn sync_node_fts(
+    _tx: &Transaction<'_>,
+    _old: Option<&StoredNode>,
+    _new: Option<(i64, &Node)>,
+) -> Result<(), String> {
+    Ok(())
+}
+
+fn delete_node_row(tx: &Transaction<'_>, stored: &StoredNode) -> Result<(), String> {
+    sync_node_fts(tx, Some(stored), None)?;
+    tx.execute("DELETE FROM fs_nodes WHERE id = ?1", params![stored.row_id])
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn split_search_terms(query_text: &str) -> Option<Vec<String>> {
+    let terms = query_text
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if terms.is_empty() { None } else { Some(terms) }
+}
+
+fn split_path_search_terms(query_text: &str) -> Option<Vec<String>> {
+    split_search_terms(query_text)
+        .map(|terms| terms.into_iter().map(|term| term.to_lowercase()).collect())
+}
+
+fn path_match_score(first_match_position: i64, path_length: i64) -> f32 {
+    ((first_match_position - 1) * 10_000 + path_length) as f32
 }
 
 fn glob_type_matches(node_type: &GlobNodeType, entry_kind: &NodeEntryKind) -> bool {

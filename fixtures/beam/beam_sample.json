@@ -1,0 +1,38 @@
+{
+  "100K": [
+    {
+      "conversation_id": "beam-sample-1",
+      "conversation_seed": {
+        "category": "General",
+        "title": "Calendar planning"
+      },
+      "narratives": "A short planning conversation about a meeting date.",
+      "user_profile": {
+        "user_info": "Sample user profile"
+      },
+      "conversation_plan": "Discuss one meeting date and confirm it.",
+      "user_questions": [
+        {
+          "messages": [
+            [
+              "Can you help me remember the meeting date?"
+            ]
+          ]
+        }
+      ],
+      "chat": [
+        [
+          {
+            "role": "user",
+            "content": "Please remember that the meeting is on March 15, 2024."
+          },
+          {
+            "role": "assistant",
+            "content": "Understood. I will remember March 15, 2024."
+          }
+        ]
+      ],
+      "probing_questions": "{'abstention':[{'question':'What city was the meeting in?','answer':'insufficient evidence'}],'temporal_reasoning':[{'question':'When is the meeting?','answer':'March 15, 2024'}]}"
+    }
+  ]
+}

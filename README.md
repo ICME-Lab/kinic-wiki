@@ -55,14 +55,125 @@ There is also a dedicated canister build path and an optional `canbench` workflo
 - benchmark build config: `canbench.yml`
 - benchmark build script: `bash scripts/build-wiki-canister-canbench.sh`
 - benchmark runner: `bash scripts/run_canbench_guard.sh`
+- scale benchmark runner: `bash scripts/run_canbench_scale.sh`
 
 `canbench` uses a fixed PocketIC runtime requirement:
 
 - `canbench 0.4.1` expects `pocket-ic-server 10.0.0`
 - `pocket-ic-server 11.x` and `12.x` are not accepted
-- prefer `POCKET_IC_BIN=/abs/path/to/pocket-ic` or `./.canbench/pocket-ic`
+- the runner prefers `./.canbench/pocket-ic` when present, then falls back to `POCKET_IC_BIN`
 - CI provisions `./.canbench-tools/bin/canbench` and `./.canbench/pocket-ic` via `bash scripts/setup_canbench_ci.sh`
 - the repo ignores `./.canbench/` and `./.canbench-tools/`, so local runtime and local canbench binaries stay untracked
+
+## VFS Validation
+
+The repo keeps VFS validation inside the workspace first.
+
+- correctness checklist: [`VFS_CORRECTNESS_CHECKLIST.md`](VFS_CORRECTNESS_CHECKLIST.md)
+- staged validation plan: [`VFS_VALIDATION_PLAN.md`](VFS_VALIDATION_PLAN.md)
+- deployed canister benchmark guide: [`VFS_DEPLOYED_CANISTER_BENCHMARKS.md`](VFS_DEPLOYED_CANISTER_BENCHMARKS.md)
+
+Minimum validation commands:
+
+- `cargo test --workspace`
+- `cd plugins/kinic-wiki && npm run check`
+- `bash scripts/build-wiki-canister-canbench.sh`
+
+If your environment has the fixed canbench runtime, also run:
+
+- `bash scripts/run_canbench_guard.sh`
+
+The canbench coverage is centered on these VFS operations:
+
+- `write_node`
+- `append_node`
+- `move_node`
+- `search_nodes`
+- `export_snapshot`
+- `fetch_updates`
+
+The scale runner writes review artifacts to `artifacts/canbench/`:
+
+- `scale_results.json`
+- `scale_results.csv`
+- `scale_report.md`
+
+Use `CANBENCH_REPEATS=1 bash scripts/run_canbench_scale.sh` for a single smoke run; the default is 3 repeats for min/max/stddev. Compare two generated JSON files with `python3 -m scripts.canbench.compare --baseline <old>/scale_results.json --candidate <new>/scale_results.json --output-dir artifacts/canbench/compare`.
+
+It executes `N = 1000, 10000, 50000` for:
+
+- `write`
+- `append`
+- `move`
+- `search`
+- `export_snapshot`
+- `fetch_updates`
+
+The validation split is:
+
+- deployed canister benchmarks: `run_canister_vfs_workload.sh`, `run_canister_vfs_latency.sh`
+- VFS-native scaling benchmarks: `canbench` for `write`, `append`, `move`, `search`, `export_snapshot`, `fetch_updates`
+- memory-quality benchmark harness: `wiki-cli beam-bench` for BEAM-style retrieval evaluation over imported wiki notes
+
+## BEAM Benchmark Harness
+
+`wiki-cli beam-bench` is separate from `canbench`.
+
+- `canbench` measures canister-side API scale and instructions
+- `beam-bench` measures retrieval quality after importing long conversations into `/Wiki/beam/...`
+
+The BEAM harness currently targets two providers:
+
+- `codex` provider: Codex CLI e2e over `wiki-cli` read-only commands
+- `openai` provider: OpenAI Responses API via `OPENAI_API_KEY`
+- read-only tool/command access only
+- artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `report.md`
+
+Example:
+
+```bash
+cargo run -p wiki-cli -- \
+  --replica-host http://127.0.0.1:4943 \
+  --canister-id aaaaa-aa \
+  beam-bench \
+  --dataset-path fixtures/beam/beam_sample.json \
+  --split 100K \
+  --model gpt-4.1 \
+  --output-dir artifacts/beam-sample \
+  --provider codex \
+  --codex-sandbox danger-full-access \
+  --limit 1 \
+  --questions-per-conversation 1 \
+  --parallelism 1
+```
+
+The harness imports each conversation under a namespaced prefix such as `/Wiki/beam/beam-run-<timestamp>/<conversation_id>/` and keeps probing answers out of the wiki notes. The `codex` provider defaults to `danger-full-access` so the child Codex process can reach the local PocketIC gateway. This command is intended for manual or dedicated benchmark runs rather than normal CI.
+
+Manual deployed canister benchmarks:
+
+- `REPLICA_HOST=http://127.0.0.1:4943 CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_workload.sh`
+- `REPLICA_HOST=http://127.0.0.1:4943 CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_latency.sh`
+- `bash scripts/bench/run_canister_vfs_fresh_compare.sh`
+
+These runs target an already deployed canister through `ic-agent`. They complement `canbench`: `canbench` is for canister-side scaling and instruction trends, while deployed canister bench is for API-level `cycles + latency + wire IO`.
+
+The deployed benchmark artifacts are written to `.benchmarks/results/<tool>/<timestamp>/` and always include:
+
+- `summary.txt` for the human-facing summary
+  includes both compact `timestamp` and human-readable `generated_at_utc`
+- `config.txt` for the true benchmark settings as JSON text
+- `environment.txt` for the execution environment plus `replica_host`, `canister_id`, `bench_transport`, `canister_status_source`
+- `raw/*.txt` for scenario-level aggregated source data as JSON text
+
+`run_canister_vfs_workload.sh` covers repeated request workloads, `run_canister_vfs_latency.sh` covers single-update latency, and `run_canister_vfs_fresh_compare.sh` is the clean-room entrypoint for FTS diagnosis.
+
+The contract for measurement mode, operation matrix, artifact format, and interpretation is maintained in [`VFS_DEPLOYED_CANISTER_BENCHMARKS.md`](VFS_DEPLOYED_CANISTER_BENCHMARKS.md). README keeps only the entrypoints and the high-level role split.
+
+Validation boundary for the current benchmark changes:
+
+- benchmark success is currently checked with `cargo test -p wiki-cli --bin vfs_bench`
+- the Codex schema-path guard is checked with `cargo test -p wiki-cli beam_bench::model::tests::codex_schema_paths_are_unique`
+- `cargo test -p wiki-cli` currently has a separate known failure in `commands_fs_tests::push_uses_expected_etag_from_frontmatter`; treat that as an unrelated FS push issue, not a blocker for benchmark-only changes
 
 ## Core operations
 
@@ -78,10 +189,11 @@ The public API is VFS-first.
 | `multi_edit_node` | Multiple atomic plain-text replacements |
 | `mkdir_node` | Validate a directory-like path without persisting a directory row |
 | `move_node` | Rename one node path |
-| `delete_node` | Tombstone delete |
+| `delete_node` | Physical delete |
 | `glob_nodes` | Shell-style path matching |
 | `recent_nodes` | Recently updated nodes |
-| `search_nodes` | Full-text search across current content |
+| `search_nodes` | Full-text search across current content with compact preview snippets |
+| `search_node_paths` | Case-insensitive substring search across current node paths and filenames |
 | `export_snapshot` | Export the current snapshot |
 | `fetch_updates` | Fetch changes since a known snapshot revision |
 
@@ -170,8 +282,7 @@ async fn run() -> Result<()> {
         "ls",
         json!({
             "prefix": "/Wiki",
-            "recursive": false,
-            "include_deleted": false
+            "recursive": false
         }),
     )
     .await?;
@@ -250,7 +361,7 @@ wiki-cli move-node --from-path /Wiki/draft.md --to-path /Wiki/archive/draft.md -
 Notes:
 
 - `append_node` appends content only when the node already exists. `kind` and `metadata_json` are only used when append creates a new node.
-- `move_node --overwrite` replaces a live target or revives a tombstoned target at the destination path.
+- `move_node --overwrite` replaces a live target or reuses a previously deleted destination path.
 - `glob_nodes` rejects overlong patterns, but stored node paths do not make the entire glob query fail just because they are long.
 
 ## Use with Obsidian
@@ -268,7 +379,7 @@ Mirror mapping:
 
 - remote `/Wiki/foo.md` -> local `Wiki/foo.md`
 - remote `/Wiki/nested/bar.md` -> local `Wiki/nested/bar.md`
-- conflict file -> `Wiki/conflicts/<basename>.conflict.md`
+- conflict file -> `Wiki/conflicts/<short-name>--<hash>.conflict.md` (`/Wiki/a/foo.md` -> `Wiki/conflicts/a__foo--<hash>.conflict.md`)
 
 Managed mirror frontmatter:
 
@@ -293,7 +404,6 @@ Main fields:
 - `created_at`
 - `updated_at`
 - `etag`
-- `deleted_at`
 - `metadata_json`
 
 Persisted node kinds:
@@ -316,16 +426,19 @@ Main tables:
 - `fs_nodes_fts`
 - `fs_change_log`
 
+Fresh bootstrap creates the current rowid-backed schema directly.
+Legacy `fs_nodes(path PRIMARY KEY, ...)` databases are not auto-migrated anymore and must be rebuilt before using the current canister bootstrap.
+
 ## Conflict model
 
-Concurrency is controlled with `etag`, not revision IDs.
+Concurrency is controlled with `etag`, which is a content digest for the current node state.
 
 - create: `expected_etag = None`
 - update: current `etag` must match
 - delete: current `etag` must match
 - stale writes fail instead of silently merging
 
-Deletes are tombstones.
+Deletes physically remove the node row.
 Moves are path renames, not copy-plus-delete at the API boundary.
 
 ## Search
@@ -333,7 +446,7 @@ Moves are path renames, not copy-plus-delete at the API boundary.
 Search is built into the same SQLite store.
 
 - backend: SQLite FTS
-- target: current non-deleted content
+- target: current content
 - prefix scoping supported
 
 There is no separate canister-only search implementation.
@@ -345,13 +458,18 @@ Sync uses:
 - `export_snapshot` for full export
 - `fetch_updates` for delta sync
 
-If the client does not know a valid snapshot revision, `fetch_updates` returns a full refresh instead of erroring.
+`fetch_updates` only returns deltas. If the client does not know a valid snapshot revision, changes
+scope, or sends a future revision, `fetch_updates` returns an error instead of a full refresh.
+Change-log rows are retained in SQLite until storage is exhausted, so old valid revisions can still
+produce deltas.
+If an existing database has already lost historical change-log rows, revisions before the available
+log floor also return an error.
 
-Scope changes compare the known snapshot scope against the current scope:
+Initial sync and scope changes must use `export_snapshot` first, then continue with
+`fetch_updates` for the same scope:
 
-- tombstones stay in `changed_nodes` when `include_deleted=true`
-- tombstones move to `removed_paths` when `include_deleted=false`
-- moved old paths appear in `removed_paths`, but they are not treated as tombstones
+- deleted paths appear in `removed_paths`
+- moved old paths appear in `removed_paths`
 
 For rename operations, sync observes:
 
@@ -383,6 +501,11 @@ Build flow:
 1. `cargo build --target wasm32-wasip1 -p wiki-canister`
 2. `wasi2ic`
 3. `ic-wasm` embeds `candid:service`
+
+Diagnostic profiles:
+
+- `WIKI_CANISTER_DIAGNOSTIC_PROFILE=baseline`
+- `WIKI_CANISTER_DIAGNOSTIC_PROFILE=fts_disabled_for_bench`
 
 Project build config:
 [`icp.yaml`](icp.yaml)

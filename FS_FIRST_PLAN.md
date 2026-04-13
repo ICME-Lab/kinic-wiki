@@ -34,10 +34,9 @@ canister の正本モデルを wiki 固有の `page/revision/section/system page
   - `created_at INTEGER NOT NULL`
   - `updated_at INTEGER NOT NULL`
   - `etag TEXT NOT NULL`
-  - `deleted_at INTEGER NULL`
   - `metadata_json TEXT NOT NULL DEFAULT '{}'`
 - `fs_nodes_fts`
-  - current non-deleted node の FTS index
+  - current node の FTS index
 - `fs_snapshots`
 - `fs_snapshot_nodes`
 
@@ -53,7 +52,7 @@ canister の正本モデルを wiki 固有の `page/revision/section/system page
 canister API は wiki API ではなく FS API に寄せる。
 
 - `read_node(path) -> opt Node`
-- `list_nodes(prefix, recursive, include_deleted) -> vec NodeEntry`
+- `list_nodes(prefix, recursive) -> vec NodeEntry`
 - `write_node(path, content, kind, expected_etag) -> WriteResult`
 - `append_node(path, content, expected_etag, separator) -> WriteResult`
 - `edit_node(path, old_text, new_text, expected_etag, replace_all) -> EditResult`
@@ -61,7 +60,7 @@ canister API は wiki API ではなく FS API に寄せる。
 - `move_node(from_path, to_path, expected_etag, overwrite) -> MoveResult`
 - `delete_node(path, expected_etag) -> DeleteResult`
 - `glob_nodes(pattern, path, node_type) -> vec GlobHit`
-- `recent_nodes(limit, path, include_deleted) -> vec RecentHit`
+- `recent_nodes(limit, path) -> vec RecentHit`
 - `multi_edit_node(path, edits, expected_etag) -> MultiEditResult`
 - `search_nodes(query, prefix, top_k) -> vec SearchHit`
 - `export_snapshot(prefix) -> Snapshot`
@@ -78,7 +77,7 @@ canister API は wiki API ではなく FS API に寄せる。
 検索は `fs_nodes` の current content に対する FTS です。
 
 - FTS テーブル: `fs_nodes_fts`
-- index 対象: `deleted_at IS NULL` の node
+- index 対象: current node
 - write/delete と同じ transaction で更新
 
 ## 捨てるもの
@@ -249,7 +248,7 @@ OpenAI / Anthropic 向けの schema と dispatcher を提供し、内部では c
 - path は absolute-like な `/Wiki/...` 文字列
 - rename は初期版では未対応
 - binary は初期版では未対応
-- delete は tombstone を残す
+- delete は physical delete
 - search は全文検索のみ
 - history は持たない
 - index/log は agent が普通の file として管理する

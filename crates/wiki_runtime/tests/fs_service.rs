@@ -3,8 +3,8 @@ use wiki_runtime::WikiService;
 use wiki_types::{
     AppendNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
     GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest, SearchNodesRequest,
-    WriteNodeRequest,
+    MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest, SearchNodePathsRequest,
+    SearchNodesRequest, WriteNodeRequest,
 };
 
 fn new_service() -> WikiService {
@@ -23,7 +23,6 @@ fn fs_service_delegates_to_fs_store() {
     let initial = service.status().expect("status should succeed");
     assert_eq!(initial.file_count, 0);
     assert_eq!(initial.source_count, 0);
-    assert_eq!(initial.deleted_count, 0);
 
     let write = service
         .write_node(
@@ -51,7 +50,7 @@ fn fs_service_delegates_to_fs_store() {
             WriteNodeRequest {
                 path: "/Wiki/nested/beta.md".to_string(),
                 kind: NodeKind::File,
-                content: "nested body".to_string(),
+                content: "beta body".to_string(),
                 metadata_json: "{}".to_string(),
                 expected_etag: None,
             },
@@ -63,7 +62,6 @@ fn fs_service_delegates_to_fs_store() {
         .list_nodes(ListNodesRequest {
             prefix: "/Wiki".to_string(),
             recursive: false,
-            include_deleted: false,
         })
         .expect("list should succeed");
     assert!(entries.iter().any(|entry| entry.path == "/Wiki/alpha.md"));
@@ -80,20 +78,27 @@ fn fs_service_delegates_to_fs_store() {
             top_k: 5,
         })
         .expect("search should succeed");
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].path, "/Wiki/nested/beta.md");
+    assert!(hits.is_empty());
+
+    let path_hits = service
+        .search_node_paths(SearchNodePathsRequest {
+            query_text: "NeStEd".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            top_k: 5,
+        })
+        .expect("path search should succeed");
+    assert_eq!(path_hits.len(), 1);
+    assert_eq!(path_hits[0].path, "/Wiki/nested/beta.md");
 
     let snapshot = service
         .export_fs_snapshot(ExportSnapshotRequest {
             prefix: Some("/Wiki".to_string()),
-            include_deleted: false,
         })
         .expect("snapshot should succeed");
     let updates = service
         .fetch_fs_updates(FetchUpdatesRequest {
             known_snapshot_revision: snapshot.snapshot_revision,
             prefix: Some("/Wiki".to_string()),
-            include_deleted: false,
         })
         .expect("updates should succeed");
     assert!(updates.changed_nodes.is_empty());
@@ -102,7 +107,6 @@ fn fs_service_delegates_to_fs_store() {
     let status = service.status().expect("status should succeed");
     assert_eq!(status.file_count, 2);
     assert_eq!(status.source_count, 0);
-    assert_eq!(status.deleted_count, 0);
 }
 
 #[test]
@@ -142,7 +146,14 @@ fn fs_service_exposes_minimal_vfs_methods() {
         )
         .expect("edit should succeed");
     assert_eq!(edited.replacement_count, 1);
-    assert_eq!(edited.node.content, "beta");
+    assert_eq!(
+        service
+            .read_node("/Wiki/work/log.md")
+            .expect("read should succeed")
+            .expect("node should exist")
+            .content,
+        "beta"
+    );
 }
 
 #[test]
@@ -187,7 +198,6 @@ fn fs_service_exposes_extended_vfs_methods() {
         .recent_nodes(RecentNodesRequest {
             limit: 5,
             path: Some("/Wiki".to_string()),
-            include_deleted: false,
         })
         .expect("recent should succeed");
     assert_eq!(recent[0].path, "/Wiki/nested/b.md");
@@ -212,5 +222,12 @@ fn fs_service_exposes_extended_vfs_methods() {
         )
         .expect("multi edit should succeed");
     assert_eq!(multi_edited.replacement_count, 2);
-    assert_eq!(multi_edited.node.content, "after beta");
+    assert_eq!(
+        service
+            .read_node("/Wiki/nested/b.md")
+            .expect("read should succeed")
+            .expect("node should exist")
+            .content,
+        "after beta"
+    );
 }

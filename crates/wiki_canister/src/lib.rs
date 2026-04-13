@@ -16,8 +16,8 @@ use wiki_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodesRequest, Status, WriteNodeRequest,
-    WriteNodeResult,
+    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    Status, WriteNodeRequest, WriteNodeResult,
 };
 
 const DB_PATH: &str = "./DB/wiki.sqlite3";
@@ -106,6 +106,11 @@ fn search_nodes(request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, Strin
 }
 
 #[query]
+fn search_node_paths(request: SearchNodePathsRequest) -> Result<Vec<SearchNodeHit>, String> {
+    with_service(|service| service.search_node_paths(request))
+}
+
+#[query]
 fn export_snapshot(request: ExportSnapshotRequest) -> Result<ExportSnapshotResponse, String> {
     with_service(|service| service.export_fs_snapshot(request))
 }
@@ -184,7 +189,26 @@ where
 export_service!();
 
 pub fn candid_interface() -> String {
-    __export_service()
+    normalize_candid_interface(__export_service())
+}
+
+fn normalize_candid_interface(interface: String) -> String {
+    // Where: canister Candid export path.
+    // What: Restore the public nominal request name for mkdir_node.
+    // Why: candid::export_service() deduplicates identical record shapes and
+    //      rewrites MkdirNodeRequest to DeleteNodeResult, but the checked-in
+    //      wiki.did is the public contract and must keep MkdirNodeRequest.
+    let normalized = interface.replace(
+        "mkdir_node : (DeleteNodeResult) -> (Result_7) query;",
+        "mkdir_node : (MkdirNodeRequest) -> (Result_7) query;",
+    );
+    if normalized.contains("type MkdirNodeRequest = record { path : text };") {
+        return normalized;
+    }
+    normalized.replace(
+        "type MkdirNodeResult = record { created : bool; path : text };",
+        "type MkdirNodeRequest = record { path : text };\ntype MkdirNodeResult = record { created : bool; path : text };",
+    )
 }
 
 #[cfg(feature = "canbench-rs")]
@@ -192,3 +216,5 @@ mod benches;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_sync_contract;

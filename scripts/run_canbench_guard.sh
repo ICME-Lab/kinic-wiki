@@ -27,14 +27,14 @@ resolve_canbench_bin() {
 resolve_runtime_bin() {
   local -a candidates=()
 
-  if [[ -n "${POCKET_IC_BIN:-}" ]]; then
-    candidates+=("${POCKET_IC_BIN}")
-  fi
   candidates+=(
     "${REPO_ROOT}/.canbench/pocket-ic"
     "${REPO_ROOT}/pocket-ic"
     "${REPO_ROOT}/crates/evm-rpc-e2e/pocket-ic"
   )
+  if [[ -n "${POCKET_IC_BIN:-}" ]]; then
+    candidates+=("${POCKET_IC_BIN}")
+  fi
 
   local candidate
   for candidate in "${candidates[@]}"; do
@@ -62,4 +62,4 @@ echo "Using canbench binary: ${CANBENCH_BIN}"
 echo "Using PocketIC runtime: ${RUNTIME_BIN}"
 echo "Using PocketIC version: ${RUNTIME_VERSION}"
 
-exec "${CANBENCH_BIN}" --runtime-path "${RUNTIME_BIN}" --persist --show-summary
+exec "${CANBENCH_BIN}" --runtime-path "${RUNTIME_BIN}" --persist --show-summary "$@"
