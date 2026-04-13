@@ -140,6 +140,7 @@ summary では `isolated_single_op` に対して `setup_cycles_delta` / `measure
 ## 注意
 
 - `append 1MB` や `search 1MB` のように、canister の reply size や内部制約に当たる scenario はありえます。
+- `search` seed payload は FTS5 `snippet()` が巨大単一 token を丸ごと返さないよう、空白区切り filler で生成します。
 - その場合も wrapper は run を止めず、失敗 scenario を `raw/*.txt` と `summary.txt` に残します。
 - deployed canister bench は host filesystem benchmark ではありません。
 - snapshot/export/update の scaling は `canbench` 側の責務です。

@@ -28,6 +28,9 @@ use crate::{
 const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
 const SEARCH_SNIPPET_MAX_BYTES: usize = 512;
 const SEARCH_SNIPPET_ELLIPSIS: &str = "...";
+// `fs_nodes_fts` is defined as `fts5(content, ...)`, so the searched content column is index 0.
+// Keep this in sync with the FTS schema if additional indexed columns are ever added.
+const FS_NODES_FTS_CONTENT_COLUMN_INDEX: i32 = 0;
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
 const MAX_RETAINED_REVISIONS: i64 = 256;
 
@@ -353,9 +356,9 @@ impl FsStore {
             .ok_or_else(|| "query_text must not be empty".to_string())?;
         let conn = self.open()?;
         let top_k = capped_query_limit(request.top_k);
-        let mut sql = String::from(
+        let mut sql = format!(
             "SELECT fs_nodes.path, fs_nodes.kind,
-                    snippet(fs_nodes_fts, 0, '[', ']', '...', 12) AS snippet,
+                    snippet(fs_nodes_fts, {FS_NODES_FTS_CONTENT_COLUMN_INDEX}, '[', ']', '...', 12) AS snippet,
                     bm25(fs_nodes_fts) AS score
              FROM fs_nodes_fts
              JOIN fs_nodes ON fs_nodes.id = fs_nodes_fts.rowid
@@ -804,6 +807,8 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
     }
 }
 
+// `snippet()` output can vary with token and marker placement, but the transport contract is fixed:
+// always return valid UTF-8 bounded by bytes first, with chars as a secondary UI-friendly limit.
 fn clamp_search_snippet(snippet: String) -> String {
     let mut out = if snippet.chars().count() > SEARCH_SNIPPET_MAX_CHARS {
         let mut shortened = snippet

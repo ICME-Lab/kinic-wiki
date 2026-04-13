@@ -192,7 +192,7 @@ The public API is VFS-first.
 | `delete_node` | Physical delete |
 | `glob_nodes` | Shell-style path matching |
 | `recent_nodes` | Recently updated nodes |
-| `search_nodes` | Full-text search across current content |
+| `search_nodes` | Full-text search across current content with compact preview snippets |
 | `search_node_paths` | Case-insensitive substring search across current node paths and filenames |
 | `export_snapshot` | Export the current snapshot |
 | `fetch_updates` | Fetch changes since a known snapshot revision |

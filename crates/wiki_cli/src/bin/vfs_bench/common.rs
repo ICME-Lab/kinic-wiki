@@ -198,7 +198,18 @@ pub fn make_searchable_payload(payload_size_bytes: usize, index: usize) -> Strin
     }
     let mut content = String::with_capacity(payload_size_bytes);
     content.push_str(&prefix);
-    content.push_str(&"x".repeat(payload_size_bytes - prefix.len()));
+    while content.len() < payload_size_bytes {
+        // Keep filler token lengths bounded. SQLite FTS5 snippet() is token-based,
+        // so a single 1MB token can expand the snippet before Rust-side clamping.
+        let remaining = payload_size_bytes - content.len();
+        let chunk = if remaining >= 11 {
+            "benchfill "
+        } else {
+            "benchfill"
+        };
+        let take = remaining.min(chunk.len());
+        content.push_str(&chunk[..take]);
+    }
     content
 }
 
@@ -381,6 +392,18 @@ mod tests {
         assert!(make_searchable_payload(64, 12).contains("shared-bench-search"));
         assert!(make_multi_editable_payload(64).starts_with("BENCH_MULTI_A0"));
         assert!(make_multi_editable_payload(64).contains("BENCH_MULTI_B0"));
+    }
+
+    #[test]
+    fn searchable_payload_keeps_tokens_bounded_at_1mb() {
+        let payload = make_searchable_payload(1024 * 1024, 12);
+        assert_eq!(payload.len(), 1024 * 1024);
+        let max_token_len = payload
+            .split_whitespace()
+            .map(str::len)
+            .max()
+            .expect("payload should include at least one token");
+        assert!(max_token_len <= "shared-bench-search".len());
     }
 
     #[test]

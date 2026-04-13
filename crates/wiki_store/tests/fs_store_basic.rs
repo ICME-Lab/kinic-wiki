@@ -74,6 +74,7 @@ fn fs_migrations_create_tables() {
             |row| row.get(0),
         )
         .expect("fts sql lookup should succeed");
+    assert!(fts_sql.contains("fts5(\n    content,"));
     assert!(fts_sql.contains("content='fs_nodes'"));
     assert!(fts_sql.contains("content_rowid='id'"));
 
@@ -558,6 +559,11 @@ fn search_nodes_clamps_snippets_from_large_single_token_content() {
         );
         for hit in hits {
             assert!(
+                !hit.snippet.is_empty(),
+                "snippet should be non-empty for {}",
+                hit.path
+            );
+            assert!(
                 hit.snippet.chars().count() <= 243,
                 "snippet should be limited to 240 chars plus ellipsis"
             );
@@ -565,7 +571,83 @@ fn search_nodes_clamps_snippets_from_large_single_token_content() {
                 hit.snippet.len() <= 512,
                 "snippet should be limited to 512 utf-8 bytes"
             );
+            assert!(std::str::from_utf8(hit.snippet.as_bytes()).is_ok());
         }
+    }
+}
+
+#[test]
+fn search_nodes_builds_compact_case_insensitive_preview() {
+    let (_dir, store) = new_store();
+    store
+        .write_node(
+            WriteNodeRequest {
+                path: "/Wiki/preview.md".to_string(),
+                kind: NodeKind::File,
+                content: "prefix text AlphaBeta suffix text".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            200,
+        )
+        .expect("write should succeed");
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            query_text: "alphabeta".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            top_k: 5,
+        })
+        .expect("search should succeed");
+
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, "/Wiki/preview.md");
+    assert!(!hits[0].snippet.is_empty());
+    assert!(
+        hits[0].snippet.to_ascii_lowercase().contains("alphabeta"),
+        "snippet should include the matched token: {}",
+        hits[0].snippet
+    );
+    assert!(hits[0].snippet.len() <= 512);
+}
+
+#[test]
+fn search_nodes_handles_ten_large_hits_without_loading_full_content() {
+    let (_dir, store) = new_store();
+    let payload = format!("shared-bench-search {}", "x".repeat(1024 * 1024 - 20));
+    for index in 0..100 {
+        store
+            .write_node(
+                WriteNodeRequest {
+                    path: format!("/Wiki/large/node-{index:03}.md"),
+                    kind: NodeKind::File,
+                    content: payload.clone(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                500 + index as i64,
+            )
+            .expect("large write should succeed");
+    }
+
+    let hits = store
+        .search_nodes(SearchNodesRequest {
+            query_text: "shared-bench-search".to_string(),
+            prefix: Some("/Wiki/large".to_string()),
+            top_k: 10,
+        })
+        .expect("search should succeed");
+
+    assert_eq!(hits.len(), 10);
+    for window in hits.windows(2) {
+        assert!(window[0].score <= window[1].score);
+    }
+    for hit in hits {
+        assert!(hit.path.starts_with("/Wiki/large/"));
+        assert!(!hit.snippet.is_empty());
+        assert!(hit.snippet.len() <= 512);
+        assert!(hit.snippet.chars().count() <= 243);
+        assert!(std::str::from_utf8(hit.snippet.as_bytes()).is_ok());
     }
 }
 

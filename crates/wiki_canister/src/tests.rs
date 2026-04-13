@@ -199,6 +199,41 @@ fn fs_entrypoints_cover_append_edit_and_mkdir() {
 }
 
 #[test]
+fn fs_entrypoints_search_large_hits_without_trap() {
+    install_test_service();
+
+    let payload = format!("shared-bench-search {}", "x".repeat(1024 * 1024 - 20));
+    for index in 0..10 {
+        write_node(WriteNodeRequest {
+            path: format!("/Wiki/large/node-{index:03}.md"),
+            kind: NodeKind::File,
+            content: payload.clone(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("large write should succeed");
+    }
+
+    let hits = search_nodes(SearchNodesRequest {
+        query_text: "shared-bench-search".to_string(),
+        prefix: Some("/Wiki/large".to_string()),
+        top_k: 10,
+    })
+    .expect("large search should succeed");
+
+    assert_eq!(hits.len(), 10);
+    for window in hits.windows(2) {
+        assert!(window[0].score <= window[1].score);
+    }
+    for hit in hits {
+        assert!(hit.path.starts_with("/Wiki/large/"));
+        assert!(!hit.snippet.is_empty());
+        assert!(hit.snippet.len() <= 512);
+        assert!(hit.snippet.chars().count() <= 243);
+    }
+}
+
+#[test]
 fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
     install_test_service();
 
