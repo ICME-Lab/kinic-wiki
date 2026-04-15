@@ -296,7 +296,7 @@ export const idlFactory: ActorFactory = ({ IDL: candid }) => {
       cursor: candid.Opt(candid.Text),
       snapshot_revision: candid.Opt(candid.Text),
       snapshot_session_id: candid.Opt(candid.Text)
-    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, snapshot_session_id: candid.Opt(candid.Text), nodes: candid.Vec(Node), next_cursor: candid.Opt(candid.Text) }), Err: candid.Text })], ["query"]),
+    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, snapshot_session_id: candid.Opt(candid.Text), nodes: candid.Vec(Node), next_cursor: candid.Opt(candid.Text) }), Err: candid.Text })], []),
     fetch_updates: candid.Func([candid.Record({
       known_snapshot_revision: candid.Text,
       prefix: candid.Opt(candid.Text),

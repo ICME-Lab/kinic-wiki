@@ -149,7 +149,7 @@ service : () -> {
   append_node : (AppendNodeRequest) -> (Result);
   delete_node : (DeleteNodeRequest) -> (Result_1);
   edit_node : (EditNodeRequest) -> (Result_2);
-  export_snapshot : (ExportSnapshotRequest) -> (Result_3) query;
+  export_snapshot : (ExportSnapshotRequest) -> (Result_3);
   fetch_updates : (FetchUpdatesRequest) -> (Result_4) query;
   glob_nodes : (GlobNodesRequest) -> (Result_5) query;
   list_nodes : (ListNodesRequest) -> (Result_6) query;

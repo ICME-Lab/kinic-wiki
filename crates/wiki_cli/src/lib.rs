@@ -14,7 +14,10 @@ mod commands_fs_tests;
 mod commands_sync_tests;
 #[cfg(test)]
 mod commands_vfs_tests;
+#[cfg(test)]
+mod commands_workflow_tests;
 pub mod lint_local;
 pub mod mirror;
 #[cfg(test)]
 mod mirror_fs_tests;
+pub mod workflow;

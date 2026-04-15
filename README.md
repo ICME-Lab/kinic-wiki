@@ -38,7 +38,56 @@ Current scope:
 
 - single-tenant
 - text-first
-- `/Wiki/...` as the single public root
+- `/Wiki/...` as the primary wiki root
+- `/Sources/...` for raw source nodes managed by CLI workflows
+
+## LLM Workflow
+
+`wiki-cli` builds workflow context and applies validated workflow results.
+LLM-side reasoning lives in the repo-local skill:
+
+- skill: `.agents/skills/wiki-workflow/SKILL.md`
+- raw source storage: `/Sources/raw/...`
+- session source storage: `/Sources/sessions/...`
+- generated wiki outputs: `/Wiki/sources/...`, `/Wiki/lint/...`, and targeted `/Wiki/...` updates
+
+Workflow commands:
+
+- `wiki-cli ingest-source`
+- `wiki-cli build-ingest-context`
+- `wiki-cli build-crystallize-context`
+- `wiki-cli build-query-context`
+- `wiki-cli build-integrate-context`
+- `wiki-cli build-lint-context`
+- `wiki-cli apply-workflow-result`
+- `wiki-cli apply-integrate`
+- `wiki-cli rebuild-index`
+- `wiki-cli append-log`
+
+Flow:
+
+1. `ingest-source` stores raw source only.
+2. `build-*-context` emits a JSON envelope plus `response_schema`.
+3. For ingest, crystallize, integrate, and lint, the skill uses that JSON to produce a structured result.
+4. `apply-workflow-result` validates and writes ingest/crystallize/lint results.
+5. `apply-integrate` validates and writes integrate results.
+6. Query is read-only by default; if the answer should update wiki content, the LLM calls explicit node commands afterward.
+
+Notes:
+
+- knowledge content stays markdown, but workflow transport stays JSON
+- ingest results must include `source_path`, `source_id`, `source_etag`, and `index_etag`
+- crystallize results must include `session_path`, `session_id`, `session_etag`, and `index_etag`
+- integrate results must include `target_paths` and `index_etag`
+- lint results must include `index_etag`
+- stale `index_etag` or stale `source_etag` is rejected
+- stale `session_etag` is rejected
+- context pages stay in one JSON bundle, but are capped by count and content length
+- truncation is explicit via `content_truncated`, `source_content_truncated`, and `index_truncated`
+- canonical raw source path is `/Sources/raw/<source_id>/<source_id>.md`
+- canonical session source path is `/Sources/sessions/<session_id>/<session_id>.md`
+
+The CLI fixes allowed write paths, update order, `index.md` rebuild, and `log.md` append for ingest/crystallize/integrate/lint workflows.
 
 ## CI and Benchmarks
 
@@ -480,7 +529,9 @@ Initial sync and scope changes must use `export_snapshot` first, then continue w
 `fetch_updates` from that snapshot revision to catch concurrent writes before saving local sync
 state:
 
-`export_snapshot` now fixes the path set per `snapshot_session_id`, but it still reads current
+`export_snapshot` is an update call so the server can persist `snapshot_session_id` across pages.
+`fetch_updates` remains a query call. `export_snapshot` now fixes the path set per
+`snapshot_session_id`, but it still reads current
 rows for node content. If a session path is deleted or renamed before its page is read, the server
 returns `snapshot_revision is no longer current` and the client must restart snapshot sync. If a
 session expires, the server returns `snapshot_session_id has expired` and the client must restart

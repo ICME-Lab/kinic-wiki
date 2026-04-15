@@ -124,7 +124,8 @@ The plugin calls these canister methods directly:
 before saving `lastSnapshotRevision`. Initial sync fetches a snapshot, then immediately fetches
 deltas from that snapshot revision before committing local sync state. Paged snapshot requests
 reuse the canister-provided `snapshot_session_id` so the remote path set stays fixed for the whole
-initial sync.
+initial sync. `export_snapshot` is an update call because the canister persists snapshot sessions;
+`fetch_updates` remains a query call.
 
 If `fetch_updates` returns `known_snapshot_revision is no longer available`, the plugin stops the
 delta sync and asks the user to run `Initial sync`.

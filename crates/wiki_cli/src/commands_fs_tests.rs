@@ -19,6 +19,7 @@ use wiki_types::{
 pub(crate) struct MockClient {
     pub(crate) nodes: Vec<Node>,
     pub(crate) fetch_nodes: Vec<Node>,
+    pub(crate) search_hits: Vec<SearchNodeHit>,
     pub(crate) writes: std::sync::Mutex<Vec<WriteNodeRequest>>,
     pub(crate) appends: std::sync::Mutex<Vec<AppendNodeRequest>>,
     pub(crate) edits: std::sync::Mutex<Vec<EditNodeRequest>>,
@@ -45,19 +46,38 @@ impl WikiApi for MockClient {
     }
 
     async fn read_node(&self, _path: &str) -> Result<Option<Node>> {
-        Ok(Some(Node {
-            path: _path.to_string(),
-            kind: NodeKind::File,
-            content: "# Remote".to_string(),
-            created_at: 1,
-            updated_at: 3,
-            etag: "etag-remote".to_string(),
-            metadata_json: "{}".to_string(),
-        }))
+        if self.nodes.is_empty() {
+            return Ok(Some(Node {
+                path: _path.to_string(),
+                kind: NodeKind::File,
+                content: "# Remote".to_string(),
+                created_at: 1,
+                updated_at: 3,
+                etag: "etag-remote".to_string(),
+                metadata_json: "{}".to_string(),
+            }));
+        }
+        Ok(self.nodes.iter().find(|node| node.path == _path).cloned())
     }
 
-    async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
-        Ok(Vec::new())
+    async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+        let mut entries = Vec::new();
+        for node in &self.nodes {
+            if !node.path.starts_with(&request.prefix) {
+                continue;
+            }
+            entries.push(NodeEntry {
+                path: node.path.clone(),
+                kind: match node.kind {
+                    NodeKind::File => wiki_types::NodeEntryKind::File,
+                    NodeKind::Source => wiki_types::NodeEntryKind::Source,
+                },
+                updated_at: node.updated_at,
+                etag: node.etag.clone(),
+                has_children: false,
+            });
+        }
+        Ok(entries)
     }
 
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
@@ -153,8 +173,24 @@ impl WikiApi for MockClient {
         self.recents
             .lock()
             .expect("recents should lock")
-            .push(request);
-        Ok(Vec::new())
+            .push(request.clone());
+        let mut hits = self
+            .nodes
+            .iter()
+            .filter(|node| match &request.path {
+                Some(path) => node.path.starts_with(path),
+                None => true,
+            })
+            .map(|node| RecentNodeHit {
+                path: node.path.clone(),
+                kind: node.kind.clone(),
+                updated_at: node.updated_at,
+                etag: node.etag.clone(),
+            })
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+        hits.truncate(request.limit as usize);
+        Ok(hits)
     }
 
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {
@@ -174,7 +210,7 @@ impl WikiApi for MockClient {
     }
 
     async fn search_nodes(&self, _request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
-        Ok(Vec::new())
+        Ok(self.search_hits.clone())
     }
 
     async fn search_node_paths(
