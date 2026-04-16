@@ -114,8 +114,7 @@ async fn run_conversation_benchmark(
         .filter(|question| {
             config
                 .include_question_classes
-                .iter()
-                .any(|value| *value == question.question_class)
+                .contains(&question.question_class)
         })
         .collect::<Vec<_>>();
     if let Some(limit) = config.questions_per_conversation {
