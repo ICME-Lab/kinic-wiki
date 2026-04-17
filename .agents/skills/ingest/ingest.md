@@ -9,17 +9,23 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 1. Inspect the source material and the user focus.
 2. If the source is noisy web or PDF-derived text, normalize it first.
 3. Decide whether the source should also be persisted under `/Sources/raw/...`.
-4. Read existing wiki context with `read`, `search`, `search_paths`, `recent`, or their CLI equivalents.
+4. Read existing wiki context with `read-node`, `search-remote`, `search-path-remote`, `recent-nodes`, or `list-nodes`.
 5. Choose the minimum coherent set of pages to update.
-6. Edit `/Wiki/...` directly through raw tools or `wiki-cli` remote VFS commands.
-7. Run `rebuild-index` only when durable wiki structure changed enough that `index.md` is stale.
-8. Stop at review-ready unless the user explicitly asks for push.
+6. Edit `/Wiki/...` directly through `wiki-cli` remote VFS commands.
+7. When a reorganization needs explicit removal of obsolete `/Wiki/...` page groups, use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
+8. Update `log.md` for every page creation, deletion, or edit done in the workflow.
+9. Read only the recent tail of `log.md` before appending, for example `tail -n 5`, unless a longer window is clearly needed.
+10. Append one new log line per workflow mutation. Do not rewrite or restructure older log entries.
+11. Run `rebuild-index` by default for new page creation, deletion, or large restructures. Skip it for routine small edits.
+12. Stop at review-ready unless the user explicitly asks for push.
 
 ## Working Rules
 
 - Treat local `Wiki/` content as the human review surface.
 - Prefer fewer stronger pages over many shallow stubs.
 - Reuse existing pages when possible instead of minting near-duplicates.
+- Keep `log.md` in sync with every page mutation.
+- Keep `log.md` append-only so recent context can be read with `tail -n 5`.
 - Do not hide push behind ingest.
 
 ## Repo Contract
@@ -28,8 +34,13 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 - Raw source append path: `/Sources/raw/<source_id>/<source_id>.md`
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:
-  - agent tools: `read`, `write`, `append`, `edit`, `ls`, `glob`, `recent`, `search`, `search_paths`
-  - CLI commands: `read-node`, `write-node`, `append-node`, `edit-node`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `rebuild-index`
+  - CLI commands: `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `rebuild-index`
+- Delete semantics:
+  - `delete-node`: delete one node path
+  - `delete-tree`: delete real node paths under a prefix, deepest-first
+- `log.md` rule:
+  - read only the recent tail before appending unless more history is needed
+  - append one single-line event per mutation
 
 ## Output
 

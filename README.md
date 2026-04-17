@@ -170,19 +170,15 @@ The validation split is:
 
 - deployed canister benchmarks: `run_canister_vfs_workload.sh`, `run_canister_vfs_latency.sh`
 - VFS-native scaling benchmarks: `canbench` for `write`, `append`, `move`, `search`, `export_snapshot`, `fetch_updates`
-- memory-quality benchmark harness: `wiki-cli beam-bench` for BEAM-style retrieval evaluation over imported wiki notes
+- memory-quality benchmark harness: `scripts/bench/run_beam_bench.sh` for BEAM-style retrieval evaluation over imported wiki notes
 
 ## BEAM Benchmark Harness
 
-`wiki-cli beam-bench` is separate from `canbench`.
+`scripts/bench/run_beam_bench.sh` is a development benchmark harness, separate from both `wiki-cli` and `canbench`.
 
 - `canbench` measures canister-side API scale and instructions
-- `beam-bench` measures retrieval quality after importing long conversations into `/Wiki/beam/...`
-
-The BEAM harness currently targets two providers:
-
-- `codex` provider: Codex CLI e2e over `wiki-cli` read-only commands
-- `openai` provider: OpenAI Responses API via `OPENAI_API_KEY`
+- `beam-bench` measures retrieval quality after importing long conversations into `/Wiki/<namespace>/...`
+- Codex CLI e2e over `wiki-cli` read-only commands
 - read-only tool/command access only
 - artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `report.md`
 
@@ -191,15 +187,13 @@ Default evaluation mode is now `retrieve-and-extract`.
 - primary metrics focus on factoid questions only
 - `--questions-per-conversation` applies after primary question-class filtering
 - retrieval hit rate and short-answer match rate are reported separately
-- `legacy-agent-answer` remains available for answer comparison runs, but not retrieval headline metrics
 
 Example:
 
 ```bash
-cargo run -p wiki-cli -- \
+bash scripts/bench/run_beam_bench.sh \
   --local \
   --canister-id aaaaa-aa \
-  beam-bench \
   --dataset-path fixtures/beam/beam_sample.json \
   --split 100K \
   --output-dir artifacts/beam-sample \
@@ -215,21 +209,15 @@ Normal mainnet usage can omit host flags.
 Local usage can use `--local`.
 Only `canister_id` still needs `--canister-id`, `WIKI_CANISTER_ID`, or user config.
 
-The harness imports each conversation under a namespaced prefix such as `/Wiki/beam/beam-run-<timestamp>/<conversation_id>/` and keeps probing answers out of the wiki notes. The `codex` provider defaults to `danger-full-access` so the child Codex process can reach the local PocketIC gateway. This command is intended for manual or dedicated benchmark runs rather than normal CI.
-
-For legacy model-answer comparison, add:
-
-```bash
---eval-mode legacy-agent-answer --provider codex --model gpt-4.1
-```
-
-In legacy mode, `retrieval_questions` will be `0` because retrieval is not evaluated separately from answer generation.
+The harness imports each conversation under a normal wiki path such as `/Wiki/bench-run-<timestamp>/<conversation_id>/` and keeps probing answers out of the wiki notes. Codex defaults to `danger-full-access` so the child process can reach the local PocketIC gateway. This command is intended for manual or dedicated benchmark runs rather than normal CI.
 
 Manual deployed canister benchmarks:
 
-- `CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_workload.sh`
+- `bash scripts/bench/run_canister_vfs_workload.sh`
 - `CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_latency.sh`
 - `bash scripts/bench/run_canister_vfs_fresh_compare.sh`
+
+`run_canister_vfs_workload.sh` is local-only and resolves the local `wiki` canister id from `.icp/cache/mappings/local.ids.json` when `--canister-id` and `CANISTER_ID` are both absent. Use manual canister id injection only when measuring a different canister on purpose.
 
 These runs target an already deployed canister through `ic-agent`. They complement `canbench`: `canbench` is for canister-side scaling and instruction trends, while deployed canister bench is for API-level `cycles + latency + wire IO`.
 
@@ -237,6 +225,7 @@ The deployed benchmark artifacts are written to `.benchmarks/results/<tool>/<tim
 
 - `summary.txt` for the human-facing summary
   includes both compact `timestamp` and human-readable `generated_at_utc`
+  includes the resolved `canister_id`
 - `config.txt` for the true benchmark settings as JSON text
 - `environment.txt` for the execution environment plus `replica_host`, `canister_id`, `bench_transport`, `canister_status_source`
 - `raw/*.txt` for scenario-level aggregated source data as JSON text
@@ -542,6 +531,7 @@ Main commands:
 - `glob-nodes`
 - `recent-nodes`
 - `delete-node`
+- `delete-tree`
 - `search-remote`
 - `search-path-remote`
 - `rebuild-index`
@@ -558,12 +548,14 @@ wiki-cli glob-nodes '**/*.md' --path /Wiki --node-type file
 wiki-cli recent-nodes --limit 20 --path /Wiki
 wiki-cli append-node --path /Wiki/log.md --input ./entry.md
 wiki-cli move-node --from-path /Wiki/draft.md --to-path /Wiki/archive/draft.md --expected-etag etag-1 --overwrite
+wiki-cli delete-tree --path /Wiki/archive
 ```
 
 Notes:
 
 - `append_node` appends content only when the node already exists. `kind` and `metadata_json` are only used when append creates a new node.
 - `move_node --overwrite` replaces a live target or reuses a previously deleted destination path.
+- `delete-node` deletes one node path. `delete-tree` deletes all node paths under a prefix, deepest-first.
 - `glob_nodes` rejects overlong patterns, but stored node paths do not make the entire glob query fail just because they are long.
 
 ## Use with Obsidian
@@ -684,8 +676,8 @@ state:
 
 `export_snapshot` is an update call so the server can persist `snapshot_session_id` across pages.
 `fetch_updates` remains a query call. `export_snapshot` now fixes the path set per
-`snapshot_session_id`, but it still reads current
-rows for node content. If a session path is deleted or renamed before its page is read, the server
+`snapshot_session_id` and rejects later pages if any unread session path changed after the session
+started. If a session path is updated, deleted, or renamed before its page is read, the server
 returns `snapshot_revision is no longer current` and the client must restart snapshot sync. If a
 session expires, the server returns `snapshot_session_id has expired` and the client must restart
 snapshot sync. Continued snapshot requests validate `snapshot_session_id` first, then TTL, then

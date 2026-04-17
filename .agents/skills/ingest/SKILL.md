@@ -24,7 +24,8 @@ Core rules:
 - Treat the canister wiki as the source of truth.
 - Stop at review-ready unless the user explicitly asks for push.
 - Keep source persistence separate from wiki synthesis.
-- `log.md` updates are optional.
+- When pages are created, deleted, or edited, update `log.md`.
+- Keep `log.md` append-only and easy to inspect with `tail -n 5`.
 - PDF handling stays inside ingest as source normalization.
 
 Read [ingest.md](ingest.md) before doing substantive ingest work.
