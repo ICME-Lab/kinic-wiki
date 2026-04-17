@@ -4,7 +4,7 @@ use wiki_store::FsStore;
 use wiki_types::{
     AppendNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest, ListNodesRequest,
     MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeEntryKind, NodeKind,
-    RecentNodesRequest, SearchNodePathsRequest,
+    RecentNodesRequest, SearchNodePathsRequest, SearchPreviewMode,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -292,6 +292,7 @@ fn move_node_renames_and_updates_search() {
             query_text: "alpha".to_string(),
             prefix: Some("/Wiki".to_string()),
             top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
         })
         .expect("search should succeed");
     #[cfg(feature = "bench-disable-fts")]

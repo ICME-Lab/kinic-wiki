@@ -198,6 +198,8 @@ pub struct SearchNodesRequest {
     pub query_text: String,
     pub prefix: Option<String>,
     pub top_k: u32,
+    #[serde(default)]
+    pub preview_mode: Option<SearchPreviewMode>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -212,8 +214,36 @@ pub struct SearchNodeHit {
     pub path: String,
     pub kind: NodeKind,
     pub snippet: Option<String>,
+    #[serde(default)]
+    pub preview: Option<SearchPreview>,
     pub score: f32,
     pub match_reasons: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchPreviewMode {
+    #[serde(alias = "None")]
+    None,
+    #[serde(alias = "Light")]
+    Light,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchPreviewField {
+    #[serde(alias = "Content")]
+    Content,
+    #[serde(alias = "Path")]
+    Path,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct SearchPreview {
+    pub field: SearchPreviewField,
+    pub match_reason: String,
+    pub char_offset: u32,
+    pub excerpt: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -252,7 +282,11 @@ pub struct FetchUpdatesResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{GlobNodeType, NodeEntryKind, NodeKind};
+    use candid::{decode_one, encode_one};
+
+    use super::{
+        GlobNodeType, NodeEntryKind, NodeKind, SearchPreview, SearchPreviewField, SearchPreviewMode,
+    };
     use serde::{
         Deserialize,
         de::value::{Error, StrDeserializer},
@@ -280,5 +314,23 @@ mod tests {
             GlobNodeType::deserialize(StrDeserializer::<Error>::new("Any"))
                 .expect("uppercase alias should decode");
         assert_eq!(node_type, GlobNodeType::Any);
+    }
+
+    #[test]
+    fn search_preview_types_roundtrip_through_candid() {
+        let preview_mode =
+            decode_one::<SearchPreviewMode>(&encode_one(SearchPreviewMode::Light).unwrap())
+                .expect("preview mode should roundtrip");
+        assert_eq!(preview_mode, SearchPreviewMode::Light);
+
+        let preview = SearchPreview {
+            field: SearchPreviewField::Content,
+            match_reason: "content_fts".to_string(),
+            char_offset: 12,
+            excerpt: Some("...alpha beta...".to_string()),
+        };
+        let decoded = decode_one::<SearchPreview>(&encode_one(preview.clone()).unwrap())
+            .expect("preview should roundtrip");
+        assert_eq!(decoded, preview);
     }
 }

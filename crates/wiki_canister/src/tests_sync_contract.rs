@@ -5,7 +5,7 @@ use tempfile::tempdir;
 use wiki_runtime::WikiService;
 use wiki_types::{
     DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, NodeKind,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 use super::{
@@ -54,6 +54,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
         query_text: "shared".to_string(),
         prefix: Some("/Wiki/project-alpha".to_string()),
         top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert!(hits.is_empty());
@@ -62,6 +63,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
         query_text: "shared".to_string(),
         prefix: Some("/Wiki/project-beta".to_string()),
         top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert_eq!(beta_hits.len(), 1);

@@ -236,17 +236,11 @@ pub(crate) fn relative_to_prefix(prefix: &str, path: &str) -> Option<String> {
     path.strip_prefix(&format!("{prefix}/")).map(str::to_string)
 }
 
-pub(crate) fn build_fts_query(query_text: &str) -> Option<String> {
-    let terms = query_text
-        .split_whitespace()
-        .map(str::trim)
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>();
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" "))
+pub(crate) fn file_search_title(path: &str) -> String {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    match basename.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => stem.to_string(),
+        _ => basename.to_string(),
     }
 }
 

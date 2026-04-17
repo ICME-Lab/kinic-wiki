@@ -4,7 +4,7 @@ use wiki_types::{
     AppendNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
     GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
     MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeRequest,
+    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn new_service() -> WikiService {
@@ -71,11 +71,13 @@ fn fs_service_delegates_to_fs_store() {
             .any(|entry| entry.path == "/Wiki/nested" && entry.kind == NodeEntryKind::Directory)
     );
 
+    // No token in file bodies or paths matches this; distinguishes FTS/path search from path-only search below.
     let hits = service
         .search_nodes(SearchNodesRequest {
-            query_text: "nested".to_string(),
+            query_text: "zzz_no_match_token".to_string(),
             prefix: Some("/Wiki".to_string()),
             top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
         })
         .expect("search should succeed");
     assert!(hits.is_empty());

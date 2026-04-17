@@ -7,7 +7,7 @@ use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 use super::{
@@ -88,6 +88,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         query_text: "alpha".to_string(),
         prefix: Some("/Wiki".to_string()),
         top_k: 5,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert_eq!(hits.len(), 1);
@@ -223,6 +224,7 @@ fn fs_entrypoints_search_large_hits_without_trap() {
         query_text: "shared-bench-search".to_string(),
         prefix: Some("/Wiki/large".to_string()),
         top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("large search should succeed");
 
@@ -231,14 +233,9 @@ fn fs_entrypoints_search_large_hits_without_trap() {
         assert!(window[0].score <= window[1].score);
     }
     for hit in hits {
-        let snippet = hit
-            .snippet
-            .as_deref()
-            .expect("snippet should exist for large hit");
         assert!(hit.path.starts_with("/Wiki/large/"));
-        assert!(!snippet.is_empty());
-        assert!(snippet.len() <= 512);
-        assert!(snippet.chars().count() <= 243);
+        assert!(hit.snippet.is_none());
+        assert!(hit.preview.is_none());
     }
 }
 

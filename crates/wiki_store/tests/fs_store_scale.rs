@@ -5,7 +5,7 @@ use wiki_store::FsStore;
 use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
     GlobNodesRequest, ListNodesRequest, NodeEntryKind, NodeKind, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeRequest,
+    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -204,6 +204,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
             query_text: "needle".to_string(),
             prefix: Some("/Wiki/projects/alpha".to_string()),
             top_k: 100,
+            preview_mode: Some(SearchPreviewMode::None),
         })
         .expect("search should succeed");
     assert!(

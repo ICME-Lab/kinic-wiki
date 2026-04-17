@@ -731,6 +731,58 @@ fn export_snapshot_rejects_deleted_session_path() {
 }
 
 #[test]
+fn export_snapshot_rejects_updated_session_path() {
+    let (_dir, store) = new_store();
+    for index in 0..101 {
+        write_node(
+            &store,
+            &format!("/Wiki/{index:03}.md"),
+            "content",
+            None,
+            index,
+        );
+    }
+
+    let first = store
+        .export_snapshot(ExportSnapshotRequest {
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("first page should succeed");
+    let etag = store
+        .read_node("/Wiki/100.md")
+        .expect("read should succeed")
+        .expect("node should exist")
+        .etag;
+    store
+        .write_node(
+            WriteNodeRequest {
+                path: "/Wiki/100.md".to_string(),
+                kind: NodeKind::File,
+                content: "updated".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some(etag),
+            },
+            500,
+        )
+        .expect("write should succeed");
+
+    let error = store
+        .export_snapshot(ExportSnapshotRequest {
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: first.next_cursor,
+            snapshot_revision: Some(first.snapshot_revision),
+            snapshot_session_id: first.snapshot_session_id,
+        })
+        .expect_err("updated path should invalidate session page");
+    assert_eq!(error, "snapshot_revision is no longer current");
+}
+
+#[test]
 fn export_snapshot_rejects_expired_session() {
     let (_dir, store) = new_store();
     for index in 0..101 {

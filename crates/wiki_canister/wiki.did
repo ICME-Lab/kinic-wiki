@@ -120,6 +120,7 @@ type Result_7 = variant { Ok : MkdirNodeResult; Err : text };
 type Result_8 = variant { Ok : MoveNodeResult; Err : text };
 type Result_9 = variant { Ok : opt Node; Err : text };
 type SearchNodeHit = record {
+  preview : opt SearchPreview;
   kind : NodeKind;
   path : text;
   match_reasons : vec text;
@@ -133,9 +134,18 @@ type SearchNodePathsRequest = record {
 };
 type SearchNodesRequest = record {
   top_k : nat32;
+  preview_mode : opt SearchPreviewMode;
   prefix : opt text;
   query_text : text;
 };
+type SearchPreview = record {
+  field : SearchPreviewField;
+  char_offset : nat32;
+  match_reason : text;
+  excerpt : opt text;
+};
+type SearchPreviewField = variant { Path; Content };
+type SearchPreviewMode = variant { Light; None };
 type Status = record { source_count : nat64; file_count : nat64 };
 type WriteNodeRequest = record {
   content : text;

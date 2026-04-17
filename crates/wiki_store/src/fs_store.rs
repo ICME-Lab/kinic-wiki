@@ -18,27 +18,27 @@ use wiki_types::{
     GlobNodeHit, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
-    WriteNodeRequest, WriteNodeResult,
+    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 use crate::{
     fs_helpers::{
-        StoredNode, build_entries_from_rows, build_fts_query, build_glob_entries_from_rows,
-        compute_node_etag, load_node, load_scoped_entry_rows, load_stored_node, node_ack,
+        StoredNode, build_entries_from_rows, build_glob_entries_from_rows, compute_node_etag,
+        file_search_title, load_node, load_scoped_entry_rows, load_stored_node, node_ack,
         node_kind_from_db, node_kind_to_db, normalize_node_path, prefix_filter_sql,
         prefix_filter_sql_for_column, relative_to_prefix, snapshot_revision_token,
     },
+    fs_search::{
+        build_light_previews_for_hits, build_search_query_plan, finalize_hits,
+        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
+        path_match_score, rerank_candidates, sort_candidates,
+    },
+    fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
     schema,
 };
 
-const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
-const SEARCH_SNIPPET_MAX_BYTES: usize = 512;
-const SEARCH_SNIPPET_ELLIPSIS: &str = "...";
-// `fs_nodes_fts` is defined as `fts5(content, ...)`, so the searched content column is index 0.
-// Keep this in sync with the FTS schema if additional indexed columns are ever added.
-const FS_NODES_FTS_CONTENT_COLUMN_INDEX: i32 = 0;
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
 const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
@@ -50,14 +50,6 @@ const SNAPSHOT_SESSION_CURSOR_FORBIDDEN: &str =
     "snapshot_session_id cannot be used when cursor is absent";
 const SNAPSHOT_SESSION_CURSOR_INVALID: &str = "cursor is invalid for snapshot_session_id";
 const SNAPSHOT_SESSION_TTL_SECS: i64 = 300;
-
-#[derive(Clone)]
-struct RankedSearchHit {
-    row_id: i64,
-    path: String,
-    kind: NodeKind,
-    score: f32,
-}
 
 // Where: crates/wiki_store/src/fs_store.rs
 // What: Change-log semantics used by delta sync visibility checks.
@@ -378,55 +370,39 @@ impl FsStore {
             .as_ref()
             .map(|value| normalize_node_path(value, true))
             .transpose()?;
-        let query = build_fts_query(&request.query_text)
+        let plan = build_search_query_plan(&request.query_text)
             .ok_or_else(|| "query_text must not be empty".to_string())?;
         let conn = self.open()?;
         let top_k = capped_query_limit(request.top_k);
-        let mut sql = String::from(
-            "WITH ranked AS (
-                 SELECT rowid, bm25(fs_nodes_fts) AS score
-                 FROM fs_nodes_fts
-                 WHERE fs_nodes_fts MATCH ?1
-             )
-             SELECT fs_nodes.id, fs_nodes.path, fs_nodes.kind, ranked.score
-             FROM ranked
-             JOIN fs_nodes ON fs_nodes.id = ranked.rowid
-             WHERE 1 = 1",
-        );
-        let mut values = vec![rusqlite::types::Value::from(query)];
-        if let Some(prefix) = prefix {
-            let (scope_sql, scope_values) =
-                prefix_filter_sql_for_column("fs_nodes.path", &prefix, 2);
-            sql.push_str(&scope_sql);
-            values.extend(scope_values);
+        let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::Light);
+        let mut candidates = if fs_search_bench::stage_enabled(SearchBenchStage::FtsCandidates) {
+            load_ranked_fts_candidates(&conn, &plan, prefix.as_deref(), top_k)?
+                .into_iter()
+                .map(|candidate| (candidate.row_id, candidate))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        if fs_search_bench::stage_enabled(SearchBenchStage::ContentSubstringCandidates) {
+            for candidate in
+                load_content_substring_candidates(&conn, &plan, prefix.as_deref(), top_k)?
+            {
+                candidates.entry(candidate.row_id).or_insert(candidate);
+            }
         }
-        sql.push_str(&format!(
-            " ORDER BY ranked.score ASC, fs_nodes.path ASC LIMIT {top_k}"
-        ));
-        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        let ranked_hits = stmt
-            .query_map(rusqlite::params_from_iter(values.iter()), |row| {
-                Ok(RankedSearchHit {
-                    row_id: row.get(0)?,
-                    path: row.get(1)?,
-                    kind: node_kind_from_db(&row.get::<_, String>(2)?)?,
-                    score: row.get(3)?,
-                })
-            })
-            .map_err(|error| error.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        let snippets = load_search_previews(&conn, &ranked_hits);
-        Ok(ranked_hits
-            .into_iter()
-            .map(|hit| SearchNodeHit {
-                path: hit.path,
-                kind: hit.kind,
-                snippet: snippets.get(&hit.row_id).cloned().flatten(),
-                score: hit.score,
-                match_reasons: vec!["fts5_bm25".to_string()],
-            })
-            .collect())
+        let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
+            load_path_candidates(&conn, &plan.path_terms, prefix.as_deref(), top_k)?
+        } else {
+            Vec::new()
+        };
+        let mut ranked = if fs_search_bench::stage_enabled(SearchBenchStage::RerankAdjustment) {
+            rerank_candidates(candidates, &plan, path_hits)
+        } else {
+            sort_candidates(candidates.into_values().collect())
+        };
+        ranked.truncate(top_k as usize);
+        build_light_previews_for_hits(&conn, &mut ranked, &plan, preview_mode)?;
+        Ok(finalize_hits(ranked, top_k))
     }
 
     pub fn search_node_paths(
@@ -470,12 +446,21 @@ impl FsStore {
             let path = row.get::<_, String>(0)?;
             let first_match_position = row.get::<_, i64>(2)?;
             let path_length = row.get::<_, i64>(3)?;
+            let title = file_search_title(&path).to_lowercase();
+            let lowered_query = request.query_text.to_lowercase();
+            let mut match_reasons = vec!["path_substring".to_string()];
+            if title == lowered_query {
+                match_reasons.push("basename_exact".to_string());
+            } else if title.starts_with(&lowered_query) {
+                match_reasons.push("basename_prefix".to_string());
+            }
             Ok(SearchNodeHit {
                 path: path.clone(),
                 kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
                 snippet: Some(path),
+                preview: None,
                 score: path_match_score(first_match_position, path_length),
-                match_reasons: vec!["path_substring".to_string()],
+                match_reasons,
             })
         })
         .map_err(|error| error.to_string())?
@@ -886,7 +871,7 @@ fn build_snapshot_page_from_live_paths(
     Ok(SnapshotPage {
         snapshot_revision: scoped_snapshot_revision(prefix, snapshot_revision),
         snapshot_session_id: session_id.to_string(),
-        nodes: load_snapshot_nodes(tx, &page_paths)?,
+        nodes: load_snapshot_nodes(tx, &page_paths, snapshot_revision)?,
         next_cursor,
     })
 }
@@ -944,7 +929,7 @@ fn build_snapshot_page_from_session(
     Ok(SnapshotPage {
         snapshot_revision: scoped_snapshot_revision(&session.prefix, session.snapshot_revision),
         snapshot_session_id: session.session_id.clone(),
-        nodes: load_snapshot_nodes(tx, &page_paths)?,
+        nodes: load_snapshot_nodes(tx, &page_paths, session.snapshot_revision)?,
         next_cursor,
     })
 }
@@ -965,9 +950,16 @@ fn load_snapshot_cursor_ordinal(
     .map_err(|error| error.to_string())
 }
 
-fn load_snapshot_nodes(tx: &Transaction<'_>, paths: &[String]) -> Result<Vec<Node>, String> {
+fn load_snapshot_nodes(
+    tx: &Transaction<'_>,
+    paths: &[String],
+    snapshot_revision: i64,
+) -> Result<Vec<Node>, String> {
     let mut nodes = Vec::with_capacity(paths.len());
     for path in paths {
+        if load_path_last_change_revision(tx, path)? > snapshot_revision {
+            return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
+        }
         let node =
             load_node(tx, path)?.ok_or_else(|| SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string())?;
         nodes.push(node);
@@ -1074,69 +1066,6 @@ fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
         |row| row.get::<_, u64>(0),
     )
     .map_err(|error| error.to_string())
-}
-
-fn load_search_previews(
-    conn: &Connection,
-    hits: &[RankedSearchHit],
-) -> std::collections::BTreeMap<i64, Option<String>> {
-    let mut previews = std::collections::BTreeMap::new();
-    if hits.is_empty() {
-        return previews;
-    }
-
-    let placeholders = (1..=hits.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT rowid,
-                snippet(fs_nodes_fts, {FS_NODES_FTS_CONTENT_COLUMN_INDEX}, '[', ']', '...', 12) AS snippet
-         FROM fs_nodes_fts
-         WHERE rowid IN ({placeholders})"
-    );
-    let values = hits
-        .iter()
-        .map(|hit| rusqlite::types::Value::from(hit.row_id))
-        .collect::<Vec<_>>();
-
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(stmt) => stmt,
-        Err(error) => {
-            eprintln!(
-                "[wiki_store] search preview prepare failed for {} hits: {}",
-                hits.len(),
-                error
-            );
-            return previews;
-        }
-    };
-    let rows = match stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
-        let snippet = clamp_search_snippet(row.get(1)?);
-        Ok((row.get::<_, i64>(0)?, snippet))
-    }) {
-        Ok(rows) => rows,
-        Err(error) => {
-            eprintln!(
-                "[wiki_store] search preview query failed for {} hits: {}",
-                hits.len(),
-                error
-            );
-            return previews;
-        }
-    };
-
-    for row in rows {
-        match row {
-            Ok((row_id, snippet)) => {
-                previews.insert(row_id, Some(snippet));
-            }
-            Err(error) => {
-                eprintln!("[wiki_store] search preview row decode failed: {}", error);
-            }
-        }
-    }
-    previews
 }
 
 fn create_new_node(path: String, request: WriteNodeRequest, now: i64) -> Result<Node, String> {
@@ -1298,33 +1227,6 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
     }
 }
 
-// `snippet()` output can vary with token and marker placement, but the transport contract is fixed:
-// always return valid UTF-8 bounded by bytes first, with chars as a secondary UI-friendly limit.
-fn clamp_search_snippet(snippet: String) -> String {
-    let mut out = if snippet.chars().count() > SEARCH_SNIPPET_MAX_CHARS {
-        let mut shortened = snippet
-            .chars()
-            .take(SEARCH_SNIPPET_MAX_CHARS)
-            .collect::<String>();
-        shortened.push_str(SEARCH_SNIPPET_ELLIPSIS);
-        shortened
-    } else {
-        snippet
-    };
-
-    if out.len() <= SEARCH_SNIPPET_MAX_BYTES {
-        return out;
-    }
-
-    while out.len() + SEARCH_SNIPPET_ELLIPSIS.len() > SEARCH_SNIPPET_MAX_BYTES {
-        if out.pop().is_none() {
-            break;
-        }
-    }
-    out.push_str(SEARCH_SNIPPET_ELLIPSIS);
-    out
-}
-
 #[cfg(not(feature = "bench-disable-fts"))]
 fn sync_node_fts(
     tx: &Transaction<'_>,
@@ -1333,7 +1235,10 @@ fn sync_node_fts(
 ) -> Result<(), String> {
     let unchanged = match (old, new) {
         (Some(stored), Some((row_id, node))) => {
-            stored.row_id == row_id && stored.node.content == node.content
+            stored.row_id == row_id
+                && stored.node.path == node.path
+                && file_search_title(&stored.node.path) == file_search_title(&node.path)
+                && stored.node.content == node.content
         }
         _ => false,
     };
@@ -1344,15 +1249,16 @@ fn sync_node_fts(
 
     if let Some(stored) = old {
         tx.execute(
-            "INSERT INTO fs_nodes_fts(fs_nodes_fts, rowid, content) VALUES('delete', ?1, ?2)",
-            params![stored.row_id, stored.node.content],
+            "DELETE FROM fs_nodes_fts WHERE rowid = ?1",
+            params![stored.row_id],
         )
         .map_err(|error| error.to_string())?;
     }
     if let Some((row_id, node)) = new {
+        let title = file_search_title(&node.path);
         tx.execute(
-            "INSERT INTO fs_nodes_fts(rowid, content) VALUES(?1, ?2)",
-            params![row_id, node.content],
+            "INSERT INTO fs_nodes_fts(rowid, path, title, content) VALUES(?1, ?2, ?3, ?4)",
+            params![row_id, node.path, title, node.content],
         )
         .map_err(|error| error.to_string())?;
     }
@@ -1388,10 +1294,6 @@ fn split_search_terms(query_text: &str) -> Option<Vec<String>> {
 fn split_path_search_terms(query_text: &str) -> Option<Vec<String>> {
     split_search_terms(query_text)
         .map(|terms| terms.into_iter().map(|term| term.to_lowercase()).collect())
-}
-
-fn path_match_score(first_match_position: i64, path_length: i64) -> f32 {
-    ((first_match_position - 1) * 10_000 + path_length) as f32
 }
 
 fn glob_type_matches(node_type: &GlobNodeType, entry_kind: &NodeEntryKind) -> bool {

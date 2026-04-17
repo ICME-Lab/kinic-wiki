@@ -3,24 +3,11 @@
 // Why: The repo now has one node-based schema, so migration history only tracks FS tables.
 use rusqlite::{Connection, OptionalExtension, params};
 
-const MIGRATIONS: &[(&str, &str)] = &[
-    (
-        "wiki_store:000_fs_schema",
-        include_str!("../migrations/000_fs_schema.sql"),
-    ),
-    (
-        "wiki_store:001_fs_remove_tombstones",
-        include_str!("../migrations/001_fs_remove_tombstones.sql"),
-    ),
-    (
-        "wiki_store:002_fs_path_state",
-        include_str!("../migrations/002_fs_path_state.sql"),
-    ),
-    (
-        "wiki_store:003_fs_snapshot_sessions",
-        include_str!("../migrations/003_fs_snapshot_sessions.sql"),
-    ),
-];
+const CURRENT_SCHEMA_VERSION: &str = "wiki_store:000_fs_schema";
+const MIGRATIONS: &[(&str, &str)] = &[(
+    CURRENT_SCHEMA_VERSION,
+    include_str!("../migrations/000_fs_schema.sql"),
+)];
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
     include_str!("../migrations/000_schema_migrations.sql");
 
@@ -28,18 +15,9 @@ pub fn run_fs_migrations(conn: &mut Connection) -> Result<(), String> {
     ensure_schema_migrations_table(conn)?;
 
     let tx = conn.transaction().map_err(|error| error.to_string())?;
+    reject_legacy_schema(&tx)?;
     for (version, sql) in MIGRATIONS {
         if migration_already_applied(&tx, version)? {
-            continue;
-        }
-        if *version == "wiki_store:001_fs_remove_tombstones"
-            && !table_has_column(&tx, "fs_nodes", "deleted_at")?
-        {
-            tx.execute(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-                params![version],
-            )
-            .map_err(|error| error.to_string())?;
             continue;
         }
         tx.execute_batch(sql).map_err(|error| error.to_string())?;
@@ -58,6 +36,23 @@ fn ensure_schema_migrations_table(conn: &Connection) -> Result<(), String> {
     }
     conn.execute_batch(SCHEMA_MIGRATIONS_BOOTSTRAP_SQL)
         .map_err(|error| error.to_string())
+}
+
+fn reject_legacy_schema(conn: &Connection) -> Result<(), String> {
+    let versions = applied_versions(conn)?;
+    if versions.is_empty() {
+        if managed_table_exists(conn)? {
+            return Err("legacy wiki_store schema is unsupported; recreate database".to_string());
+        }
+        return Ok(());
+    }
+    if versions.len() == 1 && versions[0] == CURRENT_SCHEMA_VERSION {
+        return Ok(());
+    }
+    Err(format!(
+        "legacy wiki_store schema is unsupported; recreate database: {}",
+        versions.join(", ")
+    ))
 }
 
 fn migration_already_applied(conn: &Connection, version: &str) -> Result<bool, String> {
@@ -82,13 +77,25 @@ fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
     .map_err(|error| error.to_string())
 }
 
-fn table_has_column(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
-    let pragma = format!("PRAGMA table_info({table})");
-    let mut stmt = conn.prepare(&pragma).map_err(|error| error.to_string())?;
-    let mut rows = stmt.query([]).map_err(|error| error.to_string())?;
-    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-        let current = row.get::<_, String>(1).map_err(|error| error.to_string())?;
-        if current == column {
+fn applied_versions(conn: &Connection) -> Result<Vec<String>, String> {
+    conn.prepare("SELECT version FROM schema_migrations ORDER BY version ASC")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+fn managed_table_exists(conn: &Connection) -> Result<bool, String> {
+    for table in [
+        "fs_nodes",
+        "fs_nodes_fts",
+        "fs_change_log",
+        "fs_path_state",
+        "fs_snapshot_sessions",
+        "fs_snapshot_session_paths",
+    ] {
+        if table_exists(conn, table)? {
             return Ok(true);
         }
     }

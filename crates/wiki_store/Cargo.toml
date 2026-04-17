@@ -5,6 +5,7 @@ edition = "2024"
 
 [features]
 bench-disable-fts = []
+bench-search-stages = []
 
 [dependencies]
 hex = "0.4.3"
