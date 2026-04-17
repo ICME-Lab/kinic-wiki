@@ -38,10 +38,14 @@ pub struct BeamQuestion {
     pub question_id: String,
     pub question_type: String,
     pub question_class: BeamQuestionClass,
-    pub prompt: String,
+    pub query: String,
+    pub as_of: Option<String>,
     pub reference_answer: Option<String>,
+    pub gold_answers: Vec<String>,
     pub gold_paths: Vec<String>,
     pub gold_spans: Vec<String>,
+    pub expects_abstention: bool,
+    pub tags: Vec<String>,
     pub raw: Value,
 }
 
@@ -86,12 +90,22 @@ pub fn extract_questions(conversation: &BeamConversation) -> Result<Vec<BeamQues
             let Some(question) = item.get("question").and_then(Value::as_str) else {
                 continue;
             };
+            let question_class = extract_question_class(question_type, item);
+            let gold_answers = extract_gold_answers(item);
+            let as_of = extract_optional_string(item, &["as_of"]);
+            if is_temporal_question(question_type) && as_of.is_none() {
+                return Err(anyhow!(
+                    "temporal question {question_type}-{index:03} is missing as_of"
+                ));
+            }
             questions.push(BeamQuestion {
                 question_id: format!("{question_type}-{index:03}"),
                 question_type: question_type.clone(),
-                question_class: extract_question_class(question_type, item),
-                prompt: question.to_string(),
-                reference_answer: extract_reference_answer(item),
+                question_class,
+                query: question.to_string(),
+                as_of,
+                reference_answer: gold_answers.first().cloned(),
+                gold_answers,
                 gold_paths: extract_string_list(
                     item,
                     &["gold_paths", "gold_path", "evidence_paths"],
@@ -100,6 +114,8 @@ pub fn extract_questions(conversation: &BeamConversation) -> Result<Vec<BeamQues
                     item,
                     &["gold_spans", "gold_span", "evidence_spans"],
                 ),
+                expects_abstention: extract_expects_abstention(question_type, item, question_class),
+                tags: extract_tags(question_type, item, question_class),
                 raw: item.clone(),
             });
         }
@@ -127,6 +143,22 @@ fn extract_reference_answer(item: &Value) -> Option<String> {
     .map(str::trim)
     .filter(|value| !value.is_empty())
     .map(ToOwned::to_owned)
+}
+
+fn extract_gold_answers(item: &Value) -> Vec<String> {
+    let explicit = extract_string_list(
+        item,
+        &[
+            "gold_answers",
+            "gold_answer",
+            "reference_answers",
+            "expected_answers",
+        ],
+    );
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    extract_reference_answer(item).into_iter().collect()
 }
 
 fn extract_question_class(question_type: &str, item: &Value) -> BeamQuestionClass {
@@ -157,6 +189,61 @@ fn parse_question_class(value: &str) -> Option<BeamQuestionClass> {
         "abstention" => Some(BeamQuestionClass::Abstention),
         _ => None,
     }
+}
+
+fn is_temporal_question(question_type: &str) -> bool {
+    question_type
+        .trim()
+        .to_ascii_lowercase()
+        .contains("temporal")
+}
+
+fn extract_expects_abstention(
+    question_type: &str,
+    item: &Value,
+    question_class: BeamQuestionClass,
+) -> bool {
+    if let Some(value) = item.get("expects_abstention").and_then(Value::as_bool) {
+        return value;
+    }
+    if matches!(question_class, BeamQuestionClass::Abstention) {
+        return true;
+    }
+    extract_reference_answer(item)
+        .map(|answer| normalize_marker(&answer) == "insufficient evidence")
+        .unwrap_or_else(|| question_type.trim().eq_ignore_ascii_case("abstention"))
+}
+
+fn extract_tags(
+    question_type: &str,
+    item: &Value,
+    question_class: BeamQuestionClass,
+) -> Vec<String> {
+    let explicit = extract_string_list(item, &["tags"]);
+    if !explicit.is_empty() {
+        return explicit;
+    }
+    let mut tags = vec![question_type.trim().to_ascii_lowercase()];
+    match question_class {
+        BeamQuestionClass::Factoid => tags.push("factoid".to_string()),
+        BeamQuestionClass::Reasoning => tags.push("temporal".to_string()),
+        BeamQuestionClass::Abstention => tags.push("abstention".to_string()),
+    }
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+fn extract_optional_string(item: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| item.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn normalize_marker(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 fn extract_string_list(item: &Value, keys: &[&str]) -> Vec<String> {
@@ -290,7 +377,7 @@ mod tests {
                 "conversation_plan": "plan",
                 "user_questions": [{"messages":["q1"]}],
                 "chat": [[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]],
-                "probing_questions": "{'factoid':[{'question':'What date?','answer':'March 15, 2024','gold_paths':['messages/0002-assistant.md'],'gold_spans':['March 15, 2024']}],'temporal_reasoning':[{'question':'Why?','answer':'Because'}]}"
+                "probing_questions": "{'factoid':[{'question':'What date?','answer':'March 15, 2024','gold_paths':['facts.md'],'gold_spans':['March 15, 2024'],'tags':['factoid','facts']}],'temporal_reasoning':[{'question':'Why?','answer':'Because','as_of':'2026-04-16T00:00:00+09:00','gold_paths':['events.md']}]}"
               }]
             }"#,
         )
@@ -302,8 +389,13 @@ mod tests {
         let questions = extract_questions(&conversation).expect("questions should parse");
         assert_eq!(questions.len(), 2);
         assert_eq!(questions[0].question_class, BeamQuestionClass::Factoid);
-        assert_eq!(questions[0].gold_paths, vec!["messages/0002-assistant.md"]);
+        assert_eq!(questions[0].gold_paths, vec!["facts.md"]);
         assert_eq!(questions[0].gold_spans, vec!["March 15, 2024"]);
+        assert_eq!(questions[0].gold_answers, vec!["March 15, 2024"]);
+        assert_eq!(
+            questions[1].as_of.as_deref(),
+            Some("2026-04-16T00:00:00+09:00")
+        );
         assert_eq!(questions[1].question_class, BeamQuestionClass::Reasoning);
     }
 
@@ -316,12 +408,39 @@ mod tests {
             .pop()
             .expect("sample fixture should contain one conversation");
         let questions = extract_questions(&conversation).expect("questions should parse");
-        assert_eq!(questions.len(), 2);
+        assert_eq!(questions.len(), 4);
         assert_eq!(questions[0].question_class, BeamQuestionClass::Abstention);
         assert_eq!(questions[1].question_class, BeamQuestionClass::Factoid);
         assert_eq!(
             questions[1].reference_answer.as_deref(),
             Some("March 15, 2024")
         );
+    }
+
+    #[test]
+    fn extract_questions_requires_as_of_for_temporal_items() {
+        let dir = tempfile::tempdir().expect("tempdir should exist");
+        let path = dir.path().join("beam.json");
+        fs::write(
+            &path,
+            r#"{
+              "100K": [{
+                "conversation_id": "conv-1",
+                "conversation_seed": {"category":"General"},
+                "narratives": "narrative",
+                "user_profile": {"user_info":"info"},
+                "conversation_plan": "plan",
+                "user_questions": [{"messages":["q1"]}],
+                "chat": [[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]],
+                "probing_questions": "{'temporal_reasoning':[{'question':'When next?','answer':'Soon','gold_paths':['events.md']}]}"}]
+            }"#,
+        )
+        .expect("fixture should write");
+        let conversation = load_dataset(&path, "100K", 1)
+            .expect("dataset should load")
+            .pop()
+            .expect("conversation should exist");
+        let error = extract_questions(&conversation).expect_err("temporal question should fail");
+        assert!(error.to_string().contains("missing as_of"));
     }
 }

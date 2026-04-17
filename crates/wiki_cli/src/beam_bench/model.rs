@@ -1,12 +1,10 @@
 // Where: crates/wiki_cli/src/beam_bench/model.rs
-// What: OpenAI Responses integration and provider abstraction for BEAM benchmark runs.
-// Why: The benchmark must be able to replay tool-calling conversations in tests and against one production provider.
+// What: Codex CLI integration for BEAM benchmark runs.
+// Why: The harness now executes only the Codex-based read-only retrieval flow.
 use anyhow::{Context, Result, anyhow};
-use async_trait::async_trait;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::future::Future;
+use std::fs;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -15,13 +13,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 use crate::connection::ResolvedConnection;
-
-#[derive(Debug, Clone)]
-pub struct ModelRequest {
-    pub model: String,
-    pub input: Vec<Value>,
-    pub tools: Vec<Value>,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolCallRecord {
@@ -41,79 +32,13 @@ pub struct ModelRun {
     pub raw_events: Vec<Value>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ToolLoopConfig {
-    pub max_roundtrips: usize,
-}
-
-#[async_trait]
-pub trait BenchmarkModel: Send + Sync {
-    async fn create_response(&self, request: ModelRequest) -> Result<ModelResponse>;
-}
-
-pub async fn run_tool_loop<F, Fut>(
-    provider: &impl BenchmarkModel,
-    request: ModelRequest,
-    config: &ToolLoopConfig,
-    mut execute_tool: F,
-) -> Result<ModelRun>
-where
-    F: FnMut(&str, &str) -> Fut,
-    Fut: Future<Output = Result<String>>,
-{
-    let started_at = Instant::now();
-    let mut accumulated_input = request.input;
-    let mut tool_calls = Vec::new();
-    let mut usage = Usage::default();
-    for _ in 0..config.max_roundtrips {
-        let response = provider
-            .create_response(ModelRequest {
-                model: request.model.clone(),
-                input: accumulated_input.clone(),
-                tools: request.tools.clone(),
-            })
-            .await?;
-        usage.merge(response.usage);
-        if response.function_calls.is_empty() {
-            return Ok(ModelRun {
-                answer: response.output_text,
-                tool_calls,
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                total_tokens: usage.total_tokens,
-                latency_ms: started_at.elapsed().as_millis(),
-                raw_events: Vec::new(),
-            });
-        }
-
-        for function_call in response.function_calls {
-            let output = execute_tool(&function_call.name, &function_call.arguments).await?;
-            accumulated_input.push(json!({
-                "type": "function_call_output",
-                "call_id": function_call.call_id,
-                "output": output
-            }));
-            tool_calls.push(ToolCallRecord {
-                name: function_call.name,
-                arguments: function_call.arguments,
-                is_error: output.contains("\"error\""),
-            });
-        }
-    }
-    Err(anyhow!("tool loop exceeded max roundtrips"))
-}
-
-pub struct OpenAiResponsesModel {
-    base_url: String,
-    api_key: String,
-    client: Client,
-}
-
 static CODEX_SCHEMA_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub async fn run_codex_question(
     codex_bin: &Path,
     model: &str,
+    namespace_path: &str,
+    namespace_index_path: &str,
     base_path: &str,
     question: &str,
     connection: &ResolvedConnection,
@@ -124,14 +49,23 @@ pub async fn run_codex_question(
     tokio::fs::write(&schema_path, codex_answer_schema().to_string())
         .await
         .with_context(|| "failed to write Codex output schema")?;
-    let prompt = codex_prompt(base_path, question, connection);
+    let prompt = codex_prompt(
+        namespace_path,
+        namespace_index_path,
+        base_path,
+        question,
+        connection,
+    );
     let mut child = Command::new(codex_bin)
         .arg("exec")
         .arg("--json")
+        .arg("--ephemeral")
         .arg("--cd")
         .arg(std::env::current_dir().with_context(|| "failed to resolve current dir")?)
         .arg("--sandbox")
         .arg(codex_sandbox)
+        .arg("-c")
+        .arg("model_reasoning_effort=\"none\"")
         .arg("--output-schema")
         .arg(&schema_path)
         .arg("--model")
@@ -191,32 +125,55 @@ fn next_codex_schema_path() -> std::path::PathBuf {
     ))
 }
 
-fn codex_prompt(base_path: &str, question: &str, connection: &ResolvedConnection) -> String {
-    let connection_args = if connection.replica_host == "http://127.0.0.1:4943" {
+fn codex_prompt(
+    namespace_path: &str,
+    namespace_index_path: &str,
+    base_path: &str,
+    question: &str,
+    connection: &ResolvedConnection,
+) -> String {
+    let connection_args = if connection.replica_host == "http://127.0.0.1:8000" {
         format!("--local --canister-id {}", connection.canister_id)
     } else {
         format!("--canister-id {}", connection.canister_id)
     };
+    let skill = load_query_skill_contract()
+        .unwrap_or_else(|error| format!("Query skill contract could not be loaded: {error}"));
     format!(
-        r#"You are answering a BEAM benchmark question using llm-wiki.
+        r#"You are answering a BEAM-derived wiki benchmark question using llm-wiki.
 
-Use shell commands only through `cargo run -p wiki-cli -- ...` and only these read-only subcommands:
-- read-node
-- list-nodes
-- search-remote
-- recent-nodes
+Follow the embedded query skill contract. This run is stateless. Do not rely on prior turns.
 
-Use this exact argument order. Do not put connection flags after the subcommand:
+{skill}
+
+Runtime constraints:
+- Use shell commands only through `cargo run -p wiki-cli --bin wiki-cli -- ...`
+- Allowed read-only subcommands only:
+  - read-node
+  - list-nodes
+  - search-remote
+  - search-path-remote
+  - recent-nodes
+- Do not use write-node, append-node, edit-node, multi-edit-node, delete-node, delete-tree, rebuild-index, pull, or push
+- If evidence is insufficient, answer exactly `insufficient evidence`
+
+Use this exact argument order. Do not put connection flags after the subcommand. Always request JSON output:
 
 ```bash
+cargo run -p wiki-cli --bin wiki-cli -- {connection_args} read-node --path /Wiki/index.md --json
+cargo run -p wiki-cli --bin wiki-cli -- {connection_args} read-node --path {namespace_index_path} --json
+cargo run -p wiki-cli --bin wiki-cli -- {connection_args} list-nodes --prefix {namespace_path} --recursive --json
 cargo run -p wiki-cli --bin wiki-cli -- {connection_args} list-nodes --prefix {base_path} --recursive --json
 cargo run -p wiki-cli --bin wiki-cli -- {connection_args} search-remote --prefix {base_path} "query text" --json
-cargo run -p wiki-cli --bin wiki-cli -- {connection_args} read-node --path {base_path}/conversation.md --json
+cargo run -p wiki-cli --bin wiki-cli -- {connection_args} search-path-remote "query text" --prefix {base_path} --json
+cargo run -p wiki-cli --bin wiki-cli -- {connection_args} read-node --path {base_path}/index.md --json
+cargo run -p wiki-cli --bin wiki-cli -- {connection_args} read-node --path <discovered path> --json
 ```
 
 Connection:
 - replica host: {replica_host}
 - canister id: {canister_id}
+- wiki namespace: {namespace_path}
 - wiki prefix: {base_path}
 
 Question:
@@ -224,9 +181,12 @@ Question:
 
 Answer with JSON matching the provided output schema. The `answer` field must be the shortest complete answer grounded in the wiki notes. If there is not enough evidence, set `answer` to exactly `insufficient evidence`.
 "#,
+        skill = skill,
         connection_args = connection_args,
         replica_host = connection.replica_host,
         canister_id = connection.canister_id,
+        namespace_path = namespace_path,
+        namespace_index_path = namespace_index_path,
         base_path = base_path,
         question = question
     )
@@ -301,7 +261,9 @@ fn parse_codex_tool_calls(events: &[Value]) -> Vec<ToolCallRecord> {
                 return None;
             }
             Some(ToolCallRecord {
-                name: "codex_shell".to_string(),
+                name: parse_wiki_cli_subcommand(command)
+                    .unwrap_or("codex_shell")
+                    .to_string(),
                 arguments: command.to_string(),
                 is_error: item
                     .get("status")
@@ -313,80 +275,52 @@ fn parse_codex_tool_calls(events: &[Value]) -> Vec<ToolCallRecord> {
         .collect()
 }
 
+fn load_query_skill_contract() -> Result<String> {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .with_context(|| "failed to resolve workspace root from CARGO_MANIFEST_DIR")?;
+    let skill_path = repo_root.join(".agents/skills/query/SKILL.md");
+    let workflow_path = repo_root.join(".agents/skills/query/query.md");
+    let skill = fs::read_to_string(&skill_path)
+        .with_context(|| format!("failed to read {}", skill_path.display()))?;
+    let workflow = fs::read_to_string(&workflow_path)
+        .with_context(|| format!("failed to read {}", workflow_path.display()))?;
+    Ok(format!(
+        "=== query/SKILL.md ===\n{skill}\n\n=== query/query.md ===\n{workflow}"
+    ))
+}
+
+fn parse_wiki_cli_subcommand(command: &str) -> Option<&'static str> {
+    let args = command.split_whitespace().collect::<Vec<_>>();
+    let separator = args.iter().position(|arg| *arg == "--")?;
+    let mut index = separator + 1;
+    while index < args.len() {
+        let arg = args[index].trim_matches('\'').trim_matches('"');
+        match arg {
+            "--local" | "--json" | "--recursive" => {
+                index += 1;
+            }
+            "--canister-id" | "--path" | "--prefix" | "--top-k" => {
+                index += 2;
+            }
+            "read-node" => return Some("read-node"),
+            "list-nodes" => return Some("list-nodes"),
+            "search-remote" => return Some("search-remote"),
+            "search-path-remote" => return Some("search-path-remote"),
+            "recent-nodes" => return Some("recent-nodes"),
+            _ => {
+                index += 1;
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Deserialize)]
 struct CodexUsage {
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
-}
-
-impl OpenAiResponsesModel {
-    pub fn new(base_url: String, api_key: String) -> Self {
-        Self {
-            base_url,
-            api_key,
-            client: Client::new(),
-        }
-    }
-}
-
-#[async_trait]
-impl BenchmarkModel for OpenAiResponsesModel {
-    async fn create_response(&self, request: ModelRequest) -> Result<ModelResponse> {
-        let payload = json!({
-            "model": request.model,
-            "input": request.input,
-            "tools": request.tools,
-        });
-        let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
-        let response = self
-            .client
-            .post(endpoint)
-            .bearer_auth(&self.api_key)
-            .json(&payload)
-            .send()
-            .await
-            .with_context(|| "failed to call OpenAI Responses API")?;
-        let response = response
-            .error_for_status()
-            .with_context(|| "OpenAI Responses API returned an error status")?;
-        let body: OpenAiResponseBody = response
-            .json()
-            .await
-            .with_context(|| "failed to decode OpenAI Responses API response")?;
-        Ok(ModelResponse::from_openai(body))
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ModelResponse {
-    pub output_text: String,
-    pub function_calls: Vec<FunctionCall>,
-    pub usage: Usage,
-}
-
-impl ModelResponse {
-    fn from_openai(body: OpenAiResponseBody) -> Self {
-        let mut text_parts = Vec::new();
-        let mut function_calls = Vec::new();
-        for item in body.output {
-            if let Some(function_call) = item.as_function_call() {
-                function_calls.push(function_call);
-                continue;
-            }
-            text_parts.extend(item.text_segments());
-        }
-        Self {
-            output_text: text_parts.join("\n").trim().to_string(),
-            function_calls,
-            usage: body.usage.unwrap_or_default(),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenAiResponseBody {
-    output: Vec<ResponseItem>,
-    usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -394,14 +328,6 @@ pub struct Usage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
-}
-
-impl Usage {
-    fn merge(&mut self, other: Usage) {
-        self.input_tokens = sum_optional(self.input_tokens, other.input_tokens);
-        self.output_tokens = sum_optional(self.output_tokens, other.output_tokens);
-        self.total_tokens = sum_optional(self.total_tokens, other.total_tokens);
-    }
 }
 
 fn sum_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
@@ -413,124 +339,11 @@ fn sum_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct ResponseItem {
-    #[serde(rename = "type")]
-    item_type: String,
-    name: Option<String>,
-    arguments: Option<String>,
-    call_id: Option<String>,
-    content: Option<Vec<ResponseContent>>,
-}
-
-impl ResponseItem {
-    fn as_function_call(&self) -> Option<FunctionCall> {
-        if self.item_type != "function_call" {
-            return None;
-        }
-        Some(FunctionCall {
-            name: self.name.clone().unwrap_or_default(),
-            arguments: self.arguments.clone().unwrap_or_else(|| "{}".to_string()),
-            call_id: self.call_id.clone().unwrap_or_default(),
-        })
-    }
-
-    fn text_segments(&self) -> Vec<String> {
-        self.content
-            .clone()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|item| item.content_type == "output_text")
-            .filter_map(|item| item.text)
-            .collect()
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct ResponseContent {
-    #[serde(rename = "type")]
-    content_type: String,
-    text: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionCall {
-    pub name: String,
-    pub arguments: String,
-    pub call_id: String,
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        BenchmarkModel, FunctionCall, ModelRequest, ModelResponse, ToolLoopConfig, Usage,
-        next_codex_schema_path, run_tool_loop,
-    };
-    use anyhow::Result;
-    use async_trait::async_trait;
-    use serde_json::json;
+    use super::{codex_prompt, next_codex_schema_path};
+    use crate::connection::ResolvedConnection;
     use std::collections::HashSet;
-    use std::sync::Mutex;
-
-    struct MockModel {
-        responses: Mutex<Vec<ModelResponse>>,
-    }
-
-    #[async_trait]
-    impl BenchmarkModel for MockModel {
-        async fn create_response(&self, _request: ModelRequest) -> Result<ModelResponse> {
-            let mut responses = self
-                .responses
-                .lock()
-                .expect("responses lock should succeed");
-            Ok(responses.remove(0))
-        }
-    }
-
-    #[tokio::test]
-    async fn run_tool_loop_replays_function_call_outputs() {
-        let provider = MockModel {
-            responses: Mutex::new(vec![
-                ModelResponse {
-                    output_text: String::new(),
-                    function_calls: vec![FunctionCall {
-                        name: "search".to_string(),
-                        arguments: "{\"query_text\":\"meeting\"}".to_string(),
-                        call_id: "call-1".to_string(),
-                    }],
-                    usage: Usage {
-                        input_tokens: Some(10),
-                        output_tokens: Some(5),
-                        total_tokens: Some(15),
-                    },
-                },
-                ModelResponse {
-                    output_text: "March 15, 2024".to_string(),
-                    function_calls: Vec::new(),
-                    usage: Usage {
-                        input_tokens: Some(4),
-                        output_tokens: Some(3),
-                        total_tokens: Some(7),
-                    },
-                },
-            ]),
-        };
-        let run = run_tool_loop(
-            &provider,
-            ModelRequest {
-                model: "gpt-5".to_string(),
-                input: vec![json!({"role":"user","content":"When is the meeting?"})],
-                tools: vec![json!({"type":"function","name":"search"})],
-            },
-            &ToolLoopConfig { max_roundtrips: 4 },
-            |_name, _arguments| async { Ok("{\"hits\":[{\"path\":\"/Wiki/a.md\"}]}".to_string()) },
-        )
-        .await
-        .expect("tool loop should finish");
-        assert_eq!(run.answer, "March 15, 2024");
-        assert_eq!(run.tool_calls.len(), 1);
-        assert_eq!(run.total_tokens, Some(22));
-    }
 
     #[test]
     fn codex_schema_paths_are_unique() {
@@ -539,5 +352,49 @@ mod tests {
             .collect::<Vec<_>>();
         let unique = paths.iter().collect::<HashSet<_>>();
         assert_eq!(paths.len(), unique.len());
+    }
+
+    #[test]
+    fn codex_prompt_excludes_benchmark_specific_guidance() {
+        let prompt = codex_prompt(
+            "/Wiki/run-a",
+            "/Wiki/run-a/index.md",
+            "/Wiki/run-a/conv-1",
+            "When is the meeting?",
+            &ResolvedConnection {
+                replica_host: "http://127.0.0.1:8000".to_string(),
+                canister_id: "aaaaa-aa".to_string(),
+            },
+        );
+        assert!(!prompt.contains("structured notes are preferred"));
+        assert!(!prompt.contains("Stay within the wiki prefix"));
+        assert!(!prompt.contains("Start from `/Wiki/index.md`"));
+        assert!(prompt.contains("Do not use write-node"));
+        assert!(prompt.contains("insufficient evidence"));
+        assert!(!prompt.contains("Query skill contract could not be loaded"));
+        assert!(!prompt.contains(&format!("{}/beam", "/Wiki")));
+        assert!(prompt.contains("read-node --path /Wiki/run-a/index.md --json"));
+    }
+
+    #[test]
+    fn codex_prompt_embeds_scope_and_abstention_rules_from_skill() {
+        let prompt = codex_prompt(
+            "/Wiki/run-a",
+            "/Wiki/run-a/index.md",
+            "/Wiki/run-a/conv-1",
+            "When is the meeting?",
+            &ResolvedConnection {
+                replica_host: "http://127.0.0.1:8000".to_string(),
+                canister_id: "aaaaa-aa".to_string(),
+            },
+        );
+        assert!(prompt.contains("Prefer scope-first exploration."));
+        assert!(prompt.contains("Preserve exact value formatting"));
+        assert!(prompt.contains("answer exactly `insufficient evidence`"));
+        assert!(prompt.contains("do not answer from the index alone"));
+        assert!(prompt.contains("Read `events.md` at least once before answering"));
+        assert!(prompt.contains("prefer extraction over summarization"));
+        assert!(prompt.contains("smallest answer span"));
+        assert!(!prompt.contains("facts.md を先に読め"));
     }
 }

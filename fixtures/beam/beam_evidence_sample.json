@@ -32,7 +32,7 @@
           }
         ]
       ],
-      "probing_questions": "{'factoid':[{'question':'When is the meeting?','answer':'March 15, 2024','gold_paths':['messages/0002-assistant.md'],'gold_spans':['March 15, 2024']}],'abstention':[{'question':'What city was the meeting in?','answer':'insufficient evidence'}]}"
+      "probing_questions": "{'factoid':[{'question':'When is the meeting?','answer':'March 15, 2024','gold_answers':['March 15, 2024'],'gold_paths':['facts.md'],'gold_spans':['March 15, 2024'],'tags':['factoid','facts']},{'question':'What was the conversation plan?','answer':'Discuss one meeting date and confirm it.','gold_answers':['Discuss one meeting date and confirm it.'],'gold_paths':['plan.md'],'gold_spans':['Discuss one meeting date and confirm it.'],'tags':['factoid','plan']}],'temporal_reasoning':[{'question':'What happened in the first turn?','answer':'Please remember that the meeting is on March 15, 2024.','gold_answers':['Please remember that the meeting is on March 15, 2024.'],'gold_paths':['events.md'],'gold_spans':['Turn 0001 user: Please remember that the meeting is on March 15, 2024.'],'as_of':'2026-04-16T00:00:00+09:00','tags':['temporal','events']}],'abstention':[{'question':'What city was the meeting in?','answer':'insufficient evidence','expects_abstention':true,'gold_answers':['insufficient evidence'],'tags':['abstention']}]}"
     }
   ]
 }
