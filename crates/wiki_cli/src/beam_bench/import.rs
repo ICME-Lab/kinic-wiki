@@ -236,9 +236,11 @@ mod tests {
         assert_eq!(imported.namespace_index_path, "/Wiki/run-a/index.md");
         assert_eq!(imported.base_path, "/Wiki/run-a/conv-1");
         assert_eq!(imported.note_paths.len(), imported.notes.len());
-        assert!(imported
-            .notes
-            .iter()
-            .all(|note| note.path.starts_with("/Wiki/run-a/conv-1/")));
+        assert!(
+            imported
+                .notes
+                .iter()
+                .all(|note| note.path.starts_with("/Wiki/run-a/conv-1/"))
+        );
     }
 }

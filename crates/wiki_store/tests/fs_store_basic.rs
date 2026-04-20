@@ -178,7 +178,7 @@ fn status_counts_live_files_and_sources() {
     let source = store
         .write_node(
             WriteNodeRequest {
-                path: "/Wiki/source.txt".to_string(),
+                path: "/Sources/raw/source/source.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source".to_string(),
                 metadata_json: "{}".to_string(),

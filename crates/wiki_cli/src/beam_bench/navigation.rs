@@ -18,7 +18,10 @@ pub fn conversation_base_path(namespace: &str, conversation_id: &str) -> String 
 }
 
 pub fn conversation_index_path(namespace: &str, conversation_id: &str) -> String {
-    format!("{}/index.md", conversation_base_path(namespace, conversation_id))
+    format!(
+        "{}/index.md",
+        conversation_base_path(namespace, conversation_id)
+    )
 }
 
 pub fn namespace_base_path(namespace: &str) -> String {
@@ -30,7 +33,10 @@ pub fn namespace_index_path(namespace: &str) -> String {
 }
 
 pub fn manifest_path(namespace: &str) -> String {
-    format!("{}/_beam_prepare_manifest.json", namespace_base_path(namespace))
+    format!(
+        "{}/_beam_prepare_manifest.json",
+        namespace_base_path(namespace)
+    )
 }
 
 pub async fn sync_beam_indexes(client: &impl WikiApi, namespace: &str) -> Result<()> {
@@ -253,10 +259,9 @@ mod tests {
     use crate::client::WikiApi;
 
     use super::{
-        BeamIndexRow, conversation_base_path, conversation_index_path,
-        extract_identifier_summary, manifest_path, namespace_base_path, namespace_index_path,
-        render_beam_index, sync_beam_indexes, upsert_list_entry,
-        upsert_section,
+        BeamIndexRow, conversation_base_path, conversation_index_path, extract_identifier_summary,
+        manifest_path, namespace_base_path, namespace_index_path, render_beam_index,
+        sync_beam_indexes, upsert_list_entry, upsert_section,
     };
 
     #[test]

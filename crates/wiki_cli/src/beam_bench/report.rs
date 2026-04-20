@@ -239,7 +239,10 @@ pub fn summarize(results: &[QuestionResult], top_k: u32) -> BenchmarkSummary {
         .iter()
         .filter(|item| item.retrieved_paths_nonempty)
         .count();
-    let read_before_answer = results.iter().filter(|item| item.read_before_answer).count();
+    let read_before_answer = results
+        .iter()
+        .filter(|item| item.read_before_answer)
+        .count();
     let supported_questions = results
         .iter()
         .filter(|item| supported_slice_bucket(item) != "unsupported")
@@ -661,9 +664,9 @@ fn summarize_by_tag(results: &[QuestionResult]) -> BTreeMap<String, TagSummary> 
 fn summarize_by_question_type(results: &[QuestionResult]) -> BTreeMap<String, QuestionTypeSummary> {
     let mut buckets = BTreeMap::new();
     for result in results {
-        let entry = buckets.entry(result.question_type.clone()).or_insert((
-            0usize, 0usize, 0usize, 0usize, 0usize, 0usize,
-        ));
+        let entry = buckets
+            .entry(result.question_type.clone())
+            .or_insert((0usize, 0usize, 0usize, 0usize, 0usize, 0usize));
         entry.0 += 1;
         if result.grounded {
             entry.1 += 1;
@@ -790,15 +793,22 @@ fn render_report(summary: &BenchmarkSummary) -> String {
         summary.total_output_tokens,
         summary.total_tokens,
         summary.avg_latency_ms,
-        question_type_metric(summary, "information_extraction", |item| item.grounded_answer_rate),
-        question_type_metric(summary, "temporal_reasoning", |item| item.grounded_answer_rate),
+        question_type_metric(summary, "information_extraction", |item| item
+            .grounded_answer_rate),
+        question_type_metric(summary, "temporal_reasoning", |item| item
+            .grounded_answer_rate),
         question_type_metric(summary, "event_ordering", |item| item.grounded_answer_rate),
-        question_type_metric(summary, "instruction_following", |item| item.grounded_answer_rate),
-        question_type_metric(summary, "preference_following", |item| item.grounded_answer_rate),
-        question_type_metric(summary, "knowledge_update", |item| item.grounded_answer_rate),
-        question_type_metric(summary, "contradiction_resolution", |item| item.grounded_answer_rate),
+        question_type_metric(summary, "instruction_following", |item| item
+            .grounded_answer_rate),
+        question_type_metric(summary, "preference_following", |item| item
+            .grounded_answer_rate),
+        question_type_metric(summary, "knowledge_update", |item| item
+            .grounded_answer_rate),
+        question_type_metric(summary, "contradiction_resolution", |item| item
+            .grounded_answer_rate),
         question_type_metric(summary, "summarization", |item| item.grounded_answer_rate),
-        question_type_metric(summary, "multi_session_reasoning", |item| item.grounded_answer_rate),
+        question_type_metric(summary, "multi_session_reasoning", |item| item
+            .grounded_answer_rate),
         tag_metric(summary, "abstention", |item| item.abstention_correct_rate),
     )
 }

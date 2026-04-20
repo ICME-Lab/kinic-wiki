@@ -52,12 +52,7 @@ pub fn extract_fact_lines(conversation: &BeamConversation) -> Vec<String> {
         let trimmed = turn.content.trim();
         if let Some(line) = extract_stable_statement_fact(trimmed) {
             lines.push(line);
-            continue;
         }
-        if looks_temporal_or_ordered_statement(trimmed) {
-            continue;
-        }
-        lines.push(format!("statement: {trimmed}"));
     }
     dedupe_lines(lines)
 }
@@ -156,7 +151,9 @@ fn push_json_facts(label: &str, value: &Value, lines: &mut Vec<String>) {
     collect_json_facts(label, value, lines, None, None);
 }
 
-fn push_json_facts_limited(label: &str, value: &Value, lines: &mut Vec<String>, limit: usize) { collect_json_facts(label, value, lines, None, Some(limit)); }
+fn push_json_facts_limited(label: &str, value: &Value, lines: &mut Vec<String>, limit: usize) {
+    collect_json_facts(label, value, lines, None, Some(limit));
+}
 
 fn collect_json_facts(
     label: &str,
@@ -200,9 +197,18 @@ fn collect_json_facts(
     }
 }
 
-fn push_named_scalar(value: &Value, key: &str, label: &str, lines: &mut Vec<String>) { if let Some(text) = value.get(key).and_then(Value::as_str) { push_fact_line(label, None, text, lines); } }
+fn push_named_scalar(value: &Value, key: &str, label: &str, lines: &mut Vec<String>) {
+    if let Some(text) = value.get(key).and_then(Value::as_str) {
+        push_fact_line(label, None, text, lines);
+    }
+}
 
-fn push_text_fact(label: &str, value: &str, lines: &mut Vec<String>) { let trimmed = value.trim(); if !trimmed.is_empty() { lines.push(format!("{label}: {trimmed}")); } }
+fn push_text_fact(label: &str, value: &str, lines: &mut Vec<String>) {
+    let trimmed = value.trim();
+    if !trimmed.is_empty() {
+        lines.push(format!("{label}: {trimmed}"));
+    }
+}
 
 fn push_fact_line(label: &str, prefix: Option<String>, value: &str, lines: &mut Vec<String>) {
     let trimmed = value.trim();
@@ -219,25 +225,11 @@ fn dedupe_lines(lines: Vec<String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for line in lines {
-        if seen.insert(line.clone()) { out.push(line); }
+        if seen.insert(line.clone()) {
+            out.push(line);
+        }
     }
     out
-}
-
-fn looks_temporal_or_ordered_statement(text: &str) -> bool {
-    let lowered = text.to_ascii_lowercase();
-    let temporal_markers = [
-        "turn ",
-        "first ",
-        "last ",
-        "earliest",
-        "latest",
-        " before ",
-        " after ",
-    ];
-    temporal_markers
-        .iter()
-        .any(|marker| lowered.contains(marker))
 }
 
 fn extract_stable_statement_fact(text: &str) -> Option<String> {
@@ -259,6 +251,17 @@ fn extract_stable_statement_fact(text: &str) -> Option<String> {
         let subject = normalize_subject(subject);
         return Some(format!("{subject} location: {}", value.trim()));
     }
+    if let Some((subject, value)) = split_once_insensitive(normalized, " has ") {
+        let subject = normalize_subject(subject);
+        let value = value.trim();
+        if value
+            .chars()
+            .next()
+            .is_some_and(|char| char.is_ascii_digit())
+        {
+            return Some(format!("{subject} detail: {value}"));
+        }
+    }
     if lowered.starts_with("my ") && lowered.contains(" preference is ") {
         return Some(format!("preference: {normalized}"));
     }
@@ -272,18 +275,26 @@ fn split_once_insensitive<'a>(text: &'a str, needle: &str) -> Option<(&'a str, &
 }
 
 fn normalize_subject(subject: &str) -> String {
-    subject
-        .trim()
+    let lowered = subject.trim().to_ascii_lowercase();
+    lowered
         .trim_start_matches("the ")
         .trim_start_matches("my ")
         .trim()
-        .to_ascii_lowercase()
+        .to_string()
 }
 
-fn fenced_json(value: &Value) -> String { format!("```json\n{}\n```", serde_json::to_string_pretty(value).expect("JSON value should serialize")) }
+fn fenced_json(value: &Value) -> String {
+    format!(
+        "```json\n{}\n```",
+        serde_json::to_string_pretty(value).expect("JSON value should serialize")
+    )
+}
 
 fn scalar_value(value: &Value) -> String {
-    match value { Value::String(text) => text.clone(), _ => value.to_string() }
+    match value {
+        Value::String(text) => text.clone(),
+        _ => value.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -309,7 +320,7 @@ mod tests {
     fn extract_fact_lines_keeps_numeric_non_temporal_statements() {
         let conversation = conversation_with_chat("The order has 3 items.");
         let lines = extract_fact_lines(&conversation);
-        assert!(lines.contains(&"statement: The order has 3 items.".to_string()));
+        assert!(lines.contains(&"order detail: 3 items".to_string()));
     }
 
     #[test]
@@ -317,5 +328,13 @@ mod tests {
         let conversation = conversation_with_chat("The first delivery arrives after the second.");
         let lines = extract_fact_lines(&conversation);
         assert!(!lines.iter().any(|line| line.contains("delivery")));
+    }
+
+    #[test]
+    fn extract_fact_lines_drops_topic_only_requests() {
+        let conversation =
+            conversation_with_chat("Can you help me improve the UI/UX before the public launch?");
+        let lines = extract_fact_lines(&conversation);
+        assert!(!lines.iter().any(|line| line.contains("UI/UX")));
     }
 }

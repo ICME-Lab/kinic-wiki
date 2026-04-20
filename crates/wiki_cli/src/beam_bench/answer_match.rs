@@ -18,7 +18,8 @@ pub fn answer_normalized_match(question: &BeamQuestion, predicted: Option<&str>)
         return false;
     };
     if question.gold_answers.iter().any(|expected| {
-        normalize_text(expected) == normalize_text(predicted) && !normalize_text(expected).is_empty()
+        normalize_text(expected) == normalize_text(predicted)
+            && !normalize_text(expected).is_empty()
     }) {
         return true;
     }
@@ -51,16 +52,14 @@ pub fn answer_normalized_match(question: &BeamQuestion, predicted: Option<&str>)
 }
 
 fn minimum_summary_hits(len: usize) -> usize {
-    if len <= 1 {
-        1
-    } else {
-        len.div_ceil(2)
-    }
+    if len <= 1 { 1 } else { len.div_ceil(2) }
 }
 
 fn instruction_match(predicted: &str, rubric: &[String]) -> bool {
     let lowered = predicted.to_ascii_lowercase();
-    if rubric.iter().any(|item| item.contains("syntax highlighting"))
+    if rubric
+        .iter()
+        .any(|item| item.contains("syntax highlighting"))
         && (predicted.contains("```rust")
             || predicted.contains("```python")
             || predicted.contains("```ts")
@@ -70,9 +69,7 @@ fn instruction_match(predicted: &str, rubric: &[String]) -> bool {
     {
         return true;
     }
-    rubric_match(predicted, rubric, 1)
-        || lowered.contains("```")
-        || lowered.contains("code block")
+    rubric_match(predicted, rubric, 1) || lowered.contains("```") || lowered.contains("code block")
 }
 
 fn preference_match(predicted: &str, rubric: &[String]) -> bool {
@@ -95,10 +92,53 @@ fn preference_match(predicted: &str, rubric: &[String]) -> bool {
 
 fn contradiction_match(predicted: &str, rubric: &[String]) -> bool {
     let lowered = predicted.to_ascii_lowercase();
+    let plain_yes_no = is_plain_yes_no(&lowered);
+    let expects_resolution = rubric_expects_resolution(rubric);
+    let expects_conflict = rubric_expects_conflict(rubric);
+    if plain_yes_no && expects_conflict && !expects_resolution {
+        return false;
+    }
+    if plain_yes_no && expects_resolution {
+        return true;
+    }
     if lowered.contains("contradict") || lowered.contains("clarif") {
         return true;
     }
+    if lowered.contains("conflicting information")
+        || lowered.contains("which is correct")
+        || lowered.contains("which statement is correct")
+    {
+        return true;
+    }
     rubric_match(predicted, rubric, 2.min(rubric.len()))
+}
+
+fn is_plain_yes_no(value: &str) -> bool {
+    matches!(value.trim(), "yes" | "no" | "yes." | "no.")
+}
+
+fn rubric_expects_resolution(rubric: &[String]) -> bool {
+    rubric.iter().any(|item| {
+        let lowered = item.to_ascii_lowercase();
+        ["latest", "corrected", "resolved", "current", "up to date"]
+            .iter()
+            .any(|needle| lowered.contains(needle))
+    })
+}
+
+fn rubric_expects_conflict(rubric: &[String]) -> bool {
+    rubric.iter().any(|item| {
+        let lowered = item.to_ascii_lowercase();
+        [
+            "contradict",
+            "conflicting information",
+            "clarif",
+            "which is correct",
+            "which statement is correct",
+        ]
+        .iter()
+        .any(|needle| lowered.contains(needle))
+    })
 }
 
 fn rubric_match(predicted: &str, rubric: &[String], minimum_hits: usize) -> bool {
@@ -127,7 +167,9 @@ fn clean_rubric_clause(value: &str) -> String {
 fn rubric_clause_matches(expected: &str, actual: &str) -> bool {
     let left = normalize_text(expected);
     let right = normalize_text(actual);
-    !left.is_empty() && !right.is_empty() && (left == right || right.contains(&left) || left.contains(&right))
+    !left.is_empty()
+        && !right.is_empty()
+        && (left == right || right.contains(&left) || left.contains(&right))
 }
 
 fn normalize_text(value: &str) -> String {
@@ -161,12 +203,18 @@ mod tests {
             query: "q".to_string(),
             as_of: None,
             reference_answer: gold_answers.first().map(|value| (*value).to_string()),
-            gold_answers: gold_answers.iter().map(|value| (*value).to_string()).collect(),
+            gold_answers: gold_answers
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
             gold_paths: Vec::new(),
             gold_spans: Vec::new(),
             expects_abstention: false,
             tags: vec![question_type.to_string()],
-            rubric_items: rubric_items.iter().map(|value| (*value).to_string()).collect(),
+            rubric_items: rubric_items
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
             raw: json!({}),
         }
     }
@@ -195,6 +243,26 @@ mod tests {
             &question,
             Some("There is contradictory information here. Please clarify which is correct.")
         ));
+    }
+
+    #[test]
+    fn contradiction_match_rejects_plain_yes_no() {
+        let question = question(
+            "contradiction_resolution",
+            &[],
+            &["LLM response should state: there is contradictory information"],
+        );
+        assert!(!answer_normalized_match(&question, Some("yes")));
+    }
+
+    #[test]
+    fn contradiction_match_accepts_plain_yes_no_for_resolved_value() {
+        let question = question(
+            "contradiction_resolution",
+            &[],
+            &["LLM response should state: the corrected latest value is yes"],
+        );
+        assert!(answer_normalized_match(&question, Some("yes")));
     }
 
     #[test]

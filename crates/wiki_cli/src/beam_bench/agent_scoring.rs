@@ -42,8 +42,7 @@ pub fn score_question(
     let gold_span_hit_at_1 = span_hit_within_rank(imported, &retrieved_paths, &gold.gold_spans, 1);
     let gold_span_hit_at_3 = span_hit_within_rank(imported, &retrieved_paths, &gold.gold_spans, 3);
     let answer_exact_match = matches_exact_answer(&question, predicted_answer.as_deref());
-    let answer_normalized_match =
-        matches_normalized_answer(&question, predicted_answer.as_deref());
+    let answer_normalized_match = matches_normalized_answer(&question, predicted_answer.as_deref());
     let answer_match_given_span_hit = gold_span_hit_at_3 && answer_normalized_match;
     let abstention_correct = question.expects_abstention && answer_normalized_match;
     let tool_error_count = run.tool_calls.iter().filter(|call| call.is_error).count();
@@ -302,8 +301,11 @@ fn build_precheck_failure(
     failure_reason: FailureReason,
 ) -> QuestionResult {
     let answered = !run.answer.trim().is_empty();
-    let read_before_answer =
-        answered && run.tool_calls.iter().any(|call| is_read_tool_name(&call.name));
+    let read_before_answer = answered
+        && run
+            .tool_calls
+            .iter()
+            .any(|call| is_read_tool_name(&call.name));
     QuestionResult {
         conversation_id,
         question_id: question.question_id,
@@ -370,8 +372,11 @@ fn build_runtime_failure(
     failure_reason: FailureReason,
 ) -> QuestionResult {
     let answered = !run.answer.trim().is_empty();
-    let read_before_answer =
-        answered && run.tool_calls.iter().any(|call| is_read_tool_name(&call.name));
+    let read_before_answer = answered
+        && run
+            .tool_calls
+            .iter()
+            .any(|call| is_read_tool_name(&call.name));
     QuestionResult {
         conversation_id,
         question_id: question.question_id,

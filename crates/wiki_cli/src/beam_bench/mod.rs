@@ -9,10 +9,10 @@ mod gold_paths;
 mod import;
 mod manifest;
 mod model;
-mod note_extract;
-mod note_views;
 mod navigation;
+mod note_extract;
 mod note_support;
+mod note_views;
 mod notes;
 mod prepare;
 mod question_types;
@@ -113,7 +113,7 @@ fn with_defaults(mut args: BeamBenchArgs) -> BeamBenchArgs {
     if args.model.trim().is_empty() {
         args.model = "gpt-5.4-mini".to_string();
     }
-    if args.include_question_classes.is_empty() {
+    if args.include_question_classes.is_empty() && args.include_question_types.is_empty() {
         args.include_question_classes = vec![BeamQuestionClass::Factoid];
     }
     args
@@ -130,9 +130,10 @@ async fn run_conversation_benchmark(
     let mut questions = extract_questions(&conversation)?
         .into_iter()
         .filter(|question| {
-            config
-                .include_question_classes
-                .contains(&question.question_class)
+            config.include_question_classes.is_empty()
+                || config
+                    .include_question_classes
+                    .contains(&question.question_class)
         })
         .filter(|question| matches_question_filters(config, question))
         .filter(|question| {
@@ -161,20 +162,18 @@ async fn run_conversation_benchmark(
                 .await?
             }
             BeamBenchEvalMode::RetrieveAndExtract => {
-                match run_agent_question(
-                    connection,
-                    config,
-                    &imported.namespace_path,
-                    &imported.namespace_index_path,
-                    &imported.base_path,
-                    &imported.conversation_id,
-                    &question.question_id,
-                    &question.question_type,
-                    question.question_class,
-                    &question.query,
-                )
-                .await
-                {
+                let context = CodexQuestionContext {
+                    namespace_path: &imported.namespace_path,
+                    namespace_index_path: &imported.namespace_index_path,
+                    base_path: &imported.base_path,
+                    conversation_id: &imported.conversation_id,
+                    question_id: &question.question_id,
+                    question_type: &question.question_type,
+                    question_class: question.question_class,
+                    question: &question.query,
+                    codex_sandbox: &config.codex_sandbox,
+                };
+                match run_agent_question(connection, config, context).await {
                     Ok(run) => agent_scoring::score_question(
                         imported.conversation_id.clone(),
                         &imported,
@@ -323,35 +322,12 @@ fn matches_question_filters(config: &BeamBenchArgs, question: &dataset::BeamQues
 async fn run_agent_question(
     connection: &ResolvedConnection,
     config: &BeamBenchArgs,
-    namespace_path: &str,
-    namespace_index_path: &str,
-    base_path: &str,
-    conversation_id: &str,
-    question_id: &str,
-    question_type: &str,
-    question_class: BeamQuestionClass,
-    question: &str,
+    context: CodexQuestionContext<'_>,
 ) -> Result<model::ModelRun> {
     if config.model.trim().is_empty() {
         return Err(anyhow!("--model is required for retrieve-and-extract mode"));
     }
-    run_codex_question(
-        &config.codex_bin,
-        &config.model,
-        connection,
-        CodexQuestionContext {
-            namespace_path,
-            namespace_index_path,
-            base_path,
-            conversation_id,
-            question_id,
-            question_type,
-            question_class,
-            question,
-            codex_sandbox: &config.codex_sandbox,
-        },
-    )
-    .await
+    run_codex_question(&config.codex_bin, &config.model, connection, context).await
 }
 
 fn score_legacy_failure(
@@ -568,6 +544,29 @@ mod tests {
     }
 
     #[test]
+    fn explicit_question_type_keeps_question_class_open() {
+        let args = with_defaults(BeamBenchArgs {
+            dataset_path: PathBuf::from("beam.json"),
+            split: "100K".to_string(),
+            model: String::new(),
+            output_dir: PathBuf::from("artifacts"),
+            eval_mode: BeamBenchEvalMode::RetrieveAndExtract,
+            limit: 1,
+            parallelism: 1,
+            top_k: 5,
+            questions_per_conversation: None,
+            question_id: None,
+            include_question_classes: Vec::new(),
+            include_tags: Vec::new(),
+            include_question_types: vec!["temporal_reasoning".to_string()],
+            namespace: None,
+            codex_bin: PathBuf::from("codex"),
+            codex_sandbox: "danger-full-access".to_string(),
+        });
+        assert!(args.include_question_classes.is_empty());
+    }
+
+    #[test]
     fn default_namespace_uses_benchmark_prefix() {
         assert!(default_namespace().starts_with("bench-run-"));
     }
@@ -593,7 +592,10 @@ mod tests {
             std::slice::from_ref(&imported),
         );
         let mut nodes = std::collections::BTreeMap::new();
-        nodes.insert("/Wiki/run-a/index.md".to_string(), "# Benchmark".to_string());
+        nodes.insert(
+            "/Wiki/run-a/index.md".to_string(),
+            "# Benchmark".to_string(),
+        );
         nodes.insert(
             manifest_path_for_namespace("run-a"),
             serde_json::to_string(&manifest).expect("manifest should serialize"),
@@ -619,7 +621,10 @@ mod tests {
             std::slice::from_ref(&imported),
         );
         let mut nodes = std::collections::BTreeMap::new();
-        nodes.insert("/Wiki/run-a/index.md".to_string(), "# Benchmark".to_string());
+        nodes.insert(
+            "/Wiki/run-a/index.md".to_string(),
+            "# Benchmark".to_string(),
+        );
         nodes.insert(
             manifest_path_for_namespace("run-a"),
             serde_json::to_string(&manifest).expect("manifest should serialize"),
@@ -656,12 +661,19 @@ mod tests {
             &[first_imported.clone(), second_imported.clone()],
         );
         let mut nodes = std::collections::BTreeMap::new();
-        nodes.insert("/Wiki/run-a/index.md".to_string(), "# Benchmark".to_string());
+        nodes.insert(
+            "/Wiki/run-a/index.md".to_string(),
+            "# Benchmark".to_string(),
+        );
         nodes.insert(
             manifest_path_for_namespace("run-a"),
             serde_json::to_string(&manifest).expect("manifest should serialize"),
         );
-        for note in first_imported.notes.iter().chain(second_imported.notes.iter()) {
+        for note in first_imported
+            .notes
+            .iter()
+            .chain(second_imported.notes.iter())
+        {
             nodes.insert(note.path.clone(), note.content.clone());
         }
         let client = MockClient { nodes };

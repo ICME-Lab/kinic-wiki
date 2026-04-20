@@ -165,7 +165,9 @@ fn extract_gold_answers(item: &Value) -> Vec<String> {
     if !explicit.is_empty() {
         return explicit;
     }
-    let mut answers = extract_reference_answer(item).into_iter().collect::<Vec<_>>();
+    let mut answers = extract_reference_answer(item)
+        .into_iter()
+        .collect::<Vec<_>>();
     answers.extend(
         extract_string_list(item, &["rubric"])
             .into_iter()

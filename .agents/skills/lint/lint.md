@@ -15,14 +15,27 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
    - stale navigation or index
    - missing cross-links
    - ambiguous page boundaries
+   - canonicality leaks between structured notes
+   - unresolved contradiction state
 5. Report findings first.
 6. Only edit pages if the user asks for fixes or the workflow explicitly includes a repair step.
 
 ## Working Rules
 
+- Current repo-local note schema lives in [WIKI_CANONICALITY.md](../../../WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
 - When `index.md` is stale, recommend or run `rebuild-index` as an explicit maintenance step.
 - Recommend `rebuild-index` for new page creation, deletion, or large restructures. Do not require it for routine small edits.
 - Keep local lint separate from remote content review.
+- Treat note role violations as first-class findings:
+  - settled-fact notes containing topic-only mentions, broad recap, or unresolved question text
+  - recap notes containing exact fact claims, causal claims, or resolution claims
+  - unresolved-state notes missing explicit ambiguity or competing-claim markers
+  - settled notes and unresolved-state notes disagreeing on the same supposedly settled value
+- For contradiction review, distinguish:
+  - ambiguity detected and unresolved
+  - ambiguity resolved with explicit source-backed settlement
+  - noisy pseudo-state lines that should be removed from the unresolved-state note
+- Prefer reporting the exact offending lines and the target canonical note, not generic prose.
 
 ## Repo Contract
 
@@ -42,3 +55,7 @@ Optionally include:
 - candidate page merges
 - candidate missing links
 - recommendation to rebuild `index.md`
+- candidate canonicality repairs such as:
+  - move exact settled values into the settled-fact note
+  - move unresolved state into the unresolved-state note
+  - remove exact-evidence lines from recap notes

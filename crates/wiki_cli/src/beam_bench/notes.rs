@@ -65,7 +65,7 @@ fn conversation_index_markdown(conversation: &BeamConversation, base_path: &str)
     }
     out.push_str("\n## Note Roles\n\n");
     out.push_str(&format!(
-        "- [facts.md]({base_path}/facts.md) - stable facts and concise summaries\n"
+        "- [facts.md]({base_path}/facts.md) - stable facts only, without topic-only mentions\n"
     ));
     out.push_str(&format!(
         "- [plan.md]({base_path}/plan.md) - the explicit plan and user questions\n"
@@ -83,10 +83,10 @@ fn conversation_index_markdown(conversation: &BeamConversation, base_path: &str)
         "- [instructions.md]({base_path}/instructions.md) - explicit directives, constraints, and obligations\n"
     ));
     out.push_str(&format!(
-        "- [updates.md]({base_path}/updates.md) - previous values, latest values, and update history\n"
+        "- [updates.md]({base_path}/updates.md) - previous values, latest values, conflicts, and resolution state\n"
     ));
     out.push_str(&format!(
-        "- [summary.md]({base_path}/summary.md) - higher-level synthesis across multiple turns\n"
+        "- [summary.md]({base_path}/summary.md) - recap only, not exact or causal evidence\n"
     ));
     out.push_str(&format!(
         "- [conversation.md]({base_path}/conversation.md) - raw transcript and surrounding context\n"
@@ -270,8 +270,13 @@ mod tests {
         );
         assert!(documents[0].1.contains("## Identifiers"));
         assert!(documents[0].1.contains("title: Calendar planning"));
-        assert!(documents[0].1.contains("preferences.md"));
+        assert!(documents[0].1.contains("stable facts only"));
         assert!(documents[0].1.contains("instructions.md"));
+        assert!(
+            documents[0]
+                .1
+                .contains("recap only, not exact or causal evidence")
+        );
         assert!(documents[1].1.contains("conversation_id"));
         assert!(documents[1].1.contains("March 15, 2024"));
         assert!(documents[1].1.contains("## Related"));

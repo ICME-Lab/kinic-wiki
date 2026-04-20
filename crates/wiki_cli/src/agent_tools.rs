@@ -315,12 +315,12 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec::new("rm", "Delete a node by path.", delete_schema()),
         ToolSpec::new(
             "search",
-            "Search current node contents. Unspecified preview mode defaults to light.",
+            "Search current node contents with FTS recall. Unspecified preview mode defaults to light.",
             search_schema(),
         ),
         ToolSpec::new(
             "search_paths",
-            "Search node paths and filenames by case-insensitive substring.",
+            "Search node paths and basenames by case-insensitive substring recall.",
             search_schema(),
         ),
     ]

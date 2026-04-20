@@ -21,12 +21,21 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 
 ## Working Rules
 
+- Current repo-local note schema lives in [WIKI_CANONICALITY.md](../../../WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
 - Treat local `Wiki/` content as the human review surface.
 - Prefer fewer stronger pages over many shallow stubs.
 - Reuse existing pages when possible instead of minting near-duplicates.
 - Keep `log.md` in sync with every page mutation.
 - Keep `log.md` append-only so recent context can be read with `tail -n 5`.
 - Do not hide push behind ingest.
+- Preserve structured note canonicality while ingesting:
+  - keep exact settled facts separate from recap and unresolved-state notes
+  - keep unresolved questions and competing claims out of settled-fact notes
+  - keep raw-source references separate from synthesized wiki knowledge
+  - keep recap notes coarse; do not use them as exact or causal evidence notes
+  - if a detail is durable and settled, move it into the settled note rather than leaving it only in recap
+- When source material is noisy, prefer omission over polluting structured notes with low-confidence pseudo-facts.
+- When a contradiction appears, preserve it in the unresolved-state area rather than silently normalizing it into a settled note.
 
 ## Repo Contract
 
@@ -55,3 +64,4 @@ When useful, also provide:
 - pages created or updated
 - source files used
 - open questions that block push
+- canonicality risks such as unresolved state leaking into settled notes, topic-only facts, or recap leaking into exact notes

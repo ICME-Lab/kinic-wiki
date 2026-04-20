@@ -89,7 +89,7 @@ fn append_node_preserves_existing_kind_and_metadata() {
     let created = store
         .append_node(
             AppendNodeRequest {
-                path: "/Wiki/log.md".to_string(),
+                path: "/Sources/raw/log/log.md".to_string(),
                 content: "alpha".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -103,7 +103,7 @@ fn append_node_preserves_existing_kind_and_metadata() {
     let _updated = store
         .append_node(
             AppendNodeRequest {
-                path: "/Wiki/log.md".to_string(),
+                path: "/Sources/raw/log/log.md".to_string(),
                 content: "beta".to_string(),
                 expected_etag: Some(created.node.etag),
                 separator: Some("\n".to_string()),
@@ -115,7 +115,7 @@ fn append_node_preserves_existing_kind_and_metadata() {
         .expect("append update should succeed");
 
     let current = store
-        .read_node("/Wiki/log.md")
+        .read_node("/Sources/raw/log/log.md")
         .expect("read should succeed")
         .expect("node should exist");
     assert_eq!(current.kind, NodeKind::Source);

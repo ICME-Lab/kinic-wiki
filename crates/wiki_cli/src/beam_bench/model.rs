@@ -69,17 +69,7 @@ pub(crate) async fn run_codex_question(
     tokio::fs::write(&schema_path, codex_answer_schema().to_string())
         .await
         .with_context(|| "failed to write Codex output schema")?;
-    let prompt = codex_prompt(
-        context.namespace_path,
-        context.namespace_index_path,
-        context.base_path,
-        context.conversation_id,
-        context.question_id,
-        context.question_type,
-        context.question_class,
-        context.question,
-        connection,
-    );
+    let prompt = codex_prompt(&context, connection);
     let mut child = Command::new(codex_bin)
         .arg("exec")
         .arg("--json")
@@ -235,17 +225,7 @@ fn next_codex_schema_path() -> std::path::PathBuf {
     ))
 }
 
-fn codex_prompt(
-    namespace_path: &str,
-    namespace_index_path: &str,
-    base_path: &str,
-    conversation_id: &str,
-    question_id: &str,
-    question_type: &str,
-    question_class: BeamQuestionClass,
-    question: &str,
-    connection: &ResolvedConnection,
-) -> String {
+fn codex_prompt(context: &CodexQuestionContext<'_>, connection: &ResolvedConnection) -> String {
     let connection_args = if connection.replica_host == "http://127.0.0.1:8000" {
         format!("--local --canister-id {}", connection.canister_id)
     } else {
@@ -298,20 +278,26 @@ Question:
 {question}
 
 Answer with JSON matching the provided output schema. The `answer` field must match the question shape and stay grounded in the wiki notes. Use extractive answers for exact values and turn-local questions. Use concise synthesis only for recap, preference, instruction, contradiction, update, or multi-session reasoning questions. If there is not enough evidence, set `answer` to exactly `insufficient evidence`.
+If `question class` is `abstention`, answer only from a note that directly states the requested value or relation. If the note only contains related context, implications, or high-level summary, set `answer` to exactly `insufficient evidence`.
+If `question class` is `abstention`, do not use `summary.md` or cross-note synthesis as sole evidence for the answer.
+If `question class` is `abstention`, a broader topic match is not enough. The requested field, requested list, requested rationale, or requested relation must be stated directly in a note.
+If `question class` is `abstention`, if the note only names a framework, style guide, product, or topic but does not list the requested items, rules, reasons, or relation, set `answer` to exactly `insufficient evidence`.
+If `question class` is `abstention`, do not infer causality, influence, or motivation from separate facts. If one note mentions X and another note mentions Y, that does not establish that X caused or influenced Y.
+If `question type` is `contradiction_resolution`, do not collapse conflicting statements into a plain yes or no unless a note explicitly marks the corrected or latest value. Prefer stating that the wiki contains conflicting information, or return the explicit corrected/latest value from `updates.md`.
 "#,
         skill = skill,
         connection_args = connection_args,
         replica_host = connection.replica_host,
         canister_id = connection.canister_id,
-        namespace_path = namespace_path,
-        namespace_index_path = namespace_index_path,
-        base_path = base_path,
-        conversation_id = conversation_id,
-        question_id = question_id,
-        question_type = question_type,
-        question_class =
-            serde_json::to_string(&question_class).unwrap_or_else(|_| "\"unknown\"".to_string()),
-        question = question
+        namespace_path = context.namespace_path,
+        namespace_index_path = context.namespace_index_path,
+        base_path = context.base_path,
+        conversation_id = context.conversation_id,
+        question_id = context.question_id,
+        question_type = context.question_type,
+        question_class = serde_json::to_string(&context.question_class)
+            .unwrap_or_else(|_| "\"unknown\"".to_string()),
+        question = context.question
     )
 }
 
@@ -471,10 +457,24 @@ fn sum_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{codex_prompt, next_codex_schema_path};
+    use super::{CodexQuestionContext, codex_prompt, next_codex_schema_path};
     use crate::beam_bench::dataset::BeamQuestionClass;
     use crate::connection::ResolvedConnection;
     use std::collections::HashSet;
+
+    fn test_context<'a>() -> CodexQuestionContext<'a> {
+        CodexQuestionContext {
+            namespace_path: "/Wiki/run-a",
+            namespace_index_path: "/Wiki/run-a/index.md",
+            base_path: "/Wiki/run-a/conv-1",
+            conversation_id: "conv-1",
+            question_id: "factoid-000",
+            question_type: "information_extraction",
+            question_class: BeamQuestionClass::Factoid,
+            question: "When is the meeting?",
+            codex_sandbox: "workspace-write",
+        }
+    }
 
     #[test]
     fn codex_schema_paths_are_unique() {
@@ -488,14 +488,7 @@ mod tests {
     #[test]
     fn codex_prompt_excludes_benchmark_specific_guidance() {
         let prompt = codex_prompt(
-            "/Wiki/run-a",
-            "/Wiki/run-a/index.md",
-            "/Wiki/run-a/conv-1",
-            "conv-1",
-            "factoid-000",
-            "information_extraction",
-            BeamQuestionClass::Factoid,
-            "When is the meeting?",
+            &test_context(),
             &ResolvedConnection {
                 replica_host: "http://127.0.0.1:8000".to_string(),
                 canister_id: "aaaaa-aa".to_string(),
@@ -514,14 +507,7 @@ mod tests {
     #[test]
     fn codex_prompt_embeds_scope_and_abstention_rules_from_skill() {
         let prompt = codex_prompt(
-            "/Wiki/run-a",
-            "/Wiki/run-a/index.md",
-            "/Wiki/run-a/conv-1",
-            "conv-1",
-            "factoid-000",
-            "information_extraction",
-            BeamQuestionClass::Factoid,
-            "When is the meeting?",
+            &test_context(),
             &ResolvedConnection {
                 replica_host: "http://127.0.0.1:8000".to_string(),
                 canister_id: "aaaaa-aa".to_string(),
@@ -530,22 +516,40 @@ mod tests {
         assert!(prompt.contains("Prefer scope-first exploration."));
         assert!(prompt.contains("Preserve exact value formatting"));
         assert!(prompt.contains("Do not answer from an index, list, or search result alone."));
-        assert!(
-            prompt.contains("Before the final answer, read at least one note that directly supports the answer.")
-        );
-        assert!(
-            prompt.contains("Treat the final answer as invalid until it is anchored to a note you actually read.")
-        );
+        assert!(prompt.contains("WIKI_CANONICALITY.md"));
+        assert!(prompt.contains(
+            "Before the final answer, read at least one note that directly supports the answer."
+        ));
+        assert!(prompt.contains(
+            "Treat the final answer as invalid until it is anchored to a note you actually read."
+        ));
         assert!(prompt.contains("answer exactly `insufficient evidence`"));
         assert!(prompt.contains("do not answer from the index alone"));
-        assert!(prompt.contains("Read `events.md` at least once before answering"));
+        assert!(
+            prompt.contains("Read the repo-local timeline note at least once before answering")
+        );
         assert!(prompt.contains("prefer extraction over summarization"));
         assert!(prompt.contains("smallest answer span"));
-        assert!(prompt.contains("Use `preferences.md` first for preference questions."));
-        assert!(prompt.contains("Use `instructions.md` first for directive, promise, or obligation questions."));
-        assert!(prompt.contains("Use `updates.md` first for latest-value, change, contradiction, or superseded-fact questions."));
-        assert!(prompt.contains("Use `summary.md` first for broad recap or multi-turn synthesis questions."));
+        assert!(
+            prompt.contains("Use the repo-local preference note first for preference questions.")
+        );
+        assert!(prompt.contains(
+            "Use the repo-local instruction note first for directive, promise, or obligation questions."
+        ));
+        assert!(prompt.contains("Use the repo-local unresolved-state note first for latest-value, change, contradiction, or superseded-fact questions."));
+        assert!(prompt.contains(
+            "Use the repo-local recap note first for broad recap or multi-turn synthesis questions."
+        ));
         assert!(prompt.contains("- question type: information_extraction"));
+        assert!(prompt.contains("If `question class` is `abstention`, answer only from a note that directly states the requested value or relation."));
+        assert!(
+            prompt.contains("do not use `summary.md` or cross-note synthesis as sole evidence")
+        );
+        assert!(prompt.contains("a broader topic match is not enough"));
+        assert!(
+            prompt.contains("do not infer causality, influence, or motivation from separate facts")
+        );
+        assert!(prompt.contains("If `question type` is `contradiction_resolution`, do not collapse conflicting statements into a plain yes or no"));
         assert!(!prompt.contains("facts.md を先に読め"));
     }
 }

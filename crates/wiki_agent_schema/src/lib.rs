@@ -10,7 +10,9 @@ pub const INGEST_STEPS: &[&str] = &[
 
 pub const QUERY_FILE_BACK_RULES: &[&str] = &[
     "Read index.md before broad exploration.",
-    "Use search as a supplement when index.md and direct page reads are not enough.",
+    "Use path search and content search before concluding recall is absent.",
+    "Treat path search as basename/path recall and content search as FTS recall.",
+    "Do not answer from search output alone; read at least one supporting note.",
     "Do not auto-save query answers as query-note pages.",
     "If durable knowledge should update the wiki, use explicit node commands after the read-only query step.",
     "Prefer updating an existing durable page before creating a new durable page.",
@@ -62,6 +64,19 @@ mod tests {
             QUERY_FILE_BACK_RULES
                 .iter()
                 .any(|rule| rule.contains("Read index.md before broad exploration."))
+        );
+        assert!(QUERY_FILE_BACK_RULES.iter().any(|rule| {
+            rule.contains("Use path search and content search before concluding recall is absent.")
+        }));
+        assert!(QUERY_FILE_BACK_RULES.iter().any(|rule| {
+            rule.contains(
+                "Treat path search as basename/path recall and content search as FTS recall.",
+            )
+        }));
+        assert!(
+            QUERY_FILE_BACK_RULES
+                .iter()
+                .any(|rule| { rule.contains("Do not answer from search output alone") })
         );
         assert!(
             QUERY_FILE_BACK_RULES

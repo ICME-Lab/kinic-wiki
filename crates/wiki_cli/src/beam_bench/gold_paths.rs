@@ -56,6 +56,35 @@ fn note_type_matches(actual: &str, expected: &str) -> bool {
     actual == expected || actual.trim_end_matches(".md") == expected.trim_end_matches(".md")
 }
 
+pub(crate) fn note_counts_as_retrieved(
+    path: &str,
+    notes: &[ImportedNote],
+    allow_explicit_gold_paths: bool,
+) -> bool {
+    if is_structured_note(path, notes) {
+        return true;
+    }
+    allow_explicit_gold_paths && note_exists(path, notes)
+}
+
+pub(crate) fn has_explicit_gold_paths(question: &BeamQuestion) -> bool {
+    !question.gold_paths.is_empty()
+}
+
+pub(crate) fn note_exists(path: &str, notes: &[ImportedNote]) -> bool {
+    notes.iter().any(|note| note.path == path)
+}
+
+pub(crate) fn is_structured_note(path: &str, notes: &[ImportedNote]) -> bool {
+    notes.iter().any(|note| {
+        note.path == path
+            && note.note_type != "conversation.md"
+            && note.note_type != "conversation"
+            && note.note_type != "index.md"
+            && note.note_type != "index"
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::resolve_gold_paths;
@@ -89,7 +118,10 @@ mod tests {
             gold_spans: Vec::new(),
             expects_abstention: false,
             tags: vec!["instruction_following".to_string()],
-            rubric_items: vec!["LLM response should contain: explicit version details for each dependency".to_string()],
+            rubric_items: vec![
+                "LLM response should contain: explicit version details for each dependency"
+                    .to_string(),
+            ],
             raw: json!({}),
         };
         assert_eq!(
@@ -97,33 +129,52 @@ mod tests {
             vec!["/Wiki/run/conv-1/instructions.md".to_string()]
         );
     }
-}
 
-pub(crate) fn note_counts_as_retrieved(
-    path: &str,
-    notes: &[ImportedNote],
-    allow_explicit_gold_paths: bool,
-) -> bool {
-    if is_structured_note(path, notes) {
-        return true;
+    #[test]
+    fn information_extraction_can_fall_back_to_conversation_note() {
+        let imported = ImportedConversation {
+            conversation_id: "conv-1".to_string(),
+            namespace_path: "/Wiki/run".to_string(),
+            namespace_index_path: "/Wiki/run/index.md".to_string(),
+            base_path: "/Wiki/run/conv-1".to_string(),
+            note_paths: vec![
+                "/Wiki/run/conv-1/facts.md".to_string(),
+                "/Wiki/run/conv-1/conversation.md".to_string(),
+            ],
+            notes: vec![
+                ImportedNote {
+                    path: "/Wiki/run/conv-1/facts.md".to_string(),
+                    content: "# Facts\n".to_string(),
+                    note_type: "facts.md".to_string(),
+                },
+                ImportedNote {
+                    path: "/Wiki/run/conv-1/conversation.md".to_string(),
+                    content: "The stack uses React and Tailwind.".to_string(),
+                    note_type: "conversation.md".to_string(),
+                },
+            ],
+        };
+        let question = BeamQuestion {
+            question_id: "information_extraction-000".to_string(),
+            question_type: "information_extraction".to_string(),
+            question_class: BeamQuestionClass::Factoid,
+            query: "Which stack is used?".to_string(),
+            as_of: None,
+            reference_answer: Some("React and Tailwind".to_string()),
+            gold_answers: vec!["React and Tailwind".to_string()],
+            gold_paths: Vec::new(),
+            gold_spans: Vec::new(),
+            expects_abstention: false,
+            tags: vec!["information_extraction".to_string()],
+            rubric_items: Vec::new(),
+            raw: json!({}),
+        };
+        assert_eq!(
+            resolve_gold_paths(&imported, &question),
+            vec![
+                "/Wiki/run/conv-1/facts.md".to_string(),
+                "/Wiki/run/conv-1/conversation.md".to_string()
+            ]
+        );
     }
-    allow_explicit_gold_paths && note_exists(path, notes)
-}
-
-pub(crate) fn has_explicit_gold_paths(question: &BeamQuestion) -> bool {
-    !question.gold_paths.is_empty()
-}
-
-pub(crate) fn note_exists(path: &str, notes: &[ImportedNote]) -> bool {
-    notes.iter().any(|note| note.path == path)
-}
-
-pub(crate) fn is_structured_note(path: &str, notes: &[ImportedNote]) -> bool {
-    notes.iter().any(|note| {
-        note.path == path
-            && note.note_type != "conversation.md"
-            && note.note_type != "conversation"
-            && note.note_type != "index.md"
-            && note.note_type != "index"
-    })
 }

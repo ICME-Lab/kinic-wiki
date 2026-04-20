@@ -3,8 +3,8 @@
 // Why: Eval must stay read-only while prepare owns the canister mutation lifecycle.
 use anyhow::Result;
 use serde::Serialize;
-use wiki_types::{NodeKind, WriteNodeRequest};
 use std::path::PathBuf;
+use wiki_types::{NodeKind, WriteNodeRequest};
 
 use crate::client::{CanisterWikiClient, WikiApi};
 use crate::connection::ResolvedConnection;

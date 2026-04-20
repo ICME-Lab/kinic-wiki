@@ -7,12 +7,12 @@ pub fn normalize_question_type(question_type: &str) -> String {
 
 pub fn canonical_note_candidates(question_type: &str) -> &'static [&'static str] {
     match normalize_question_type(question_type).as_str() {
-        "information_extraction" => &["facts.md", "profile.md"],
-        "temporal_reasoning" | "event_ordering" => &["events.md", "facts.md"],
-        "instruction_following" => &["instructions.md", "plan.md"],
-        "preference_following" => &["preferences.md", "profile.md"],
-        "knowledge_update" | "contradiction_resolution" => &["updates.md", "facts.md", "events.md"],
-        "summarization" | "multi_session_reasoning" => &["summary.md", "facts.md", "events.md"],
+        "information_extraction" => &["facts.md", "conversation.md"],
+        "temporal_reasoning" | "event_ordering" => &["events.md"],
+        "instruction_following" => &["instructions.md"],
+        "preference_following" => &["preferences.md"],
+        "knowledge_update" | "contradiction_resolution" => &["updates.md"],
+        "summarization" | "multi_session_reasoning" => &["summary.md"],
         "abstention" => &[
             "facts.md",
             "events.md",
@@ -66,17 +66,18 @@ mod tests {
     #[test]
     fn canonical_candidates_cover_full_question_types() {
         assert_eq!(
+            canonical_note_candidates("information_extraction"),
+            &["facts.md", "conversation.md"]
+        );
+        assert_eq!(
             canonical_note_candidates("instruction_following"),
-            &["instructions.md", "plan.md"]
+            &["instructions.md"]
         );
         assert_eq!(
             canonical_note_candidates("knowledge_update"),
-            &["updates.md", "facts.md", "events.md"]
+            &["updates.md"]
         );
-        assert_eq!(
-            canonical_note_candidates("summarization"),
-            &["summary.md", "facts.md", "events.md"]
-        );
+        assert_eq!(canonical_note_candidates("summarization"), &["summary.md"]);
     }
 
     #[test]

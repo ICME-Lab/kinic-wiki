@@ -51,7 +51,12 @@ pub fn build_prepare_manifest(
             conversation
                 .notes
                 .iter()
-                .map(|note| (note.path.clone(), note_fingerprint(&note.path, &note.content)))
+                .map(|note| {
+                    (
+                        note.path.clone(),
+                        note_fingerprint(&note.path, &note.content),
+                    )
+                })
                 .collect(),
         );
     }
@@ -87,7 +92,8 @@ pub fn dataset_fingerprint(dataset: &[BeamConversation]) -> String {
 }
 
 pub fn parse_prepare_manifest(content: &str) -> Result<PrepareManifest> {
-    serde_json::from_str(content).map_err(|error| anyhow!("missing prepare: invalid manifest: {error}"))
+    serde_json::from_str(content)
+        .map_err(|error| anyhow!("missing prepare: invalid manifest: {error}"))
 }
 
 pub fn validate_manifest_identity(
@@ -138,10 +144,12 @@ pub fn validate_manifest_identity(
         }
         return Ok(());
     }
-    if expected_ids
-        .iter()
-        .all(|conversation_id| manifest.conversation_ids.binary_search(conversation_id).is_ok())
-    {
+    if expected_ids.iter().all(|conversation_id| {
+        manifest
+            .conversation_ids
+            .binary_search(conversation_id)
+            .is_ok()
+    }) {
         return Ok(());
     }
     Err(anyhow!(

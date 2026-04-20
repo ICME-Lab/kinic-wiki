@@ -96,8 +96,7 @@ pub async fn run_question(
     let matched_gold_path = first_matching_path(&retrieved_paths, &gold.gold_paths);
     let matched_gold_span = first_matching_span(imported, &retrieved_paths, &gold.gold_spans, 3);
     let answer_exact_match = matches_exact_answer(&question, predicted_answer.as_deref());
-    let answer_normalized_match =
-        matches_normalized_answer(&question, predicted_answer.as_deref());
+    let answer_normalized_match = matches_normalized_answer(&question, predicted_answer.as_deref());
     let answer_match_given_span_hit = gold_span_hit_at_3 && answer_normalized_match;
     let abstention_correct = question.expects_abstention && answer_normalized_match;
     let failure_reason = determine_failure_reason(
