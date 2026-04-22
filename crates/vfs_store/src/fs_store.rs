@@ -21,6 +21,7 @@ use vfs_types::{
     RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SearchPreviewMode, Status, WriteNodeRequest, WriteNodeResult,
 };
+use wiki_domain::validate_source_path_for_kind;
 
 use crate::{
     fs_helpers::{
@@ -50,6 +51,8 @@ const SNAPSHOT_SESSION_CURSOR_REQUIRED: &str = "snapshot_session_id is required 
 const SNAPSHOT_SESSION_CURSOR_FORBIDDEN: &str =
     "snapshot_session_id cannot be used when cursor is absent";
 const SNAPSHOT_SESSION_CURSOR_INVALID: &str = "cursor is invalid for snapshot_session_id";
+const TARGET_SNAPSHOT_CURSOR_REQUIRED: &str =
+    "target_snapshot_revision is required when cursor is set";
 const SNAPSHOT_SESSION_TTL_SECS: i64 = 300;
 
 // Where: crates/vfs_store/src/fs_store.rs
@@ -114,6 +117,7 @@ impl FsStore {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
+        validate_source_path_for_kind(&request.path, &request.kind)?;
         let path = normalize_node_path(&request.path, false)?;
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
@@ -144,6 +148,14 @@ impl FsStore {
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         let existing = load_stored_node(&tx, &path)?;
+        match existing.as_ref() {
+            Some(current) => validate_source_path_for_kind(&path, &current.node.kind)?,
+            None => {
+                if let Some(kind) = request.kind.as_ref() {
+                    validate_source_path_for_kind(&path, kind)?;
+                }
+            }
+        }
         let created = existing.is_none();
         let mut node = match existing.as_ref() {
             Some(current) => append_existing_node(current.node.clone(), request, now)?,
@@ -514,6 +526,9 @@ impl FsStore {
         }
         if known_snapshot.revision > current_change_revision {
             return Err("known_snapshot_revision is newer than current revision".to_string());
+        }
+        if cursor.is_some() && request.target_snapshot_revision.is_none() {
+            return Err(TARGET_SNAPSHOT_CURSOR_REQUIRED.to_string());
         }
         let target_snapshot = match request.target_snapshot_revision.as_deref() {
             Some(snapshot_revision) => parse_target_snapshot_revision(
