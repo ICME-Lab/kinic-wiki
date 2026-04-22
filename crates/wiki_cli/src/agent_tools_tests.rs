@@ -158,7 +158,8 @@ impl WikiApi for ToolMockClient {
         Ok(vec![SearchNodeHit {
             path: "/Wiki/nested/beta.md".to_string(),
             kind: NodeKind::File,
-            snippet: "/Wiki/nested/beta.md".to_string(),
+            snippet: Some("/Wiki/nested/beta.md".to_string()),
+            preview: None,
             score: 15.0,
             match_reasons: vec!["path_substring".to_string()],
         }])
@@ -170,7 +171,9 @@ impl WikiApi for ToolMockClient {
     ) -> Result<ExportSnapshotResponse> {
         Ok(ExportSnapshotResponse {
             snapshot_revision: "snap".to_string(),
+            snapshot_session_id: None,
             nodes: Vec::new(),
+            next_cursor: None,
         })
     }
 
@@ -179,6 +182,7 @@ impl WikiApi for ToolMockClient {
             snapshot_revision: "snap".to_string(),
             changed_nodes: Vec::new(),
             removed_paths: Vec::new(),
+            next_cursor: None,
         })
     }
 }

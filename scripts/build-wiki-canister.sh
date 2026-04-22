@@ -46,9 +46,29 @@ if [[ -n "${EXTRA_FEATURES}" ]]; then
   build_cmd+=(--features "${EXTRA_FEATURES}")
 fi
 
+maybe_dump_wasm_sections() {
+  local label="$1"
+  local wasm_path="$2"
+  if [[ "${WIKI_CANISTER_WASM_DEBUG_SECTIONS:-0}" != "1" ]]; then
+    return
+  fi
+  if ! command -v wasm-tools >/dev/null 2>&1; then
+    return
+  fi
+  echo "wasm section dump (${label}): ${wasm_path}" >&2
+  wasm-tools objdump "${wasm_path}" >&2
+}
+
 "${build_cmd[@]}"
 
+# `wasi2ic` currently emits walrus warnings for data-name indices while parsing
+# Rust-produced name sections. The converted module still retains a name section
+# and remains usable. If the warning changes, set
+# `WIKI_CANISTER_WASM_DEBUG_SECTIONS=1` to dump pre/post conversion section
+# layouts without changing the emitted artifact.
+maybe_dump_wasm_sections "cargo-build output" "${INPUT_WASM}"
 wasi2ic "${INPUT_WASM}" "${OUTPUT_WASM}"
+maybe_dump_wasm_sections "wasi2ic output" "${OUTPUT_WASM}"
 if [[ "${OUTPUT_WASM}" != "${ICP_WASM_OUTPUT_PATH}" ]]; then
   cp "${OUTPUT_WASM}" "${ICP_WASM_OUTPUT_PATH}"
 fi

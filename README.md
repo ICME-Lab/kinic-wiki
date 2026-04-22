@@ -38,7 +38,66 @@ Current scope:
 
 - single-tenant
 - text-first
-- `/Wiki/...` as the single public root
+- `/Wiki/...` as the primary wiki root
+- `/Sources/...` for raw and session source nodes
+
+## Connection Resolution
+
+`wiki-cli` resolves the target canister in this order:
+
+1. `--local`
+2. default mainnet host `https://icp0.io`
+
+`canister_id` resolves separately:
+
+1. `--canister-id`
+2. `WIKI_CANISTER_ID`
+3. user config
+
+Host selection flag:
+
+- `--local`
+
+Environment variables:
+
+- `WIKI_CANISTER_ID`
+
+User config paths:
+
+- `~/.config/wiki-cli/config.toml`
+- `~/.wiki-cli.toml`
+
+Config format:
+
+```toml
+canister_id = "aaaaa-aa"
+```
+
+## Source And Maintenance
+
+`wiki-cli` is VFS-first.
+Agents read, search, and edit nodes directly, then call explicit maintenance commands when needed.
+
+Source node conventions:
+
+- raw source path: `/Sources/raw/<source_id>/<source_id>.md`
+- session source path: `/Sources/sessions/<session_id>/<session_id>.md`
+- new source nodes: `write-node --kind source`
+- append to existing source nodes: `append-node --kind source`
+- when `kind=source`, CLI lightly validates the canonical path form above
+
+System maintenance commands:
+
+- `wiki-cli rebuild-scope-index --scope <scope>`
+- `wiki-cli rebuild-index`
+
+Typical flow:
+
+1. Read `index.md` and related durable pages with VFS commands.
+2. Search with `search-remote`, `search-path-remote`, `glob-nodes`, or `recent-nodes` when needed.
+3. Write or edit `/Wiki/...` and `/Sources/...` nodes directly.
+4. Run `rebuild-scope-index --scope <scope>` after durable single-scope updates when index entries may have changed.
+5. Run `rebuild-index` only for cross-scope repair or full index rebuild.
 
 ## CI and Benchmarks
 
@@ -113,47 +172,104 @@ The validation split is:
 
 - deployed canister benchmarks: `run_canister_vfs_workload.sh`, `run_canister_vfs_latency.sh`
 - VFS-native scaling benchmarks: `canbench` for `write`, `append`, `move`, `search`, `export_snapshot`, `fetch_updates`
-- memory-quality benchmark harness: `wiki-cli beam-bench` for BEAM-style retrieval evaluation over imported wiki notes
+- memory-quality benchmark harness: `scripts/bench/run_beam_bench.sh` for BEAM-style retrieval evaluation over imported wiki notes
 
 ## BEAM Benchmark Harness
 
-`wiki-cli beam-bench` is separate from `canbench`.
+`scripts/bench/run_beam_bench.sh` is a read-only eval harness, separate from both `wiki-cli` and `canbench`.
 
 - `canbench` measures canister-side API scale and instructions
-- `beam-bench` measures retrieval quality after importing long conversations into `/Wiki/beam/...`
-
-The BEAM harness currently targets two providers:
-
-- `codex` provider: Codex CLI e2e over `wiki-cli` read-only commands
-- `openai` provider: OpenAI Responses API via `OPENAI_API_KEY`
+- `beam_prepare` writes long conversations into `/Wiki/<namespace>/...` and updates benchmark indexes
+- `beam-bench` measures retrieval quality against an already prepared namespace
+- Codex CLI e2e over `wiki-cli` read-only commands
 - read-only tool/command access only
-- artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `report.md`
+- artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `failure_manifest.json`, `retry_manifest.json`, `report.md`
 
-Example:
+Default evaluation mode is now `retrieve-and-extract`.
+
+### Current Benchmark Snapshot
+
+Measured on a 400-question all-types BEAM-derived full run.
+
+- `98.75%` grounded answer rate
+- `98.75%` read-before-answer rate
+- `0.0%` answered without grounding
+- `97.5%` abstention correctness
+
+See the benchmark artifacts under `artifacts/beam-runs/alltypes-full-current-20260421-170734/` for full details.
+
+- full BEAM question-type coverage now uses structured notes:
+  - `facts.md`
+  - `events.md`
+  - `plans.md`
+  - `preferences.md`
+  - `open_questions.md`
+  - `summary.md`
+  - `provenance.md`
+- report headline includes operational grounding metrics plus `by_question_type`
+- `--questions-per-conversation` applies after primary question-class filtering
+- `--resume` keeps existing `results.jsonl` and runs only unanswered questions in the same output dir
+- retrieval hit rate and short-answer match rate are reported separately
+
+Typical test usage:
 
 ```bash
-cargo run -p wiki-cli -- \
-  --replica-host http://127.0.0.1:4943 \
-  --canister-id aaaaa-aa \
-  beam-bench \
-  --dataset-path fixtures/beam/beam_sample.json \
-  --split 100K \
-  --model gpt-4.1 \
-  --output-dir artifacts/beam-sample \
-  --provider codex \
-  --codex-sandbox danger-full-access \
+bash scripts/bench/run_beam_grounded_slice.sh facts \
+  aaaaa-aa \
+  fixtures/beam/beam_sample.json \
+  artifacts/beam-sample \
+  beam-sample \
   --limit 1 \
-  --questions-per-conversation 1 \
-  --parallelism 1
+  --questions-per-conversation 1
 ```
 
-The harness imports each conversation under a namespaced prefix such as `/Wiki/beam/beam-run-<timestamp>/<conversation_id>/` and keeps probing answers out of the wiki notes. The `codex` provider defaults to `danger-full-access` so the child Codex process can reach the local PocketIC gateway. This command is intended for manual or dedicated benchmark runs rather than normal CI.
+Manual debug usage keeps prepare and eval separate:
+
+```bash
+bash scripts/bench/run_beam_prepare.sh \
+  --local \
+  --canister-id aaaaa-aa \
+  --dataset-path fixtures/beam/beam_sample.json \
+  --split 100K \
+  --namespace beam-sample \
+  --limit 1 \
+
+bash scripts/bench/run_beam_bench.sh \
+  --local \
+  --canister-id aaaaa-aa \
+  --dataset-path fixtures/beam/beam_sample.json \
+  --split 100K \
+  --output-dir artifacts/beam-sample \
+  --eval-mode retrieve-and-extract \
+  --top-k 5 \
+  --limit 1 \
+  --questions-per-conversation 1 \
+  --parallelism 1 \
+  --namespace beam-sample
+```
+
+The examples above use the local replica.
+Normal mainnet usage can omit host flags.
+Local usage can use `--local`.
+Only `canister_id` still needs `--canister-id`, `WIKI_CANISTER_ID`, or user config.
+
+Parquet snapshots need one conversion step first:
+
+```bash
+cargo run -p wiki-cli --bin beam_dataset_convert -- \
+  --input-path .benchmarks/beam/beam-100k.parquet \
+  --output-path /tmp/beam-100k.jsonl
+```
+
+`beam_prepare` imports each conversation under a normal wiki path such as `/Wiki/<namespace>/<conversation_id>/` and keeps probing answers out of the wiki notes. `beam_bench` is read-only and evaluates the current namespace state as-is. Eval only checks that the namespace index, conversation indexes, and expected note paths exist; it does not reject manual wiki repairs. Codex defaults to `danger-full-access` so the child process can reach the local PocketIC gateway. These commands are intended for manual or dedicated benchmark runs rather than normal CI.
 
 Manual deployed canister benchmarks:
 
-- `REPLICA_HOST=http://127.0.0.1:4943 CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_workload.sh`
-- `REPLICA_HOST=http://127.0.0.1:4943 CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_latency.sh`
+- `bash scripts/bench/run_canister_vfs_workload.sh`
+- `CANISTER_ID=<id> bash scripts/bench/run_canister_vfs_latency.sh`
 - `bash scripts/bench/run_canister_vfs_fresh_compare.sh`
+
+`run_canister_vfs_workload.sh` is local-only and resolves the local `wiki` canister id from `.icp/cache/mappings/local.ids.json` when `--canister-id` and `CANISTER_ID` are both absent. Use manual canister id injection only when measuring a different canister on purpose.
 
 These runs target an already deployed canister through `ic-agent`. They complement `canbench`: `canbench` is for canister-side scaling and instruction trends, while deployed canister bench is for API-level `cycles + latency + wire IO`.
 
@@ -161,6 +277,7 @@ The deployed benchmark artifacts are written to `.benchmarks/results/<tool>/<tim
 
 - `summary.txt` for the human-facing summary
   includes both compact `timestamp` and human-readable `generated_at_utc`
+  includes the resolved `canister_id`
 - `config.txt` for the true benchmark settings as JSON text
 - `environment.txt` for the execution environment plus `replica_host`, `canister_id`, `bench_transport`, `canister_status_source`
 - `raw/*.txt` for scenario-level aggregated source data as JSON text
@@ -212,6 +329,130 @@ The basic pattern is:
 1. create a canister client
 2. hand the SDK the generated tools
 3. dispatch tool calls back into `handle_*_tool_call`
+
+## Interface boundaries
+
+This project has one shared canister client and two primitive interfaces on top of it.
+
+- `client`
+- `agent tools`
+- `CLI commands`
+- `skills`
+
+### Shared client
+
+`client` is the common transport layer that talks to the canister.
+
+Both agent tools and CLI commands use the same client layer and ultimately call the same canister methods such as `read_node`, `write_node`, `search_nodes`, and `move_node`.
+
+Conceptually:
+
+```text
+LLM tool call
+  -> agent_tools
+  -> client
+  -> canister
+
+shell command
+  -> CLI commands
+  -> client
+  -> canister
+```
+
+### Agent tools
+
+Agent tools are the agent-facing primitive interface.
+
+They are intended for hosts that support tool calling, such as an app built on top of the OpenAI Responses API or Anthropic tool use. In that setup, the host creates tool schemas with `create_*_tools()` and dispatches tool calls with `handle_*_tool_call()`.
+
+Agent tools are not shell commands. They are JSON-shaped tool definitions and dispatch helpers for LLM runtimes.
+
+Use agent tools when:
+
+- an LLM host already supports tool calling
+- the model should call primitive wiki operations directly
+- you want a tool surface that stays close to the VFS model
+
+Current agent tools:
+
+- `read`
+- `write`
+- `append`
+- `edit`
+- `ls`
+- `mkdir`
+- `mv`
+- `glob`
+- `recent`
+- `multi_edit`
+- `rm`
+- `search`
+- `search_paths`
+
+### CLI commands
+
+CLI commands are the shell-facing primitive interface.
+
+They are intended for humans, scripts, and coding agents that can run terminal commands directly. The CLI exposes remote VFS operations, sync flows, and maintenance commands through `wiki-cli ...`.
+
+Use CLI commands when:
+
+- working from a shell or script
+- integrating with coding agents that already have terminal access
+- running sync or maintenance flows such as `pull`, `push`, or `rebuild-index`
+
+### Skills
+
+Skills are the high-level workflow layer.
+
+Skills should orchestrate multiple primitive operations from the agent tools or the CLI. For the wiki workflow described in `idea.md`, the main skills are:
+
+- `ingest`
+- `query`
+- `lint`
+
+A useful helper skill may also exist for source normalization, such as PDF-to-Markdown conversion, but that should remain a sub-workflow under ingest rather than a new core system boundary.
+
+## Agent tool to CLI mapping
+
+The agent tool surface is intentionally close to the remote VFS command surface.
+
+| Agent tool | CLI command | Purpose |
+| --- | --- | --- |
+| `read` | `read-node` | read one node |
+| `write` | `write-node` | replace full node content |
+| `append` | `append-node` | append content |
+| `edit` | `edit-node` | plain-text replacement |
+| `ls` | `list-nodes` | list nodes under a prefix |
+| `mkdir` | `mkdir-node` | validate a directory-like path |
+| `mv` | `move-node` | move or rename a node |
+| `glob` | `glob-nodes` | path globbing |
+| `recent` | `recent-nodes` | recently updated nodes |
+| `multi_edit` | `multi-edit-node` | multiple replacements in one operation |
+| `rm` | `delete-node` | delete a node |
+| `search` | `search-remote` | full-text content search |
+| `search_paths` | `search-path-remote` | path and filename search |
+
+Not every CLI command has an agent tool equivalent. Sync and maintenance commands stay CLI-only for now.
+
+Examples:
+
+- `rebuild-index`
+- `status`
+- `pull`
+- `push`
+- `lint-local`
+
+## Design intent
+
+The design intent is:
+
+- keep the shared client as the single canister access layer
+- keep agent tools raw and composable
+- keep CLI commands raw and operational
+- keep high-level workflows in skills
+
+This separation keeps the primitive interface small while allowing higher-level wiki behavior to evolve independently.
 
 ## OpenAI-compatible tool calling
 
@@ -342,7 +583,11 @@ Main commands:
 - `glob-nodes`
 - `recent-nodes`
 - `delete-node`
+- `delete-tree`
 - `search-remote`
+- `search-path-remote`
+- `rebuild-scope-index`
+- `rebuild-index`
 - `status`
 - `lint-local`
 - `pull`
@@ -356,12 +601,14 @@ wiki-cli glob-nodes '**/*.md' --path /Wiki --node-type file
 wiki-cli recent-nodes --limit 20 --path /Wiki
 wiki-cli append-node --path /Wiki/log.md --input ./entry.md
 wiki-cli move-node --from-path /Wiki/draft.md --to-path /Wiki/archive/draft.md --expected-etag etag-1 --overwrite
+wiki-cli delete-tree --path /Wiki/archive
 ```
 
 Notes:
 
 - `append_node` appends content only when the node already exists. `kind` and `metadata_json` are only used when append creates a new node.
 - `move_node --overwrite` replaces a live target or reuses a previously deleted destination path.
+- `delete-node` deletes one node path. `delete-tree` deletes all node paths under a prefix, deepest-first.
 - `glob_nodes` rejects overlong patterns, but stored node paths do not make the entire glob query fail just because they are long.
 
 ## Use with Obsidian
@@ -458,15 +705,42 @@ Sync uses:
 - `export_snapshot` for full export
 - `fetch_updates` for delta sync
 
+Both sync APIs are paged. Requests must set `limit` in `1..=100`; responses return
+`next_cursor` when another page exists. The cursor is the last absolute path from the previous
+page. Clients must not persist a new `snapshot_revision` until the final page.
+`export_snapshot` also returns `snapshot_session_id`; paged snapshot requests must resend it from
+page 2 onward so the server can keep a fixed path set for the session lifetime.
+
 `fetch_updates` only returns deltas. If the client does not know a valid snapshot revision, changes
 scope, or sends a future revision, `fetch_updates` returns an error instead of a full refresh.
 Change-log rows are retained in SQLite until storage is exhausted, so old valid revisions can still
 produce deltas.
+Paged delta race checks use a per-path `last_change_revision` index. Paths whose latest revision is
+still at or before `target_snapshot_revision` may be returned from current state; paths updated
+again after that target still fail hard.
 If an existing database has already lost historical change-log rows, revisions before the available
-log floor also return an error.
+log floor also return `known_snapshot_revision is no longer available`; clients must stop delta sync
+and run an explicit snapshot resync.
 
 Initial sync and scope changes must use `export_snapshot` first, then continue with
-`fetch_updates` for the same scope:
+`fetch_updates` for the same scope. After paged `export_snapshot` completes, clients run paged
+`fetch_updates` from that snapshot revision to catch concurrent writes before saving local sync
+state:
+
+`export_snapshot` is an update call so the server can persist `snapshot_session_id` across pages.
+`fetch_updates` remains a query call. `export_snapshot` now fixes the path set per
+`snapshot_session_id` and rejects later pages if any unread session path changed after the session
+started. If a session path is updated, deleted, or renamed before its page is read, the server
+returns `snapshot_revision is no longer current` and the client must restart snapshot sync. If a
+session expires, the server returns `snapshot_session_id has expired` and the client must restart
+snapshot sync. Continued snapshot requests validate `snapshot_session_id` first, then TTL, then
+prefix, and only then validate that `cursor` is a valid session path.
+Paged `fetch_updates` must pin `target_snapshot_revision` after the first page. If `cursor` is set
+without `target_snapshot_revision`, the server returns
+`target_snapshot_revision is required when cursor is set`. If an unread changed path advances past
+the pinned target before its page is read, the server returns
+`target_snapshot_revision is no longer current for changed path` and the client must restart
+snapshot sync.
 
 - deleted paths appear in `removed_paths`
 - moved old paths appear in `removed_paths`

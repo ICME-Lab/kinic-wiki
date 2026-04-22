@@ -189,18 +189,35 @@ export class KinicCanisterClient {
     }));
   }
 
-  async exportSnapshot(): Promise<ExportSnapshotResponse> {
+  async exportSnapshot(
+    cursor: string | null,
+    snapshotRevision: string | null,
+    snapshotSessionId: string | null,
+    limit: number
+  ): Promise<ExportSnapshotResponse> {
     const actor = await this.actor();
     return normalizeExportResponse(await actor.export_snapshot({
-      prefix: ["/Wiki"]
+      prefix: ["/Wiki"],
+      limit,
+      cursor: cursor === null ? [] : [cursor],
+      snapshot_revision: snapshotRevision === null ? [] : [snapshotRevision],
+      snapshot_session_id: snapshotSessionId === null ? [] : [snapshotSessionId]
     }));
   }
 
-  async fetchUpdates(lastSnapshotRevision: string): Promise<FetchUpdatesResponse> {
+  async fetchUpdates(
+    lastSnapshotRevision: string,
+    cursor: string | null,
+    targetSnapshotRevision: string | null,
+    limit: number
+  ): Promise<FetchUpdatesResponse> {
     const actor = await this.actor();
     return normalizeFetchResponse(await actor.fetch_updates({
       known_snapshot_revision: lastSnapshotRevision,
-      prefix: ["/Wiki"]
+      prefix: ["/Wiki"],
+      limit,
+      cursor: cursor === null ? [] : [cursor],
+      target_snapshot_revision: targetSnapshotRevision === null ? [] : [targetSnapshotRevision]
     }));
   }
 

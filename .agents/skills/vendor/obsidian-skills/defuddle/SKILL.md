@@ -14,7 +14,7 @@ Use this skill when the user provides:
 
 ## Role In This Repo
 
-Use Defuddle-style extraction as a preprocessing step for `wiki-generate`.
+Use Defuddle-style extraction as a preprocessing step for `ingest`.
 
 - extract readable content
 - reduce clutter and navigation noise
@@ -28,4 +28,4 @@ Do not treat extracted markdown as final wiki content. It is source material.
 - keep the extracted source tied to its original URL and provenance
 - synthesize before writing final wiki pages
 
-Read [references/source-intake.md](references/source-intake.md) when using this with `wiki-generate`.
+Read [references/source-intake.md](references/source-intake.md) when using this with `ingest`.

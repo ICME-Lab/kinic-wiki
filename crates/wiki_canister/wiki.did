@@ -19,19 +19,31 @@ type EditNodeResult = record {
   node : NodeMutationAck;
   replacement_count : nat32;
 };
-type ExportSnapshotRequest = record { prefix : opt text };
+type ExportSnapshotRequest = record {
+  snapshot_revision : opt text;
+  cursor : opt text;
+  limit : nat32;
+  prefix : opt text;
+  snapshot_session_id : opt text;
+};
 type ExportSnapshotResponse = record {
   snapshot_revision : text;
   nodes : vec Node;
+  next_cursor : opt text;
+  snapshot_session_id : opt text;
 };
 type FetchUpdatesRequest = record {
   known_snapshot_revision : text;
+  cursor : opt text;
+  limit : nat32;
   prefix : opt text;
+  target_snapshot_revision : opt text;
 };
 type FetchUpdatesResponse = record {
   removed_paths : vec text;
   snapshot_revision : text;
   changed_nodes : vec Node;
+  next_cursor : opt text;
 };
 type GlobNodeHit = record {
   kind : NodeEntryKind;
@@ -108,10 +120,11 @@ type Result_7 = variant { Ok : MkdirNodeResult; Err : text };
 type Result_8 = variant { Ok : MoveNodeResult; Err : text };
 type Result_9 = variant { Ok : opt Node; Err : text };
 type SearchNodeHit = record {
+  preview : opt SearchPreview;
   kind : NodeKind;
   path : text;
   match_reasons : vec text;
-  snippet : text;
+  snippet : opt text;
   score : float32;
 };
 type SearchNodePathsRequest = record {
@@ -121,9 +134,18 @@ type SearchNodePathsRequest = record {
 };
 type SearchNodesRequest = record {
   top_k : nat32;
+  preview_mode : opt SearchPreviewMode;
   prefix : opt text;
   query_text : text;
 };
+type SearchPreview = record {
+  field : SearchPreviewField;
+  char_offset : nat32;
+  match_reason : text;
+  excerpt : opt text;
+};
+type SearchPreviewField = variant { Path; Content };
+type SearchPreviewMode = variant { Light; None };
 type Status = record { source_count : nat64; file_count : nat64 };
 type WriteNodeRequest = record {
   content : text;
@@ -137,7 +159,7 @@ service : () -> {
   append_node : (AppendNodeRequest) -> (Result);
   delete_node : (DeleteNodeRequest) -> (Result_1);
   edit_node : (EditNodeRequest) -> (Result_2);
-  export_snapshot : (ExportSnapshotRequest) -> (Result_3) query;
+  export_snapshot : (ExportSnapshotRequest) -> (Result_3);
   fetch_updates : (FetchUpdatesRequest) -> (Result_4) query;
   glob_nodes : (GlobNodesRequest) -> (Result_5) query;
   list_nodes : (ListNodesRequest) -> (Result_6) query;

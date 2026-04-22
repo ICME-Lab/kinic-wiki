@@ -1,6 +1,8 @@
 // Where: plugins/kinic-wiki/types.ts
 // What: Runtime-safe DTOs for the FS-first plugin workflow.
 // Why: The plugin mirrors node paths directly and persists tracked etags in settings.
+import { normalizeStoredSnapshotRevision } from "./sync_logic";
+
 export type NodeKind = "file" | "source";
 export type NodeEntryKind = "directory" | NodeKind;
 export type GlobNodeType = "file" | "directory" | "any";
@@ -43,20 +45,23 @@ export interface NodeEntry {
 export interface SearchNodeHit {
   path: string;
   kind: NodeKind;
-  snippet: string;
+  snippet: string | null;
   score: number;
   match_reasons: string[];
 }
 
 export interface ExportSnapshotResponse {
   snapshot_revision: string;
+  snapshot_session_id: string | null;
   nodes: NodeSnapshot[];
+  next_cursor: string | null;
 }
 
 export interface FetchUpdatesResponse {
   snapshot_revision: string;
   changed_nodes: NodeSnapshot[];
   removed_paths: string[];
+  next_cursor: string | null;
 }
 
 export interface NodeMutationAck {
@@ -151,7 +156,9 @@ export function parsePluginSettings(input: unknown): PluginSettings {
     canisterId: readString(input, "canisterId", DEFAULTS.canisterId),
     mirrorRoot: readString(input, "mirrorRoot", DEFAULTS.mirrorRoot),
     autoPullOnStartup: readBoolean(input, "autoPullOnStartup", DEFAULTS.autoPullOnStartup),
-    lastSnapshotRevision: readString(input, "lastSnapshotRevision", DEFAULTS.lastSnapshotRevision),
+    lastSnapshotRevision: normalizeStoredSnapshotRevision(
+      readString(input, "lastSnapshotRevision", DEFAULTS.lastSnapshotRevision)
+    ),
     lastSyncedAt: readNumber(input, "lastSyncedAt", DEFAULTS.lastSyncedAt),
     pendingConflictPaths: readStringArray(input, "pendingConflictPaths"),
     trackedNodes: readTrackedNodes(input.trackedNodes)
@@ -188,7 +195,7 @@ export function isSearchNodeHit(input: unknown): input is SearchNodeHit {
   return isRecord(input)
     && isString(input.path)
     && isNodeKind(input.kind)
-    && isString(input.snippet)
+    && isOptionalString(input.snippet)
     && isNumberValue(input.score)
     && isStringArray(input.match_reasons);
 }
@@ -196,8 +203,10 @@ export function isSearchNodeHit(input: unknown): input is SearchNodeHit {
 export function isExportSnapshotResponse(input: unknown): input is ExportSnapshotResponse {
   return isRecord(input)
     && isString(input.snapshot_revision)
+    && isOptionalString(input.snapshot_session_id)
     && Array.isArray(input.nodes)
-    && input.nodes.every(isNodeSnapshot);
+    && input.nodes.every(isNodeSnapshot)
+    && isOptionalString(input.next_cursor);
 }
 
 export function isFetchUpdatesResponse(input: unknown): input is FetchUpdatesResponse {
@@ -205,7 +214,8 @@ export function isFetchUpdatesResponse(input: unknown): input is FetchUpdatesRes
     && isString(input.snapshot_revision)
     && Array.isArray(input.changed_nodes)
     && input.changed_nodes.every(isNodeSnapshot)
-    && isStringArray(input.removed_paths);
+    && isStringArray(input.removed_paths)
+    && isOptionalString(input.next_cursor);
 }
 
 export function isWriteNodeResult(input: unknown): input is WriteNodeResult {
@@ -306,6 +316,10 @@ function isNumberValue(input: unknown): input is number {
 
 function isStringArray(input: unknown): input is string[] {
   return Array.isArray(input) && input.every(isString);
+}
+
+function isOptionalString(input: unknown): input is string | null {
+  return input === null || isString(input);
 }
 
 function isNodeKind(input: unknown): input is NodeKind {

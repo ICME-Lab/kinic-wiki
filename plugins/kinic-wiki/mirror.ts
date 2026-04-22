@@ -5,6 +5,7 @@ import { App, Notice, TFile, TFolder, normalizePath } from "obsidian";
 
 import {
   parseMirrorFrontmatter,
+  remoteDeleteConflictMarkdown,
   serializeMirrorFile,
   stripManagedFrontmatter
 } from "./frontmatter";
@@ -199,6 +200,16 @@ export async function writeRemoteUpdateConflictFile(app: App, mirrorRoot: string
     node.content
   ].join("\n");
   await writeConflictFile(app, mirrorRoot, node.path, body);
+}
+
+export async function writeRemoteDeleteConflictFile(app: App, mirrorRoot: string, remotePath: string): Promise<void> {
+  const localPath = remoteToLocalPath(mirrorRoot, remotePath);
+  const existing = app.vault.getAbstractFileByPath(localPath);
+  let localContent: string | undefined;
+  if (existing instanceof TFile) {
+    localContent = stripManagedFrontmatter(await app.vault.read(existing)).trimStart();
+  }
+  await writeConflictFile(app, mirrorRoot, remotePath, remoteDeleteConflictMarkdown(remotePath, localContent));
 }
 
 function remoteToLocalPath(mirrorRoot: string, remotePath: string): string {

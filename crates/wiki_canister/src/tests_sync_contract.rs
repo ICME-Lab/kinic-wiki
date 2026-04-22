@@ -5,7 +5,7 @@ use tempfile::tempdir;
 use wiki_runtime::WikiService;
 use wiki_types::{
     DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, NodeKind,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 use super::{
@@ -54,6 +54,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
         query_text: "shared".to_string(),
         prefix: Some("/Wiki/project-alpha".to_string()),
         top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert!(hits.is_empty());
@@ -62,6 +63,7 @@ fn canister_search_respects_prefix_and_hides_deleted_nodes() {
         query_text: "shared".to_string(),
         prefix: Some("/Wiki/project-beta".to_string()),
         top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert_eq!(beta_hits.len(), 1);
@@ -92,6 +94,10 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
 
     let snapshot = export_snapshot(ExportSnapshotRequest {
         prefix: Some("/Wiki/scope".to_string()),
+        limit: 100,
+        cursor: None,
+        snapshot_revision: None,
+        snapshot_session_id: None,
     })
     .expect("snapshot should succeed");
 
@@ -104,6 +110,9 @@ fn canister_fetch_updates_reports_removed_paths_after_delete() {
     let updates = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: snapshot.snapshot_revision,
         prefix: Some("/Wiki/scope".to_string()),
+        limit: 100,
+        cursor: None,
+        target_snapshot_revision: None,
     })
     .expect("updates should succeed");
     assert!(updates.changed_nodes.is_empty());
@@ -136,11 +145,18 @@ fn canister_fetch_updates_rejects_prefix_scope_changes() {
 
     let narrow = export_snapshot(ExportSnapshotRequest {
         prefix: Some("/Wiki/a".to_string()),
+        limit: 100,
+        cursor: None,
+        snapshot_revision: None,
+        snapshot_session_id: None,
     })
     .expect("snapshot should succeed");
     let widened = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: narrow.snapshot_revision,
         prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: None,
+        target_snapshot_revision: None,
     });
     assert_eq!(
         widened.expect_err("prefix scope change should fail"),
@@ -171,6 +187,10 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
 
     let base = export_snapshot(ExportSnapshotRequest {
         prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: None,
+        snapshot_revision: None,
+        snapshot_session_id: None,
     })
     .expect("snapshot should succeed");
 
@@ -185,23 +205,39 @@ fn canister_fetch_updates_returns_delta_from_old_retained_revision() {
         .expect("history write should succeed");
     }
 
-    let updates = fetch_updates(FetchUpdatesRequest {
+    let first = fetch_updates(FetchUpdatesRequest {
+        known_snapshot_revision: base.snapshot_revision.clone(),
+        prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: None,
+        target_snapshot_revision: None,
+    })
+    .expect("first old snapshot delta page should succeed");
+    let second = fetch_updates(FetchUpdatesRequest {
+        known_snapshot_revision: base.snapshot_revision.clone(),
+        prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: first.next_cursor.clone(),
+        target_snapshot_revision: Some(first.snapshot_revision.clone()),
+    })
+    .expect("second old snapshot delta page should succeed");
+    let third = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: base.snapshot_revision,
         prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: second.next_cursor.clone(),
+        target_snapshot_revision: Some(first.snapshot_revision.clone()),
     })
-    .expect("old snapshot delta should succeed");
+    .expect("third old snapshot delta page should succeed");
+    let updates = [first, second, third]
+        .into_iter()
+        .flat_map(|page| page.changed_nodes)
+        .collect::<Vec<_>>();
 
-    assert_eq!(updates.changed_nodes.len(), 300);
-    assert!(updates.removed_paths.is_empty());
-    assert!(
-        !updates
-            .changed_nodes
-            .iter()
-            .any(|node| node.path == "/Wiki/unchanged.md")
-    );
+    assert_eq!(updates.len(), 300);
+    assert!(!updates.iter().any(|node| node.path == "/Wiki/unchanged.md"));
     assert!(
         updates
-            .changed_nodes
             .iter()
             .all(|node| node.path.starts_with("/Wiki/history-"))
     );

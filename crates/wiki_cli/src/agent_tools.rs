@@ -252,6 +252,7 @@ async fn dispatch_tool_call_impl(
                     query_text: args.query_text,
                     prefix: args.prefix,
                     top_k: args.top_k.unwrap_or(10),
+                    preview_mode: None,
                 })
                 .await?;
             tool_ok(json!({ "hits": result }))
@@ -312,10 +313,14 @@ fn tool_specs() -> Vec<ToolSpec> {
             multi_edit_schema(),
         ),
         ToolSpec::new("rm", "Delete a node by path.", delete_schema()),
-        ToolSpec::new("search", "Search current node contents.", search_schema()),
+        ToolSpec::new(
+            "search",
+            "Search current node contents with FTS recall. Unspecified preview mode defaults to light.",
+            search_schema(),
+        ),
         ToolSpec::new(
             "search_paths",
-            "Search node paths and filenames by case-insensitive substring.",
+            "Search node paths and basenames by case-insensitive substring recall.",
             search_schema(),
         ),
     ]

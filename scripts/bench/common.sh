@@ -15,6 +15,29 @@ bench_repo_root() {
   printf '%s\n' "${REPO_ROOT}"
 }
 
+bench_local_ids_file() {
+  printf '%s/.icp/cache/mappings/local.ids.json\n' "${REPO_ROOT}"
+}
+
+resolve_local_canister_id() {
+  local canister_name="${1:-wiki}"
+  local ids_file
+  ids_file="$(bench_local_ids_file)"
+  if [[ ! -f "${ids_file}" ]]; then
+    return 1
+  fi
+  node -e '
+    const fs = require("fs");
+    const [filePath, canisterName] = process.argv.slice(1);
+    const payload = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const value = payload[canisterName];
+    if (typeof value !== "string" || value.trim() === "") {
+      process.exit(1);
+    }
+    process.stdout.write(value);
+  ' "${ids_file}" "${canister_name}"
+}
+
 # Matches where `cargo build` writes when run from the workspace root (honors CARGO_TARGET_DIR).
 bench_cargo_target_root() {
   printf '%s\n' "${CARGO_TARGET_DIR:-${REPO_ROOT}/target}"

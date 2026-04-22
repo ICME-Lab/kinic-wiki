@@ -5,7 +5,7 @@ use wiki_store::FsStore;
 use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
     GlobNodesRequest, ListNodesRequest, NodeEntryKind, NodeKind, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeRequest,
+    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -204,6 +204,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
             query_text: "needle".to_string(),
             prefix: Some("/Wiki/projects/alpha".to_string()),
             top_k: 100,
+            preview_mode: Some(SearchPreviewMode::None),
         })
         .expect("search should succeed");
     assert!(
@@ -287,15 +288,24 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             prefix: Some("/Wiki/snapshot".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
         })
         .expect("base snapshot should succeed");
-    assert_eq!(base.nodes.len(), 1_000);
+    assert_eq!(base.nodes.len(), 100);
 
+    let updated_etag = store
+        .read_node("/Wiki/snapshot/note-0001.md")
+        .expect("read should succeed")
+        .expect("node should exist")
+        .etag;
     let updated = write_file(
         &store,
         "/Wiki/snapshot/note-0001.md",
         "body 1 updated",
-        Some(&base.nodes[1].etag),
+        Some(&updated_etag),
         5_000,
     );
     let deleted_etag = store
@@ -318,6 +328,9 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
         .fetch_updates(FetchUpdatesRequest {
             known_snapshot_revision: base.snapshot_revision,
             prefix: Some("/Wiki/snapshot".to_string()),
+            limit: 100,
+            cursor: None,
+            target_snapshot_revision: None,
         })
         .expect("updates should succeed");
     assert_eq!(updates.changed_nodes.len(), 2);

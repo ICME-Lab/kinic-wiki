@@ -10,9 +10,9 @@
 
 ## 使い方
 
-- まず `wiki-generate` を親 skill として使う
+- まず repo 固有 skill (`ingest`, `query`, `lint`) を使う
 - Obsidian 記法や vault 操作の詳細が必要な時だけ vendor skill を読む
-- vendor skill 自体は一般知識、正本 workflow は `wiki-generate` に置く
+- vendor skill 自体は一般知識、正本 workflow は repo 固有 skill に置く
 
 ## 注意
 

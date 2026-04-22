@@ -296,12 +296,8 @@ pub fn io_stats(metrics: &[CallMetric]) -> IoStats {
     IoStats {
         total_request_payload_bytes: request_total,
         total_response_payload_bytes: response_total,
-        avg_request_payload_bytes: if count == 0 { 0 } else { request_total / count },
-        avg_response_payload_bytes: if count == 0 {
-            0
-        } else {
-            response_total / count
-        },
+        avg_request_payload_bytes: request_total.checked_div(count).unwrap_or(0),
+        avg_response_payload_bytes: response_total.checked_div(count).unwrap_or(0),
     }
 }
 

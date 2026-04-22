@@ -14,7 +14,7 @@ Use this skill when the task requires:
 - note metadata/frontmatter
 - callouts, embeds, comments, tags, math, or Mermaid in notes
 
-Do not use this skill as the source-of-truth workflow. In this repo, that remains in [`wiki-generate`](../../../wiki-generate/SKILL.md).
+Do not use this skill as the source-of-truth workflow. In this repo, that remains in the repo-specific workflow skills such as [`ingest`](../../../ingest/SKILL.md), [`query`](../../../query/SKILL.md), and [`lint`](../../../lint/SKILL.md).
 
 ## Core Rules
 
@@ -22,7 +22,7 @@ Do not use this skill as the source-of-truth workflow. In this repo, that remain
 - Use standard Markdown links only for external URLs.
 - Keep frontmatter minimal and purposeful.
 - Prefer readable notes over heavy formatting.
-- When writing for this repo's working copy, prefer the mirror contract from [`wiki-generate`](../../../wiki-generate/SKILL.md).
+- When writing for this repo's working copy, prefer the shared mirror contract from [`wiki-generate/references/obsidian-rules.md`](../../../wiki-generate/references/obsidian-rules.md).
 
 ## Obsidian-Specific Syntax
 

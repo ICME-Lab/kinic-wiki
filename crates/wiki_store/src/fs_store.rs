@@ -1,37 +1,58 @@
 // Where: crates/wiki_store/src/fs_store.rs
 // What: FS-first node store over SQLite for phase-2 persistence and search.
 // Why: The new agent-facing model needs file-like CRUD and sync without changing the old wiki store yet.
-use std::path::{Path, PathBuf};
+//
+// Search keeps ranking and preview generation separate.
+// That prevents SQLite `snippet()` cost from scaling with all matched rows.
+// Only returned hits pay preview generation cost.
+use std::{
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use uuid::Uuid;
 use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
-    WriteNodeRequest, WriteNodeResult,
+    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 use crate::{
     fs_helpers::{
-        StoredNode, build_entries_from_rows, build_fts_query, build_glob_entries_from_rows,
-        compute_node_etag, load_node, load_scoped_entry_rows, load_scoped_nodes, load_stored_node,
-        node_ack, node_kind_from_db, node_kind_to_db, normalize_node_path, prefix_filter_sql,
+        StoredNode, build_entries_from_rows, build_glob_entries_from_rows, compute_node_etag,
+        file_search_title, load_node, load_scoped_entry_rows, load_stored_node, node_ack,
+        node_kind_from_db, node_kind_to_db, normalize_node_path, prefix_filter_sql,
         prefix_filter_sql_for_column, relative_to_prefix, snapshot_revision_token,
+        validate_source_path_for_kind,
     },
+    fs_search::{
+        build_light_previews_for_hits, build_search_query_plan, finalize_hits,
+        load_content_substring_candidates, load_path_candidates, load_ranked_fts_candidates,
+        path_match_score, rerank_candidates, sort_candidates,
+    },
+    fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
     schema,
 };
 
-const SEARCH_SNIPPET_MAX_CHARS: usize = 240;
-const SEARCH_SNIPPET_MAX_BYTES: usize = 512;
-const SEARCH_SNIPPET_ELLIPSIS: &str = "...";
-// `fs_nodes_fts` is defined as `fts5(content, ...)`, so the searched content column is index 0.
-// Keep this in sync with the FTS schema if additional indexed columns are ever added.
-const FS_NODES_FTS_CONTENT_COLUMN_INDEX: i32 = 0;
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
+const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
+const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
+const SNAPSHOT_SESSION_EXPIRED: &str = "snapshot_session_id has expired";
+const SNAPSHOT_SESSION_PREFIX_MISMATCH: &str =
+    "snapshot_session_id prefix does not match request prefix";
+const SNAPSHOT_SESSION_CURSOR_REQUIRED: &str = "snapshot_session_id is required when cursor is set";
+const SNAPSHOT_SESSION_CURSOR_FORBIDDEN: &str =
+    "snapshot_session_id cannot be used when cursor is absent";
+const SNAPSHOT_SESSION_CURSOR_INVALID: &str = "cursor is invalid for snapshot_session_id";
+const TARGET_SNAPSHOT_CURSOR_REQUIRED: &str =
+    "target_snapshot_revision is required when cursor is set";
+const SNAPSHOT_SESSION_TTL_SECS: i64 = 300;
 
 // Where: crates/wiki_store/src/fs_store.rs
 // What: Change-log semantics used by delta sync visibility checks.
@@ -104,7 +125,9 @@ impl FsStore {
             Some(current) => update_existing_node(current.node.clone(), request, now)?,
             None => create_new_node(path, request, now)?,
         };
-        record_change(&tx, &node)?;
+        validate_source_path_for_kind(&node.path, &node.kind)?;
+        let revision = record_change(&tx, &node)?;
+        update_path_state(&tx, &node.path, revision)?;
         node.etag = compute_node_etag(&node);
         let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
         sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
@@ -129,7 +152,9 @@ impl FsStore {
             Some(current) => append_existing_node(current.node.clone(), request, now)?,
             None => create_appended_node(path, request, now)?,
         };
-        record_change(&tx, &node)?;
+        validate_source_path_for_kind(&node.path, &node.kind)?;
+        let revision = record_change(&tx, &node)?;
+        update_path_state(&tx, &node.path, revision)?;
         node.etag = compute_node_etag(&node);
         let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
         sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
@@ -161,7 +186,8 @@ impl FsStore {
         let mut node = current.node.clone();
         node.content = content;
         node.updated_at = now;
-        record_change(&tx, &node)?;
+        let revision = record_change(&tx, &node)?;
+        update_path_state(&tx, &node.path, revision)?;
         node.etag = compute_node_etag(&node);
         save_node(&tx, Some(current.row_id), &node)?;
         sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
@@ -195,6 +221,7 @@ impl FsStore {
                 "expected_etag does not match current etag: {from_path}"
             ));
         }
+        validate_source_path_for_kind(&to_path, &current.node.kind)?;
         let target = load_stored_node(&tx, &to_path)?;
         let overwrote = target.is_some();
         if overwrote && !request.overwrite {
@@ -206,8 +233,10 @@ impl FsStore {
         let mut moved = current.node.clone();
         moved.path = to_path.clone();
         moved.updated_at = now;
-        record_path_removal(&tx, &from_path)?;
-        record_change(&tx, &moved)?;
+        let from_revision = record_path_removal(&tx, &from_path)?;
+        update_path_state(&tx, &from_path, from_revision)?;
+        let to_revision = record_change(&tx, &moved)?;
+        update_path_state(&tx, &to_path, to_revision)?;
         moved.etag = compute_node_etag(&moved);
         save_node(&tx, Some(current.row_id), &moved)?;
         sync_node_fts(&tx, Some(&current), Some((current.row_id, &moved)))?;
@@ -309,7 +338,8 @@ impl FsStore {
         let mut node = current.node.clone();
         node.content = content;
         node.updated_at = now;
-        record_change(&tx, &node)?;
+        let revision = record_change(&tx, &node)?;
+        update_path_state(&tx, &node.path, revision)?;
         node.etag = compute_node_etag(&node);
         save_node(&tx, Some(current.row_id), &node)?;
         sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
@@ -333,7 +363,8 @@ impl FsStore {
         if current.node.etag != request.expected_etag.unwrap_or_default() {
             return Err(format!("expected_etag does not match current etag: {path}"));
         }
-        record_path_removal(&tx, &path)?;
+        let revision = record_path_removal(&tx, &path)?;
+        update_path_state(&tx, &path, revision)?;
         delete_node_row(&tx, &current)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(DeleteNodeResult { path })
@@ -345,40 +376,39 @@ impl FsStore {
             .as_ref()
             .map(|value| normalize_node_path(value, true))
             .transpose()?;
-        let query = build_fts_query(&request.query_text)
+        let plan = build_search_query_plan(&request.query_text)
             .ok_or_else(|| "query_text must not be empty".to_string())?;
         let conn = self.open()?;
         let top_k = capped_query_limit(request.top_k);
-        let mut sql = format!(
-            "SELECT fs_nodes.path, fs_nodes.kind,
-                    snippet(fs_nodes_fts, {FS_NODES_FTS_CONTENT_COLUMN_INDEX}, '[', ']', '...', 12) AS snippet,
-                    bm25(fs_nodes_fts) AS score
-             FROM fs_nodes_fts
-             JOIN fs_nodes ON fs_nodes.id = fs_nodes_fts.rowid
-             WHERE fs_nodes_fts MATCH ?1",
-        );
-        let mut values = vec![rusqlite::types::Value::from(query)];
-        if let Some(prefix) = prefix {
-            let (scope_sql, scope_values) =
-                prefix_filter_sql_for_column("fs_nodes.path", &prefix, 2);
-            sql.push_str(&scope_sql);
-            values.extend(scope_values);
+        let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::Light);
+        let mut candidates = if fs_search_bench::stage_enabled(SearchBenchStage::FtsCandidates) {
+            load_ranked_fts_candidates(&conn, &plan, prefix.as_deref(), top_k)?
+                .into_iter()
+                .map(|candidate| (candidate.row_id, candidate))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        } else {
+            std::collections::BTreeMap::new()
+        };
+        if fs_search_bench::stage_enabled(SearchBenchStage::ContentSubstringCandidates) {
+            for candidate in
+                load_content_substring_candidates(&conn, &plan, prefix.as_deref(), top_k)?
+            {
+                candidates.entry(candidate.row_id).or_insert(candidate);
+            }
         }
-        sql.push_str(&format!(" ORDER BY score ASC, path ASC LIMIT {top_k}"));
-        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
-            let snippet = clamp_search_snippet(row.get(2)?);
-            Ok(SearchNodeHit {
-                path: row.get(0)?,
-                kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-                snippet,
-                score: row.get(3)?,
-                match_reasons: vec!["fts5_bm25".to_string()],
-            })
-        })
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+        let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
+            load_path_candidates(&conn, &plan.path_terms, prefix.as_deref(), top_k)?
+        } else {
+            Vec::new()
+        };
+        let mut ranked = if fs_search_bench::stage_enabled(SearchBenchStage::RerankAdjustment) {
+            rerank_candidates(candidates, &plan, path_hits)
+        } else {
+            sort_candidates(candidates.into_values().collect())
+        };
+        ranked.truncate(top_k as usize);
+        build_light_previews_for_hits(&conn, &mut ranked, &plan, preview_mode)?;
+        Ok(finalize_hits(ranked, top_k))
     }
 
     pub fn search_node_paths(
@@ -422,12 +452,21 @@ impl FsStore {
             let path = row.get::<_, String>(0)?;
             let first_match_position = row.get::<_, i64>(2)?;
             let path_length = row.get::<_, i64>(3)?;
+            let title = file_search_title(&path).to_lowercase();
+            let lowered_query = request.query_text.to_lowercase();
+            let mut match_reasons = vec!["path_substring".to_string()];
+            if title == lowered_query {
+                match_reasons.push("basename_exact".to_string());
+            } else if title.starts_with(&lowered_query) {
+                match_reasons.push("basename_prefix".to_string());
+            }
             Ok(SearchNodeHit {
                 path: path.clone(),
                 kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-                snippet: path,
+                snippet: Some(path),
+                preview: None,
                 score: path_match_score(first_match_position, path_length),
-                match_reasons: vec!["path_substring".to_string()],
+                match_reasons,
             })
         })
         .map_err(|error| error.to_string())?
@@ -439,46 +478,39 @@ impl FsStore {
         &self,
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse, String> {
+        let limit = sync_page_limit(request.limit)?;
         let prefix = request
             .prefix
             .as_deref()
             .map(|value| normalize_node_path(value, true))
             .transpose()?;
         let prefix = prefix.unwrap_or_else(|| "/".to_string());
-        let conn = self.open()?;
-        let current_change_revision = current_snapshot_revision_number(&conn)?;
-        let nodes = load_scoped_nodes(&conn, &prefix)?;
-        let revision = scoped_snapshot_revision(&prefix, current_change_revision);
-        Ok(ExportSnapshotResponse {
-            snapshot_revision: revision,
-            nodes,
-        })
+        let _legacy_snapshot_revision = request.snapshot_revision;
+        match (request.cursor, request.snapshot_session_id) {
+            (None, None) => self.start_snapshot_session(prefix, limit),
+            (Some(cursor), Some(session_id)) => {
+                self.resume_snapshot_session(prefix, cursor, session_id, limit)
+            }
+            (Some(_), None) => Err(SNAPSHOT_SESSION_CURSOR_REQUIRED.to_string()),
+            (None, Some(_)) => Err(SNAPSHOT_SESSION_CURSOR_FORBIDDEN.to_string()),
+        }
     }
 
     pub fn fetch_updates(
         &self,
         request: FetchUpdatesRequest,
     ) -> Result<FetchUpdatesResponse, String> {
+        let limit = sync_page_limit(request.limit)?;
         let prefix = request
             .prefix
             .as_deref()
             .map(|value| normalize_node_path(value, true))
             .transpose()?;
         let prefix = prefix.unwrap_or_else(|| "/".to_string());
+        let cursor = normalize_sync_cursor(request.cursor.as_deref(), &prefix)?;
         let conn = self.open()?;
         let current_change_revision = current_snapshot_revision_number(&conn)?;
-        let current_snapshot_revision = scoped_snapshot_revision(&prefix, current_change_revision);
         let known_snapshot = parse_known_snapshot_revision(&request.known_snapshot_revision);
-        if let Some(known_snapshot) = known_snapshot.as_ref()
-            && known_snapshot.revision == current_change_revision
-            && known_snapshot.prefix == prefix
-        {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: current_snapshot_revision,
-                changed_nodes: Vec::new(),
-                removed_paths: Vec::new(),
-            });
-        }
         let Some(known_snapshot) = known_snapshot else {
             return Err("known_snapshot_revision is invalid".to_string());
         };
@@ -488,13 +520,56 @@ impl FsStore {
         if known_snapshot.revision > current_change_revision {
             return Err("known_snapshot_revision is newer than current revision".to_string());
         }
+        if cursor.is_some() && request.target_snapshot_revision.is_none() {
+            return Err(TARGET_SNAPSHOT_CURSOR_REQUIRED.to_string());
+        }
+        let target_snapshot = match request.target_snapshot_revision.as_deref() {
+            Some(snapshot_revision) => parse_target_snapshot_revision(
+                snapshot_revision,
+                &prefix,
+                current_change_revision,
+                "target_snapshot_revision",
+            )?,
+            None => KnownSnapshotRevision {
+                revision: current_change_revision,
+                prefix: prefix.clone(),
+            },
+        };
+        if target_snapshot.revision < known_snapshot.revision {
+            return Err(
+                "target_snapshot_revision is older than known_snapshot_revision".to_string(),
+            );
+        }
+        let target_snapshot_revision = scoped_snapshot_revision(&prefix, target_snapshot.revision);
+        if known_snapshot.revision == target_snapshot.revision {
+            return Ok(FetchUpdatesResponse {
+                snapshot_revision: target_snapshot_revision,
+                changed_nodes: Vec::new(),
+                removed_paths: Vec::new(),
+                next_cursor: None,
+            });
+        }
         let oldest_change_revision = oldest_snapshot_revision_number(&conn)?;
         if known_snapshot.revision < oldest_change_revision.saturating_sub(1) {
             return Err("known_snapshot_revision is no longer available".to_string());
         }
         let mut changed_nodes = Vec::new();
         let mut removed_paths = Vec::new();
-        for path in load_changed_paths_since(&conn, known_snapshot.revision, &prefix)? {
+        let mut paths = load_changed_paths_page(
+            &conn,
+            known_snapshot.revision,
+            target_snapshot.revision,
+            &prefix,
+            cursor.as_deref(),
+            limit + 1,
+        )?;
+        let next_cursor = page_next_cursor(&mut paths, limit);
+        for path in paths {
+            if load_path_last_change_revision(&conn, &path)? > target_snapshot.revision {
+                return Err(
+                    "target_snapshot_revision is no longer current for changed path".to_string(),
+                );
+            }
             let current_node = load_node(&conn, &path)?;
             match current_node {
                 Some(node) => changed_nodes.push(node),
@@ -502,14 +577,94 @@ impl FsStore {
             }
         }
         Ok(FetchUpdatesResponse {
-            snapshot_revision: current_snapshot_revision,
+            snapshot_revision: target_snapshot_revision,
             changed_nodes,
             removed_paths,
+            next_cursor,
         })
     }
 
     fn open(&self) -> Result<Connection, String> {
         Connection::open(&self.database_path).map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SnapshotSession {
+    session_id: String,
+    prefix: String,
+    snapshot_revision: i64,
+    expires_at: i64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SnapshotPage {
+    snapshot_revision: String,
+    snapshot_session_id: String,
+    nodes: Vec<Node>,
+    next_cursor: Option<String>,
+}
+
+impl FsStore {
+    fn start_snapshot_session(
+        &self,
+        prefix: String,
+        limit: i64,
+    ) -> Result<ExportSnapshotResponse, String> {
+        let mut conn = self.open()?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let now = unix_timestamp_secs()?;
+        delete_expired_snapshot_sessions(&tx, now)?;
+        let snapshot_revision = current_snapshot_revision_number(&tx)?;
+        let session_id = Uuid::new_v4().to_string();
+        let expires_at = now + SNAPSHOT_SESSION_TTL_SECS;
+        insert_snapshot_session(&tx, &session_id, &prefix, snapshot_revision, expires_at)?;
+        let page = build_snapshot_page_from_live_paths(
+            &tx,
+            &session_id,
+            &prefix,
+            snapshot_revision,
+            limit,
+        )?;
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(ExportSnapshotResponse {
+            snapshot_revision: page.snapshot_revision,
+            snapshot_session_id: Some(page.snapshot_session_id),
+            nodes: page.nodes,
+            next_cursor: page.next_cursor,
+        })
+    }
+
+    fn resume_snapshot_session(
+        &self,
+        prefix: String,
+        cursor: String,
+        session_id: String,
+        limit: i64,
+    ) -> Result<ExportSnapshotResponse, String> {
+        let mut conn = self.open()?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let now = unix_timestamp_secs()?;
+        let session = load_snapshot_session(&tx, &session_id)?
+            .ok_or_else(|| SNAPSHOT_SESSION_INVALID.to_string())?;
+        delete_expired_snapshot_sessions(&tx, now)?;
+        if session.expires_at <= now {
+            delete_snapshot_session(&tx, &session.session_id)?;
+            return Err(SNAPSHOT_SESSION_EXPIRED.to_string());
+        }
+        let normalized_prefix = normalize_node_path(&prefix, true)?;
+        if session.prefix != normalized_prefix {
+            return Err(SNAPSHOT_SESSION_PREFIX_MISMATCH.to_string());
+        }
+        let cursor = normalize_snapshot_session_cursor(&cursor, &session.prefix)?;
+        let page = build_snapshot_page_from_session(&tx, &session, &cursor, limit)?;
+        tx.commit().map_err(|error| error.to_string())?;
+        Ok(ExportSnapshotResponse {
+            snapshot_revision: page.snapshot_revision,
+            snapshot_session_id: Some(page.snapshot_session_id),
+            nodes: page.nodes,
+            next_cursor: page.next_cursor,
+        })
     }
 }
 
@@ -522,10 +677,21 @@ fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<i64, String> {
     Ok(tx.last_insert_rowid())
 }
 
-fn record_path_removal(tx: &Transaction<'_>, path: &str) -> Result<(), String> {
+fn record_path_removal(tx: &Transaction<'_>, path: &str) -> Result<i64, String> {
     tx.execute(
         "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, ?2)",
         params![path, ChangeKind::PathRemoval.as_str()],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(tx.last_insert_rowid())
+}
+
+fn update_path_state(tx: &Transaction<'_>, path: &str, revision: i64) -> Result<(), String> {
+    tx.execute(
+        "INSERT INTO fs_path_state (path, last_change_revision)
+         VALUES (?1, ?2)
+         ON CONFLICT(path) DO UPDATE SET last_change_revision = excluded.last_change_revision",
+        params![path, revision],
     )
     .map(|_| ())
     .map_err(|error| error.to_string())
@@ -573,32 +739,319 @@ fn parse_known_snapshot_revision(snapshot_revision: &str) -> Option<KnownSnapsho
     })
 }
 
+fn parse_target_snapshot_revision(
+    snapshot_revision: &str,
+    prefix: &str,
+    current_revision: i64,
+    field_name: &str,
+) -> Result<KnownSnapshotRevision, String> {
+    let parsed = parse_known_snapshot_revision(snapshot_revision)
+        .ok_or_else(|| format!("{field_name} is invalid"))?;
+    if parsed.prefix != prefix {
+        return Err(format!("{field_name} prefix does not match request prefix"));
+    }
+    if parsed.revision > current_revision {
+        return Err(format!("{field_name} is newer than current revision"));
+    }
+    Ok(parsed)
+}
+
 fn capped_query_limit(requested: u32) -> i64 {
     i64::from(requested.clamp(1, QUERY_RESULT_LIMIT_MAX))
 }
 
-fn load_changed_paths_since(
-    conn: &Connection,
-    known_revision: i64,
+fn sync_page_limit(requested: u32) -> Result<i64, String> {
+    if !(1..=QUERY_RESULT_LIMIT_MAX).contains(&requested) {
+        return Err(format!(
+            "limit must be between 1 and {QUERY_RESULT_LIMIT_MAX}"
+        ));
+    }
+    Ok(i64::from(requested))
+}
+
+fn normalize_sync_cursor(cursor: Option<&str>, prefix: &str) -> Result<Option<String>, String> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    let cursor = normalize_node_path(cursor, false)?;
+    if !path_in_prefix(&cursor, prefix) {
+        return Err("cursor must be within request prefix".to_string());
+    }
+    Ok(Some(cursor))
+}
+
+fn normalize_snapshot_session_cursor(cursor: &str, prefix: &str) -> Result<String, String> {
+    let cursor = normalize_node_path(cursor, false)?;
+    if !path_in_prefix(&cursor, prefix) {
+        return Err(SNAPSHOT_SESSION_CURSOR_INVALID.to_string());
+    }
+    Ok(cursor)
+}
+
+fn unix_timestamp_secs() -> Result<i64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .map_err(|error| error.to_string())
+}
+
+fn path_in_prefix(path: &str, prefix: &str) -> bool {
+    prefix == "/" || path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
+fn page_next_cursor<T>(items: &mut Vec<T>, limit: i64) -> Option<String>
+where
+    T: PageCursorPath,
+{
+    if items.len() <= limit as usize {
+        return None;
+    }
+    items.truncate(limit as usize);
+    items.last().map(PageCursorPath::cursor_path)
+}
+
+trait PageCursorPath {
+    fn cursor_path(&self) -> String;
+}
+
+impl PageCursorPath for Node {
+    fn cursor_path(&self) -> String {
+        self.path.clone()
+    }
+}
+
+impl PageCursorPath for String {
+    fn cursor_path(&self) -> String {
+        self.clone()
+    }
+}
+
+fn insert_snapshot_session(
+    tx: &Transaction<'_>,
+    session_id: &str,
     prefix: &str,
-) -> Result<Vec<String>, String> {
-    let mut sql = String::from(
-        "SELECT DISTINCT path
-         FROM fs_change_log
-         WHERE revision > ?1",
-    );
-    let mut values = vec![rusqlite::types::Value::from(known_revision)];
+    snapshot_revision: i64,
+    expires_at: i64,
+) -> Result<(), String> {
+    tx.execute(
+        "INSERT INTO fs_snapshot_sessions (session_id, prefix, snapshot_revision, expires_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![session_id, prefix, snapshot_revision, expires_at],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn build_snapshot_page_from_live_paths(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    prefix: &str,
+    snapshot_revision: i64,
+    limit: i64,
+) -> Result<SnapshotPage, String> {
+    let mut sql = String::from("SELECT path FROM fs_nodes WHERE 1 = 1");
+    let mut values = Vec::new();
     if prefix != "/" {
-        let (scope_sql, scope_values) = prefix_filter_sql(prefix, 2);
+        let (scope_sql, scope_values) = prefix_filter_sql(prefix, 1);
         sql.push_str(&scope_sql);
         values.extend(scope_values);
     }
     sql.push_str(" ORDER BY path ASC");
+    let mut stmt = tx.prepare(&sql).map_err(|error| error.to_string())?;
+    let mut rows = stmt
+        .query(rusqlite::params_from_iter(values.iter()))
+        .map_err(|error| error.to_string())?;
+    let mut page_paths = Vec::new();
+    let mut ordinal = 0_i64;
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        let path = row.get::<_, String>(0).map_err(|error| error.to_string())?;
+        tx.execute(
+            "INSERT INTO fs_snapshot_session_paths (session_id, ordinal, path)
+             VALUES (?1, ?2, ?3)",
+            params![session_id, ordinal, path],
+        )
+        .map_err(|error| error.to_string())?;
+        if ordinal <= limit {
+            page_paths.push(path);
+        }
+        ordinal += 1;
+    }
+    let next_cursor = page_next_cursor(&mut page_paths, limit);
+    Ok(SnapshotPage {
+        snapshot_revision: scoped_snapshot_revision(prefix, snapshot_revision),
+        snapshot_session_id: session_id.to_string(),
+        nodes: load_snapshot_nodes(tx, &page_paths, snapshot_revision)?,
+        next_cursor,
+    })
+}
+
+fn load_snapshot_session(
+    tx: &Transaction<'_>,
+    session_id: &str,
+) -> Result<Option<SnapshotSession>, String> {
+    tx.query_row(
+        "SELECT session_id, prefix, snapshot_revision, expires_at
+         FROM fs_snapshot_sessions
+         WHERE session_id = ?1",
+        params![session_id],
+        |row| {
+            Ok(SnapshotSession {
+                session_id: row.get(0)?,
+                prefix: row.get(1)?,
+                snapshot_revision: row.get(2)?,
+                expires_at: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn build_snapshot_page_from_session(
+    tx: &Transaction<'_>,
+    session: &SnapshotSession,
+    cursor: &str,
+    limit: i64,
+) -> Result<SnapshotPage, String> {
+    let start_ordinal = load_snapshot_cursor_ordinal(tx, &session.session_id, cursor)?
+        .ok_or_else(|| SNAPSHOT_SESSION_CURSOR_INVALID.to_string())?
+        + 1;
+    let mut stmt = tx
+        .prepare(
+            "SELECT path
+             FROM fs_snapshot_session_paths
+             WHERE session_id = ?1 AND ordinal >= ?2
+             ORDER BY ordinal ASC
+             LIMIT ?3",
+        )
+        .map_err(|error| error.to_string())?;
+    let page_paths = stmt
+        .query_map(
+            params![session.session_id, start_ordinal, limit + 1],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let mut page_paths = page_paths;
+    let next_cursor = page_next_cursor(&mut page_paths, limit);
+    Ok(SnapshotPage {
+        snapshot_revision: scoped_snapshot_revision(&session.prefix, session.snapshot_revision),
+        snapshot_session_id: session.session_id.clone(),
+        nodes: load_snapshot_nodes(tx, &page_paths, session.snapshot_revision)?,
+        next_cursor,
+    })
+}
+
+fn load_snapshot_cursor_ordinal(
+    tx: &Transaction<'_>,
+    session_id: &str,
+    cursor: &str,
+) -> Result<Option<i64>, String> {
+    tx.query_row(
+        "SELECT ordinal
+         FROM fs_snapshot_session_paths
+         WHERE session_id = ?1 AND path = ?2",
+        params![session_id, cursor],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn load_snapshot_nodes(
+    tx: &Transaction<'_>,
+    paths: &[String],
+    snapshot_revision: i64,
+) -> Result<Vec<Node>, String> {
+    let mut nodes = Vec::with_capacity(paths.len());
+    for path in paths {
+        if load_path_last_change_revision(tx, path)? > snapshot_revision {
+            return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
+        }
+        let node =
+            load_node(tx, path)?.ok_or_else(|| SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string())?;
+        nodes.push(node);
+    }
+    Ok(nodes)
+}
+
+fn delete_expired_snapshot_sessions(tx: &Transaction<'_>, now: i64) -> Result<(), String> {
+    let expired = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT session_id
+                 FROM fs_snapshot_sessions
+                 WHERE expires_at <= ?1",
+            )
+            .map_err(|error| error.to_string())?;
+        stmt.query_map(params![now], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    for session_id in expired {
+        delete_snapshot_session(tx, &session_id)?;
+    }
+    Ok(())
+}
+
+fn delete_snapshot_session(tx: &Transaction<'_>, session_id: &str) -> Result<(), String> {
+    tx.execute(
+        "DELETE FROM fs_snapshot_sessions WHERE session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|error| error.to_string())?;
+    tx.execute(
+        "DELETE FROM fs_snapshot_session_paths WHERE session_id = ?1",
+        params![session_id],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn load_changed_paths_page(
+    conn: &Connection,
+    known_revision: i64,
+    target_revision: i64,
+    prefix: &str,
+    cursor: Option<&str>,
+    limit: i64,
+) -> Result<Vec<String>, String> {
+    let mut sql = String::from(
+        "SELECT DISTINCT path
+         FROM fs_change_log
+         WHERE revision > ?1 AND revision <= ?2",
+    );
+    let mut values = vec![
+        rusqlite::types::Value::from(known_revision),
+        rusqlite::types::Value::from(target_revision),
+    ];
+    if prefix != "/" {
+        let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
+        sql.push_str(&scope_sql);
+        values.extend(scope_values);
+    }
+    if let Some(cursor) = cursor {
+        let index = values.len() + 1;
+        sql.push_str(&format!(" AND path > ?{index}"));
+        values.push(rusqlite::types::Value::from(cursor.to_string()));
+    }
+    sql.push_str(&format!(" ORDER BY path ASC LIMIT {limit}"));
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
     stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| row.get(0))
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())
+}
+
+fn load_path_last_change_revision(conn: &Connection, path: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT last_change_revision FROM fs_path_state WHERE path = ?1",
+        params![path],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn decode_hex_to_string(value: &str) -> Option<String> {
@@ -783,33 +1236,6 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
     }
 }
 
-// `snippet()` output can vary with token and marker placement, but the transport contract is fixed:
-// always return valid UTF-8 bounded by bytes first, with chars as a secondary UI-friendly limit.
-fn clamp_search_snippet(snippet: String) -> String {
-    let mut out = if snippet.chars().count() > SEARCH_SNIPPET_MAX_CHARS {
-        let mut shortened = snippet
-            .chars()
-            .take(SEARCH_SNIPPET_MAX_CHARS)
-            .collect::<String>();
-        shortened.push_str(SEARCH_SNIPPET_ELLIPSIS);
-        shortened
-    } else {
-        snippet
-    };
-
-    if out.len() <= SEARCH_SNIPPET_MAX_BYTES {
-        return out;
-    }
-
-    while out.len() + SEARCH_SNIPPET_ELLIPSIS.len() > SEARCH_SNIPPET_MAX_BYTES {
-        if out.pop().is_none() {
-            break;
-        }
-    }
-    out.push_str(SEARCH_SNIPPET_ELLIPSIS);
-    out
-}
-
 #[cfg(not(feature = "bench-disable-fts"))]
 fn sync_node_fts(
     tx: &Transaction<'_>,
@@ -818,7 +1244,10 @@ fn sync_node_fts(
 ) -> Result<(), String> {
     let unchanged = match (old, new) {
         (Some(stored), Some((row_id, node))) => {
-            stored.row_id == row_id && stored.node.content == node.content
+            stored.row_id == row_id
+                && stored.node.path == node.path
+                && file_search_title(&stored.node.path) == file_search_title(&node.path)
+                && stored.node.content == node.content
         }
         _ => false,
     };
@@ -829,15 +1258,16 @@ fn sync_node_fts(
 
     if let Some(stored) = old {
         tx.execute(
-            "INSERT INTO fs_nodes_fts(fs_nodes_fts, rowid, content) VALUES('delete', ?1, ?2)",
-            params![stored.row_id, stored.node.content],
+            "DELETE FROM fs_nodes_fts WHERE rowid = ?1",
+            params![stored.row_id],
         )
         .map_err(|error| error.to_string())?;
     }
     if let Some((row_id, node)) = new {
+        let title = file_search_title(&node.path);
         tx.execute(
-            "INSERT INTO fs_nodes_fts(rowid, content) VALUES(?1, ?2)",
-            params![row_id, node.content],
+            "INSERT INTO fs_nodes_fts(rowid, path, title, content) VALUES(?1, ?2, ?3, ?4)",
+            params![row_id, node.path, title, node.content],
         )
         .map_err(|error| error.to_string())?;
     }
@@ -873,10 +1303,6 @@ fn split_search_terms(query_text: &str) -> Option<Vec<String>> {
 fn split_path_search_terms(query_text: &str) -> Option<Vec<String>> {
     split_search_terms(query_text)
         .map(|terms| terms.into_iter().map(|term| term.to_lowercase()).collect())
-}
-
-fn path_match_score(first_match_position: i64, path_length: i64) -> f32 {
-    ((first_match_position - 1) * 10_000 + path_length) as f32
 }
 
 fn glob_type_matches(node_type: &GlobNodeType, entry_kind: &NodeEntryKind) -> bool {

@@ -6,6 +6,8 @@ import { IDL } from "@dfinity/candid";
 import {
   idlFactory,
   localReplicaHost,
+  normalizeExportResponse,
+  normalizeFetchResponse,
   normalizeGlobNodeHits,
   normalizeNodeKind,
   normalizeStatus,
@@ -68,6 +70,30 @@ test("normalizeGlobNodeHits accepts the compact glob wire shape", () => {
     has_children: false
   }]);
 });
+
+test("sync normalizers convert paged cursor fields", () => {
+  const snapshot = normalizeExportResponse({
+    Ok: {
+      snapshot_revision: "snap-1",
+      snapshot_session_id: ["session-1"],
+      nodes: [],
+      next_cursor: ["/Wiki/page-099.md"]
+    }
+  });
+  assert.equal(snapshot.next_cursor, "/Wiki/page-099.md");
+  assert.equal(snapshot.snapshot_session_id, "session-1");
+
+  const updates = normalizeFetchResponse({
+    Ok: {
+      snapshot_revision: "snap-2",
+      changed_nodes: [],
+      removed_paths: [],
+      next_cursor: []
+    }
+  });
+  assert.equal(updates.next_cursor, null);
+});
+
 
 test("localReplicaHost detects localhost style hosts", () => {
   assert.equal(localReplicaHost("http://127.0.0.1:8000"), true);

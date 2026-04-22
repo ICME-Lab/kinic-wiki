@@ -110,7 +110,7 @@ fn search_node_paths(request: SearchNodePathsRequest) -> Result<Vec<SearchNodeHi
     with_service(|service| service.search_node_paths(request))
 }
 
-#[query]
+#[update]
 fn export_snapshot(request: ExportSnapshotRequest) -> Result<ExportSnapshotResponse, String> {
     with_service(|service| service.export_fs_snapshot(request))
 }

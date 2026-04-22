@@ -14,7 +14,7 @@ use wiki_cli::client::{CanisterWikiClient, WikiApi};
 use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeKind,
-    RecentNodesRequest, SearchNodesRequest, WriteNodeRequest,
+    RecentNodesRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 use crate::vfs_bench::common::{
@@ -38,6 +38,7 @@ pub struct WorkloadBenchArgs {
     pub warmup_iterations: usize,
     pub operation: WorkloadOperation,
     pub measurement_mode: MeasurementMode,
+    pub preview_mode: SearchPreviewMode,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +60,7 @@ pub struct WorkloadBenchResult {
     pub concurrent_clients: usize,
     pub iterations: usize,
     pub warmup_iterations: usize,
+    pub preview_mode: SearchPreviewMode,
     pub request_count: usize,
     pub total_seconds: f64,
     pub avg_latency_us: f64,
@@ -133,6 +135,7 @@ where
         concurrent_clients: args.concurrent_clients,
         iterations: args.iterations,
         warmup_iterations: args.warmup_iterations,
+        preview_mode: args.preview_mode,
         request_count: latency.request_count,
         total_seconds: latency.total_seconds,
         avg_latency_us: latency.avg_latency_us,
@@ -270,6 +273,7 @@ where
         file_count: args.file_count,
         concurrent_clients: args.concurrent_clients,
         iterations: args.iterations,
+        preview_mode: args.preview_mode,
         warmup_iterations: args.warmup_iterations,
         request_count: latency.request_count,
         total_seconds: latency.total_seconds,
@@ -870,6 +874,7 @@ where
         query_text: "shared-bench-search".to_string(),
         prefix: Some(args.prefix.clone()),
         top_k: 10,
+        preview_mode: Some(args.preview_mode),
     };
     let client = Arc::clone(client);
     run_parallel(args.iterations, args.concurrent_clients, move |_| {
@@ -895,6 +900,7 @@ where
         query_text: "shared-bench-search".to_string(),
         prefix: Some(args.prefix.clone()),
         top_k: 10,
+        preview_mode: Some(args.preview_mode),
     };
     let client = Arc::clone(client);
     run_parallel(args.iterations, args.concurrent_clients, move |_| {
@@ -1570,7 +1576,8 @@ mod tests {
             Ok(vec![SearchNodeHit {
                 path: "/Wiki/bench/node-000000.md".to_string(),
                 kind: NodeKind::File,
-                snippet: request.query_text,
+                snippet: Some(request.query_text),
+                preview: None,
                 score: 1.0,
                 match_reasons: vec!["text".to_string()],
             }])
@@ -1586,7 +1593,8 @@ mod tests {
             Ok(vec![SearchNodeHit {
                 path: "/Wiki/bench/node-000000.md".to_string(),
                 kind: NodeKind::File,
-                snippet: "/Wiki/bench/node-000000.md".to_string(),
+                snippet: Some("/Wiki/bench/node-000000.md".to_string()),
+                preview: None,
                 score: 1.0,
                 match_reasons: vec!["path_substring".to_string()],
             }])
@@ -1608,7 +1616,7 @@ mod tests {
     fn args(operation: WorkloadOperation) -> WorkloadBenchArgs {
         WorkloadBenchArgs {
             benchmark_name: "bench".to_string(),
-            replica_host: "http://127.0.0.1:4943".to_string(),
+            replica_host: "http://127.0.0.1:8000".to_string(),
             canister_id: "aaaaa-aa".to_string(),
             prefix: "/Wiki/bench".to_string(),
             payload_size_bytes: 1024,
@@ -1619,6 +1627,7 @@ mod tests {
             warmup_iterations: 0,
             operation,
             measurement_mode: MeasurementMode::ScenarioTotal,
+            preview_mode: SearchPreviewMode::None,
         }
     }
 

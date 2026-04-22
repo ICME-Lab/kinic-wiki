@@ -4,7 +4,7 @@ use wiki_types::{
     AppendNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
     GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
     MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeRequest,
+    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn new_service() -> WikiService {
@@ -71,11 +71,13 @@ fn fs_service_delegates_to_fs_store() {
             .any(|entry| entry.path == "/Wiki/nested" && entry.kind == NodeEntryKind::Directory)
     );
 
+    // No token in file bodies or paths matches this; distinguishes FTS/path search from path-only search below.
     let hits = service
         .search_nodes(SearchNodesRequest {
-            query_text: "nested".to_string(),
+            query_text: "zzz_no_match_token".to_string(),
             prefix: Some("/Wiki".to_string()),
             top_k: 5,
+            preview_mode: Some(SearchPreviewMode::None),
         })
         .expect("search should succeed");
     assert!(hits.is_empty());
@@ -93,12 +95,19 @@ fn fs_service_delegates_to_fs_store() {
     let snapshot = service
         .export_fs_snapshot(ExportSnapshotRequest {
             prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
         })
         .expect("snapshot should succeed");
     let updates = service
         .fetch_fs_updates(FetchUpdatesRequest {
             known_snapshot_revision: snapshot.snapshot_revision,
             prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            target_snapshot_revision: None,
         })
         .expect("updates should succeed");
     assert!(updates.changed_nodes.is_empty());
@@ -230,4 +239,35 @@ fn fs_service_exposes_extended_vfs_methods() {
             .content,
         "after beta"
     );
+}
+
+#[test]
+fn fs_service_rejects_noncanonical_source_move_target() {
+    let service = new_service();
+    let created = service
+        .write_node(
+            WriteNodeRequest {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKind::Source,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            40,
+        )
+        .expect("write should succeed");
+
+    let error = service
+        .move_node(
+            MoveNodeRequest {
+                from_path: "/Sources/raw/source/source.md".to_string(),
+                to_path: "/Sources/raw/renamed/wrong.md".to_string(),
+                expected_etag: Some(created.node.etag),
+                overwrite: false,
+            },
+            41,
+        )
+        .expect_err("move should fail");
+
+    assert!(error.contains("source path must"));
 }

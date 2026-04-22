@@ -11,10 +11,14 @@ pub mod commands;
 #[cfg(test)]
 mod commands_fs_tests;
 #[cfg(test)]
+mod commands_maintenance_tests;
+#[cfg(test)]
 mod commands_sync_tests;
 #[cfg(test)]
 mod commands_vfs_tests;
+pub mod connection;
 pub mod lint_local;
+pub mod maintenance;
 pub mod mirror;
 #[cfg(test)]
 mod mirror_fs_tests;

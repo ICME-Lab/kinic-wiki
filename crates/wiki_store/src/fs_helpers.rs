@@ -8,6 +8,9 @@ use wiki_types::{Node, NodeEntry, NodeEntryKind, NodeKind, NodeMutationAck};
 
 use crate::hashing::sha256_hex;
 
+const RAW_SOURCES_PREFIX: &str = "/Sources/raw";
+const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
+
 pub(crate) fn normalize_node_path(path: &str, allow_root: bool) -> Result<String, String> {
     if path.is_empty() {
         return Err("path must not be empty".to_string());
@@ -34,6 +37,56 @@ pub(crate) fn normalize_node_path(path: &str, allow_root: bool) -> Result<String
         }
     }
     Ok(path.to_string())
+}
+
+pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
+    if *kind != NodeKind::Source {
+        return Ok(());
+    }
+    validate_canonical_source_path(path)
+}
+
+pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
+    if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
+        return validate_source_path_under_prefix(path, RAW_SOURCES_PREFIX);
+    }
+    if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
+        return validate_source_path_under_prefix(path, SESSION_SOURCES_PREFIX);
+    }
+    Err(format!(
+        "source path must stay under {RAW_SOURCES_PREFIX} or {SESSION_SOURCES_PREFIX}: {path}"
+    ))
+}
+
+fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), String> {
+    let relative = path
+        .strip_prefix(prefix)
+        .ok_or_else(|| format!("source path must stay under {prefix}: {path}"))?;
+    let segments = relative
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.len() != 2 {
+        return Err(format!(
+            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+        ));
+    }
+    let [directory_name, file_name] = segments.as_slice() else {
+        unreachable!();
+    };
+    if directory_name.is_empty() || *file_name != format!("{directory_name}.md") {
+        return Err(format!(
+            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn compute_node_etag(node: &Node) -> String {
@@ -97,25 +150,6 @@ pub(crate) fn load_stored_node(
     )
     .optional()
     .map_err(|error| error.to_string())
-}
-
-pub(crate) fn load_scoped_nodes(conn: &Connection, prefix: &str) -> Result<Vec<Node>, String> {
-    let mut sql = String::from(
-        "SELECT path, kind, content, created_at, updated_at, etag, metadata_json
-         FROM fs_nodes WHERE 1 = 1",
-    );
-    let mut values = Vec::new();
-    if prefix != "/" {
-        let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
-        sql.push_str(&scope_sql);
-        values.extend(scope_values);
-    }
-    sql.push_str(" ORDER BY path ASC");
-    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(rusqlite::params_from_iter(values.iter()), map_node)
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn load_scoped_entry_rows(
@@ -255,17 +289,11 @@ pub(crate) fn relative_to_prefix(prefix: &str, path: &str) -> Option<String> {
     path.strip_prefix(&format!("{prefix}/")).map(str::to_string)
 }
 
-pub(crate) fn build_fts_query(query_text: &str) -> Option<String> {
-    let terms = query_text
-        .split_whitespace()
-        .map(str::trim)
-        .filter(|term| !term.is_empty())
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>();
-    if terms.is_empty() {
-        None
-    } else {
-        Some(terms.join(" "))
+pub(crate) fn file_search_title(path: &str) -> String {
+    let basename = path.rsplit('/').next().unwrap_or(path);
+    match basename.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => stem.to_string(),
+        _ => basename.to_string(),
     }
 }
 
@@ -309,18 +337,6 @@ pub(crate) fn node_kind_from_db(value: &str) -> Result<NodeKind, rusqlite::Error
             rusqlite::types::Type::Text,
         )),
     }
-}
-
-fn map_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<Node> {
-    Ok(Node {
-        path: row.get(0)?,
-        kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-        content: row.get(2)?,
-        created_at: row.get(3)?,
-        updated_at: row.get(4)?,
-        etag: row.get(5)?,
-        metadata_json: row.get(6)?,
-    })
 }
 
 fn map_stored_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredNode> {

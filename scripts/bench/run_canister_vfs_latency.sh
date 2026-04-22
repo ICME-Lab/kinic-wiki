@@ -13,19 +13,21 @@ require_command "cargo" "Rust toolchain is required to build the vfs_bench clien
 require_command "node" "Node.js is required to materialize JSON summaries."
 require_command "icp" "The icp CLI is required to collect canister cycle costs."
 
-REPLICA_HOST="${REPLICA_HOST:-}"
 CANISTER_ID="${CANISTER_ID:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --replica-host) REPLICA_HOST="$2"; shift 2 ;;
     --canister-id) CANISTER_ID="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
-if [[ -z "${REPLICA_HOST}" || -z "${CANISTER_ID}" ]]; then
-  echo "usage: REPLICA_HOST=... CANISTER_ID=... bash scripts/bench/run_canister_vfs_latency.sh" >&2
+if [[ -z "${CANISTER_ID}" ]]; then
+  echo "usage: CANISTER_ID=... bash scripts/bench/run_canister_vfs_latency.sh" >&2
   exit 1
 fi
+REPLICA_HOST="http://127.0.0.1:8000"
+LOCAL_ARGS=(--local)
+CANISTER_STATUS_ENVIRONMENT="local"
+unset CANISTER_STATUS_NETWORK
 
 RESULT_DIR="$(bench_results_dir "canister_vfs_latency")"
 RAW_DIR="$(bench_raw_dir "${RESULT_DIR}")"
@@ -164,7 +166,7 @@ node -e '
   "${BENCH_BIN}" latency-setup \
     --output-json "${setup_raw_file}" \
     --benchmark-name "${scenario}" \
-    --replica-host "${REPLICA_HOST}" \
+    "${LOCAL_ARGS[@]}" \
     --canister-id "${CANISTER_ID}" \
     --prefix "${prefix}" \
     --payload-size-bytes "${payload_size}" \
@@ -173,7 +175,7 @@ node -e '
   if "${BENCH_BIN}" latency-measure \
     --output-json "${raw_file}" \
     --benchmark-name "${scenario}" \
-    --replica-host "${REPLICA_HOST}" \
+    "${LOCAL_ARGS[@]}" \
     --canister-id "${CANISTER_ID}" \
     --prefix "${prefix}" \
     --payload-size-bytes "${payload_size}" \

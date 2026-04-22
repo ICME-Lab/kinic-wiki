@@ -43,6 +43,33 @@ pub struct MirrorState {
     pub tracked_nodes: Vec<TrackedNodeState>,
 }
 
+fn is_valid_snapshot_revision(snapshot_revision: &str) -> bool {
+    let mut parts = snapshot_revision.split(':');
+    let Some(version) = parts.next() else {
+        return false;
+    };
+    let Some(revision) = parts.next() else {
+        return false;
+    };
+    let Some(prefix_hex) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() || version != "v5" {
+        return false;
+    }
+    if revision.is_empty() || (revision.starts_with('0') && revision != "0") {
+        return false;
+    }
+    if !revision.chars().all(|char| char.is_ascii_digit()) {
+        return false;
+    }
+    !prefix_hex.is_empty() && prefix_hex.chars().all(|char| char.is_ascii_hexdigit())
+}
+
+pub fn snapshot_revision_is_valid(snapshot_revision: &str) -> bool {
+    is_valid_snapshot_revision(snapshot_revision.trim())
+}
+
 pub fn load_state(mirror_root: &Path) -> Result<MirrorState> {
     let path = state_path(mirror_root);
     if !path.exists() {

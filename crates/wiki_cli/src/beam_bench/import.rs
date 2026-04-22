@@ -1,19 +1,65 @@
 // Where: crates/wiki_cli/src/beam_bench/import.rs
-// What: Deterministic conversion from BEAM raw conversations into llm-wiki notes.
-// Why: The benchmark should measure retrieval over stable wiki-shaped notes rather than over ad hoc JSON blobs.
+// What: Write BEAM conversation pages and their structured wiki notes to the canister.
+// Why: The harness needs a stable import boundary while note rendering stays in a dedicated module.
 use crate::client::WikiApi;
 use anyhow::Result;
 use serde::Serialize;
-use serde_json::Value;
 use wiki_types::{NodeKind, WriteNodeRequest};
 
 use super::dataset::BeamConversation;
+use super::navigation::{
+    conversation_base_path, namespace_base_path, namespace_index_path, raw_source_path,
+};
+use super::notes::build_documents;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportedConversation {
     pub conversation_id: String,
+    pub namespace_path: String,
+    pub namespace_index_path: String,
     pub base_path: String,
     pub note_paths: Vec<String>,
+    pub notes: Vec<ImportedNote>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportedNote {
+    pub path: String,
+    pub content: String,
+    pub note_type: String,
+}
+
+pub fn plan_imported_conversation(
+    namespace: &str,
+    conversation: &BeamConversation,
+) -> ImportedConversation {
+    let namespace_path = namespace_base_path(namespace);
+    let namespace_index_path = namespace_index_path(namespace);
+    let base_path = conversation_base_path(namespace, &conversation.conversation_id);
+    let documents = build_documents(
+        conversation,
+        &base_path,
+        &raw_source_path(namespace, &conversation.conversation_id),
+    );
+    let mut note_paths = Vec::with_capacity(documents.len());
+    let mut notes = Vec::with_capacity(documents.len());
+    for (path, content) in documents {
+        let note_type = note_type_for_path(&path, &base_path);
+        note_paths.push(path.clone());
+        notes.push(ImportedNote {
+            path,
+            content,
+            note_type,
+        });
+    }
+    ImportedConversation {
+        conversation_id: conversation.conversation_id.clone(),
+        namespace_path,
+        namespace_index_path,
+        base_path,
+        note_paths,
+        notes,
+    }
 }
 
 pub async fn import_conversation(
@@ -21,212 +67,206 @@ pub async fn import_conversation(
     namespace: &str,
     conversation: &BeamConversation,
 ) -> Result<ImportedConversation> {
-    let base_path = format!(
-        "/Wiki/beam/{}/{}",
-        sanitize_segment(namespace),
-        sanitize_segment(&conversation.conversation_id)
-    );
-    let documents = build_documents(conversation, &base_path);
-    let mut note_paths = Vec::with_capacity(documents.len());
-    for (path, content) in documents {
+    let imported = plan_imported_conversation(namespace, conversation);
+    for note in &imported.notes {
+        let expected_etag = client.read_node(&note.path).await?.map(|node| node.etag);
         client
             .write_node(WriteNodeRequest {
-                path: path.clone(),
+                path: note.path.clone(),
                 kind: NodeKind::File,
-                content,
+                content: note.content.clone(),
                 metadata_json: "{}".to_string(),
-                expected_etag: None,
+                expected_etag,
             })
             .await?;
-        note_paths.push(path);
     }
-    Ok(ImportedConversation {
-        conversation_id: conversation.conversation_id.clone(),
-        base_path,
-        note_paths,
-    })
+    Ok(imported)
 }
 
-fn build_documents(conversation: &BeamConversation, base_path: &str) -> Vec<(String, String)> {
-    vec![
-        (
-            format!("{base_path}/conversation.md"),
-            conversation_markdown(conversation),
-        ),
-        (
-            format!("{base_path}/profile.md"),
-            json_markdown("Profile", &conversation.user_profile),
-        ),
-        (
-            format!("{base_path}/plan.md"),
-            text_markdown("Plan", &conversation.conversation_plan),
-        ),
-        (
-            format!("{base_path}/user_questions.md"),
-            json_markdown("User Questions", &conversation.user_questions),
-        ),
-    ]
-}
-
-fn conversation_markdown(conversation: &BeamConversation) -> String {
-    let mut lines = vec![
-        format!("# BEAM Conversation {}", conversation.conversation_id),
-        String::new(),
-        "## Seed".to_string(),
-        fenced_json(&conversation.conversation_seed),
-        String::new(),
-    ];
-    if !conversation.narratives.trim().is_empty() {
-        lines.push("## Narratives".to_string());
-        lines.push(conversation.narratives.trim().to_string());
-        lines.push(String::new());
-    }
-    lines.push("## Chat".to_string());
-    let messages = flatten_chat(&conversation.chat);
-    if messages.is_empty() {
-        lines.push("_No chat messages extracted._".to_string());
-    } else {
-        for (index, message) in messages.iter().enumerate() {
-            lines.push(format!("### {:04} {}", index + 1, message.label()));
-            lines.push(message.content.clone());
-            lines.push(String::new());
-        }
-    }
-    lines.join("\n")
-}
-
-fn json_markdown(title: &str, value: &Value) -> String {
-    format!("# {title}\n\n{}", fenced_json(value))
-}
-
-fn text_markdown(title: &str, value: &str) -> String {
-    format!("# {title}\n\n{}", value.trim())
-}
-
-fn fenced_json(value: &Value) -> String {
-    format!(
-        "```json\n{}\n```",
-        serde_json::to_string_pretty(value).expect("JSON value should serialize")
-    )
-}
-
-fn sanitize_segment(value: &str) -> String {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return "unknown".to_string();
-    }
-    trimmed
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone)]
-struct ChatMessage {
-    role: Option<String>,
-    content: String,
-}
-
-impl ChatMessage {
-    fn label(&self) -> String {
-        self.role
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .unwrap_or("message")
-            .to_string()
-    }
-}
-
-fn flatten_chat(value: &Value) -> Vec<ChatMessage> {
-    let mut messages = Vec::new();
-    collect_chat_messages(value, &mut messages);
-    messages
-}
-
-fn collect_chat_messages(value: &Value, messages: &mut Vec<ChatMessage>) {
-    match value {
-        Value::Array(items) => {
-            for item in items {
-                collect_chat_messages(item, messages);
-            }
-        }
-        Value::Object(object) => {
-            if let Some(content) = object.get("content").and_then(Value::as_str) {
-                messages.push(ChatMessage {
-                    role: object
-                        .get("role")
-                        .and_then(Value::as_str)
-                        .map(ToOwned::to_owned),
-                    content: content.to_string(),
-                });
-                return;
-            }
-            if let Some(nested) = object.get("messages") {
-                collect_chat_messages(nested, messages);
-            }
-        }
-        Value::String(text) => {
-            messages.push(ChatMessage {
-                role: None,
-                content: text.clone(),
-            });
-        }
-        _ => {}
-    }
+fn note_type_for_path(path: &str, base_path: &str) -> String {
+    let relative = path
+        .strip_prefix(base_path)
+        .unwrap_or(path)
+        .trim_start_matches('/');
+    relative
+        .split('/')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or("root")
+        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{build_documents, flatten_chat};
+    use super::{import_conversation, plan_imported_conversation};
     use crate::beam_bench::dataset::BeamConversation;
+    use crate::client::WikiApi;
+    use anyhow::Result;
+    use async_trait::async_trait;
     use serde_json::json;
+    use std::sync::Mutex;
+    use wiki_types::{
+        AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+        ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+        GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
+        MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node,
+        NodeEntry, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
+        SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+    };
 
-    fn sample_conversation() -> BeamConversation {
-        BeamConversation {
-            conversation_id: "conv-1".to_string(),
-            conversation_seed: json!({"category":"General"}),
-            narratives: "narrative".to_string(),
-            user_profile: json!({"user_info":"profile"}),
-            conversation_plan: "plan".to_string(),
-            user_questions: json!([{"messages":["question"]}]),
-            chat: json!([[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]]),
-            probing_questions:
-                "{\"abstention\":[{\"question\":\"What did the assistant say?\",\"answer\":\"hi\"}]}"
-                    .to_string(),
+    #[derive(Default)]
+    struct MockClient {
+        writes: Mutex<Vec<WriteNodeRequest>>,
+    }
+
+    #[async_trait]
+    impl WikiApi for MockClient {
+        async fn status(&self) -> Result<Status> {
+            unreachable!()
+        }
+        async fn read_node(&self, _path: &str) -> Result<Option<Node>> {
+            Ok(None)
+        }
+        async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+            unreachable!()
+        }
+        async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
+            self.writes
+                .lock()
+                .expect("writes should lock")
+                .push(request.clone());
+            Ok(WriteNodeResult {
+                node: wiki_types::NodeMutationAck {
+                    path: request.path,
+                    kind: request.kind,
+                    updated_at: 0,
+                    etag: "etag".to_string(),
+                },
+                created: true,
+            })
+        }
+        async fn append_node(&self, _request: AppendNodeRequest) -> Result<WriteNodeResult> {
+            unreachable!()
+        }
+        async fn edit_node(&self, _request: EditNodeRequest) -> Result<EditNodeResult> {
+            unreachable!()
+        }
+        async fn delete_node(&self, _request: DeleteNodeRequest) -> Result<DeleteNodeResult> {
+            unreachable!()
+        }
+        async fn move_node(&self, _request: MoveNodeRequest) -> Result<MoveNodeResult> {
+            unreachable!()
+        }
+        async fn mkdir_node(&self, _request: MkdirNodeRequest) -> Result<MkdirNodeResult> {
+            unreachable!()
+        }
+        async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
+            unreachable!()
+        }
+        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
+            unreachable!()
+        }
+        async fn multi_edit_node(
+            &self,
+            _request: MultiEditNodeRequest,
+        ) -> Result<MultiEditNodeResult> {
+            unreachable!()
+        }
+        async fn search_nodes(&self, _request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
+            unreachable!()
+        }
+        async fn search_node_paths(
+            &self,
+            _request: SearchNodePathsRequest,
+        ) -> Result<Vec<SearchNodeHit>> {
+            unreachable!()
+        }
+        async fn export_snapshot(
+            &self,
+            _request: ExportSnapshotRequest,
+        ) -> Result<ExportSnapshotResponse> {
+            unreachable!()
+        }
+        async fn fetch_updates(
+            &self,
+            _request: FetchUpdatesRequest,
+        ) -> Result<FetchUpdatesResponse> {
+            unreachable!()
         }
     }
 
-    #[test]
-    fn flatten_chat_preserves_message_order() {
-        let messages = flatten_chat(&sample_conversation().chat);
-        assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].content, "hello");
-        assert_eq!(messages[1].content, "hi");
+    fn sample_conversation() -> BeamConversation {
+        BeamConversation {
+            conversation_id: "Conv 1".to_string(),
+            conversation_seed: json!({"category":"General","title":"Calendar planning"}),
+            narratives: "A short planning conversation.".to_string(),
+            user_profile: json!({"user_info":"Sample profile"}),
+            conversation_plan: "Confirm the meeting date.".to_string(),
+            user_questions: json!([{"messages":["When is the meeting?"]}]),
+            chat: json!([[{"role":"user","content":"Meeting is on March 15, 2024."}]]),
+            probing_questions: "{}".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn import_conversation_uses_namespace_in_base_path() {
+        let client = MockClient::default();
+
+        let imported = import_conversation(&client, "Run A", &sample_conversation())
+            .await
+            .expect("conversation should import");
+
+        assert_eq!(imported.namespace_path, "/Wiki/run-a");
+        assert_eq!(imported.namespace_index_path, "/Wiki/run-a/index.md");
+        assert_eq!(imported.base_path, "/Wiki/run-a/conv-1");
+        assert!(
+            imported
+                .note_paths
+                .iter()
+                .any(|path| { path.starts_with("/Sources/raw/run-a-conv-1/") })
+        );
+        assert!(
+            imported
+                .note_paths
+                .iter()
+                .filter(|path| !path.starts_with("/Sources/raw/"))
+                .all(|path| { path.starts_with("/Wiki/run-a/conv-1/") })
+        );
+        let writes = client.writes.lock().expect("writes should lock");
+        assert_eq!(writes.len(), imported.note_paths.len());
+        assert!(
+            writes
+                .iter()
+                .any(|request| { request.path.starts_with("/Sources/raw/run-a-conv-1/") })
+        );
+        assert!(
+            writes
+                .iter()
+                .filter(|request| !request.path.starts_with("/Sources/raw/"))
+                .all(|request| { request.path.starts_with("/Wiki/run-a/conv-1/") })
+        );
     }
 
     #[test]
-    fn build_documents_emits_deterministic_note_set() {
-        let documents = build_documents(&sample_conversation(), "/Wiki/beam/run/conv-1");
-        let paths = documents
-            .iter()
-            .map(|(path, _)| path.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            paths,
-            vec![
-                "/Wiki/beam/run/conv-1/conversation.md".to_string(),
-                "/Wiki/beam/run/conv-1/profile.md".to_string(),
-                "/Wiki/beam/run/conv-1/plan.md".to_string(),
-                "/Wiki/beam/run/conv-1/user_questions.md".to_string()
-            ]
+    fn planning_conversation_keeps_note_metadata_without_writes() {
+        let imported = plan_imported_conversation("Run A", &sample_conversation());
+
+        assert_eq!(imported.namespace_path, "/Wiki/run-a");
+        assert_eq!(imported.namespace_index_path, "/Wiki/run-a/index.md");
+        assert_eq!(imported.base_path, "/Wiki/run-a/conv-1");
+        assert_eq!(imported.note_paths.len(), imported.notes.len());
+        assert!(
+            imported
+                .notes
+                .iter()
+                .any(|note| note.path.starts_with("/Sources/raw/run-a-conv-1/"))
         );
-        assert!(documents[0].1.contains("### 0001 user"));
-        assert!(documents[0].1.contains("### 0002 assistant"));
+        assert!(
+            imported
+                .notes
+                .iter()
+                .filter(|note| !note.path.starts_with("/Sources/raw/"))
+                .all(|note| note.path.starts_with("/Wiki/run-a/conv-1/"))
+        );
     }
 }

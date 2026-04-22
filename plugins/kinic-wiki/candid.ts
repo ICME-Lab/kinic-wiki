@@ -72,7 +72,7 @@ type RawGlobNodeHit = {
 type RawSearchNodeHit = {
   path: string;
   kind: RawNodeKind;
-  snippet: string;
+  snippet: [] | [string];
   score: number;
   match_reasons: string[];
 };
@@ -151,11 +151,18 @@ export interface KinicCanisterApi {
   }) => Promise<RawResult<RawSearchNodeHit[]>>;
   export_snapshot: (request: {
     prefix: [] | [string];
-  }) => Promise<RawResult<{ snapshot_revision: string; nodes: RawNode[] }>>;
+    limit: number;
+    cursor: [] | [string];
+    snapshot_revision: [] | [string];
+    snapshot_session_id: [] | [string];
+  }) => Promise<RawResult<{ snapshot_revision: string; snapshot_session_id: [] | [string]; nodes: RawNode[]; next_cursor: [] | [string] }>>;
   fetch_updates: (request: {
     known_snapshot_revision: string;
     prefix: [] | [string];
-  }) => Promise<RawResult<{ snapshot_revision: string; changed_nodes: RawNode[]; removed_paths: string[] }>>;
+    limit: number;
+    cursor: [] | [string];
+    target_snapshot_revision: [] | [string];
+  }) => Promise<RawResult<{ snapshot_revision: string; changed_nodes: RawNode[]; removed_paths: string[]; next_cursor: [] | [string] }>>;
 }
 
 type ActorFactory = Parameters<typeof Actor.createActor<KinicCanisterApi>>[0];
@@ -202,7 +209,7 @@ export const idlFactory: ActorFactory = ({ IDL: candid }) => {
   const SearchNodeHit = candid.Record({
     path: candid.Text,
     kind: NodeKind,
-    snippet: candid.Text,
+    snippet: candid.Opt(candid.Text),
     score: candid.Float32,
     match_reasons: candid.Vec(candid.Text)
   });
@@ -284,12 +291,19 @@ export const idlFactory: ActorFactory = ({ IDL: candid }) => {
       top_k: candid.Nat32
     })], [candid.Variant({ Ok: candid.Vec(SearchNodeHit), Err: candid.Text })], ["query"]),
     export_snapshot: candid.Func([candid.Record({
-      prefix: candid.Opt(candid.Text)
-    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, nodes: candid.Vec(Node) }), Err: candid.Text })], ["query"]),
+      prefix: candid.Opt(candid.Text),
+      limit: candid.Nat32,
+      cursor: candid.Opt(candid.Text),
+      snapshot_revision: candid.Opt(candid.Text),
+      snapshot_session_id: candid.Opt(candid.Text)
+    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, snapshot_session_id: candid.Opt(candid.Text), nodes: candid.Vec(Node), next_cursor: candid.Opt(candid.Text) }), Err: candid.Text })], []),
     fetch_updates: candid.Func([candid.Record({
       known_snapshot_revision: candid.Text,
-      prefix: candid.Opt(candid.Text)
-    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, changed_nodes: candid.Vec(Node), removed_paths: candid.Vec(candid.Text) }), Err: candid.Text })], ["query"])
+      prefix: candid.Opt(candid.Text),
+      limit: candid.Nat32,
+      cursor: candid.Opt(candid.Text),
+      target_snapshot_revision: candid.Opt(candid.Text)
+    })], [candid.Variant({ Ok: candid.Record({ snapshot_revision: candid.Text, changed_nodes: candid.Vec(Node), removed_paths: candid.Vec(candid.Text), next_cursor: candid.Opt(candid.Text) }), Err: candid.Text })], ["query"])
   });
 };
 
@@ -388,27 +402,30 @@ export function normalizeSearchNodeHits(raw: RawResult<RawSearchNodeHit[]>): Sea
     validate("search_nodes", {
       path: entry.path,
       kind: normalizeNodeKind(entry.kind),
-      snippet: entry.snippet,
+      snippet: entry.snippet.length === 0 ? null : entry.snippet[0],
       score: entry.score,
       match_reasons: entry.match_reasons
     }, isSearchNodeHit)
   );
 }
 
-export function normalizeExportResponse(raw: RawResult<{ snapshot_revision: string; nodes: RawNode[] }>): ExportSnapshotResponse {
+export function normalizeExportResponse(raw: RawResult<{ snapshot_revision: string; snapshot_session_id: [] | [string]; nodes: RawNode[]; next_cursor: [] | [string] }>): ExportSnapshotResponse {
   const ok = unwrapResult(raw);
   return validate("export_snapshot", {
     snapshot_revision: ok.snapshot_revision,
-    nodes: ok.nodes.map(normalizeNode)
+    snapshot_session_id: ok.snapshot_session_id.length === 0 ? null : ok.snapshot_session_id[0],
+    nodes: ok.nodes.map(normalizeNode),
+    next_cursor: ok.next_cursor.length === 0 ? null : ok.next_cursor[0]
   }, isExportSnapshotResponse);
 }
 
-export function normalizeFetchResponse(raw: RawResult<{ snapshot_revision: string; changed_nodes: RawNode[]; removed_paths: string[] }>): FetchUpdatesResponse {
+export function normalizeFetchResponse(raw: RawResult<{ snapshot_revision: string; changed_nodes: RawNode[]; removed_paths: string[]; next_cursor: [] | [string] }>): FetchUpdatesResponse {
   const ok = unwrapResult(raw);
   return validate("fetch_updates", {
     snapshot_revision: ok.snapshot_revision,
     changed_nodes: ok.changed_nodes.map(normalizeNode),
-    removed_paths: ok.removed_paths
+    removed_paths: ok.removed_paths,
+    next_cursor: ok.next_cursor.length === 0 ? null : ok.next_cursor[0]
   }, isFetchUpdatesResponse);
 }
 

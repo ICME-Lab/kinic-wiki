@@ -4,7 +4,7 @@
 
 ## 目的
 
-- `wiki-generate` をこの repo 固有の親 skill として維持する
+- repo 固有 workflow を `ingest` `query` `lint` に分割して維持する
 - Obsidian 一般の知識は外部 skill から再利用する
 - upstream の全体構成に引きずられず、この repo の canister / CLI / plugin 前提を守る
 
@@ -25,10 +25,15 @@
 
 ```text
 .agents/skills/
+  ingest/
+    SKILL.md
+  query/
+    SKILL.md
+  lint/
+    SKILL.md
   wiki-generate/
     SKILL.md
     references/
-    agents/
   vendor/
     obsidian-skills/
       obsidian-markdown/
@@ -44,13 +49,27 @@
 
 ## 役割分担
 
+### `ingest`
+
+- source-driven wiki 更新
+- source normalization
+- page map
+- review-first draft generation
+
+### `query`
+
+- wiki に対する探索と回答
+- 必要時だけ page synthesis を戻す
+
+### `lint`
+
+- local / remote health inspection
+- report-first repair planning
+
 ### `wiki-generate`
 
-- この repo の正本 workflow を持つ親 skill
-- canister-backed wiki
-- `Wiki/` working copy
-- review gate / push gate
-- page map / draft generation
+- legacy entry point
+- 新しい 3 skill への案内だけを持つ
 
 ### `vendor/obsidian-markdown`
 
@@ -72,11 +91,13 @@
 
 ## 依存の向き
 
-`wiki-generate` が vendor skill を参照する。
+repo skill が vendor skill を参照する。
 
-- `wiki-generate` -> `vendor/obsidian-markdown`
-- `wiki-generate` -> `vendor/obsidian-cli`
-- `wiki-generate` -> `vendor/defuddle`
+- `ingest` -> `vendor/obsidian-markdown`
+- `ingest` -> `vendor/obsidian-cli`
+- `ingest` -> `vendor/defuddle`
+- `query` -> `vendor/obsidian-markdown` when page write-back is needed
+- `lint` -> `vendor/obsidian-markdown` when mirror-shape checks need markdown details
 
 逆方向の依存は作らない。
 
@@ -87,7 +108,7 @@
 - upstream を wholesale import しない
 - 必要 skill だけ vendor する
 - vendor 後に、この repo で不要な記述は削る
-- `wiki-generate` の正本 workflow は vendor 側に移さない
+- repo 固有 workflow は vendor 側に移さない
 
 ## 更新方針
 

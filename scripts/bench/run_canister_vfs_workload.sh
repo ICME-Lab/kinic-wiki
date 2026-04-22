@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Where: scripts/bench/run_canister_vfs_workload.sh
-# What: Run API-centric repeated-request benchmarks against a deployed canister.
+# What: Run API-centric repeated-request benchmarks against a deployed local canister.
 # Why: We want operation-level cycle, latency, and wire-IO costs for the real canister API.
+# Why: The local `wiki` canister id should auto-resolve from `.icp/cache/mappings/local.ids.json`.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=./common.sh
@@ -13,19 +14,37 @@ require_command "cargo" "Rust toolchain is required to build the vfs_bench clien
 require_command "node" "Node.js is required to materialize JSON summaries."
 require_command "icp" "The icp CLI is required to collect canister cycle costs."
 
-REPLICA_HOST="${REPLICA_HOST:-}"
-CANISTER_ID="${CANISTER_ID:-}"
+CLI_CANISTER_ID=""
+ENV_CANISTER_ID="${CANISTER_ID:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --replica-host) REPLICA_HOST="$2"; shift 2 ;;
-    --canister-id) CANISTER_ID="$2"; shift 2 ;;
+    --canister-id) CLI_CANISTER_ID="$2"; shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
 done
-if [[ -z "${REPLICA_HOST}" || -z "${CANISTER_ID}" ]]; then
-  echo "usage: REPLICA_HOST=... CANISTER_ID=... bash scripts/bench/run_canister_vfs_workload.sh" >&2
+
+CANISTER_ID_SOURCE=""
+CANISTER_ID="${CLI_CANISTER_ID:-}"
+if [[ -n "${CANISTER_ID}" ]]; then
+  CANISTER_ID_SOURCE="cli"
+elif [[ -n "${ENV_CANISTER_ID}" ]]; then
+  CANISTER_ID="${ENV_CANISTER_ID}"
+  CANISTER_ID_SOURCE="env"
+else
+  CANISTER_ID="$(resolve_local_canister_id "wiki" || true)"
+  if [[ -n "${CANISTER_ID}" ]]; then
+    CANISTER_ID_SOURCE="$(bench_local_ids_file):wiki"
+  fi
+fi
+if [[ -z "${CANISTER_ID}" ]]; then
+  echo "failed to resolve local wiki canister id: set --canister-id, CANISTER_ID, or deploy local wiki so $(bench_local_ids_file) contains a wiki entry" >&2
   exit 1
 fi
+bench_log "resolved canister id ${CANISTER_ID} (${CANISTER_ID_SOURCE})"
+REPLICA_HOST="http://127.0.0.1:8000"
+LOCAL_ARGS=(--local)
+CANISTER_STATUS_ENVIRONMENT="local"
+unset CANISTER_STATUS_NETWORK
 
 RESULT_DIR="$(bench_results_dir "canister_vfs_workload")"
 RAW_DIR="$(bench_raw_dir "${RESULT_DIR}")"
@@ -33,6 +52,7 @@ SUMMARY_FILE="${RESULT_DIR}/summary.txt"
 CONFIG_FILE="${RESULT_DIR}/config.txt"
 ENVIRONMENT_FILE="${RESULT_DIR}/environment.txt"
 write_summary_header "${SUMMARY_FILE}" "canister_vfs_workload"
+printf 'canister_id=%s\n' "${CANISTER_ID}" >> "${SUMMARY_FILE}"
 write_environment_json "${ENVIRONMENT_FILE}"
 augment_environment_json "${ENVIRONMENT_FILE}" "${REPLICA_HOST}" "${CANISTER_ID}" "ic-agent" "icp" "true"
 
@@ -47,12 +67,18 @@ node -e '
   const parseList = (value, fallback) => !value ? fallback : value.split(",").map(item => item.trim()).filter(Boolean);
   const diagnosticProfile = process.env.WIKI_CANISTER_DIAGNOSTIC_PROFILE || "baseline";
   const replicaResetMode = process.env.BENCH_REPLICA_RESET_MODE || null;
-  const sizeSpecs = [
+  const searchPreviewModes = parseList(process.env.WORKLOAD_SEARCH_PREVIEW_MODES, ["none", "light"]);
+  const allSizeSpecs = [
     { label: "1k", bytes: 1024, iterations: Number(process.env.WORKLOAD_ITERATIONS_1K || 200) },
     { label: "10k", bytes: 10240, iterations: Number(process.env.WORKLOAD_ITERATIONS_10K || 100) },
     { label: "100k", bytes: 102400, iterations: Number(process.env.WORKLOAD_ITERATIONS_100K || 40) },
     { label: "1mb", bytes: 1048576, iterations: Number(process.env.WORKLOAD_ITERATIONS_1MB || 10) }
   ];
+  const defaultPayloadLabels = ["1k", "10k", "100k", "1mb"];
+  const payloadLabels = process.env.WORKLOAD_PAYLOAD_LABELS
+    ? parseList(process.env.WORKLOAD_PAYLOAD_LABELS, defaultPayloadLabels)
+    : defaultPayloadLabels;
+  const sizeSpecs = allSizeSpecs.filter((s) => payloadLabels.includes(s.label));
   const pickIterations = (operation, size) => {
     if (operation === "list") return Number(process.env.WORKLOAD_LIST_ITERATIONS || 100);
     if (operation === "search") return Number(process.env.WORKLOAD_SEARCH_ITERATIONS || 50);
@@ -80,22 +106,26 @@ node -e '
       for (const size of sizeSpecs) {
         const iterations = pickIterations(operation, size);
         if (iterations <= 0) continue;
+        const previewModes = operation === "search" ? searchPreviewModes : ["none"];
         // `mkdir` is the only workload scenario that stays scenario_total.
         // Everything else should report pure measured-request cycles first.
         const measurementMode = operation === "mkdir"
           ? "scenario_total"
           : "isolated_single_op";
-        scenarios.push({
-          scenario: `${operation}_${shape}_n${fileCount}_p${size.bytes}_c${clients}`,
-          operation,
-          measurement_mode: measurementMode,
-          directory_shape: shape,
-          file_count: fileCount,
-          payload_size_bytes: size.bytes,
-          concurrent_clients: clients,
-          iterations,
-          warmup_iterations: 0
-        });
+        for (const previewMode of previewModes) {
+          scenarios.push({
+            scenario: `${operation}_${shape}_n${fileCount}_p${size.bytes}_c${clients}_preview_${previewMode}`,
+            operation,
+            preview_mode: previewMode,
+            measurement_mode: measurementMode,
+            directory_shape: shape,
+            file_count: fileCount,
+            payload_size_bytes: size.bytes,
+            concurrent_clients: clients,
+            iterations,
+            warmup_iterations: 0
+          });
+        }
       }
   const payload = {
     tool: "canister_vfs_workload",
@@ -108,6 +138,7 @@ node -e '
     directory_shapes: directoryShapes,
     file_count: fileCount,
     payload_sizes: sizeSpecs,
+    search_preview_modes: searchPreviewModes,
     concurrent_clients: clients,
     scenarios
   };
@@ -123,6 +154,7 @@ append_summary() {
     const lines = [
       `scenario=${data.benchmark_name}`,
       `operation=${data.operation}`,
+      `preview_mode=${data.preview_mode ?? "none"}`,
       `openai_tool=${data.openai_tool ?? null}`,
       `openai_tool_variant=${data.openai_tool_variant ?? null}`,
       `directory_shape=${data.directory_shape}`,
@@ -180,7 +212,8 @@ write_failed_raw() {
   local concurrent_clients="$7"
   local iterations="$8"
   local measurement_mode="$9"
-  local error_text="${10}"
+  local preview_mode="${10}"
+  local error_text="${11}"
   node -e '
     const fs = require("fs");
     const [
@@ -193,6 +226,7 @@ write_failed_raw() {
       concurrentClients,
       iterations,
       measurementMode,
+      previewMode,
       errorText
     ] = process.argv.slice(1);
     const op = operation.replaceAll("-", "_");
@@ -216,6 +250,7 @@ write_failed_raw() {
     fs.writeFileSync(rawFile, JSON.stringify({
       benchmark_name: scenario,
       operation: op,
+      preview_mode: previewMode,
       openai_tool: oa.openai_tool,
       openai_tool_variant: oa.openai_tool_variant,
       directory_shape: directoryShape,
@@ -244,7 +279,7 @@ write_failed_raw() {
       cycles_per_measured_request: null,
       error: errorText
     }, null, 2) + "\n");
-  ' "${raw_file}" "${scenario}" "${operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${error_text}"
+  ' "${raw_file}" "${scenario}" "${operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${preview_mode}" "${error_text}"
 }
 
 node -e '
@@ -254,6 +289,7 @@ node -e '
     console.log([
       scenario.scenario,
       scenario.operation,
+      scenario.preview_mode,
       scenario.measurement_mode,
       scenario.directory_shape,
       scenario.file_count,
@@ -263,7 +299,7 @@ node -e '
       scenario.warmup_iterations
     ].join("|"));
   }
-' "${CONFIG_FILE}" | while IFS='|' read -r scenario operation measurement_mode directory_shape file_count payload_size concurrent_clients iterations warmup_iterations; do
+' "${CONFIG_FILE}" | while IFS='|' read -r scenario operation preview_mode measurement_mode directory_shape file_count payload_size concurrent_clients iterations warmup_iterations; do
   raw_file="${RAW_DIR}/${scenario}.txt"
   before_file="${RESULT_DIR}/${scenario}.before_cycles.txt"
   after_file="${RESULT_DIR}/${scenario}.after_cycles.txt"
@@ -278,7 +314,7 @@ node -e '
     if "${BENCH_BIN}" workload-setup \
       --output-json "${setup_raw_file}" \
       --benchmark-name "${scenario}" \
-      --replica-host "${REPLICA_HOST}" \
+      "${LOCAL_ARGS[@]}" \
       --canister-id "${CANISTER_ID}" \
       --prefix "${prefix}" \
       --payload-size-bytes "${payload_size}" \
@@ -286,12 +322,13 @@ node -e '
       --directory-shape "${directory_shape}" \
       --concurrent-clients "${concurrent_clients}" \
       --iterations "${iterations}" \
+      --preview-mode "${preview_mode}" \
       --operation "${cli_operation}" 2> "${stderr_file}"; then
       :
     else
       error_text="$(tr '\n' ' ' < "${stderr_file}" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
       [[ -n "${error_text}" ]] || error_text="benchmark setup command failed"
-      write_failed_raw "${raw_file}" "${scenario}" "${cli_operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${error_text}"
+      write_failed_raw "${raw_file}" "${scenario}" "${cli_operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${preview_mode}" "${error_text}"
       capture_canister_cycles_json "${CANISTER_ID}" "${after_file}"
       augment_raw_with_cycles "${raw_file}" "${before_file}" "${after_file}" "${iterations}"
       append_summary "${raw_file}"
@@ -301,7 +338,7 @@ node -e '
     if "${BENCH_BIN}" workload-measure \
       --output-json "${raw_file}" \
       --benchmark-name "${scenario}" \
-      --replica-host "${REPLICA_HOST}" \
+      "${LOCAL_ARGS[@]}" \
       --canister-id "${CANISTER_ID}" \
       --prefix "${prefix}" \
       --payload-size-bytes "${payload_size}" \
@@ -309,12 +346,13 @@ node -e '
       --directory-shape "${directory_shape}" \
       --concurrent-clients "${concurrent_clients}" \
       --iterations "${iterations}" \
+      --preview-mode "${preview_mode}" \
       --operation "${cli_operation}" 2> "${stderr_file}"; then
       :
     else
       error_text="$(tr '\n' ' ' < "${stderr_file}" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//')"
       [[ -n "${error_text}" ]] || error_text="benchmark command failed"
-      write_failed_raw "${raw_file}" "${scenario}" "${cli_operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${error_text}"
+      write_failed_raw "${raw_file}" "${scenario}" "${cli_operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${preview_mode}" "${error_text}"
     fi
     capture_canister_cycles_json "${CANISTER_ID}" "${after_file}"
     augment_raw_with_isolated_cycles "${raw_file}" "${setup_raw_file}" "${before_file}" "${after_setup_file}" "${after_file}" "${iterations}"
@@ -325,7 +363,7 @@ node -e '
   if "${BENCH_BIN}" workload \
     --output-json "${raw_file}" \
     --benchmark-name "${scenario}" \
-    --replica-host "${REPLICA_HOST}" \
+    "${LOCAL_ARGS[@]}" \
     --canister-id "${CANISTER_ID}" \
     --prefix "${prefix}" \
     --payload-size-bytes "${payload_size}" \
@@ -334,6 +372,7 @@ node -e '
     --concurrent-clients "${concurrent_clients}" \
     --iterations "${iterations}" \
     --warmup-iterations "${warmup_iterations}" \
+    --preview-mode "${preview_mode}" \
     --operation "${cli_operation}" 2> "${stderr_file}"; then
     :
   else
@@ -341,7 +380,7 @@ node -e '
     if [[ -z "${error_text}" ]]; then
       error_text="benchmark command failed"
     fi
-    write_failed_raw "${raw_file}" "${scenario}" "${cli_operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${error_text}"
+    write_failed_raw "${raw_file}" "${scenario}" "${cli_operation}" "${directory_shape}" "${file_count}" "${payload_size}" "${concurrent_clients}" "${iterations}" "${measurement_mode}" "${preview_mode}" "${error_text}"
   fi
   capture_canister_cycles_json "${CANISTER_ID}" "${after_file}"
   augment_raw_with_cycles "${raw_file}" "${before_file}" "${after_file}" "${iterations}"

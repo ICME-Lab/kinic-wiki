@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   parseMirrorFrontmatter,
+  remoteDeleteConflictMarkdown,
   serializeMirrorFile,
   stripManagedFrontmatter
 } from "./frontmatter";
@@ -35,7 +36,7 @@ test("plugin settings preserve tracked nodes", () => {
     canisterId: "aaaaa-aa",
     mirrorRoot: "Wiki",
     autoPullOnStartup: true,
-    lastSnapshotRevision: "snap-1",
+    lastSnapshotRevision: "v5:1:2f57696b69",
     lastSyncedAt: 42,
     trackedNodes: [{
       path: "/Wiki/foo.md",
@@ -46,6 +47,15 @@ test("plugin settings preserve tracked nodes", () => {
 
   assert.equal(settings.trackedNodes.length, 1);
   assert.equal(settings.trackedNodes[0].etag, "etag-1");
+  assert.equal(settings.lastSnapshotRevision, "v5:1:2f57696b69");
+});
+
+test("plugin settings discard legacy snapshot revisions", () => {
+  const settings = parsePluginSettings({
+    lastSnapshotRevision: "v3:1:0:2f57696b69:old-state-hash"
+  });
+
+  assert.equal(settings.lastSnapshotRevision, "");
 });
 
 test("deletedTrackedNodes does not treat broken frontmatter files as deleted", () => {
@@ -164,6 +174,23 @@ test("partitionPullUpdates keeps dirty initial-sync stale files out of removals"
   assert.deepEqual(result.nextTrackedNodes, [
     { path: "/Wiki/stale-dirty.md", kind: "file", etag: "dirty" }
   ]);
+});
+
+test("remoteDeleteConflictMarkdown includes local content when available", () => {
+  const result = remoteDeleteConflictMarkdown("/Wiki/dirty.md", "# Local\n\nbody");
+
+  assert.match(result, /^# Remote delete conflict/);
+  assert.match(result, /Remote path: \/Wiki\/dirty\.md/);
+  assert.match(result, /Status: remote copy was deleted; dirty local copy was kept\./);
+  assert.match(result, /Resolution: re-push the local file or delete the local file and pull again\./);
+  assert.match(result, /## Local content/);
+  assert.match(result, /# Local/);
+});
+
+test("remoteDeleteConflictMarkdown omits empty local content section", () => {
+  const result = remoteDeleteConflictMarkdown("/Wiki/dirty.md");
+
+  assert.doesNotMatch(result, /## Local content/);
 });
 
 function remoteToLocalPath(mirrorRoot: string, remotePath: string): string {

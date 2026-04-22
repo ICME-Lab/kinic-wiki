@@ -1,4 +1,4 @@
 version: 1
 display_name: Wiki Generate
-short_description: Generate and refine draft wiki pages for the canister-backed llm-wiki workflow.
-default_prompt: Generate or expand draft wiki pages from local source material, keep output compatible with the Obsidian working copy, and prepare reviewed changes for wiki-cli push.
+short_description: Legacy router for the llm-wiki workflow skills.
+default_prompt: Route the task to the correct repo skill. Use ingest for source-driven updates, query for wiki-backed answering, and lint for health inspection.

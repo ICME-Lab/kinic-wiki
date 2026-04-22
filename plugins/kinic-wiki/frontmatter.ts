@@ -62,6 +62,20 @@ export function serializeMirrorFile(frontmatter: MirrorFrontmatter, body: string
   ].join("\n");
 }
 
+export function remoteDeleteConflictMarkdown(remotePath: string, localContent?: string): string {
+  const body = [
+    "# Remote delete conflict",
+    "",
+    `Remote path: ${remotePath}`,
+    "Status: remote copy was deleted; dirty local copy was kept.",
+    "Resolution: re-push the local file or delete the local file and pull again."
+  ];
+  if (localContent !== undefined && localContent.length > 0) {
+    body.push("", "## Local content", "", localContent);
+  }
+  return body.join("\n");
+}
+
 function stripQuotes(value: string): string {
   return value.replace(/^"(.*)"$/, "$1");
 }

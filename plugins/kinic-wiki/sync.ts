@@ -15,6 +15,7 @@ import {
   removeMirrorPaths,
   updateLocalNodeMetadata,
   writeConflictFile,
+  writeRemoteDeleteConflictFile,
   writeRemoteUpdateConflictFile,
   writeSnapshotMirror
 } from "./mirror";
@@ -23,11 +24,15 @@ import {
   excludeCleanRemotePaths,
   hasStoredSnapshotRevision,
   initialSyncStalePaths,
+  mergeInitialSnapshotNodes,
   mergeDirtyPaths,
+  snapshotRecoveryNotice,
   shouldSkipPush,
   sortedUniquePaths
 } from "./sync_logic";
-import { FetchUpdatesResponse, NodeSnapshot, PluginSettings, TrackedNodeState } from "./types";
+import { ExportSnapshotResponse, FetchUpdatesResponse, NodeSnapshot, PluginSettings, TrackedNodeState } from "./types";
+
+const SYNC_PAGE_LIMIT = 100;
 
 interface SyncApplyResult {
   appliedChanges: number;
@@ -65,9 +70,13 @@ export class WikiSyncService {
     if (!hasStoredSnapshotRevision(this.settings.lastSnapshotRevision)) {
       return this.applyInitialSnapshot(dirtyPaths);
     }
-    const client = this.client();
-    const updates = await client.fetchUpdates(this.settings.lastSnapshotRevision);
-    return this.applyFetchedUpdates(updates, dirtyPaths);
+    try {
+      const updates = await this.collectPagedUpdates(this.settings.lastSnapshotRevision);
+      return this.applyFetchedUpdates(updates, dirtyPaths);
+    } catch (error: unknown) {
+      this.noticeResyncRequired(error);
+      throw error;
+    }
   }
 
   async showStatus(): Promise<void> {
@@ -184,17 +193,23 @@ export class WikiSyncService {
   }
 
   private async applyInitialSnapshot(dirtyPaths?: Set<string>): Promise<SyncApplyResult> {
-    const snapshot = await this.client().exportSnapshot();
+    const snapshot = await this.collectPagedSnapshot();
+    const updates = await this.collectPagedUpdates(snapshot.snapshot_revision);
+    const nodes = mergeInitialSnapshotNodes(
+      snapshot.nodes,
+      updates.changed_nodes,
+      updates.removed_paths
+    );
     const managedNodes = await collectManagedNodes(this.app, this.settings.mirrorRoot);
-    const remotePaths = new Set(snapshot.nodes.map((node) => node.path));
+    const remotePaths = new Set(nodes.map((node) => node.path));
     const stalePaths = initialSyncStalePaths(
       managedNodes.map((node) => node.metadata.path),
       this.settings.trackedNodes.map((node) => node.path),
       remotePaths
     );
     return this.applyRemoteChanges(
-      snapshot.snapshot_revision,
-      snapshot.nodes,
+      updates.snapshot_revision,
+      nodes,
       stalePaths,
       dirtyPaths ?? dirtyPathsFromManagedNodes(managedNodes, this.settings.lastSyncedAt)
     );
@@ -204,9 +219,79 @@ export class WikiSyncService {
     cleanRemotePaths = new Set<string>(),
     unresolvedConflictPaths = new Set<string>()
   ): Promise<SyncApplyResult> {
-    const updates = await this.client().fetchUpdates(this.settings.lastSnapshotRevision);
     const dirtyPaths = excludeCleanRemotePaths(await this.collectDirtyPaths(), cleanRemotePaths);
-    return this.applyFetchedUpdates(updates, dirtyPaths, unresolvedConflictPaths);
+    if (!hasStoredSnapshotRevision(this.settings.lastSnapshotRevision)) {
+      return this.applyInitialSnapshot(dirtyPaths);
+    }
+    try {
+      const updates = await this.collectPagedUpdates(this.settings.lastSnapshotRevision);
+      return this.applyFetchedUpdates(updates, dirtyPaths, unresolvedConflictPaths);
+    } catch (error: unknown) {
+      this.noticeResyncRequired(error);
+      throw error;
+    }
+  }
+
+  private async collectPagedSnapshot(): Promise<ExportSnapshotResponse> {
+    let cursor: string | null = null;
+    let snapshotRevision: string | null = null;
+    let snapshotSessionId: string | null = null;
+    const nodes: NodeSnapshot[] = [];
+    while (true) {
+      const page = await this.client().exportSnapshot(
+        cursor,
+        snapshotRevision,
+        snapshotSessionId,
+        SYNC_PAGE_LIMIT
+      );
+      snapshotRevision = page.snapshot_revision;
+      snapshotSessionId = page.snapshot_session_id;
+      nodes.push(...page.nodes);
+      if (page.next_cursor === null) {
+        return {
+          snapshot_revision: snapshotRevision,
+          snapshot_session_id: snapshotSessionId,
+          nodes,
+          next_cursor: null
+        };
+      }
+      cursor = page.next_cursor;
+    }
+  }
+
+  private async collectPagedUpdates(lastSnapshotRevision: string): Promise<FetchUpdatesResponse> {
+    let cursor: string | null = null;
+    let targetSnapshotRevision: string | null = null;
+    const changedNodes: NodeSnapshot[] = [];
+    const removedPaths: string[] = [];
+    while (true) {
+      const page = await this.client().fetchUpdates(
+        lastSnapshotRevision,
+        cursor,
+        targetSnapshotRevision,
+        SYNC_PAGE_LIMIT
+      );
+      targetSnapshotRevision = page.snapshot_revision;
+      changedNodes.push(...page.changed_nodes);
+      removedPaths.push(...page.removed_paths);
+      if (page.next_cursor === null) {
+        return {
+          snapshot_revision: targetSnapshotRevision,
+          changed_nodes: changedNodes,
+          removed_paths: removedPaths,
+          next_cursor: null
+        };
+      }
+      cursor = page.next_cursor;
+    }
+  }
+
+  private noticeResyncRequired(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const notice = snapshotRecoveryNotice(message);
+    if (notice !== null) {
+      new Notice(notice);
+    }
   }
 
   private async applyFetchedUpdates(
@@ -241,6 +326,9 @@ export class WikiSyncService {
     await removeMirrorPaths(this.app, this.settings.mirrorRoot, partition.safeRemovedPaths);
     for (const node of partition.conflictChangedNodes) {
       await writeRemoteUpdateConflictFile(this.app, this.settings.mirrorRoot, node);
+    }
+    for (const path of partition.conflictRemovedPaths) {
+      await writeRemoteDeleteConflictFile(this.app, this.settings.mirrorRoot, path);
     }
     await this.markSynced(
       snapshotRevision,

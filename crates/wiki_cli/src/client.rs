@@ -182,7 +182,7 @@ impl WikiApi for CanisterWikiClient {
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse> {
         let result: Result<ExportSnapshotResponse, String> =
-            self.query("export_snapshot", &request).await?;
+            self.update("export_snapshot", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

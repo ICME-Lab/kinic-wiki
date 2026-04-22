@@ -7,7 +7,7 @@ use wiki_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 use super::{
@@ -88,6 +88,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         query_text: "alpha".to_string(),
         prefix: Some("/Wiki".to_string()),
         top_k: 5,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
     assert_eq!(hits.len(), 1);
@@ -104,6 +105,10 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
 
     let snapshot = export_snapshot(ExportSnapshotRequest {
         prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: None,
+        snapshot_revision: None,
+        snapshot_session_id: None,
     })
     .expect("snapshot should export");
     assert_eq!(snapshot.nodes.len(), 2);
@@ -111,6 +116,9 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     let empty_delta = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: snapshot.snapshot_revision.clone(),
         prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: None,
+        target_snapshot_revision: None,
     })
     .expect("matching snapshot should produce empty delta");
     assert!(empty_delta.changed_nodes.is_empty());
@@ -119,6 +127,9 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     let invalid_delta = fetch_updates(FetchUpdatesRequest {
         known_snapshot_revision: "missing".to_string(),
         prefix: Some("/Wiki".to_string()),
+        limit: 100,
+        cursor: None,
+        target_snapshot_revision: None,
     });
     assert_eq!(
         invalid_delta.expect_err("unknown snapshot should fail"),
@@ -213,6 +224,7 @@ fn fs_entrypoints_search_large_hits_without_trap() {
         query_text: "shared-bench-search".to_string(),
         prefix: Some("/Wiki/large".to_string()),
         top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("large search should succeed");
 
@@ -222,9 +234,8 @@ fn fs_entrypoints_search_large_hits_without_trap() {
     }
     for hit in hits {
         assert!(hit.path.starts_with("/Wiki/large/"));
-        assert!(!hit.snippet.is_empty());
-        assert!(hit.snippet.len() <= 512);
-        assert!(hit.snippet.chars().count() <= 243);
+        assert!(hit.snippet.is_none());
+        assert!(hit.preview.is_none());
     }
 }
 

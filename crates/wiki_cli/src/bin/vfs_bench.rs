@@ -8,8 +8,10 @@ mod vfs_bench {
 }
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::fs;
+use wiki_cli::connection::resolve_connection;
+use wiki_types::SearchPreviewMode;
 
 use vfs_bench::common::{
     DirectoryShape, LatencyOperation, MeasurementMode, SetupStats, WorkloadOperation,
@@ -29,6 +31,21 @@ struct Cli {
     command: Command,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum BenchSearchPreviewMode {
+    None,
+    Light,
+}
+
+impl From<BenchSearchPreviewMode> for SearchPreviewMode {
+    fn from(value: BenchSearchPreviewMode) -> Self {
+        match value {
+            BenchSearchPreviewMode::None => SearchPreviewMode::None,
+            BenchSearchPreviewMode::Light => SearchPreviewMode::Light,
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Command {
     Workload {
@@ -37,9 +54,9 @@ enum Command {
         #[arg(long)]
         benchmark_name: String,
         #[arg(long)]
-        replica_host: String,
+        local: bool,
         #[arg(long)]
-        canister_id: String,
+        canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -56,6 +73,8 @@ enum Command {
         warmup_iterations: usize,
         #[arg(long, value_enum)]
         operation: WorkloadOperation,
+        #[arg(long, value_enum, default_value_t = BenchSearchPreviewMode::None)]
+        preview_mode: BenchSearchPreviewMode,
     },
     Latency {
         #[arg(long)]
@@ -63,9 +82,9 @@ enum Command {
         #[arg(long)]
         benchmark_name: String,
         #[arg(long)]
-        replica_host: String,
+        local: bool,
         #[arg(long)]
-        canister_id: String,
+        canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -83,9 +102,9 @@ enum Command {
         #[arg(long)]
         benchmark_name: String,
         #[arg(long)]
-        replica_host: String,
+        local: bool,
         #[arg(long)]
-        canister_id: String,
+        canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -100,6 +119,8 @@ enum Command {
         iterations: usize,
         #[arg(long, value_enum)]
         operation: WorkloadOperation,
+        #[arg(long, value_enum, default_value_t = BenchSearchPreviewMode::None)]
+        preview_mode: BenchSearchPreviewMode,
     },
     WorkloadMeasure {
         #[arg(long)]
@@ -107,9 +128,9 @@ enum Command {
         #[arg(long)]
         benchmark_name: String,
         #[arg(long)]
-        replica_host: String,
+        local: bool,
         #[arg(long)]
-        canister_id: String,
+        canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -124,6 +145,8 @@ enum Command {
         iterations: usize,
         #[arg(long, value_enum)]
         operation: WorkloadOperation,
+        #[arg(long, value_enum, default_value_t = BenchSearchPreviewMode::None)]
+        preview_mode: BenchSearchPreviewMode,
     },
     LatencySetup {
         #[arg(long)]
@@ -131,9 +154,9 @@ enum Command {
         #[arg(long)]
         benchmark_name: String,
         #[arg(long)]
-        replica_host: String,
+        local: bool,
         #[arg(long)]
-        canister_id: String,
+        canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -147,9 +170,9 @@ enum Command {
         #[arg(long)]
         benchmark_name: String,
         #[arg(long)]
-        replica_host: String,
+        local: bool,
         #[arg(long)]
-        canister_id: String,
+        canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
         #[arg(long)]
@@ -167,7 +190,7 @@ async fn main() -> Result<()> {
         Command::Workload {
             output_json,
             benchmark_name,
-            replica_host,
+            local,
             canister_id,
             prefix,
             payload_size_bytes,
@@ -177,11 +200,13 @@ async fn main() -> Result<()> {
             iterations,
             warmup_iterations,
             operation,
+            preview_mode,
         } => {
+            let connection = resolve_connection(local, canister_id)?;
             let result = run_workload_bench(WorkloadBenchArgs {
                 benchmark_name,
-                replica_host,
-                canister_id,
+                replica_host: connection.replica_host,
+                canister_id: connection.canister_id,
                 prefix,
                 payload_size_bytes,
                 file_count,
@@ -191,6 +216,7 @@ async fn main() -> Result<()> {
                 warmup_iterations,
                 operation,
                 measurement_mode: MeasurementMode::ScenarioTotal,
+                preview_mode: preview_mode.into(),
             })
             .await?;
             fs::write(output_json, serde_json::to_string_pretty(&result)? + "\n")?;
@@ -198,7 +224,7 @@ async fn main() -> Result<()> {
         Command::Latency {
             output_json,
             benchmark_name,
-            replica_host,
+            local,
             canister_id,
             prefix,
             payload_size_bytes,
@@ -206,10 +232,11 @@ async fn main() -> Result<()> {
             warmup_iterations,
             operation,
         } => {
+            let connection = resolve_connection(local, canister_id)?;
             let result = run_latency_bench(LatencyBenchArgs {
                 benchmark_name,
-                replica_host,
-                canister_id,
+                replica_host: connection.replica_host,
+                canister_id: connection.canister_id,
                 prefix,
                 payload_size_bytes,
                 iterations,
@@ -223,7 +250,7 @@ async fn main() -> Result<()> {
         Command::WorkloadSetup {
             output_json,
             benchmark_name,
-            replica_host,
+            local,
             canister_id,
             prefix,
             payload_size_bytes,
@@ -232,28 +259,33 @@ async fn main() -> Result<()> {
             concurrent_clients,
             iterations,
             operation,
-        } => write_setup(
-            output_json,
-            setup_workload_bench(WorkloadBenchArgs {
-                benchmark_name,
-                replica_host,
-                canister_id,
-                prefix,
-                payload_size_bytes,
-                file_count,
-                directory_shape,
-                concurrent_clients,
-                iterations,
-                warmup_iterations: 0,
-                operation,
-                measurement_mode: MeasurementMode::IsolatedSingleOp,
-            })
-            .await?,
-        )?,
+            preview_mode,
+        } => {
+            let connection = resolve_connection(local, canister_id)?;
+            write_setup(
+                output_json,
+                setup_workload_bench(WorkloadBenchArgs {
+                    benchmark_name,
+                    replica_host: connection.replica_host,
+                    canister_id: connection.canister_id,
+                    prefix,
+                    payload_size_bytes,
+                    file_count,
+                    directory_shape,
+                    concurrent_clients,
+                    iterations,
+                    warmup_iterations: 0,
+                    operation,
+                    measurement_mode: MeasurementMode::IsolatedSingleOp,
+                    preview_mode: preview_mode.into(),
+                })
+                .await?,
+            )?
+        }
         Command::WorkloadMeasure {
             output_json,
             benchmark_name,
-            replica_host,
+            local,
             canister_id,
             prefix,
             payload_size_bytes,
@@ -262,11 +294,13 @@ async fn main() -> Result<()> {
             concurrent_clients,
             iterations,
             operation,
+            preview_mode,
         } => {
+            let connection = resolve_connection(local, canister_id)?;
             let result = measure_workload_bench(WorkloadBenchArgs {
                 benchmark_name,
-                replica_host,
-                canister_id,
+                replica_host: connection.replica_host,
+                canister_id: connection.canister_id,
                 prefix,
                 payload_size_bytes,
                 file_count,
@@ -276,6 +310,7 @@ async fn main() -> Result<()> {
                 warmup_iterations: 0,
                 operation,
                 measurement_mode: MeasurementMode::IsolatedSingleOp,
+                preview_mode: preview_mode.into(),
             })
             .await?;
             fs::write(output_json, serde_json::to_string_pretty(&result)? + "\n")?;
@@ -283,40 +318,44 @@ async fn main() -> Result<()> {
         Command::LatencySetup {
             output_json,
             benchmark_name,
-            replica_host,
+            local,
             canister_id,
             prefix,
             payload_size_bytes,
             operation,
-        } => write_setup(
-            output_json,
-            setup_latency_bench(LatencyBenchArgs {
-                benchmark_name,
-                replica_host,
-                canister_id,
-                prefix,
-                payload_size_bytes,
-                iterations: 0,
-                warmup_iterations: 0,
-                operation,
-                measurement_mode: MeasurementMode::IsolatedSingleOp,
-            })
-            .await?,
-        )?,
+        } => {
+            let connection = resolve_connection(local, canister_id)?;
+            write_setup(
+                output_json,
+                setup_latency_bench(LatencyBenchArgs {
+                    benchmark_name,
+                    replica_host: connection.replica_host,
+                    canister_id: connection.canister_id,
+                    prefix,
+                    payload_size_bytes,
+                    iterations: 0,
+                    warmup_iterations: 0,
+                    operation,
+                    measurement_mode: MeasurementMode::IsolatedSingleOp,
+                })
+                .await?,
+            )?
+        }
         Command::LatencyMeasure {
             output_json,
             benchmark_name,
-            replica_host,
+            local,
             canister_id,
             prefix,
             payload_size_bytes,
             iterations,
             operation,
         } => {
+            let connection = resolve_connection(local, canister_id)?;
             let result = measure_latency_bench(LatencyBenchArgs {
                 benchmark_name,
-                replica_host,
-                canister_id,
+                replica_host: connection.replica_host,
+                canister_id: connection.canister_id,
                 prefix,
                 payload_size_bytes,
                 iterations,
