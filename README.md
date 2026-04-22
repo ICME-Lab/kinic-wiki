@@ -735,6 +735,12 @@ returns `snapshot_revision is no longer current` and the client must restart sna
 session expires, the server returns `snapshot_session_id has expired` and the client must restart
 snapshot sync. Continued snapshot requests validate `snapshot_session_id` first, then TTL, then
 prefix, and only then validate that `cursor` is a valid session path.
+Paged `fetch_updates` must pin `target_snapshot_revision` after the first page. If `cursor` is set
+without `target_snapshot_revision`, the server returns
+`target_snapshot_revision is required when cursor is set`. If an unread changed path advances past
+the pinned target before its page is read, the server returns
+`target_snapshot_revision is no longer current for changed path` and the client must restart
+snapshot sync.
 
 - deleted paths appear in `removed_paths`
 - moved old paths appear in `removed_paths`

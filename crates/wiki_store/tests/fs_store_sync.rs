@@ -1137,3 +1137,78 @@ fn sync_paging_rejects_invalid_limit_and_target_revision() {
         "target_snapshot_revision prefix does not match request prefix"
     );
 }
+
+#[test]
+fn fetch_updates_requires_target_snapshot_revision_when_cursor_is_set() {
+    let (_dir, store) = new_store();
+    let base = store
+        .export_snapshot(ExportSnapshotRequest {
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("base snapshot should succeed");
+    for index in 0..101 {
+        write_node(
+            &store,
+            &format!("/Wiki/{index:03}.md"),
+            "content",
+            None,
+            index,
+        );
+    }
+    let first = store
+        .fetch_updates(FetchUpdatesRequest {
+            known_snapshot_revision: base.snapshot_revision,
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            target_snapshot_revision: None,
+        })
+        .expect("first page should succeed");
+
+    let error = store
+        .fetch_updates(FetchUpdatesRequest {
+            known_snapshot_revision: "v5:0:2f57696b69".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: first.next_cursor,
+            target_snapshot_revision: None,
+        })
+        .expect_err("paged fetch without target should fail");
+    assert_eq!(
+        error,
+        "target_snapshot_revision is required when cursor is set"
+    );
+}
+
+#[test]
+fn fetch_updates_rejects_cursor_without_target_even_when_snapshot_is_current() {
+    let (_dir, store) = new_store();
+    write_node(&store, "/Wiki/live.md", "live", None, 10);
+    let base = store
+        .export_snapshot(ExportSnapshotRequest {
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("base snapshot should succeed");
+
+    let error = store
+        .fetch_updates(FetchUpdatesRequest {
+            known_snapshot_revision: base.snapshot_revision,
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: Some("/Wiki/live.md".to_string()),
+            target_snapshot_revision: None,
+        })
+        .expect_err("cursor without target should fail before noop return");
+    assert_eq!(
+        error,
+        "target_snapshot_revision is required when cursor is set"
+    );
+}

@@ -130,7 +130,12 @@ initial sync. `export_snapshot` is an update call because the canister persists 
 If `fetch_updates` returns `known_snapshot_revision is no longer available`, the plugin stops the
 delta sync and asks the user to run `Initial sync`.
 
+Paged `fetch_updates` pins `target_snapshot_revision` after the first page. If a caller sends
+`cursor` without that pinned target, the canister returns
+`target_snapshot_revision is required when cursor is set`.
+
 If `export_snapshot` returns `snapshot_session_id has expired` or `snapshot_revision is no longer current`,
+or if `fetch_updates` returns `target_snapshot_revision is no longer current for changed path`,
 the plugin also asks the user to rerun `Initial sync`.
 
 When the host is `localhost` or `127.0.0.1`, the plugin automatically fetches the local root key before the first request.

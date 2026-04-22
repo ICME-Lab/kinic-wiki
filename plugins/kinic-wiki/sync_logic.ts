@@ -27,8 +27,27 @@ export function isSnapshotRecoveryError(message: string): boolean {
     message.includes("known_snapshot_revision is no longer available")
     || message.includes("known_snapshot_revision is invalid")
     || message.includes("snapshot_revision is no longer current")
+    || message.includes("target_snapshot_revision is no longer current for changed path")
     || message.includes("snapshot_session_id has expired")
   );
+}
+
+export function shouldRestartInitialSync(message: string): boolean {
+  return (
+    message.includes("snapshot_revision is no longer current")
+    || message.includes("target_snapshot_revision is no longer current for changed path")
+    || message.includes("snapshot_session_id has expired")
+  );
+}
+
+export function snapshotRecoveryNotice(message: string): string | null {
+  if (!isSnapshotRecoveryError(message)) {
+    return null;
+  }
+  if (shouldRestartInitialSync(message)) {
+    return "Remote snapshot changed. Run Kinic Wiki: Initial sync again.";
+  }
+  return "Remote history unavailable. Run Kinic Wiki: Initial sync.";
 }
 
 export function excludeCleanRemotePaths(dirtyPaths: Set<string>, cleanRemotePaths: Set<string>): Set<string> {

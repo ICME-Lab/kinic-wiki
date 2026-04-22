@@ -24,9 +24,9 @@ import {
   excludeCleanRemotePaths,
   hasStoredSnapshotRevision,
   initialSyncStalePaths,
-  isSnapshotRecoveryError,
   mergeInitialSnapshotNodes,
   mergeDirtyPaths,
+  snapshotRecoveryNotice,
   shouldSkipPush,
   sortedUniquePaths
 } from "./sync_logic";
@@ -288,15 +288,9 @@ export class WikiSyncService {
 
   private noticeResyncRequired(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
-    if (isSnapshotRecoveryError(message)) {
-      if (
-        message.includes("snapshot_revision is no longer current")
-        || message.includes("snapshot_session_id has expired")
-      ) {
-        new Notice("Remote snapshot changed during initial sync. Run Kinic Wiki: Initial sync again.");
-        return;
-      }
-      new Notice("Remote history unavailable. Run Kinic Wiki: Initial sync.");
+    const notice = snapshotRecoveryNotice(message);
+    if (notice !== null) {
+      new Notice(notice);
     }
   }
 

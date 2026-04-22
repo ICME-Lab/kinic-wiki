@@ -9,6 +9,8 @@ import {
   mergeInitialSnapshotNodes,
   mergeDirtyPaths,
   normalizeStoredSnapshotRevision,
+  snapshotRecoveryNotice,
+  shouldRestartInitialSync,
   shouldSkipAutoPull,
   shouldSkipPush,
   sortedUniquePaths
@@ -37,8 +39,38 @@ test("snapshot recovery errors require explicit resync", () => {
   assert.equal(isSnapshotRecoveryError("known_snapshot_revision is no longer available"), true);
   assert.equal(isSnapshotRecoveryError("known_snapshot_revision is invalid"), true);
   assert.equal(isSnapshotRecoveryError("snapshot_revision is no longer current"), true);
+  assert.equal(
+    isSnapshotRecoveryError("target_snapshot_revision is no longer current for changed path"),
+    true
+  );
   assert.equal(isSnapshotRecoveryError("snapshot_session_id has expired"), true);
   assert.equal(isSnapshotRecoveryError("other failure"), false);
+});
+
+test("initial sync restart helper matches snapshot change errors", () => {
+  assert.equal(shouldRestartInitialSync("snapshot_revision is no longer current"), true);
+  assert.equal(
+    shouldRestartInitialSync("target_snapshot_revision is no longer current for changed path"),
+    true
+  );
+  assert.equal(shouldRestartInitialSync("snapshot_session_id has expired"), true);
+  assert.equal(shouldRestartInitialSync("known_snapshot_revision is no longer available"), false);
+});
+
+test("snapshot recovery notice uses generic snapshot wording", () => {
+  assert.equal(
+    snapshotRecoveryNotice("target_snapshot_revision is no longer current for changed path"),
+    "Remote snapshot changed. Run Kinic Wiki: Initial sync again."
+  );
+  assert.equal(
+    snapshotRecoveryNotice("snapshot_session_id has expired"),
+    "Remote snapshot changed. Run Kinic Wiki: Initial sync again."
+  );
+  assert.equal(
+    snapshotRecoveryNotice("known_snapshot_revision is no longer available"),
+    "Remote history unavailable. Run Kinic Wiki: Initial sync."
+  );
+  assert.equal(snapshotRecoveryNotice("other failure"), null);
 });
 
 test("normalizeStoredSnapshotRevision discards legacy or broken tokens", () => {

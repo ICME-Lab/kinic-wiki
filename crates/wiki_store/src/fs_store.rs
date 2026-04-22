@@ -50,6 +50,8 @@ const SNAPSHOT_SESSION_CURSOR_REQUIRED: &str = "snapshot_session_id is required 
 const SNAPSHOT_SESSION_CURSOR_FORBIDDEN: &str =
     "snapshot_session_id cannot be used when cursor is absent";
 const SNAPSHOT_SESSION_CURSOR_INVALID: &str = "cursor is invalid for snapshot_session_id";
+const TARGET_SNAPSHOT_CURSOR_REQUIRED: &str =
+    "target_snapshot_revision is required when cursor is set";
 const SNAPSHOT_SESSION_TTL_SECS: i64 = 300;
 
 // Where: crates/wiki_store/src/fs_store.rs
@@ -517,6 +519,9 @@ impl FsStore {
         }
         if known_snapshot.revision > current_change_revision {
             return Err("known_snapshot_revision is newer than current revision".to_string());
+        }
+        if cursor.is_some() && request.target_snapshot_revision.is_none() {
+            return Err(TARGET_SNAPSHOT_CURSOR_REQUIRED.to_string());
         }
         let target_snapshot = match request.target_snapshot_revision.as_deref() {
             Some(snapshot_revision) => parse_target_snapshot_revision(

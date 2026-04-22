@@ -47,15 +47,22 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
 }
 
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
-    if path.starts_with(RAW_SOURCES_PREFIX) {
+    if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
         return validate_source_path_under_prefix(path, RAW_SOURCES_PREFIX);
     }
-    if path.starts_with(SESSION_SOURCES_PREFIX) {
+    if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
         return validate_source_path_under_prefix(path, SESSION_SOURCES_PREFIX);
     }
     Err(format!(
         "source path must stay under {RAW_SOURCES_PREFIX} or {SESSION_SOURCES_PREFIX}: {path}"
     ))
+}
+
+fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), String> {

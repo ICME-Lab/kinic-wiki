@@ -1243,6 +1243,55 @@ fn move_node_accepts_canonical_target_for_source_nodes() {
 }
 
 #[test]
+fn source_nodes_reject_prefix_lookalike_paths() {
+    let (_dir, store) = new_store();
+    for path in ["/Sources/rawfoo/foo.md", "/Sources/sessions-foo/x.md"] {
+        let error = store
+            .write_node(
+                WriteNodeRequest {
+                    path: path.to_string(),
+                    kind: NodeKind::Source,
+                    content: "source body".to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1_930,
+            )
+            .expect_err("write should fail");
+
+        assert!(error.contains("source path must stay under"));
+    }
+}
+
+#[test]
+fn source_nodes_accept_canonical_paths_under_both_roots() {
+    let (_dir, store) = new_store();
+    for (index, path) in [
+        "/Sources/raw/source/source.md",
+        "/Sources/sessions/session/session.md",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result = store.write_node(
+            WriteNodeRequest {
+                path: path.to_string(),
+                kind: NodeKind::Source,
+                content: "source body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            1_940 + index as i64,
+        );
+
+        assert!(
+            result.is_ok(),
+            "canonical source path should succeed: {path}"
+        );
+    }
+}
+
+#[test]
 fn query_limits_are_capped_at_one_hundred() {
     let (_dir, store) = new_store();
     for index in 0..150 {
