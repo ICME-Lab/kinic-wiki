@@ -4,4 +4,4 @@ canisters:
       steps:
         - type: script
           commands:
-            - bash scripts/build-wiki-canister.sh
+            - bash scripts/build-vfs-canister.sh

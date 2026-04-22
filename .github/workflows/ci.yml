@@ -29,25 +29,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run tests
         run: cargo test --workspace --locked
+      - name: Guard legacy wiki client aliases
+        run: |
+          ! rg -n '\b(WikiApi|CanisterWikiClient)\b' crates
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-  plugin-check:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: plugins/kinic-wiki
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: plugins/kinic-wiki/package-lock.json
-      - name: Install plugin dependencies
-        run: npm ci
-      - name: Run plugin checks
-        run: npm run check
 
   canister-build:
     runs-on: ubuntu-latest
@@ -74,5 +60,5 @@ jobs:
         run: cargo install wasi2ic ic-wasm --locked
       - name: Build canister artifact
         env:
-          ICP_WASM_OUTPUT_PATH: /tmp/wiki_canister.wasm
-        run: bash scripts/build-wiki-canister.sh
+          ICP_WASM_OUTPUT_PATH: /tmp/vfs_canister.wasm
+        run: bash scripts/build-vfs-canister.sh

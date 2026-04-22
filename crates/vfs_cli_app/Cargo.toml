@@ -1,0 +1,31 @@
+[package]
+name = "vfs-cli"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "vfs_cli_app"
+
+[dependencies]
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+candid = "0.10.20"
+chrono = { version = "0.4.42", default-features = true, features = ["clock"] }
+clap = { version = "4.5.48", features = ["derive"] }
+hex = "0.4.3"
+ic-agent = "0.39.3"
+json5 = "0.4.1"
+reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls"] }
+parquet = { version = "54", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+tokio = { version = "1.47.1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync"] }
+toml = "0.9.8"
+vfs-cli = { package = "vfs-cli-core", path = "../vfs_cli_core" }
+vfs-client = { path = "../vfs_client" }
+vfs-types = { path = "../vfs_types" }
+wiki-domain = { path = "../wiki_domain" }
+
+[dev-dependencies]
+tempfile = "3.23.0"

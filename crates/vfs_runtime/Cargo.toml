@@ -1,0 +1,16 @@
+[package]
+name = "vfs-runtime"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+bench-disable-fts = ["vfs-store/bench-disable-fts"]
+
+[dependencies]
+vfs-types = { path = "../vfs_types" }
+wiki-domain = { path = "../wiki_domain" }
+vfs-store = { path = "../vfs_store" }
+
+[dev-dependencies]
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+tempfile = "3.23.0"

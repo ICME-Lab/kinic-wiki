@@ -1,0 +1,8 @@
+[package]
+name = "vfs-types"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+candid = "0.10.26"
+serde = { version = "1.0.228", features = ["derive"] }

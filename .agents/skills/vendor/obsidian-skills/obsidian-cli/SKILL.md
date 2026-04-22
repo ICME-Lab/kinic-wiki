@@ -24,6 +24,6 @@ In this repo:
 - treat the vault as user-facing content, not a scratch directory
 - preserve paths and names that Obsidian users rely on
 - prefer explicit note operations over hidden background rewrites
-- when working on managed wiki pages, follow the shared mirror contract from [`wiki-generate/references/obsidian-rules.md`](../../../wiki-generate/references/obsidian-rules.md)
+- when working on managed wiki pages, follow the shared mirror contract from [`references/shared-rules.md`](../../../references/shared-rules.md)
 
 Read [references/vault-operations.md](references/vault-operations.md) when you need note-operation guidance.

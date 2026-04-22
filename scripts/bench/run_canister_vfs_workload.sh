@@ -58,14 +58,14 @@ augment_environment_json "${ENVIRONMENT_FILE}" "${REPLICA_HOST}" "${CANISTER_ID}
 
 bench_log "building vfs_bench binary"
 cd "$(bench_repo_root)"
-cargo build -p wiki-cli --bin vfs_bench >/dev/null
+cargo build -p vfs-cli --bin vfs_bench >/dev/null
 BENCH_BIN="$(bench_vfs_bench_bin)"
 
 node -e '
   const fs = require("fs");
   const [configFile, replicaHost, canisterId] = process.argv.slice(1);
   const parseList = (value, fallback) => !value ? fallback : value.split(",").map(item => item.trim()).filter(Boolean);
-  const diagnosticProfile = process.env.WIKI_CANISTER_DIAGNOSTIC_PROFILE || "baseline";
+  const diagnosticProfile = process.env.VFS_CANISTER_DIAGNOSTIC_PROFILE || "baseline";
   const replicaResetMode = process.env.BENCH_REPLICA_RESET_MODE || null;
   const searchPreviewModes = parseList(process.env.WORKLOAD_SEARCH_PREVIEW_MODES, ["none", "light"]);
   const allSizeSpecs = [

@@ -1,0 +1,11 @@
+[package]
+name = "vfs-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+candid = "0.10.20"
+ic-agent = "0.39.3"
+vfs-types = { path = "../vfs_types" }

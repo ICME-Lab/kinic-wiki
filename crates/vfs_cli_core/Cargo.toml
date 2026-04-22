@@ -1,0 +1,22 @@
+[package]
+name = "vfs-cli-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "vfs_cli"
+
+[dependencies]
+anyhow = "1.0.100"
+clap = { version = "4.5.48", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+toml = "0.9.8"
+vfs-client = { path = "../vfs_client" }
+vfs-types = { path = "../vfs_types" }
+wiki-domain = { path = "../wiki_domain" }
+
+[dev-dependencies]
+async-trait = "0.1.89"
+tempfile = "3.23.0"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }

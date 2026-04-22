@@ -1,10 +1,15 @@
 [workspace]
 members = [
+    "crates/vfs_cli_app",
+    "crates/vfs_cli_core",
+    "crates/vfs_client",
+    "crates/vfs_runtime",
+    "crates/vfs_types",
+    "crates/wiki_domain",
     "crates/wiki_agent_schema",
-    "crates/wiki_cli",
-    "crates/wiki_canister",
+    "crates/vfs_canister",
     "crates/wiki_types",
-    "crates/wiki_store",
+    "crates/vfs_store",
     "crates/wiki_runtime",
 ]
 resolver = "2"

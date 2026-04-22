@@ -12,10 +12,3 @@ cd "${REPO_ROOT}"
 
 cargo fmt --all -- --check
 cargo test --workspace --locked
-
-(
-  cd plugins/kinic-wiki
-  npm run typecheck
-  npm run test
-  npm run lint
-)

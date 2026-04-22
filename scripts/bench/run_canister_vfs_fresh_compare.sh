@@ -34,7 +34,7 @@ start_clean_replica() {
 deploy_profile() {
   local profile="$1"
   bench_log "deploy ${profile} on fresh replica"
-  WIKI_CANISTER_DIAGNOSTIC_PROFILE="${profile}" icp deploy wiki -e local -y >/dev/null
+  VFS_CANISTER_DIAGNOSTIC_PROFILE="${profile}" icp deploy wiki -e local -y >/dev/null
 }
 
 capture_profile_status() {
@@ -64,7 +64,7 @@ run_profile_benches() {
   local workload_output
   latency_output="$(
     BENCH_REPLICA_RESET_MODE="clean_start" \
-    WIKI_CANISTER_DIAGNOSTIC_PROFILE="${profile}" \
+    VFS_CANISTER_DIAGNOSTIC_PROFILE="${profile}" \
     CANISTER_ID="${canister_id}" \
     LATENCY_ITERATIONS_1K=0 \
     LATENCY_ITERATIONS_10K=10 \
@@ -75,7 +75,7 @@ run_profile_benches() {
   )"
   workload_output="$(
     BENCH_REPLICA_RESET_MODE="clean_start" \
-    WIKI_CANISTER_DIAGNOSTIC_PROFILE="${profile}" \
+    VFS_CANISTER_DIAGNOSTIC_PROFILE="${profile}" \
     CANISTER_ID="${canister_id}" \
     WORKLOAD_OPERATIONS="update" \
     WORKLOAD_DIRECTORY_SHAPES="flat" \

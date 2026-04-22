@@ -1,4 +1,0 @@
-version: 1
-display_name: Wiki Generate
-short_description: Legacy router for the llm-wiki workflow skills.
-default_prompt: Route the task to the correct repo skill. Use ingest for source-driven updates, query for wiki-backed answering, and lint for health inspection.

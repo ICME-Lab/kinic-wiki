@@ -159,7 +159,7 @@ augment_environment_json() {
   local canister_status_source="${5:-icp}"
   local cycles_collection_enabled="${6:-true}"
   local replica_reset_mode="${BENCH_REPLICA_RESET_MODE:-}"
-  local diagnostic_profile="${WIKI_CANISTER_DIAGNOSTIC_PROFILE:-baseline}"
+  local diagnostic_profile="${VFS_CANISTER_DIAGNOSTIC_PROFILE:-baseline}"
 
   node -e '
     const fs = require("fs");

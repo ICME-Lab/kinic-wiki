@@ -1,0 +1,34 @@
+---
+name: kinic-wiki-lint
+description: Kinic Wiki 専用 workflow skill for inspecting local and remote wiki health without silently fixing it.
+---
+
+# Kinic Wiki Lint
+
+Use this skill when the user wants to:
+
+- inspect wiki health
+- look for isolated or duplicated pages
+- check whether `index.md` is stale
+- review missing links, weak structure, or outdated organization
+- decide what to fix next without auto-applying changes
+
+Do not use this skill for:
+
+- primary source ingestion
+- ordinary question answering
+- hidden repair runs
+
+Core rules:
+
+- Default to report-only behavior.
+- Do not silently fix pages.
+- Prefer concrete findings over vague style commentary.
+- Keep local lint and remote inspection conceptually separate.
+- Treat `WIKI_CANONICALITY.md` as the schema authority.
+
+Read [lint.md](lint.md) before doing substantive Kinic Wiki lint work.
+
+Read this reference when needed:
+
+- shared repo rules: [../references/shared-rules.md](../references/shared-rules.md)

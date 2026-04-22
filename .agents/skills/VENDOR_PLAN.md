@@ -4,7 +4,7 @@
 
 ## 目的
 
-- repo 固有 workflow を `ingest` `query` `lint` に分割して維持する
+- repo 固有 workflow を `kinic-wiki-ingest` `kinic-wiki-query` `kinic-wiki-lint` に分割して維持する
 - Obsidian 一般の知識は外部 skill から再利用する
 - upstream の全体構成に引きずられず、この repo の canister / CLI / plugin 前提を守る
 
@@ -25,15 +25,15 @@
 
 ```text
 .agents/skills/
-  ingest/
+  kinic-wiki-ingest/
     SKILL.md
-  query/
+  kinic-wiki-query/
     SKILL.md
-  lint/
+  kinic-wiki-lint/
     SKILL.md
-  wiki-generate/
-    SKILL.md
-    references/
+  references/
+    shared-rules.md
+    query-rules.md
   vendor/
     obsidian-skills/
       obsidian-markdown/
@@ -49,27 +49,29 @@
 
 ## 役割分担
 
-### `ingest`
+### `kinic-wiki-ingest`
 
 - source-driven wiki 更新
 - source normalization
 - page map
 - review-first draft generation
 
-### `query`
+### `kinic-wiki-query`
 
 - wiki に対する探索と回答
 - 必要時だけ page synthesis を戻す
 
-### `lint`
+### `kinic-wiki-lint`
 
 - local / remote health inspection
 - report-first repair planning
 
-### `wiki-generate`
+### `references/`
 
-- legacy entry point
-- 新しい 3 skill への案内だけを持つ
+- repo 共通 reference
+- repo skill 間で共有する compact rules
+- `shared-rules.md` は mirror / review / optional external guidance
+- `query-rules.md` は query 専用回答規約
 
 ### `vendor/obsidian-markdown`
 
@@ -93,11 +95,11 @@
 
 repo skill が vendor skill を参照する。
 
-- `ingest` -> `vendor/obsidian-markdown`
-- `ingest` -> `vendor/obsidian-cli`
-- `ingest` -> `vendor/defuddle`
-- `query` -> `vendor/obsidian-markdown` when page write-back is needed
-- `lint` -> `vendor/obsidian-markdown` when mirror-shape checks need markdown details
+- `kinic-wiki-ingest` -> `vendor/obsidian-markdown`
+- `kinic-wiki-ingest` -> `vendor/obsidian-cli`
+- `kinic-wiki-ingest` -> `vendor/defuddle`
+- `kinic-wiki-query` -> `vendor/obsidian-markdown` when page write-back is needed
+- `kinic-wiki-lint` -> `vendor/obsidian-markdown` when mirror-shape checks need markdown details
 
 逆方向の依存は作らない。
 

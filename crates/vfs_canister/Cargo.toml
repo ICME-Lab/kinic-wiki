@@ -1,0 +1,25 @@
+[package]
+name = "vfs-canister"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+canbench-rs = ["dep:canbench-rs", "dep:serde_json"]
+bench-disable-fts = ["vfs-runtime/bench-disable-fts"]
+
+[dependencies]
+canbench-rs = { version = "0.4.1", optional = true }
+candid = "0.10.26"
+ic-cdk = "0.20.0"
+ic-stable-structures = "0.7.2"
+ic-wasi-polyfill = "0.12.0"
+serde_json = { version = "1.0.145", optional = true }
+vfs-runtime = { path = "../vfs_runtime" }
+vfs-types = { path = "../vfs_types" }
+wiki-domain = { path = "../wiki_domain" }
+
+[dev-dependencies]
+tempfile = "3.23.0"

@@ -3376,6 +3376,110 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vfs-canister"
+version = "0.1.0"
+dependencies = [
+ "canbench-rs",
+ "candid",
+ "ic-cdk 0.20.0",
+ "ic-stable-structures",
+ "ic-wasi-polyfill",
+ "serde_json",
+ "tempfile",
+ "vfs-runtime",
+ "vfs-types",
+ "wiki-domain",
+]
+
+[[package]]
+name = "vfs-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candid",
+ "chrono",
+ "clap",
+ "hex",
+ "ic-agent",
+ "json5",
+ "parquet",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "toml",
+ "vfs-cli-core",
+ "vfs-client",
+ "vfs-types",
+ "wiki-domain",
+]
+
+[[package]]
+name = "vfs-cli-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "vfs-client",
+ "vfs-types",
+ "wiki-domain",
+]
+
+[[package]]
+name = "vfs-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "candid",
+ "ic-agent",
+ "vfs-types",
+]
+
+[[package]]
+name = "vfs-runtime"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "tempfile",
+ "vfs-store",
+ "vfs-types",
+ "wiki-domain",
+]
+
+[[package]]
+name = "vfs-store"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "pulldown-cmark",
+ "rusqlite",
+ "sha2 0.10.9",
+ "tempfile",
+ "time",
+ "uuid",
+ "vfs-types",
+ "wiki-domain",
+]
+
+[[package]]
+name = "vfs-types"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "serde",
+]
+
+[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3544,42 +3648,10 @@ name = "wiki-agent-schema"
 version = "0.1.0"
 
 [[package]]
-name = "wiki-canister"
+name = "wiki-domain"
 version = "0.1.0"
 dependencies = [
- "canbench-rs",
- "candid",
- "ic-cdk 0.20.0",
- "ic-stable-structures",
- "ic-wasi-polyfill",
- "serde_json",
- "tempfile",
- "wiki-runtime",
- "wiki-types",
-]
-
-[[package]]
-name = "wiki-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "candid",
- "chrono",
- "clap",
- "hex",
- "ic-agent",
- "json5",
- "parquet",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "toml",
- "wiki-store",
- "wiki-types",
+ "vfs-types",
 ]
 
 [[package]]
@@ -3588,21 +3660,7 @@ version = "0.1.0"
 dependencies = [
  "rusqlite",
  "tempfile",
- "wiki-store",
- "wiki-types",
-]
-
-[[package]]
-name = "wiki-store"
-version = "0.1.0"
-dependencies = [
- "hex",
- "pulldown-cmark",
- "rusqlite",
- "sha2 0.10.9",
- "tempfile",
- "time",
- "uuid",
+ "vfs-runtime",
  "wiki-types",
 ]
 
@@ -3610,8 +3668,7 @@ dependencies = [
 name = "wiki-types"
 version = "0.1.0"
 dependencies = [
- "candid",
- "serde",
+ "vfs-types",
 ]
 
 [[package]]

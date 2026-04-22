@@ -8,4 +8,4 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT}"
 
-cargo test -p wiki-store --test fs_store_scale path_search_smoke_reports_latency_and_hits -- --nocapture
+cargo test -p vfs-store --test fs_store_scale path_search_smoke_reports_latency_and_hits -- --nocapture
