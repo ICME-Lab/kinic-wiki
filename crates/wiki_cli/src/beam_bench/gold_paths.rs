@@ -78,10 +78,11 @@ pub(crate) fn note_exists(path: &str, notes: &[ImportedNote]) -> bool {
 pub(crate) fn is_structured_note(path: &str, notes: &[ImportedNote]) -> bool {
     notes.iter().any(|note| {
         note.path == path
-            && note.note_type != "conversation.md"
-            && note.note_type != "conversation"
             && note.note_type != "index.md"
             && note.note_type != "index"
+            && note.note_type != "provenance.md"
+            && note.note_type != "provenance"
+            && !note.path.starts_with("/Sources/raw/")
     })
 }
 
@@ -93,17 +94,18 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn instruction_questions_resolve_to_instructions_note_without_span_match() {
+    fn instruction_questions_resolve_to_plan_note_without_span_match() {
         let imported = ImportedConversation {
             conversation_id: "conv-1".to_string(),
             namespace_path: "/Wiki/run".to_string(),
             namespace_index_path: "/Wiki/run/index.md".to_string(),
             base_path: "/Wiki/run/conv-1".to_string(),
-            note_paths: vec!["/Wiki/run/conv-1/instructions.md".to_string()],
+            note_paths: vec!["/Wiki/run/conv-1/plans.md".to_string()],
             notes: vec![ImportedNote {
-                path: "/Wiki/run/conv-1/instructions.md".to_string(),
-                content: "# Instructions\n\n- Always use syntax highlighting.\n".to_string(),
-                note_type: "instructions.md".to_string(),
+                path: "/Wiki/run/conv-1/plans.md".to_string(),
+                content: "# Plans\n\n## Scope Directives\n\n- Always use syntax highlighting.\n"
+                    .to_string(),
+                note_type: "plans.md".to_string(),
             }],
         };
         let question = BeamQuestion {
@@ -126,33 +128,23 @@ mod tests {
         };
         assert_eq!(
             resolve_gold_paths(&imported, &question),
-            vec!["/Wiki/run/conv-1/instructions.md".to_string()]
+            vec!["/Wiki/run/conv-1/plans.md".to_string()]
         );
     }
 
     #[test]
-    fn information_extraction_can_fall_back_to_conversation_note() {
+    fn information_extraction_prefers_facts_note_only() {
         let imported = ImportedConversation {
             conversation_id: "conv-1".to_string(),
             namespace_path: "/Wiki/run".to_string(),
             namespace_index_path: "/Wiki/run/index.md".to_string(),
             base_path: "/Wiki/run/conv-1".to_string(),
-            note_paths: vec![
-                "/Wiki/run/conv-1/facts.md".to_string(),
-                "/Wiki/run/conv-1/conversation.md".to_string(),
-            ],
-            notes: vec![
-                ImportedNote {
-                    path: "/Wiki/run/conv-1/facts.md".to_string(),
-                    content: "# Facts\n".to_string(),
-                    note_type: "facts.md".to_string(),
-                },
-                ImportedNote {
-                    path: "/Wiki/run/conv-1/conversation.md".to_string(),
-                    content: "The stack uses React and Tailwind.".to_string(),
-                    note_type: "conversation.md".to_string(),
-                },
-            ],
+            note_paths: vec!["/Wiki/run/conv-1/facts.md".to_string()],
+            notes: vec![ImportedNote {
+                path: "/Wiki/run/conv-1/facts.md".to_string(),
+                content: "# Facts\n\n- stack: React and Tailwind\n".to_string(),
+                note_type: "facts.md".to_string(),
+            }],
         };
         let question = BeamQuestion {
             question_id: "information_extraction-000".to_string(),
@@ -171,10 +163,7 @@ mod tests {
         };
         assert_eq!(
             resolve_gold_paths(&imported, &question),
-            vec![
-                "/Wiki/run/conv-1/facts.md".to_string(),
-                "/Wiki/run/conv-1/conversation.md".to_string()
-            ]
+            vec!["/Wiki/run/conv-1/facts.md".to_string()]
         );
     }
 }

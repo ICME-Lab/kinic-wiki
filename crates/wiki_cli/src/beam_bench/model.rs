@@ -15,7 +15,7 @@ use tokio::process::Command;
 use super::dataset::BeamQuestionClass;
 use crate::connection::ResolvedConnection;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallRecord {
     pub name: String,
     pub arguments: String,
@@ -277,13 +277,8 @@ Connection:
 Question:
 {question}
 
-Answer with JSON matching the provided output schema. The `answer` field must match the question shape and stay grounded in the wiki notes. Use extractive answers for exact values and turn-local questions. Use concise synthesis only for recap, preference, instruction, contradiction, update, or multi-session reasoning questions. If there is not enough evidence, set `answer` to exactly `insufficient evidence`.
-If `question class` is `abstention`, answer only from a note that directly states the requested value or relation. If the note only contains related context, implications, or high-level summary, set `answer` to exactly `insufficient evidence`.
-If `question class` is `abstention`, do not use `summary.md` or cross-note synthesis as sole evidence for the answer.
-If `question class` is `abstention`, a broader topic match is not enough. The requested field, requested list, requested rationale, or requested relation must be stated directly in a note.
-If `question class` is `abstention`, if the note only names a framework, style guide, product, or topic but does not list the requested items, rules, reasons, or relation, set `answer` to exactly `insufficient evidence`.
-If `question class` is `abstention`, do not infer causality, influence, or motivation from separate facts. If one note mentions X and another note mentions Y, that does not establish that X caused or influenced Y.
-If `question type` is `contradiction_resolution`, do not collapse conflicting statements into a plain yes or no unless a note explicitly marks the corrected or latest value. Prefer stating that the wiki contains conflicting information, or return the explicit corrected/latest value from `updates.md`.
+Answer with JSON matching the provided output schema.
+The `answer` field must match the question shape and stay grounded in the wiki notes.
 "#,
         skill = skill,
         connection_args = connection_args,
@@ -398,12 +393,16 @@ fn load_query_skill_contract() -> Result<String> {
         .with_context(|| "failed to resolve workspace root from CARGO_MANIFEST_DIR")?;
     let skill_path = repo_root.join(".agents/skills/query/SKILL.md");
     let workflow_path = repo_root.join(".agents/skills/query/query.md");
+    let answer_rules_path =
+        repo_root.join(".agents/skills/wiki-generate/references/query-answer-rules.md");
     let skill = fs::read_to_string(&skill_path)
         .with_context(|| format!("failed to read {}", skill_path.display()))?;
     let workflow = fs::read_to_string(&workflow_path)
         .with_context(|| format!("failed to read {}", workflow_path.display()))?;
+    let answer_rules = fs::read_to_string(&answer_rules_path)
+        .with_context(|| format!("failed to read {}", answer_rules_path.display()))?;
     Ok(format!(
-        "=== query/SKILL.md ===\n{skill}\n\n=== query/query.md ===\n{workflow}"
+        "=== query/SKILL.md ===\n{skill}\n\n=== query/query.md ===\n{workflow}\n\n=== wiki-generate/references/query-answer-rules.md ===\n{answer_rules}"
     ))
 }
 
@@ -517,6 +516,7 @@ mod tests {
         assert!(prompt.contains("Preserve exact value formatting"));
         assert!(prompt.contains("Do not answer from an index, list, or search result alone."));
         assert!(prompt.contains("WIKI_CANONICALITY.md"));
+        assert!(prompt.contains("=== wiki-generate/references/query-answer-rules.md ==="));
         assert!(prompt.contains(
             "Before the final answer, read at least one note that directly supports the answer."
         ));
@@ -525,31 +525,15 @@ mod tests {
         ));
         assert!(prompt.contains("answer exactly `insufficient evidence`"));
         assert!(prompt.contains("do not answer from the index alone"));
-        assert!(
-            prompt.contains("Read the repo-local timeline note at least once before answering")
-        );
         assert!(prompt.contains("prefer extraction over summarization"));
         assert!(prompt.contains("smallest answer span"));
-        assert!(
-            prompt.contains("Use the repo-local preference note first for preference questions.")
-        );
-        assert!(prompt.contains(
-            "Use the repo-local instruction note first for directive, promise, or obligation questions."
-        ));
-        assert!(prompt.contains("Use the repo-local unresolved-state note first for latest-value, change, contradiction, or superseded-fact questions."));
-        assert!(prompt.contains(
-            "Use the repo-local recap note first for broad recap or multi-turn synthesis questions."
-        ));
         assert!(prompt.contains("- question type: information_extraction"));
-        assert!(prompt.contains("If `question class` is `abstention`, answer only from a note that directly states the requested value or relation."));
-        assert!(
-            prompt.contains("do not use `summary.md` or cross-note synthesis as sole evidence")
-        );
-        assert!(prompt.contains("a broader topic match is not enough"));
-        assert!(
-            prompt.contains("do not infer causality, influence, or motivation from separate facts")
-        );
-        assert!(prompt.contains("If `question type` is `contradiction_resolution`, do not collapse conflicting statements into a plain yes or no"));
+        assert!(prompt.contains(
+            "For abstention questions, only an explicit statement in a note counts as evidence."
+        ));
+        assert!(prompt.contains(
+            "For abstention questions, do not treat recap notes or cross-note synthesis as direct evidence"
+        ));
         assert!(!prompt.contains("facts.md を先に読め"));
     }
 }

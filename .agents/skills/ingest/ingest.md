@@ -16,7 +16,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 8. Update `log.md` for every page creation, deletion, or edit done in the workflow.
 9. Read only the recent tail of `log.md` before appending, for example `tail -n 5`, unless a longer window is clearly needed.
 10. Append one new log line per workflow mutation. Do not rewrite or restructure older log entries.
-11. Run `rebuild-index` by default for new page creation, deletion, or large restructures. Skip it for routine small edits.
+11. Run `rebuild-scope-index --scope <scope>` by default for new page creation, deletion, or large single-scope restructures. Use `rebuild-index` only for cross-scope restructures or explicit full repair. Skip rebuilds for routine small edits.
 12. Stop at review-ready unless the user explicitly asks for push.
 
 ## Working Rules
@@ -28,14 +28,9 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 - Keep `log.md` in sync with every page mutation.
 - Keep `log.md` append-only so recent context can be read with `tail -n 5`.
 - Do not hide push behind ingest.
-- Preserve structured note canonicality while ingesting:
-  - keep exact settled facts separate from recap and unresolved-state notes
-  - keep unresolved questions and competing claims out of settled-fact notes
-  - keep raw-source references separate from synthesized wiki knowledge
-  - keep recap notes coarse; do not use them as exact or causal evidence notes
-  - if a detail is durable and settled, move it into the settled note rather than leaving it only in recap
+- Preserve structured note canonicality from `WIKI_CANONICALITY.md` while ingesting.
 - When source material is noisy, prefer omission over polluting structured notes with low-confidence pseudo-facts.
-- When a contradiction appears, preserve it in the unresolved-state area rather than silently normalizing it into a settled note.
+- When a contradiction appears, preserve it in the canonical open-question area rather than silently normalizing it into a fact note.
 
 ## Repo Contract
 
@@ -43,7 +38,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 - Raw source append path: `/Sources/raw/<source_id>/<source_id>.md`
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:
-  - CLI commands: `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `rebuild-index`
+  - CLI commands: `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `rebuild-scope-index`, `rebuild-index`
 - Delete semantics:
   - `delete-node`: delete one node path
   - `delete-tree`: delete real node paths under a prefix, deepest-first

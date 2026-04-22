@@ -33,18 +33,6 @@ pub fn flatten_chat(value: &Value) -> Vec<ChatTurn> {
 
 pub fn extract_fact_lines(conversation: &BeamConversation) -> Vec<String> {
     let mut lines = Vec::new();
-    push_json_facts(
-        "conversation_seed",
-        &conversation.conversation_seed,
-        &mut lines,
-    );
-    push_json_facts("user_profile", &conversation.user_profile, &mut lines);
-    push_text_fact(
-        "conversation_plan",
-        &conversation.conversation_plan,
-        &mut lines,
-    );
-    push_text_fact("narratives", &conversation.narratives, &mut lines);
     for turn in flatten_chat(&conversation.chat) {
         if turn.label() == "assistant" {
             continue;
@@ -71,19 +59,6 @@ pub fn extract_identifier_lines(conversation: &BeamConversation) -> Vec<String> 
         "category",
         &mut lines,
     );
-    push_text_fact("plan", &conversation.conversation_plan, &mut lines);
-    push_json_facts_limited("user_profile", &conversation.user_profile, &mut lines, 2);
-    for line in extract_fact_lines(conversation)
-        .into_iter()
-        .filter(|line| {
-            !line.starts_with("conversation_seed.")
-                && !line.starts_with("conversation_plan:")
-                && !line.starts_with("narratives:")
-        })
-        .take(3)
-    {
-        lines.push(line);
-    }
     dedupe_lines(lines)
 }
 
@@ -147,66 +122,9 @@ fn collect_chat_messages(value: &Value, turns: &mut Vec<ChatTurn>) {
     }
 }
 
-fn push_json_facts(label: &str, value: &Value, lines: &mut Vec<String>) {
-    collect_json_facts(label, value, lines, None, None);
-}
-
-fn push_json_facts_limited(label: &str, value: &Value, lines: &mut Vec<String>, limit: usize) {
-    collect_json_facts(label, value, lines, None, Some(limit));
-}
-
-fn collect_json_facts(
-    label: &str,
-    value: &Value,
-    lines: &mut Vec<String>,
-    prefix: Option<String>,
-    limit: Option<usize>,
-) {
-    if limit.is_some_and(|value| lines.len() >= value) {
-        return;
-    }
-    match value {
-        Value::Object(object) => {
-            for (key, child) in object {
-                let next = match &prefix {
-                    Some(existing) => format!("{existing}.{key}"),
-                    None => key.clone(),
-                };
-                collect_json_facts(label, child, lines, Some(next), limit);
-                if limit.is_some_and(|value| lines.len() >= value) {
-                    return;
-                }
-            }
-        }
-        Value::Array(items) => {
-            for (index, child) in items.iter().enumerate() {
-                let next = match &prefix {
-                    Some(existing) => format!("{existing}[{index}]"),
-                    None => format!("[{index}]"),
-                };
-                collect_json_facts(label, child, lines, Some(next), limit);
-                if limit.is_some_and(|value| lines.len() >= value) {
-                    return;
-                }
-            }
-        }
-        Value::String(text) => push_fact_line(label, prefix, text, lines),
-        Value::Number(number) => push_fact_line(label, prefix, &number.to_string(), lines),
-        Value::Bool(boolean) => push_fact_line(label, prefix, &boolean.to_string(), lines),
-        Value::Null => {}
-    }
-}
-
 fn push_named_scalar(value: &Value, key: &str, label: &str, lines: &mut Vec<String>) {
     if let Some(text) = value.get(key).and_then(Value::as_str) {
         push_fact_line(label, None, text, lines);
-    }
-}
-
-fn push_text_fact(label: &str, value: &str, lines: &mut Vec<String>) {
-    let trimmed = value.trim();
-    if !trimmed.is_empty() {
-        lines.push(format!("{label}: {trimmed}"));
     }
 }
 
@@ -336,5 +254,19 @@ mod tests {
             conversation_with_chat("Can you help me improve the UI/UX before the public launch?");
         let lines = extract_fact_lines(&conversation);
         assert!(!lines.iter().any(|line| line.contains("UI/UX")));
+    }
+
+    #[test]
+    fn extract_fact_lines_do_not_dump_seed_or_plan_text() {
+        let mut conversation =
+            conversation_with_chat("Please remember that the meeting is on March 15, 2024.");
+        conversation.conversation_plan =
+            "BATCH 1 PLAN\n• **Current Situation:** drafting the memo".to_string();
+        conversation.narratives = "Label dump".to_string();
+        let lines = extract_fact_lines(&conversation);
+        assert!(!lines.iter().any(|line| line.contains("conversation_seed")));
+        assert!(!lines.iter().any(|line| line.contains("conversation_plan")));
+        assert!(!lines.iter().any(|line| line.contains("narratives")));
+        assert!(lines.contains(&"meeting date: March 15, 2024".to_string()));
     }
 }

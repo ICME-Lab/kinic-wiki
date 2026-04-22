@@ -322,6 +322,7 @@ node -e '
       --directory-shape "${directory_shape}" \
       --concurrent-clients "${concurrent_clients}" \
       --iterations "${iterations}" \
+      --preview-mode "${preview_mode}" \
       --operation "${cli_operation}" 2> "${stderr_file}"; then
       :
     else

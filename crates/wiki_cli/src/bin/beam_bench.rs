@@ -43,6 +43,11 @@ struct Cli {
     include_question_type: Vec<String>,
     #[arg(long)]
     namespace: Option<String>,
+    #[arg(
+        long,
+        help = "Resume from existing results.jsonl and run only unanswered questions"
+    )]
+    resume: bool,
     #[arg(long, default_value = "codex")]
     codex_bin: PathBuf,
     #[arg(long, default_value = "danger-full-access")]
@@ -96,6 +101,7 @@ async fn main() -> Result<()> {
             namespace: cli.namespace,
             codex_bin: cli.codex_bin,
             codex_sandbox: cli.codex_sandbox,
+            resume: cli.resume,
         },
     )
     .await

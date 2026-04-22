@@ -8,7 +8,7 @@ use std::time::Instant;
 use wiki_types::SearchNodesRequest;
 
 use super::answer_match::{
-    answer_exact_match as matches_exact_answer,
+    abstention_match, answer_exact_match as matches_exact_answer,
     answer_normalized_match as matches_normalized_answer,
 };
 use super::dataset::BeamQuestion;
@@ -98,7 +98,8 @@ pub async fn run_question(
     let answer_exact_match = matches_exact_answer(&question, predicted_answer.as_deref());
     let answer_normalized_match = matches_normalized_answer(&question, predicted_answer.as_deref());
     let answer_match_given_span_hit = gold_span_hit_at_3 && answer_normalized_match;
-    let abstention_correct = question.expects_abstention && answer_normalized_match;
+    let abstention_correct =
+        question.expects_abstention && predicted_answer.as_deref().is_some_and(abstention_match);
     let failure_reason = determine_failure_reason(
         &question,
         gold_path_hit_at_3,
@@ -339,7 +340,9 @@ fn determine_failure_reason(
     answer_match: bool,
 ) -> Option<FailureReason> {
     if question.expects_abstention {
-        return (!answer_match).then_some(FailureReason::ShouldAbstainButAnswered);
+        return predicted_answer
+            .filter(|answer| !abstention_match(answer))
+            .map(|_| FailureReason::ShouldAbstainButAnswered);
     }
     if !path_hit {
         return Some(FailureReason::MissedGoldPath);
@@ -508,21 +511,39 @@ mod tests {
     #[tokio::test]
     async fn run_question_tracks_strict_and_relaxed_hits() {
         let facts_path = "/Wiki/run/conv/facts.md".to_string();
-        let conversation_path = "/Wiki/run/conv/conversation.md".to_string();
         let imported = ImportedConversation {
             conversation_id: "conv".to_string(),
             namespace_path: "/Wiki/run".to_string(),
             namespace_index_path: "/Wiki/run/index.md".to_string(),
             base_path: "/Wiki/run/conv".to_string(),
-            note_paths: vec![facts_path.clone(), conversation_path.clone()],
-            notes: vec![
-                ImportedNote { path: facts_path.clone(), content: "# Facts\n\n- user: Please remember that the meeting is on March 15, 2024.\n".to_string(), note_type: "facts".to_string() },
-                ImportedNote { path: conversation_path.clone(), content: "# Conversation\n\nMarch 15, 2024\n".to_string(), note_type: "conversation".to_string() },
-            ],
+            note_paths: vec![facts_path.clone()],
+            notes: vec![ImportedNote {
+                path: facts_path.clone(),
+                content: "# Facts\n\nmeeting date: March 15, 2024\n".to_string(),
+                note_type: "facts".to_string(),
+            }],
         };
         let client = MockClient {
-            nodes: BTreeMap::from([(facts_path.clone(), Node { path: facts_path.clone(), kind: wiki_types::NodeKind::File, content: "# Facts\n\n- user: Please remember that the meeting is on March 15, 2024.\n".to_string(), created_at: 0, updated_at: 0, etag: "etag".to_string(), metadata_json: "{}".to_string() })]),
-            search_hits: vec![SearchNodeHit { path: facts_path.clone(), kind: wiki_types::NodeKind::File, snippet: Some("March 15, 2024".to_string()), preview: None, score: 1.0, match_reasons: vec!["content".to_string()] }],
+            nodes: BTreeMap::from([(
+                facts_path.clone(),
+                Node {
+                    path: facts_path.clone(),
+                    kind: wiki_types::NodeKind::File,
+                    content: "# Facts\n\nmeeting date: March 15, 2024\n".to_string(),
+                    created_at: 0,
+                    updated_at: 0,
+                    etag: "etag".to_string(),
+                    metadata_json: "{}".to_string(),
+                },
+            )]),
+            search_hits: vec![SearchNodeHit {
+                path: facts_path.clone(),
+                kind: wiki_types::NodeKind::File,
+                snippet: Some("March 15, 2024".to_string()),
+                preview: None,
+                score: 1.0,
+                match_reasons: vec!["content".to_string()],
+            }],
         };
         let result = run_question(
             &client,
@@ -670,27 +691,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_conversation_gold_path_is_preserved() {
-        let conversation_path = "/Wiki/run/conv/conversation.md".to_string();
+    async fn explicit_provenance_gold_path_is_preserved() {
+        let provenance_path = "/Wiki/run/conv/provenance.md".to_string();
         let imported = ImportedConversation {
             conversation_id: "conv".to_string(),
             namespace_path: "/Wiki/run".to_string(),
             namespace_index_path: "/Wiki/run/index.md".to_string(),
             base_path: "/Wiki/run/conv".to_string(),
-            note_paths: vec![conversation_path.clone()],
+            note_paths: vec![provenance_path.clone()],
             notes: vec![ImportedNote {
-                path: conversation_path.clone(),
-                content: "# Conversation\n\nMarch 15, 2024\n".to_string(),
-                note_type: "conversation".to_string(),
+                path: provenance_path.clone(),
+                content: "# Provenance\n\n- source_path: /Sources/raw/run-conv/run-conv.md\n\nMarch 15, 2024\n".to_string(),
+                note_type: "provenance".to_string(),
             }],
         };
         let client = MockClient {
             nodes: BTreeMap::from([(
-                conversation_path.clone(),
+                provenance_path.clone(),
                 Node {
-                    path: conversation_path.clone(),
+                    path: provenance_path.clone(),
                     kind: wiki_types::NodeKind::File,
-                    content: "# Conversation\n\nMarch 15, 2024\n".to_string(),
+                    content: "# Provenance\n\n- source_path: /Sources/raw/run-conv/run-conv.md\n\nMarch 15, 2024\n".to_string(),
                     created_at: 0,
                     updated_at: 0,
                     etag: "etag".to_string(),
@@ -698,7 +719,7 @@ mod tests {
                 },
             )]),
             search_hits: vec![SearchNodeHit {
-                path: conversation_path,
+                path: provenance_path,
                 kind: wiki_types::NodeKind::File,
                 snippet: Some("March 15, 2024".to_string()),
                 preview: None,
@@ -718,7 +739,7 @@ mod tests {
                 as_of: None,
                 reference_answer: Some("March 15, 2024".to_string()),
                 gold_answers: vec!["March 15, 2024".to_string()],
-                gold_paths: vec!["conversation.md".to_string()],
+                gold_paths: vec!["provenance.md".to_string()],
                 gold_spans: vec!["March 15, 2024".to_string()],
                 expects_abstention: false,
                 tags: vec!["factoid".to_string()],
@@ -733,7 +754,7 @@ mod tests {
         .expect("question should run");
         assert_eq!(
             result.gold_paths,
-            vec!["/Wiki/run/conv/conversation.md".to_string()]
+            vec!["/Wiki/run/conv/provenance.md".to_string()]
         );
         assert_ne!(result.failure_reason, Some(FailureReason::TransformMiss));
         assert!(result.gold_path_hit_at_1);

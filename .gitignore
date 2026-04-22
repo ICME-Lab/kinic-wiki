@@ -36,9 +36,7 @@ __pycache__/
 /canbench_results.yml
 /canbench_results.csv
 /.benchmarks/
-/artifacts/canbench/
-/artifacts/.DS_Store
-/artifacts/beam-*/
+/artifacts/
 
 # Keep ic-hybrid-sqlite as its own repo for now
 /ic-hybrid-sqlite/

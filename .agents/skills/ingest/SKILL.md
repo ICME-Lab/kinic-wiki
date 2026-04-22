@@ -27,6 +27,7 @@ Core rules:
 - When pages are created, deleted, or edited, update `log.md`.
 - Keep `log.md` append-only and easy to inspect with `tail -n 5`.
 - PDF handling stays inside ingest as source normalization.
+- Treat `WIKI_CANONICALITY.md` as the schema authority.
 
 Read [ingest.md](ingest.md) before doing substantive ingest work.
 

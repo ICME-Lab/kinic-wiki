@@ -7,23 +7,15 @@ pub fn normalize_question_type(question_type: &str) -> String {
 
 pub fn canonical_note_candidates(question_type: &str) -> &'static [&'static str] {
     match normalize_question_type(question_type).as_str() {
-        "information_extraction" => &["facts.md", "conversation.md"],
+        "information_extraction" => &["facts.md"],
         "temporal_reasoning" | "event_ordering" => &["events.md"],
-        "instruction_following" => &["instructions.md"],
+        "instruction_following" => &["plans.md"],
         "preference_following" => &["preferences.md"],
-        "knowledge_update" | "contradiction_resolution" => &["updates.md"],
+        "knowledge_update" => &["facts.md"],
+        "contradiction_resolution" => &["open_questions.md"],
         "summarization" | "multi_session_reasoning" => &["summary.md"],
-        "abstention" => &[
-            "facts.md",
-            "events.md",
-            "plan.md",
-            "profile.md",
-            "preferences.md",
-            "instructions.md",
-            "updates.md",
-            "summary.md",
-        ],
-        _ => &["facts.md", "events.md", "plan.md", "profile.md"],
+        "abstention" => &["facts.md", "events.md", "plans.md", "preferences.md"],
+        _ => &["facts.md", "events.md", "plans.md"],
     }
 }
 
@@ -35,7 +27,8 @@ pub fn question_type_tags(question_type: &str) -> Vec<String> {
         "temporal_reasoning" | "event_ordering" => tags.push("temporal".to_string()),
         "instruction_following" => tags.push("instruction".to_string()),
         "preference_following" => tags.push("preference".to_string()),
-        "knowledge_update" | "contradiction_resolution" => tags.push("updates".to_string()),
+        "knowledge_update" => tags.push("facts".to_string()),
+        "contradiction_resolution" => tags.push("open_questions".to_string()),
         "summarization" | "multi_session_reasoning" => tags.push("summary".to_string()),
         "abstention" => tags.push("abstention".to_string()),
         _ => {}
@@ -67,15 +60,16 @@ mod tests {
     fn canonical_candidates_cover_full_question_types() {
         assert_eq!(
             canonical_note_candidates("information_extraction"),
-            &["facts.md", "conversation.md"]
+            &["facts.md"]
         );
         assert_eq!(
             canonical_note_candidates("instruction_following"),
-            &["instructions.md"]
+            &["plans.md"]
         );
+        assert_eq!(canonical_note_candidates("knowledge_update"), &["facts.md"]);
         assert_eq!(
-            canonical_note_candidates("knowledge_update"),
-            &["updates.md"]
+            canonical_note_candidates("contradiction_resolution"),
+            &["open_questions.md"]
         );
         assert_eq!(canonical_note_candidates("summarization"), &["summary.md"]);
     }

@@ -7,6 +7,7 @@ use wiki_types::{ListNodesRequest, NodeEntryKind, NodeKind, WriteNodeRequest};
 use crate::client::WikiApi;
 
 const ROOT_INDEX_PATH: &str = "/Wiki/index.md";
+const SOURCES_ROOT_PREFIX: &str = "/Sources/raw";
 const WIKI_ROOT_PREFIX: &str = "/Wiki";
 
 pub fn conversation_base_path(namespace: &str, conversation_id: &str) -> String {
@@ -37,6 +38,19 @@ pub fn manifest_path(namespace: &str) -> String {
         "{}/_beam_prepare_manifest.json",
         namespace_base_path(namespace)
     )
+}
+
+pub fn raw_source_id(namespace: &str, conversation_id: &str) -> String {
+    format!(
+        "{}-{}",
+        sanitize_segment(namespace),
+        sanitize_segment(conversation_id)
+    )
+}
+
+pub fn raw_source_path(namespace: &str, conversation_id: &str) -> String {
+    let source_id = raw_source_id(namespace, conversation_id);
+    format!("{SOURCES_ROOT_PREFIX}/{source_id}/{source_id}.md")
 }
 
 pub async fn sync_beam_indexes(client: &impl WikiApi, namespace: &str) -> Result<()> {

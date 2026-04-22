@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use super::dataset::BeamConversation;
 use super::import::ImportedConversation;
-use super::navigation::{manifest_path, namespace_index_path};
+use super::navigation::manifest_path;
 
 pub const BEAM_SCHEMA_VERSION: u32 = 1;
 
@@ -128,37 +128,25 @@ pub fn validate_manifest_identity(
         .map(|conversation| conversation.conversation_id.clone())
         .collect::<Vec<_>>();
     expected_ids.sort();
-    if manifest.conversation_ids == expected_ids {
-        let fingerprint = dataset_fingerprint(dataset);
-        if manifest.dataset_fingerprint != fingerprint {
-            return Err(anyhow!(
-                "dataset mismatch: manifest fingerprint does not match current dataset"
-            ));
-        }
-        if manifest.prepared_conversation_count != dataset.len() {
-            return Err(anyhow!(
-                "stale namespace: manifest conversation count {} does not match {}",
-                manifest.prepared_conversation_count,
-                dataset.len()
-            ));
-        }
-        return Ok(());
+    if manifest.conversation_ids != expected_ids {
+        return Err(anyhow!(
+            "dataset mismatch: manifest conversations do not match current dataset"
+        ));
     }
-    if expected_ids.iter().all(|conversation_id| {
-        manifest
-            .conversation_ids
-            .binary_search(conversation_id)
-            .is_ok()
-    }) {
-        return Ok(());
+    let fingerprint = dataset_fingerprint(dataset);
+    if manifest.dataset_fingerprint != fingerprint {
+        return Err(anyhow!(
+            "dataset mismatch: manifest fingerprint does not match current dataset"
+        ));
     }
-    Err(anyhow!(
-        "dataset mismatch: manifest conversations do not include current dataset"
-    ))
-}
-
-pub fn expected_namespace_index_path(namespace: &str) -> String {
-    namespace_index_path(namespace)
+    if manifest.prepared_conversation_count != dataset.len() {
+        return Err(anyhow!(
+            "stale namespace: manifest conversation count {} does not match {}",
+            manifest.prepared_conversation_count,
+            dataset.len()
+        ));
+    }
+    Ok(())
 }
 
 fn conversation_fingerprint_payload(conversation: &BeamConversation) -> String {
@@ -292,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn manifest_identity_accepts_subset_of_prepared_conversations() {
+    fn manifest_identity_rejects_subset_of_prepared_conversations() {
         let first = sample_conversation();
         let second = BeamConversation {
             conversation_id: "Conv 2".to_string(),
@@ -305,7 +293,8 @@ mod tests {
         ];
         let manifest = build_prepare_manifest("Run A", "100K", &dataset, &imported);
 
-        validate_manifest_identity(&manifest, "Run A", "100K", &[first])
-            .expect("prepared superset should allow subset eval");
+        let error = validate_manifest_identity(&manifest, "Run A", "100K", &[first])
+            .expect_err("prepared superset should not allow subset eval");
+        assert!(error.to_string().contains("dataset mismatch"));
     }
 }

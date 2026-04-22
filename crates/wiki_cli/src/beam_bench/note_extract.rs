@@ -1,8 +1,8 @@
 // Where: crates/wiki_cli/src/beam_bench/note_extract.rs
-// What: Role-specific extraction for BEAM structured notes beyond facts/events/plan/profile.
-// Why: Full BEAM question coverage needs dedicated preference, instruction, update, and summary notes.
+// What: Role-specific extraction for BEAM structured notes beyond facts/events/plans.
+// Why: Keep unresolved state and recap separate from stable knowledge notes.
 use super::dataset::BeamConversation;
-use super::note_support::{ChatTurn, extract_identifier_lines, flatten_chat};
+use super::note_support::{ChatTurn, flatten_chat};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -42,22 +42,20 @@ pub fn extract_preference_lines(conversation: &BeamConversation) -> Vec<String> 
 
 pub fn extract_instruction_lines(conversation: &BeamConversation) -> Vec<String> {
     let mut lines = Vec::new();
-    let plan = conversation.conversation_plan.trim();
-    if !plan.is_empty() {
-        lines.push(format!("plan directive: {plan}"));
-    }
     for turn in flatten_chat(&conversation.chat)
         .into_iter()
         .filter(|turn| turn.label() == "user")
     {
         let text = turn.content.trim();
+        if !looks_concise_directive_candidate(text) {
+            continue;
+        }
         let lowered = text.to_ascii_lowercase();
         if lowered.starts_with("please ")
-            || lowered.contains("always ")
-            || lowered.contains("never ")
-            || lowered.contains("do not ")
-            || lowered.contains("don't ")
-            || lowered.contains("remember ")
+            || lowered.starts_with("always ")
+            || lowered.starts_with("do not ")
+            || lowered.starts_with("don't ")
+            || lowered.starts_with("remember ")
             || lowered.contains("when i ask")
         {
             lines.push(text.to_string());
@@ -66,7 +64,7 @@ pub fn extract_instruction_lines(conversation: &BeamConversation) -> Vec<String>
     dedupe(lines)
 }
 
-pub fn extract_update_lines(conversation: &BeamConversation) -> Vec<String> {
+pub fn extract_open_question_lines(conversation: &BeamConversation) -> Vec<String> {
     let mut history = BTreeMap::<String, Vec<SubjectValue>>::new();
     let mut negative_claims = Vec::new();
     let mut affirmative_claims = Vec::new();
@@ -92,34 +90,31 @@ pub fn extract_update_lines(conversation: &BeamConversation) -> Vec<String> {
             continue;
         }
         let distinct = distinct_values(&values);
-        if distinct.len() == 1 {
-            lines.push(format!("{subject} conflict: no"));
-            lines.push(format!("{subject} resolved: yes"));
-            lines.push(format!("{subject} latest_value: {}", distinct[0]));
-            continue;
+        if distinct.len() > 1 {
+            lines.push(format!("{subject} conflict: yes"));
+            lines.push(format!(
+                "{subject} conflicting_values: {}",
+                distinct.join(" | ")
+            ));
+            if let Some(latest) = resolved_latest_value(&values) {
+                lines.push(format!("{subject} resolved: yes"));
+                lines.push(format!("{subject} latest_value: {latest}"));
+                lines.push(format!("{subject} corrected_value: {latest}"));
+            } else {
+                lines.push(format!("{subject} resolved: no"));
+            }
         }
-        lines.push(format!("{subject} conflict: yes"));
-        lines.push(format!(
-            "{subject} conflicting_values: {}",
-            distinct.join(" | ")
-        ));
-        let latest_explicit = values
-            .iter()
-            .rev()
-            .find(|item| item.explicit_latest)
-            .map(|item| item.value.clone());
-        if let Some(latest) = latest_explicit {
-            lines.push(format!("{subject} resolved: yes"));
-            lines.push(format!("{subject} latest_value: {latest}"));
-            lines.push(format!("{subject} corrected_value: {latest}"));
-            continue;
-        }
-        lines.push(format!("{subject} resolved: no"));
     }
-    if let Some(line) = explicit_conflict_line(&conversation.narratives) {
+    let explicit_conflicts = explicit_conflict_lines(&conversation.conversation_plan)
+        .into_iter()
+        .chain(explicit_conflict_lines(&conversation.narratives))
+        .collect::<Vec<_>>();
+    if !explicit_conflicts.is_empty() {
         lines.push("explicit_conflict: yes".to_string());
         lines.push("explicit_conflict_resolved: no".to_string());
-        lines.push(format!("explicit_conflict_statement: {line}"));
+        for line in explicit_conflicts {
+            lines.push(format!("explicit_conflict_statement: {line}"));
+        }
     }
     if let Some((negative, affirmative)) =
         matching_capability_conflict(&negative_claims, &affirmative_claims)
@@ -136,21 +131,20 @@ pub fn extract_update_lines(conversation: &BeamConversation) -> Vec<String> {
 
 pub fn extract_summary_lines(conversation: &BeamConversation) -> Vec<String> {
     let mut lines = Vec::new();
-    let identifiers = extract_identifier_lines(conversation);
-    if let Some(first) = identifiers.first() {
-        lines.push(first.clone());
+    lines.push(format!("conversation_id: {}", conversation.conversation_id));
+    if let Some(title) = conversation
+        .conversation_seed
+        .get("title")
+        .and_then(|value| value.as_str())
+    {
+        lines.push(format!("scope title: {title}"));
     }
-    if !conversation.narratives.trim().is_empty() {
-        lines.push(format!(
-            "narrative summary: {}",
-            conversation.narratives.trim()
-        ));
-    }
-    if !conversation.conversation_plan.trim().is_empty() {
-        lines.push(format!(
-            "plan summary: {}",
-            conversation.conversation_plan.trim()
-        ));
+    if let Some(category) = conversation
+        .conversation_seed
+        .get("category")
+        .and_then(|value| value.as_str())
+    {
+        lines.push(format!("scope category: {category}"));
     }
     lines.push(format!(
         "turn count: {}",
@@ -251,6 +245,17 @@ fn looks_concise_update_candidate(text: &str) -> bool {
     true
 }
 
+fn looks_concise_directive_candidate(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 240 {
+        return false;
+    }
+    if trimmed.contains('\n') || trimmed.contains("```") {
+        return false;
+    }
+    true
+}
+
 fn dedupe(lines: Vec<String>) -> Vec<String> {
     let mut out = Vec::new();
     for line in lines {
@@ -269,6 +274,21 @@ fn distinct_values(values: &[SubjectValue]) -> Vec<String> {
         }
     }
     out
+}
+
+fn has_resolved_latest(values: &[SubjectValue]) -> bool {
+    values.iter().any(|value| value.explicit_latest)
+}
+
+fn resolved_latest_value(values: &[SubjectValue]) -> Option<String> {
+    if !has_resolved_latest(values) {
+        return None;
+    }
+    values
+        .iter()
+        .rev()
+        .find(|value| value.explicit_latest)
+        .map(|value| value.value.clone())
 }
 
 fn has_explicit_latest_marker(text: &str) -> bool {
@@ -290,10 +310,11 @@ fn has_explicit_latest_marker(text: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
-fn explicit_conflict_line(text: &str) -> Option<String> {
+fn explicit_conflict_lines(text: &str) -> Vec<String> {
     text.lines()
-        .find_map(|line| line.trim().strip_prefix("• **Logical Contradiction:**"))
+        .filter_map(|line| line.trim().strip_prefix("• **Logical Contradiction:**"))
         .map(|line| line.trim().to_string())
+        .collect()
 }
 
 fn collect_capability_claims(
@@ -393,7 +414,7 @@ fn squeeze_line(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_summary_lines, extract_update_lines};
+    use super::{extract_instruction_lines, extract_open_question_lines, extract_summary_lines};
     use crate::beam_bench::dataset::BeamConversation;
     use serde_json::json;
 
@@ -415,24 +436,24 @@ mod tests {
     }
 
     #[test]
-    fn extract_update_lines_marks_unresolved_conflict() {
+    fn extract_open_question_lines_marks_unresolved_conflict() {
         let conversation = conversation_with_chat(&[
             "The deployment is on March 15, 2024.",
             "The deployment is on April 10, 2024.",
         ]);
-        let lines = extract_update_lines(&conversation);
+        let lines = extract_open_question_lines(&conversation);
         assert!(lines.contains(&"deployment date conflict: yes".to_string()));
         assert!(lines.contains(&"deployment date resolved: no".to_string()));
         assert!(lines.iter().any(|line| line.contains("conflicting_values")));
     }
 
     #[test]
-    fn extract_update_lines_marks_explicit_latest_value() {
+    fn extract_open_question_lines_keeps_resolved_latest_value() {
         let conversation = conversation_with_chat(&[
             "The deployment is on March 15, 2024.",
             "Update: the deployment is on April 10, 2024.",
         ]);
-        let lines = extract_update_lines(&conversation);
+        let lines = extract_open_question_lines(&conversation);
         assert!(lines.contains(&"deployment date conflict: yes".to_string()));
         assert!(lines.contains(&"deployment date resolved: yes".to_string()));
         assert!(lines.contains(&"deployment date latest_value: April 10, 2024".to_string()));
@@ -444,18 +465,18 @@ mod tests {
         let conversation =
             conversation_with_chat(&["Please remember that the meeting is on March 15, 2024."]);
         let lines = extract_summary_lines(&conversation);
-        assert!(lines.iter().any(|line| line.contains("narrative summary")));
-        assert!(!lines.iter().any(|line| line.contains("initial user focus")));
+        assert!(lines.contains(&"conversation_id: conv-1".to_string()));
+        assert!(lines.contains(&"scope title: Sample".to_string()));
         assert!(!lines.iter().any(|line| line.contains("March 15, 2024")));
     }
 
     #[test]
-    fn extract_update_lines_marks_capability_conflict() {
+    fn extract_open_question_lines_marks_capability_conflict() {
         let conversation = conversation_with_chat(&[
             "I've never written any Flask routes in this project.",
             "I implemented a basic homepage route with Flask.",
         ]);
-        let lines = extract_update_lines(&conversation);
+        let lines = extract_open_question_lines(&conversation);
         assert!(lines.contains(&"capability_conflict: yes".to_string()));
         assert!(lines.contains(&"capability_conflict_resolved: no".to_string()));
         assert!(
@@ -466,12 +487,12 @@ mod tests {
     }
 
     #[test]
-    fn extract_update_lines_ignores_mismatched_capability_topics() {
+    fn extract_open_question_lines_ignores_mismatched_capability_topics() {
         let conversation = conversation_with_chat(&[
             "I've never deployed to production.",
             "I implemented a basic homepage route with Flask.",
         ]);
-        let lines = extract_update_lines(&conversation);
+        let lines = extract_open_question_lines(&conversation);
         assert!(!lines.contains(&"capability_conflict: yes".to_string()));
         assert!(
             !lines
@@ -481,12 +502,39 @@ mod tests {
     }
 
     #[test]
-    fn extract_update_lines_ignores_long_question_prompts() {
+    fn extract_open_question_lines_ignores_long_question_prompts() {
         let conversation = conversation_with_chat(&[
             "I'm trying to use a public weather API without OAuth, but I'm worried about exposing my API key in the browser. How should I store it securely?",
         ]);
-        let lines = extract_update_lines(&conversation);
+        let lines = extract_open_question_lines(&conversation);
         assert!(!lines.iter().any(|line| line.contains("latest_value")));
         assert!(!lines.iter().any(|line| line.contains("resolved: yes")));
+    }
+
+    #[test]
+    fn extract_open_question_lines_collects_explicit_conflicts_from_plan_text() {
+        let mut conversation = conversation_with_chat(&[]);
+        conversation.conversation_plan =
+            "BATCH 1 PLAN\n• **Logical Contradiction:** I have never submitted the cover letter."
+                .to_string();
+        let lines = extract_open_question_lines(&conversation);
+        assert!(lines.contains(&"explicit_conflict: yes".to_string()));
+        assert!(lines.iter().any(|line| {
+            line == "explicit_conflict_statement: I have never submitted the cover letter."
+        }));
+    }
+
+    #[test]
+    fn extract_instruction_lines_keeps_concise_scope_directives_only() {
+        let conversation = conversation_with_chat(&[
+            "Always include version numbers when I ask about software dependencies or libraries used.",
+            "I'm trying to implement Flask-Login here.\n```python\nprint('hi')\n```",
+            "I've never written any Flask routes or handled HTTP requests in this project before.",
+        ]);
+        let lines = extract_instruction_lines(&conversation);
+        assert_eq!(
+            lines,
+            vec!["Always include version numbers when I ask about software dependencies or libraries used.".to_string()]
+        );
     }
 }

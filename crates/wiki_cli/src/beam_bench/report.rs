@@ -2,16 +2,17 @@
 // What: Machine-readable BEAM RAG results plus compact summary/report rendering.
 // Why: The benchmark must separate retrieval and answer failures so regressions are attributable.
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 use super::dataset::BeamQuestionClass;
 use super::model::ToolCallRecord;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureReason {
     MissedGoldPath,
@@ -25,7 +26,7 @@ pub enum FailureReason {
     GoldFixtureMismatch,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuestionResult {
     pub conversation_id: String,
     pub question_id: String,
@@ -87,6 +88,8 @@ pub struct QuestionResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct BenchmarkSummary {
     pub read_only_eval: bool,
+    pub operational: OperationalMetrics,
+    pub raw_beam_like: RawBeamLikeMetrics,
     pub total_questions: usize,
     pub primary_questions: usize,
     pub retrieval_questions: usize,
@@ -143,6 +146,19 @@ pub struct BenchmarkSummary {
     pub by_source_note_type: BTreeMap<String, usize>,
     pub failure_reasons: BTreeMap<String, usize>,
     pub top_k_hit_rate_by_rank: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OperationalMetrics {
+    pub grounded_answer_rate: f64,
+    pub answered_without_grounding_rate: f64,
+    pub read_before_answer_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RawBeamLikeMetrics {
+    pub answer_match_rate: f64,
+    pub abstention_correct_rate: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -289,6 +305,15 @@ pub fn summarize(results: &[QuestionResult], top_k: u32) -> BenchmarkSummary {
     };
     BenchmarkSummary {
         read_only_eval: false,
+        operational: OperationalMetrics {
+            grounded_answer_rate: ratio(grounded_answers, results.len()),
+            answered_without_grounding_rate: ratio(answered_without_grounding, results.len()),
+            read_before_answer_rate: ratio(read_before_answer, results.len()),
+        },
+        raw_beam_like: RawBeamLikeMetrics {
+            answer_match_rate: ratio(answer_normalized_matches, primary.len()),
+            abstention_correct_rate: ratio(abstention_correct, abstention.len()),
+        },
         total_questions: results.len(),
         primary_questions: primary.len(),
         retrieval_questions: retrieval.len(),
@@ -369,6 +394,14 @@ pub fn write_artifacts(
             .iter(),
     )?;
     fs::write(
+        output_dir.join("failure_manifest.json"),
+        serde_json::to_vec_pretty(&build_failure_manifest(results, false))?,
+    )?;
+    fs::write(
+        output_dir.join("retry_manifest.json"),
+        serde_json::to_vec_pretty(&build_failure_manifest(results, true))?,
+    )?;
+    fs::write(
         output_dir.join("transform_miss_report.json"),
         serde_json::to_vec_pretty(&build_transform_miss_report(results))?,
     )?;
@@ -380,14 +413,48 @@ pub fn write_artifacts(
     Ok(())
 }
 
-pub fn init_streaming_artifacts(output_dir: &Path) -> Result<()> {
+pub fn init_streaming_artifacts(output_dir: &Path, resume: bool) -> Result<()> {
     fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create output dir: {}", output_dir.display()))?;
     for name in ["results.jsonl", "failures.jsonl", "codex_runs.jsonl"] {
-        File::create(output_dir.join(name))
-            .with_context(|| format!("failed to create {}", output_dir.join(name).display()))?;
+        let path = output_dir.join(name);
+        if resume {
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+                .with_context(|| format!("failed to open {}", path.display()))?;
+        } else {
+            File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
+        }
     }
     Ok(())
+}
+
+pub fn load_existing_results(output_dir: &Path) -> Result<Vec<QuestionResult>> {
+    let path = output_dir.join("results.jsonl");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let file = File::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut results = Vec::new();
+    for (line_no, line) in reader.lines().enumerate() {
+        let line = line
+            .with_context(|| format!("failed to read {} line {}", path.display(), line_no + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let result = serde_json::from_str::<QuestionResult>(&line).with_context(|| {
+            format!(
+                "failed to parse {} line {} as QuestionResult",
+                path.display(),
+                line_no + 1
+            )
+        })?;
+        results.push(result);
+    }
+    Ok(results)
 }
 
 pub fn append_result_artifacts(output_dir: &Path, result: &QuestionResult) -> Result<()> {
@@ -438,6 +505,16 @@ struct TransformMissExample {
     gold_paths: Vec<String>,
     gold_spans: Vec<String>,
     retrieved_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct FailureManifestEntry {
+    conversation_id: String,
+    question_id: String,
+    question_type: String,
+    question_class: BeamQuestionClass,
+    failure_reason: FailureReason,
+    query: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -507,6 +584,31 @@ fn build_transform_miss_report(results: &[QuestionResult]) -> TransformMissRepor
         by_question_type,
         examples,
     }
+}
+
+fn build_failure_manifest(
+    results: &[QuestionResult],
+    retryable_only: bool,
+) -> Vec<FailureManifestEntry> {
+    results
+        .iter()
+        .filter_map(|result| {
+            let reason = result.failure_reason?;
+            if retryable_only
+                && !matches!(reason, FailureReason::Timeout | FailureReason::ToolError)
+            {
+                return None;
+            }
+            Some(FailureManifestEntry {
+                conversation_id: result.conversation_id.clone(),
+                question_id: result.question_id.clone(),
+                question_type: result.question_type.clone(),
+                question_class: result.question_class,
+                failure_reason: reason,
+                query: result.query.clone(),
+            })
+        })
+        .collect()
 }
 
 fn build_supported_slice_report(results: &[QuestionResult]) -> SupportedSliceReport {
@@ -767,50 +869,239 @@ where
 }
 
 fn render_report(summary: &BenchmarkSummary) -> String {
-    format!(
-        "# BEAM RAG Benchmark Report\n\n- read only eval: {}\n- total questions: {}\n- primary questions: {}\n- retrieval questions: {}\n- retrieval hit rate: {:.4}\n- answer exact match rate: {:.4}\n- answer normalized match rate: {:.4}\n- answered rate: {:.4}\n- grounded answer rate: {:.4}\n- answered without grounding rate: {:.4}\n- retrieved paths nonempty rate: {:.4}\n- read before answer rate: {:.4}\n- supported questions: {}\n- unsupported questions: {}\n- run completed: {}\n- timeout count: {}\n- total tool calls: {}\n- total tool errors: {}\n- average docs read: {:.2}\n- average docs read per answered question: {:.2}\n- total input tokens: {}\n- total output tokens: {}\n- total tokens: {}\n- average latency ms: {:.2}\n\n## Key slices\n\n- information_extraction grounded_answer_rate: {:.4}\n- temporal_reasoning grounded_answer_rate: {:.4}\n- event_ordering grounded_answer_rate: {:.4}\n- instruction_following grounded_answer_rate: {:.4}\n- preference_following grounded_answer_rate: {:.4}\n- knowledge_update grounded_answer_rate: {:.4}\n- contradiction_resolution grounded_answer_rate: {:.4}\n- summarization grounded_answer_rate: {:.4}\n- multi_session_reasoning grounded_answer_rate: {:.4}\n- abstention_correct_rate: {:.4}\n",
-        summary.read_only_eval,
-        summary.total_questions,
-        summary.primary_questions,
-        summary.retrieval_questions,
-        summary.gold_path_hit_rate_at_3,
-        summary.answer_exact_match_rate,
-        summary.answer_match_rate,
-        summary.answered_rate,
-        summary.grounded_answer_rate,
-        summary.answered_without_grounding_rate,
-        summary.retrieved_paths_nonempty_rate,
-        summary.read_before_answer_rate,
-        summary.supported_questions,
-        summary.unsupported_questions,
-        summary.run_completed,
-        summary.timeout_count,
-        summary.total_tool_calls,
-        summary.total_tool_errors,
-        summary.average_docs_read_per_question,
-        summary.avg_docs_read_per_answered_question,
-        summary.total_input_tokens,
-        summary.total_output_tokens,
-        summary.total_tokens,
-        summary.avg_latency_ms,
+    let mut out = String::new();
+    let _ = writeln!(out, "# BEAM RAG Benchmark Report");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Headline");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "- total questions: {}", summary.total_questions);
+    let _ = writeln!(out, "- run completed: {}", summary.run_completed);
+    let _ = writeln!(
+        out,
+        "- grounded answer rate: {:.4}",
+        summary.operational.grounded_answer_rate
+    );
+    let _ = writeln!(
+        out,
+        "- answer match rate: {:.4}",
+        summary.raw_beam_like.answer_match_rate
+    );
+    let _ = writeln!(
+        out,
+        "- abstention correct rate: {:.4}",
+        summary.raw_beam_like.abstention_correct_rate
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Operational");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "- answered rate: {:.4}", summary.answered_rate);
+    let _ = writeln!(
+        out,
+        "- grounded answer rate: {:.4}",
+        summary.operational.grounded_answer_rate
+    );
+    let _ = writeln!(
+        out,
+        "- answered without grounding rate: {:.4}",
+        summary.operational.answered_without_grounding_rate
+    );
+    let _ = writeln!(
+        out,
+        "- read before answer rate: {:.4}",
+        summary.operational.read_before_answer_rate
+    );
+    let _ = writeln!(
+        out,
+        "- retrieved paths nonempty rate: {:.4}",
+        summary.retrieved_paths_nonempty_rate
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Answer Quality");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "- answer exact match rate: {:.4}",
+        summary.answer_exact_match_rate
+    );
+    let _ = writeln!(
+        out,
+        "- answer normalized match rate: {:.4}",
+        summary.answer_normalized_match_rate
+    );
+    let _ = writeln!(out, "- answer match rate: {:.4}", summary.answer_match_rate);
+    let _ = writeln!(
+        out,
+        "- answer match rate given span hit: {:.4}",
+        summary.answer_match_rate_given_span_hit
+    );
+    let _ = writeln!(
+        out,
+        "- abstention correct rate: {:.4}",
+        summary.abstention_correct_rate
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Retrieval Diagnostics");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "- retrieval hit rate: {:.4}",
+        summary.retrieval_hit_rate
+    );
+    let _ = writeln!(
+        out,
+        "- gold path hit rate @1: {:.4}",
+        summary.gold_path_hit_rate_at_1
+    );
+    let _ = writeln!(
+        out,
+        "- gold path hit rate @3: {:.4}",
+        summary.gold_path_hit_rate_at_3
+    );
+    let _ = writeln!(
+        out,
+        "- gold span hit rate @1: {:.4}",
+        summary.gold_span_hit_rate_at_1
+    );
+    let _ = writeln!(
+        out,
+        "- gold span hit rate @3: {:.4}",
+        summary.gold_span_hit_rate_at_3
+    );
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Runtime Diagnostics");
+    let _ = writeln!(out);
+    let _ = writeln!(out, "- read only eval: {}", summary.read_only_eval);
+    let _ = writeln!(out, "- primary questions: {}", summary.primary_questions);
+    let _ = writeln!(
+        out,
+        "- retrieval questions: {}",
+        summary.retrieval_questions
+    );
+    let _ = writeln!(
+        out,
+        "- supported questions: {}",
+        summary.supported_questions
+    );
+    let _ = writeln!(
+        out,
+        "- unsupported questions: {}",
+        summary.unsupported_questions
+    );
+    let _ = writeln!(out, "- timeout count: {}", summary.timeout_count);
+    let _ = writeln!(out, "- total tool calls: {}", summary.total_tool_calls);
+    let _ = writeln!(out, "- total tool errors: {}", summary.total_tool_errors);
+    let _ = writeln!(
+        out,
+        "- average docs read: {:.2}",
+        summary.average_docs_read_per_question
+    );
+    let _ = writeln!(
+        out,
+        "- average docs read per answered question: {:.2}",
+        summary.avg_docs_read_per_answered_question
+    );
+    let _ = writeln!(out, "- average latency ms: {:.2}", summary.avg_latency_ms);
+    let _ = writeln!(out, "- total input tokens: {}", summary.total_input_tokens);
+    let _ = writeln!(
+        out,
+        "- total output tokens: {}",
+        summary.total_output_tokens
+    );
+    let _ = writeln!(out, "- total tokens: {}", summary.total_tokens);
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Failure Reasons");
+    let _ = writeln!(out);
+    for (reason, count) in &summary.failure_reasons {
+        let _ = writeln!(out, "- {}: {}", reason, count);
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Question Types");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "| type | questions | grounded | read_before | answer_match | gold_path@3 | answered_without_grounding |"
+    );
+    let _ = writeln!(out, "| --- | ---: | ---: | ---: | ---: | ---: | ---: |");
+    for (question_type, item) in &summary.by_question_type {
+        let _ = writeln!(
+            out,
+            "| {} | {} | {:.4} | {:.4} | {:.4} | {:.4} | {:.4} |",
+            question_type,
+            item.questions,
+            item.grounded_answer_rate,
+            item.read_before_answer_rate,
+            item.answer_match_rate,
+            item.gold_path_hit_rate_at_3,
+            item.answered_without_grounding_rate,
+        );
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Source Note Types");
+    let _ = writeln!(out);
+    for (note_type, count) in &summary.by_source_note_type {
+        let _ = writeln!(out, "- {}: {}", note_type, count);
+    }
+    let _ = writeln!(out);
+    let _ = writeln!(out, "## Key Slices");
+    let _ = writeln!(out);
+    let _ = writeln!(
+        out,
+        "- information_extraction grounded_answer_rate: {:.4}",
         question_type_metric(summary, "information_extraction", |item| item
-            .grounded_answer_rate),
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- temporal_reasoning grounded_answer_rate: {:.4}",
         question_type_metric(summary, "temporal_reasoning", |item| item
-            .grounded_answer_rate),
-        question_type_metric(summary, "event_ordering", |item| item.grounded_answer_rate),
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- event_ordering grounded_answer_rate: {:.4}",
+        question_type_metric(summary, "event_ordering", |item| item.grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- instruction_following grounded_answer_rate: {:.4}",
         question_type_metric(summary, "instruction_following", |item| item
-            .grounded_answer_rate),
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- preference_following grounded_answer_rate: {:.4}",
         question_type_metric(summary, "preference_following", |item| item
-            .grounded_answer_rate),
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- knowledge_update grounded_answer_rate: {:.4}",
         question_type_metric(summary, "knowledge_update", |item| item
-            .grounded_answer_rate),
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- contradiction_resolution grounded_answer_rate: {:.4}",
         question_type_metric(summary, "contradiction_resolution", |item| item
-            .grounded_answer_rate),
-        question_type_metric(summary, "summarization", |item| item.grounded_answer_rate),
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- summarization grounded_answer_rate: {:.4}",
+        question_type_metric(summary, "summarization", |item| item.grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- multi_session_reasoning grounded_answer_rate: {:.4}",
         question_type_metric(summary, "multi_session_reasoning", |item| item
-            .grounded_answer_rate),
-        tag_metric(summary, "abstention", |item| item.abstention_correct_rate),
-    )
+            .grounded_answer_rate)
+    );
+    let _ = writeln!(
+        out,
+        "- abstention_correct_rate: {:.4}",
+        tag_metric(summary, "abstention", |item| item.abstention_correct_rate)
+    );
+    out
 }
 
 fn tag_metric(summary: &BenchmarkSummary, tag: &str, project: impl Fn(&TagSummary) -> f64) -> f64 {
@@ -838,8 +1129,14 @@ fn ratio(numerator: usize, denominator: usize) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{BenchmarkSummary, FailureReason, QuestionResult, summarize};
+    use super::{
+        BenchmarkSummary, FailureReason, QuestionResult, init_streaming_artifacts,
+        load_existing_results, summarize, write_artifacts,
+    };
     use crate::beam_bench::dataset::BeamQuestionClass;
+    use crate::beam_bench::report::append_result_artifacts;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn result(id: &str, class: BeamQuestionClass) -> QuestionResult {
         QuestionResult {
@@ -935,7 +1232,7 @@ mod tests {
     fn summarize_tracks_tag_slices() {
         let mut plan = result("plan", BeamQuestionClass::Factoid);
         plan.tags = vec!["factoid".to_string(), "plan".to_string()];
-        plan.source_note_type = Some("plan.md".to_string());
+        plan.source_note_type = Some("plans.md".to_string());
         let mut abstention = result("abstention", BeamQuestionClass::Abstention);
         abstention.expects_abstention = true;
         abstention.included_in_primary_metrics = false;
@@ -949,5 +1246,91 @@ mod tests {
         assert_eq!(summary.by_tag["facts"].questions, 1);
         assert_eq!(summary.by_tag["plan"].questions, 1);
         assert_eq!(summary.by_tag["abstention"].abstention_correct_rate, 1.0);
+    }
+
+    #[test]
+    fn init_streaming_artifacts_truncates_without_resume() {
+        let dir = tempdir().expect("tempdir should exist");
+        let path = dir.path().join("results.jsonl");
+        fs::write(&path, "stale\n").expect("seed file should be written");
+
+        init_streaming_artifacts(dir.path(), false).expect("artifacts should initialize");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("results should exist"),
+            String::new()
+        );
+    }
+
+    #[test]
+    fn init_streaming_artifacts_preserves_results_with_resume() {
+        let dir = tempdir().expect("tempdir should exist");
+        let path = dir.path().join("results.jsonl");
+        fs::write(&path, "{\"question_id\":\"q\"}\n").expect("seed file should be written");
+
+        init_streaming_artifacts(dir.path(), true).expect("artifacts should initialize");
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("results should exist"),
+            "{\"question_id\":\"q\"}\n"
+        );
+    }
+
+    #[test]
+    fn load_existing_results_reads_jsonl_rows() {
+        let dir = tempdir().expect("tempdir should exist");
+        let result = result("fact", BeamQuestionClass::Factoid);
+        fs::write(
+            dir.path().join("results.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::to_string(&result).expect("result should serialize")
+            ),
+        )
+        .expect("results should be written");
+
+        let loaded = load_existing_results(dir.path()).expect("results should load");
+
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].question_id, "fact");
+    }
+
+    #[test]
+    fn resume_preserves_existing_rows_and_allows_new_appends() {
+        let dir = tempdir().expect("tempdir should exist");
+        let existing = result("fact", BeamQuestionClass::Factoid);
+        let next = result("next", BeamQuestionClass::Factoid);
+
+        init_streaming_artifacts(dir.path(), false).expect("artifacts should initialize");
+        append_result_artifacts(dir.path(), &existing).expect("existing row should append");
+        init_streaming_artifacts(dir.path(), true).expect("resume should preserve rows");
+        append_result_artifacts(dir.path(), &next).expect("next row should append");
+
+        let loaded = load_existing_results(dir.path()).expect("results should load");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].question_id, "fact");
+        assert_eq!(loaded[1].question_id, "next");
+    }
+
+    #[test]
+    fn write_artifacts_emits_failure_and_retry_manifests() {
+        let dir = tempdir().expect("tempdir should exist");
+        let mut timeout = result("timeout", BeamQuestionClass::Factoid);
+        timeout.failure_reason = Some(FailureReason::Timeout);
+        let mut wrong = result("wrong", BeamQuestionClass::Factoid);
+        wrong.failure_reason = Some(FailureReason::WrongShortAnswer);
+        let results = vec![timeout, wrong];
+        let summary = summarize(&results, 3);
+
+        write_artifacts(dir.path(), &summary, &results).expect("artifacts should write");
+
+        let failure_manifest = fs::read_to_string(dir.path().join("failure_manifest.json"))
+            .expect("failure manifest should exist");
+        let retry_manifest = fs::read_to_string(dir.path().join("retry_manifest.json"))
+            .expect("retry manifest should exist");
+        assert!(failure_manifest.contains("\"question_id\": \"timeout\""));
+        assert!(failure_manifest.contains("\"question_id\": \"wrong\""));
+        assert!(retry_manifest.contains("\"question_id\": \"timeout\""));
+        assert!(!retry_manifest.contains("\"question_id\": \"wrong\""));
     }
 }

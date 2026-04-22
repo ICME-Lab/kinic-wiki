@@ -17,6 +17,11 @@ pub fn answer_normalized_match(question: &BeamQuestion, predicted: Option<&str>)
     let Some(predicted) = predicted else {
         return false;
     };
+    if question.expects_abstention
+        || normalize_question_type(&question.question_type) == "abstention"
+    {
+        return abstention_match(predicted);
+    }
     if question.gold_answers.iter().any(|expected| {
         normalize_text(expected) == normalize_text(predicted)
             && !normalize_text(expected).is_empty()
@@ -90,24 +95,41 @@ fn preference_match(predicted: &str, rubric: &[String]) -> bool {
     rubric_match(predicted, rubric, 1)
 }
 
-fn contradiction_match(predicted: &str, rubric: &[String]) -> bool {
-    let lowered = predicted.to_ascii_lowercase();
-    let plain_yes_no = is_plain_yes_no(&lowered);
-    let expects_resolution = rubric_expects_resolution(rubric);
-    let expects_conflict = rubric_expects_conflict(rubric);
-    if plain_yes_no && expects_conflict && !expects_resolution {
+pub fn abstention_match(predicted: &str) -> bool {
+    let normalized = normalize_text(predicted);
+    if abstention_disqualifier_phrases()
+        .iter()
+        .any(|phrase| normalized.contains(phrase))
+    {
         return false;
     }
-    if plain_yes_no && expects_resolution {
-        return true;
+    abstention_phrases().iter().any(|phrase| {
+        let normalized_phrase = normalize_text(phrase);
+        normalized == normalized_phrase
+            || normalized
+                .strip_prefix(&normalized_phrase)
+                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(' '))
+    })
+}
+
+fn contradiction_match(predicted: &str, rubric: &[String]) -> bool {
+    let lowered = predicted.to_ascii_lowercase();
+    let expects_resolution = rubric_expects_resolution(rubric);
+    let expects_conflict = rubric_expects_conflict(rubric);
+    let rubric_hits = rubric
+        .iter()
+        .filter(|item| rubric_clause_matches(item, predicted))
+        .count();
+    let has_clarification = contradiction_phrases()
+        .iter()
+        .any(|phrase| lowered.contains(phrase));
+    if expects_conflict && !expects_resolution {
+        return has_clarification && rubric_hits >= 1;
     }
-    if lowered.contains("contradict") || lowered.contains("clarif") {
-        return true;
+    if has_clarification {
+        return rubric_hits >= 1;
     }
-    if lowered.contains("conflicting information")
-        || lowered.contains("which is correct")
-        || lowered.contains("which statement is correct")
-    {
+    if is_plain_yes_no(&lowered) && expects_resolution {
         return true;
     }
     rubric_match(predicted, rubric, 2.min(rubric.len()))
@@ -189,9 +211,39 @@ fn normalize_text(value: &str) -> String {
         .join(" ")
 }
 
+fn abstention_phrases() -> &'static [&'static str] {
+    &[
+        "insufficient evidence",
+        "no information",
+        "not enough information",
+        "there is not enough information in the chat",
+        "not mentioned",
+        "not provided in the chat",
+        "there is no information related to",
+        "based on the provided chat there is no information",
+        "based on the chat there is no information",
+    ]
+}
+
+fn abstention_disqualifier_phrases() -> &'static [&'static str] {
+    &[" but ", " probably ", " likely ", " maybe ", " perhaps "]
+}
+
+fn contradiction_phrases() -> &'static [&'static str] {
+    &[
+        "contradictory information",
+        "conflicting information",
+        "please clarify",
+        "clarify which is correct",
+        "which is correct",
+        "which statement is correct",
+        "there is a contradiction",
+    ]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::answer_normalized_match;
+    use super::{abstention_match, answer_normalized_match};
     use crate::beam_bench::dataset::{BeamQuestion, BeamQuestionClass};
     use serde_json::json;
 
@@ -233,15 +285,17 @@ mod tests {
     }
 
     #[test]
-    fn contradiction_match_accepts_clarification_language() {
+    fn contradiction_match_accepts_clarification_language_with_rubric_content() {
         let question = question(
             "contradiction_resolution",
             &[],
-            &["LLM response should state: there is contradictory information"],
+            &["LLM response should state: conflicting information between March 15 and April 10"],
         );
         assert!(answer_normalized_match(
             &question,
-            Some("There is contradictory information here. Please clarify which is correct.")
+            Some(
+                "There is conflicting information between March 15 and April 10. Please clarify which is correct."
+            )
         ));
     }
 
@@ -275,5 +329,43 @@ mod tests {
     fn short_gold_answer_does_not_match_longer_prediction() {
         let question = question("information_extraction", &["15"], &[]);
         assert!(!answer_normalized_match(&question, Some("March 15, 2024")));
+    }
+
+    #[test]
+    fn abstention_match_accepts_common_rejection_phrases() {
+        assert!(abstention_match("insufficient evidence"));
+        assert!(abstention_match(
+            "There is not enough information in the chat."
+        ));
+        assert!(abstention_match(
+            "Based on the provided chat, there is no information about Bryan's advice."
+        ));
+    }
+
+    #[test]
+    fn abstention_match_rejects_topical_answer() {
+        assert!(!abstention_match(
+            "The feedback improved the sidebar and dark mode before launch."
+        ));
+    }
+
+    #[test]
+    fn abstention_match_rejects_guess_after_refusal() {
+        assert!(!abstention_match(
+            "insufficient evidence, but it was probably React"
+        ));
+    }
+
+    #[test]
+    fn contradiction_match_rejects_clarify_only_answer() {
+        let question = question(
+            "contradiction_resolution",
+            &[],
+            &["LLM response should state: conflicting information between March 15 and April 10"],
+        );
+        assert!(!answer_normalized_match(
+            &question,
+            Some("There is conflicting information here. Please clarify which is correct.")
+        ));
     }
 }

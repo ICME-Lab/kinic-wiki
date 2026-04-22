@@ -4,7 +4,7 @@
 use crate::cli::{Cli, Command};
 use crate::client::WikiApi;
 use crate::lint_local::{lint_local, print_local_lint_report};
-use crate::maintenance::rebuild_index;
+use crate::maintenance::{rebuild_index, rebuild_scope_index};
 use crate::mirror::{
     MirrorState, collect_changed_nodes, collect_managed_nodes, deleted_tracked_nodes, load_state,
     merge_tracked_nodes, now_millis, read_managed_node_content, remove_mirror_paths,
@@ -37,6 +37,10 @@ pub async fn run_command(client: &impl WikiApi, cli: Cli) -> Result<()> {
         Command::RebuildIndex => {
             rebuild_index(client).await?;
             println!("index rebuilt");
+        }
+        Command::RebuildScopeIndex { scope } => {
+            rebuild_scope_index(client, &scope).await?;
+            println!("scope index rebuilt: {scope}");
         }
         Command::ReadNode { path, json } => {
             let node = client

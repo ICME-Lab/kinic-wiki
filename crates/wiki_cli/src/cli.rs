@@ -28,6 +28,10 @@ pub struct ConnectionArgs {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     RebuildIndex,
+    RebuildScopeIndex {
+        #[arg(long)]
+        scope: String,
+    },
     ReadNode {
         #[arg(long)]
         path: String,

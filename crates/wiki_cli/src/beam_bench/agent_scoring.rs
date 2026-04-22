@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use super::answer_match::{
-    answer_exact_match as matches_exact_answer,
+    abstention_match, answer_exact_match as matches_exact_answer,
     answer_normalized_match as matches_normalized_answer,
 };
 use super::dataset::BeamQuestion;
@@ -44,7 +44,8 @@ pub fn score_question(
     let answer_exact_match = matches_exact_answer(&question, predicted_answer.as_deref());
     let answer_normalized_match = matches_normalized_answer(&question, predicted_answer.as_deref());
     let answer_match_given_span_hit = gold_span_hit_at_3 && answer_normalized_match;
-    let abstention_correct = question.expects_abstention && answer_normalized_match;
+    let abstention_correct =
+        question.expects_abstention && predicted_answer.as_deref().is_some_and(abstention_match);
     let tool_error_count = run.tool_calls.iter().filter(|call| call.is_error).count();
     let docs_read_count = run
         .tool_calls
@@ -502,7 +503,9 @@ fn determine_failure_reason(
     answer_normalized_match: bool,
 ) -> Option<FailureReason> {
     if question.expects_abstention {
-        return (!answer_normalized_match).then_some(FailureReason::ShouldAbstainButAnswered);
+        return predicted_answer
+            .filter(|answer| !abstention_match(answer))
+            .map(|_| FailureReason::ShouldAbstainButAnswered);
     }
     if tool_error_count > 0 {
         return Some(FailureReason::ToolError);
@@ -546,26 +549,28 @@ mod tests {
             namespace_index_path: "/Wiki/run/index.md".to_string(),
             base_path: "/Wiki/run/conv-1".to_string(),
             note_paths: vec![
-                "/Wiki/run/conv-1/conversation.md".to_string(),
                 "/Wiki/run/conv-1/facts.md".to_string(),
-                "/Wiki/run/conv-1/plan.md".to_string(),
+                "/Wiki/run/conv-1/plans.md".to_string(),
+                "/Wiki/run/conv-1/provenance.md".to_string(),
             ],
             notes: vec![
-                ImportedNote {
-                    path: "/Wiki/run/conv-1/conversation.md".to_string(),
-                    content: "meeting March 15, 2024".to_string(),
-                    note_type: "conversation.md".to_string(),
-                },
                 ImportedNote {
                     path: "/Wiki/run/conv-1/facts.md".to_string(),
                     content: "meeting date: March 15, 2024".to_string(),
                     note_type: "facts.md".to_string(),
                 },
                 ImportedNote {
-                    path: "/Wiki/run/conv-1/plan.md".to_string(),
+                    path: "/Wiki/run/conv-1/plans.md".to_string(),
                     content: "conversation plan: Discuss one meeting date and confirm it."
                         .to_string(),
-                    note_type: "plan.md".to_string(),
+                    note_type: "plans.md".to_string(),
+                },
+                ImportedNote {
+                    path: "/Wiki/run/conv-1/provenance.md".to_string(),
+                    content:
+                        "source_path: /Sources/raw/run-conv-1/run-conv-1.md\nmeeting date: March 15, 2024"
+                            .to_string(),
+                    note_type: "provenance.md".to_string(),
                 },
             ],
         }
@@ -670,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn conversation_only_read_does_not_count_as_structured_hit() {
+    fn provenance_only_read_does_not_count_as_structured_hit() {
         let result = score_question(
             "conv-1".to_string(),
             &imported(),
@@ -679,7 +684,7 @@ mod tests {
                 "March 15, 2024",
                 vec![ToolCallRecord {
                     name: "read-node".to_string(),
-                    arguments: "cargo run -p wiki-cli --bin wiki-cli -- --local read-node --path /Wiki/run/conv-1/conversation.md --json".to_string(),
+                    arguments: r#"{"path":"/Wiki/run/conv-1/provenance.md"}"#.to_string(),
                     is_error: false,
                 }],
                 Vec::new(),
@@ -712,9 +717,9 @@ mod tests {
     }
 
     #[test]
-    fn explicit_conversation_gold_path_is_preserved() {
+    fn explicit_provenance_gold_path_is_preserved() {
         let mut question = fact_question();
-        question.gold_paths = vec!["conversation.md".to_string()];
+        question.gold_paths = vec!["provenance.md".to_string()];
         question.gold_spans = vec!["March 15, 2024".to_string()];
         let result = score_question(
             "conv-1".to_string(),
@@ -724,15 +729,15 @@ mod tests {
         );
         assert_eq!(
             result.gold_paths,
-            vec!["/Wiki/run/conv-1/conversation.md".to_string()]
+            vec!["/Wiki/run/conv-1/provenance.md".to_string()]
         );
         assert_ne!(result.failure_reason, Some(FailureReason::TransformMiss));
     }
 
     #[test]
-    fn explicit_conversation_gold_path_counts_when_agent_reads_it() {
+    fn explicit_provenance_gold_path_counts_when_agent_reads_it() {
         let mut question = fact_question();
-        question.gold_paths = vec!["conversation.md".to_string()];
+        question.gold_paths = vec!["provenance.md".to_string()];
         question.gold_spans = vec!["March 15, 2024".to_string()];
         let result = score_question(
             "conv-1".to_string(),
@@ -742,7 +747,7 @@ mod tests {
                 "March 15, 2024",
                 vec![ToolCallRecord {
                     name: "read-node".to_string(),
-                    arguments: "cargo run -p wiki-cli --bin wiki-cli -- --local read-node --path /Wiki/run/conv-1/conversation.md --json".to_string(),
+                    arguments: "cargo run -p wiki-cli --bin wiki-cli -- --local read-node --path /Wiki/run/conv-1/provenance.md --json".to_string(),
                     is_error: false,
                 }],
                 Vec::new(),
@@ -750,7 +755,7 @@ mod tests {
         );
         assert_eq!(
             result.retrieved_paths,
-            vec!["/Wiki/run/conv-1/conversation.md".to_string()]
+            vec!["/Wiki/run/conv-1/provenance.md".to_string()]
         );
         assert!(result.gold_path_hit_at_1);
     }

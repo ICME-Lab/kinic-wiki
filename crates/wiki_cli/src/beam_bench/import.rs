@@ -7,7 +7,9 @@ use serde::Serialize;
 use wiki_types::{NodeKind, WriteNodeRequest};
 
 use super::dataset::BeamConversation;
-use super::navigation::{conversation_base_path, namespace_base_path, namespace_index_path};
+use super::navigation::{
+    conversation_base_path, namespace_base_path, namespace_index_path, raw_source_path,
+};
 use super::notes::build_documents;
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,7 +36,11 @@ pub fn plan_imported_conversation(
     let namespace_path = namespace_base_path(namespace);
     let namespace_index_path = namespace_index_path(namespace);
     let base_path = conversation_base_path(namespace, &conversation.conversation_id);
-    let documents = build_documents(conversation, &base_path);
+    let documents = build_documents(
+        conversation,
+        &base_path,
+        &raw_source_path(namespace, &conversation.conversation_id),
+    );
     let mut note_paths = Vec::with_capacity(documents.len());
     let mut notes = Vec::with_capacity(documents.len());
     for (path, content) in documents {
@@ -217,6 +223,13 @@ mod tests {
             imported
                 .note_paths
                 .iter()
+                .any(|path| { path.starts_with("/Sources/raw/run-a-conv-1/") })
+        );
+        assert!(
+            imported
+                .note_paths
+                .iter()
+                .filter(|path| !path.starts_with("/Sources/raw/"))
                 .all(|path| { path.starts_with("/Wiki/run-a/conv-1/") })
         );
         let writes = client.writes.lock().expect("writes should lock");
@@ -224,6 +237,12 @@ mod tests {
         assert!(
             writes
                 .iter()
+                .any(|request| { request.path.starts_with("/Sources/raw/run-a-conv-1/") })
+        );
+        assert!(
+            writes
+                .iter()
+                .filter(|request| !request.path.starts_with("/Sources/raw/"))
                 .all(|request| { request.path.starts_with("/Wiki/run-a/conv-1/") })
         );
     }
@@ -240,6 +259,13 @@ mod tests {
             imported
                 .notes
                 .iter()
+                .any(|note| note.path.starts_with("/Sources/raw/run-a-conv-1/"))
+        );
+        assert!(
+            imported
+                .notes
+                .iter()
+                .filter(|note| !note.path.starts_with("/Sources/raw/"))
                 .all(|note| note.path.starts_with("/Wiki/run-a/conv-1/"))
         );
     }

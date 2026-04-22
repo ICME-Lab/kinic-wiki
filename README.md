@@ -88,6 +88,7 @@ Source node conventions:
 
 System maintenance commands:
 
+- `wiki-cli rebuild-scope-index --scope <scope>`
 - `wiki-cli rebuild-index`
 
 Typical flow:
@@ -95,7 +96,8 @@ Typical flow:
 1. Read `index.md` and related durable pages with VFS commands.
 2. Search with `search-remote`, `search-path-remote`, `glob-nodes`, or `recent-nodes` when needed.
 3. Write or edit `/Wiki/...` and `/Sources/...` nodes directly.
-4. Run `rebuild-index` after durable wiki updates when index entries may have changed.
+4. Run `rebuild-scope-index --scope <scope>` after durable single-scope updates when index entries may have changed.
+5. Run `rebuild-index` only for cross-scope repair or full index rebuild.
 
 ## CI and Benchmarks
 
@@ -181,21 +183,32 @@ The validation split is:
 - `beam-bench` measures retrieval quality against an already prepared namespace
 - Codex CLI e2e over `wiki-cli` read-only commands
 - read-only tool/command access only
-- artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `report.md`
+- artifacts: `summary.json`, `results.jsonl`, `failures.jsonl`, `failure_manifest.json`, `retry_manifest.json`, `report.md`
 
 Default evaluation mode is now `retrieve-and-extract`.
+
+### Current Benchmark Snapshot
+
+Measured on a 400-question all-types BEAM-derived full run.
+
+- `98.75%` grounded answer rate
+- `98.75%` read-before-answer rate
+- `0.0%` answered without grounding
+- `97.5%` abstention correctness
+
+See the benchmark artifacts under `artifacts/beam-runs/alltypes-full-current-20260421-170734/` for full details.
 
 - full BEAM question-type coverage now uses structured notes:
   - `facts.md`
   - `events.md`
-  - `plan.md`
-  - `profile.md`
+  - `plans.md`
   - `preferences.md`
-  - `instructions.md`
-  - `updates.md`
+  - `open_questions.md`
   - `summary.md`
+  - `provenance.md`
 - report headline includes operational grounding metrics plus `by_question_type`
 - `--questions-per-conversation` applies after primary question-class filtering
+- `--resume` keeps existing `results.jsonl` and runs only unanswered questions in the same output dir
 - retrieval hit rate and short-answer match rate are reported separately
 
 Typical test usage:
@@ -248,7 +261,7 @@ cargo run -p wiki-cli --bin beam_dataset_convert -- \
   --output-path /tmp/beam-100k.jsonl
 ```
 
-`beam_prepare` imports each conversation under a normal wiki path such as `/Wiki/<namespace>/<conversation_id>/` and keeps probing answers out of the wiki notes. `beam_bench` is read-only and validates a prepare manifest before eval. If the namespace is stale or the dataset does not match, eval fails immediately instead of rewriting the wiki. Codex defaults to `danger-full-access` so the child process can reach the local PocketIC gateway. These commands are intended for manual or dedicated benchmark runs rather than normal CI.
+`beam_prepare` imports each conversation under a normal wiki path such as `/Wiki/<namespace>/<conversation_id>/` and keeps probing answers out of the wiki notes. `beam_bench` is read-only and evaluates the current namespace state as-is. Eval only checks that the namespace index, conversation indexes, and expected note paths exist; it does not reject manual wiki repairs. Codex defaults to `danger-full-access` so the child process can reach the local PocketIC gateway. These commands are intended for manual or dedicated benchmark runs rather than normal CI.
 
 Manual deployed canister benchmarks:
 
@@ -573,6 +586,7 @@ Main commands:
 - `delete-tree`
 - `search-remote`
 - `search-path-remote`
+- `rebuild-scope-index`
 - `rebuild-index`
 - `status`
 - `lint-local`

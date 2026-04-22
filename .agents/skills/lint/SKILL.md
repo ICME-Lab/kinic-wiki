@@ -25,6 +25,7 @@ Core rules:
 - Do not silently fix pages.
 - Prefer concrete findings over vague style commentary.
 - Keep local lint and remote inspection conceptually separate.
+- Treat `WIKI_CANONICALITY.md` as the schema authority.
 
 Read [lint.md](lint.md) before doing substantive lint work.
 

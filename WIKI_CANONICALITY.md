@@ -24,10 +24,9 @@
   - 解釈や要約は置かない
 - `plans.md`
   - 予定、意図、次アクション
+  - scope 固有の明示指示、一時的な制約、運用方針
 - `preferences.md`
   - 嗜好、判断基準、選好
-- `instructions.md`
-  - 明示指示、制約、約束
 - `open_questions.md`
   - 未解決事項、要確認事項、競合情報
 - `summary.md`

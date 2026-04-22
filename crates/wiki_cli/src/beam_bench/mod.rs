@@ -14,6 +14,7 @@ mod note_extract;
 mod note_support;
 mod note_views;
 mod notes;
+mod plan_extract;
 mod prepare;
 mod question_types;
 mod report;
@@ -24,17 +25,18 @@ use anyhow::{Result, anyhow};
 use dataset::{BeamConversation, extract_questions, load_dataset};
 use import::plan_imported_conversation;
 use manifest::{
-    PrepareManifest, expected_namespace_index_path, manifest_path_for_namespace, note_fingerprint,
-    parse_prepare_manifest, validate_manifest_identity,
+    PrepareManifest, manifest_path_for_namespace, parse_prepare_manifest,
+    validate_manifest_identity,
 };
 use model::{CodexQuestionContext, run_codex_question};
-use navigation::conversation_index_path;
+use navigation::{conversation_index_path, namespace_index_path};
 pub use prepare::{BeamPrepareArgs, run_beam_prepare};
 use report::{
     BenchmarkSummary, FailureReason, QuestionResult, append_result_artifacts,
-    init_streaming_artifacts, summarize, write_artifacts,
+    init_streaming_artifacts, load_existing_results, summarize, write_artifacts,
 };
 use serde_json::json;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -61,6 +63,7 @@ pub struct BeamBenchArgs {
     pub namespace: Option<String>,
     pub codex_bin: PathBuf,
     pub codex_sandbox: String,
+    pub resume: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +76,13 @@ pub async fn run_beam_bench(connection: ResolvedConnection, args: BeamBenchArgs)
     let dataset = load_dataset(&args.dataset_path, &args.split, args.limit)?;
     let namespace = args.namespace.clone().unwrap_or_else(default_namespace);
     let config = Arc::new(with_defaults(args));
-    init_streaming_artifacts(&config.output_dir)?;
+    let existing_results = if config.resume {
+        load_existing_results(&config.output_dir)?
+    } else {
+        Vec::new()
+    };
+    let completed_questions = Arc::new(completed_question_keys(&existing_results)?);
+    init_streaming_artifacts(&config.output_dir, config.resume)?;
     let validation_client =
         CanisterWikiClient::new(&connection.replica_host, &connection.canister_id).await?;
     validate_prepared_namespace(&validation_client, &namespace, &config.split, &dataset).await?;
@@ -85,13 +94,21 @@ pub async fn run_beam_bench(connection: ResolvedConnection, args: BeamBenchArgs)
         let config = Arc::clone(&config);
         let namespace = namespace.clone();
         let gate = Arc::clone(&gate);
+        let completed_questions = Arc::clone(&completed_questions);
         tasks.spawn(async move {
             let _permit = gate.acquire_owned().await?;
-            run_conversation_benchmark(&connection, &config, &namespace, conversation).await
+            run_conversation_benchmark(
+                &connection,
+                &config,
+                &namespace,
+                conversation,
+                &completed_questions,
+            )
+            .await
         });
     }
 
-    let mut results = Vec::new();
+    let mut results = existing_results;
     while let Some(task) = tasks.join_next().await {
         let question_results =
             task.map_err(|error| anyhow!("benchmark task failed: {error}"))??;
@@ -124,6 +141,7 @@ async fn run_conversation_benchmark(
     config: &BeamBenchArgs,
     namespace: &str,
     conversation: BeamConversation,
+    completed_questions: &HashSet<String>,
 ) -> Result<Vec<QuestionResult>> {
     let client = CanisterWikiClient::new(&connection.replica_host, &connection.canister_id).await?;
     let imported = plan_imported_conversation(namespace, &conversation);
@@ -141,6 +159,12 @@ async fn run_conversation_benchmark(
                 .question_id
                 .as_ref()
                 .is_none_or(|target| question.question_id == *target)
+        })
+        .filter(|question| {
+            !completed_questions.contains(&completed_question_key(
+                &imported.conversation_id,
+                &question.question_id,
+            ))
         })
         .collect::<Vec<_>>();
     if let Some(limit) = config.questions_per_conversation {
@@ -192,6 +216,21 @@ async fn run_conversation_benchmark(
     Ok(results)
 }
 
+fn completed_question_key(conversation_id: &str, question_id: &str) -> String {
+    format!("{conversation_id}:{question_id}")
+}
+
+fn completed_question_keys(results: &[QuestionResult]) -> Result<HashSet<String>> {
+    let mut keys = HashSet::with_capacity(results.len());
+    for result in results {
+        let key = completed_question_key(&result.conversation_id, &result.question_id);
+        if !keys.insert(key.clone()) {
+            return Err(anyhow!("duplicate existing result: {key}"));
+        }
+    }
+    Ok(keys)
+}
+
 async fn validate_prepared_namespace(
     client: &impl WikiApi,
     namespace: &str,
@@ -201,7 +240,7 @@ async fn validate_prepared_namespace(
     if dataset.is_empty() {
         return Ok(());
     }
-    let namespace_index = expected_namespace_index_path(namespace);
+    let namespace_index = namespace_index_path(namespace);
     if client.read_node(&namespace_index).await?.is_none() {
         return Err(anyhow!("missing prepare: {}", namespace_index));
     }
@@ -226,25 +265,6 @@ async fn validate_prepared_notes(
     dataset: &[BeamConversation],
     manifest: &PrepareManifest,
 ) -> Result<()> {
-    let actual_note_count = manifest
-        .conversation_note_paths
-        .values()
-        .map(std::vec::Vec::len)
-        .sum::<usize>();
-    if manifest.prepared_conversation_count != manifest.conversation_note_paths.len() {
-        return Err(anyhow!(
-            "stale namespace: manifest conversation count {} does not match manifest entries {}",
-            manifest.prepared_conversation_count,
-            manifest.conversation_note_paths.len()
-        ));
-    }
-    if manifest.written_note_count != actual_note_count {
-        return Err(anyhow!(
-            "stale namespace: manifest note count {} does not match {}",
-            manifest.written_note_count,
-            actual_note_count
-        ));
-    }
     for conversation in dataset {
         let expected = plan_imported_conversation(namespace, conversation);
         let mut expected_paths = expected.note_paths.clone();
@@ -264,33 +284,13 @@ async fn validate_prepared_notes(
                 conversation.conversation_id
             ));
         }
-        let manifest_hashes = manifest
-            .conversation_note_hashes
-            .get(&conversation.conversation_id)
-            .ok_or_else(|| {
-                anyhow!(
-                    "stale namespace: manifest is missing note hashes for conversation {}",
-                    conversation.conversation_id
-                )
-            })?;
         let conversation_index = conversation_index_path(namespace, &conversation.conversation_id);
         if client.read_node(&conversation_index).await?.is_none() {
             return Err(anyhow!("missing prepare: {}", conversation_index));
         }
         for note in &expected.notes {
-            let stored = client
-                .read_node(&note.path)
-                .await?
-                .ok_or_else(|| anyhow!("missing prepare: {}", note.path))?;
-            let expected_hash = manifest_hashes.get(&note.path).ok_or_else(|| {
-                anyhow!(
-                    "stale namespace: manifest is missing note hash for {}",
-                    note.path
-                )
-            })?;
-            let actual_hash = note_fingerprint(&note.path, &stored.content);
-            if &actual_hash != expected_hash {
-                return Err(anyhow!("note mismatch: {}", note.path));
+            if client.read_node(&note.path).await?.is_none() {
+                return Err(anyhow!("missing prepare: {}", note.path));
             }
         }
     }
@@ -406,8 +406,8 @@ fn default_namespace() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        BeamBenchArgs, BeamBenchEvalMode, default_namespace, validate_prepared_namespace,
-        with_defaults,
+        BeamBenchArgs, BeamBenchEvalMode, QuestionResult, completed_question_key,
+        completed_question_keys, default_namespace, validate_prepared_namespace, with_defaults,
     };
     use crate::beam_bench::BeamQuestionClass;
     use crate::beam_bench::dataset::BeamConversation;
@@ -417,6 +417,7 @@ mod tests {
     use anyhow::Result;
     use async_trait::async_trait;
     use serde_json::json;
+    use std::collections::HashSet;
     use std::path::PathBuf;
     use wiki_types::{
         AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
@@ -536,6 +537,7 @@ mod tests {
             namespace: None,
             codex_bin: PathBuf::from("codex"),
             codex_sandbox: "danger-full-access".to_string(),
+            resume: false,
         });
         assert_eq!(
             args.include_question_classes,
@@ -562,8 +564,83 @@ mod tests {
             namespace: None,
             codex_bin: PathBuf::from("codex"),
             codex_sandbox: "danger-full-access".to_string(),
+            resume: false,
         });
         assert!(args.include_question_classes.is_empty());
+    }
+
+    #[test]
+    fn completed_question_keys_reject_duplicates() {
+        let first = QuestionResult {
+            conversation_id: "conv".to_string(),
+            question_id: "q".to_string(),
+            question_type: "information_extraction".to_string(),
+            question_class: BeamQuestionClass::Factoid,
+            query: "Q".to_string(),
+            as_of: None,
+            reference_answer: None,
+            gold_answers: Vec::new(),
+            predicted_answer: None,
+            gold_paths: Vec::new(),
+            gold_spans: Vec::new(),
+            expects_abstention: false,
+            tags: Vec::new(),
+            retrieved_paths: Vec::new(),
+            matched_gold_path: None,
+            matched_gold_span: None,
+            source_note_type: None,
+            answered: false,
+            grounded: false,
+            answered_without_grounding: false,
+            retrieved_paths_nonempty: false,
+            read_before_answer: false,
+            included_in_primary_metrics: true,
+            retrieval_evaluable: false,
+            retrieval_hit: false,
+            gold_path_hit_at_1: false,
+            gold_path_hit_at_3: false,
+            gold_span_hit_at_1: false,
+            gold_span_hit_at_3: false,
+            answer_exact_match: false,
+            answer_normalized_match: false,
+            answer_match_given_span_hit: false,
+            abstention_correct: false,
+            tool_call_count: 0,
+            tool_error_count: 0,
+            docs_read_count: 0,
+            input_tokens: None,
+            output_tokens: None,
+            total_tokens: None,
+            latency_ms: 0,
+            spawned_at_ms: None,
+            pid: None,
+            exit_status: None,
+            timed_out: false,
+            stderr: None,
+            schema_path: None,
+            last_tool_name: None,
+            last_tool_arguments: None,
+            failure_reason: None,
+            tool_calls: Vec::new(),
+            raw_events: Vec::new(),
+        };
+
+        let error =
+            completed_question_keys(&[first.clone(), first]).expect_err("duplicates must fail");
+
+        assert!(error.to_string().contains("duplicate existing result"));
+    }
+
+    #[test]
+    fn completed_questions_are_filtered_before_slice_limit() {
+        let completed = HashSet::from([completed_question_key("conv", "q1")]);
+        let remaining = ["q1", "q2", "q3"]
+            .into_iter()
+            .filter(|question_id| !completed.contains(&completed_question_key("conv", question_id)))
+            .take(1)
+            .collect::<Vec<_>>();
+
+        assert_eq!(remaining, vec!["q2"]);
     }
 
     #[test]
@@ -611,7 +688,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepared_namespace_validation_fails_when_note_hash_mismatches() {
+    async fn prepared_namespace_validation_fails_when_note_is_missing() {
+        let conversation = sample_conversation();
+        let imported = plan_imported_conversation("run-a", &conversation);
+        let manifest = build_prepare_manifest(
+            "run-a",
+            "100K",
+            std::slice::from_ref(&conversation),
+            std::slice::from_ref(&imported),
+        );
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(
+            "/Wiki/run-a/index.md".to_string(),
+            "# Benchmark".to_string(),
+        );
+        nodes.insert(
+            manifest_path_for_namespace("run-a"),
+            serde_json::to_string(&manifest).expect("manifest should serialize"),
+        );
+        for note in &imported.notes {
+            if note.path.ends_with("/facts.md") {
+                continue;
+            }
+            nodes.insert(note.path.clone(), note.content.clone());
+        }
+        let client = MockClient { nodes };
+
+        let error = validate_prepared_namespace(&client, "run-a", "100K", &[conversation])
+            .await
+            .expect_err("missing note should fail");
+        assert!(error.to_string().contains("missing prepare"));
+    }
+
+    #[tokio::test]
+    async fn prepared_namespace_validation_allows_manual_note_edits() {
         let conversation = sample_conversation();
         let imported = plan_imported_conversation("run-a", &conversation);
         let manifest = build_prepare_manifest(
@@ -639,14 +749,43 @@ mod tests {
         }
         let client = MockClient { nodes };
 
-        let error = validate_prepared_namespace(&client, "run-a", "100K", &[conversation])
+        validate_prepared_namespace(&client, "run-a", "100K", &[conversation])
             .await
-            .expect_err("tampered note should fail");
-        assert!(error.to_string().contains("note mismatch"));
+            .expect("manual edits should still allow eval");
     }
 
     #[tokio::test]
-    async fn prepared_namespace_validation_accepts_subset_of_manifest_dataset() {
+    async fn prepared_namespace_validation_fails_when_split_differs() {
+        let conversation = sample_conversation();
+        let imported = plan_imported_conversation("run-a", &conversation);
+        let manifest = build_prepare_manifest(
+            "run-a",
+            "100K",
+            std::slice::from_ref(&conversation),
+            std::slice::from_ref(&imported),
+        );
+        let mut nodes = std::collections::BTreeMap::new();
+        nodes.insert(
+            "/Wiki/run-a/index.md".to_string(),
+            "# Benchmark".to_string(),
+        );
+        nodes.insert(
+            manifest_path_for_namespace("run-a"),
+            serde_json::to_string(&manifest).expect("manifest should serialize"),
+        );
+        for note in &imported.notes {
+            nodes.insert(note.path.clone(), note.content.clone());
+        }
+        let client = MockClient { nodes };
+
+        let error = validate_prepared_namespace(&client, "run-a", "10K", &[conversation])
+            .await
+            .expect_err("split mismatch should fail");
+        assert!(error.to_string().contains("dataset mismatch"));
+    }
+
+    #[tokio::test]
+    async fn prepared_namespace_validation_fails_when_dataset_differs() {
         let first = sample_conversation();
         let second = BeamConversation {
             conversation_id: "Conv 2".to_string(),
@@ -657,8 +796,8 @@ mod tests {
         let manifest = build_prepare_manifest(
             "run-a",
             "100K",
-            &[first.clone(), second.clone()],
-            &[first_imported.clone(), second_imported.clone()],
+            std::slice::from_ref(&second),
+            std::slice::from_ref(&second_imported),
         );
         let mut nodes = std::collections::BTreeMap::new();
         nodes.insert(
@@ -678,8 +817,9 @@ mod tests {
         }
         let client = MockClient { nodes };
 
-        validate_prepared_namespace(&client, "run-a", "100K", &[first])
+        let error = validate_prepared_namespace(&client, "run-a", "100K", &[first])
             .await
-            .expect("prepared superset should validate subset");
+            .expect_err("dataset mismatch should fail");
+        assert!(error.to_string().contains("dataset mismatch"));
     }
 }
