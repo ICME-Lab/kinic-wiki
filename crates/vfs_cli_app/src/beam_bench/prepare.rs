@@ -151,6 +151,12 @@ mod tests {
                 })
                 .collect())
         }
+        async fn list_children(
+            &self,
+            _request: vfs_types::ListChildrenRequest,
+        ) -> Result<Vec<vfs_types::ChildNode>> {
+            unreachable!()
+        }
         async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
             self.nodes
                 .lock()

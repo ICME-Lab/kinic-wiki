@@ -5,12 +5,12 @@ use std::path::PathBuf;
 
 use vfs_store::FsStore;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    Status, WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeEntry, RecentNodeHit, RecentNodesRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -39,6 +39,10 @@ impl VfsService {
 
     pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
         self.fs_store.list_nodes(request)
+    }
+
+    pub fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>, String> {
+        self.fs_store.list_children(request)
     }
 
     pub fn write_node(

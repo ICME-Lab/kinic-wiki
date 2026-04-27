@@ -5,15 +5,16 @@ use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
-    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest,
-    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeEntryKind, NodeKind,
+    RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    WriteNodeRequest,
 };
 
 use super::{
     SERVICE, append_node, delete_node, edit_node, export_snapshot, fetch_updates, glob_nodes,
-    list_nodes, mkdir_node, move_node, multi_edit_node, read_node, recent_nodes, search_node_paths,
-    search_nodes, status, write_node,
+    list_children, list_nodes, mkdir_node, move_node, multi_edit_node, read_node, recent_nodes,
+    search_node_paths, search_nodes, status, write_node,
 };
 
 fn install_test_service() {
@@ -83,6 +84,19 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
             entry.path == "/Wiki/nested" && entry.kind == NodeEntryKind::Directory
         })
     );
+
+    let children = list_children(ListChildrenRequest {
+        path: "/Wiki".to_string(),
+    })
+    .expect("children should list");
+    assert!(children.iter().any(|child| {
+        child.path == "/Wiki/nested" && child.kind == NodeEntryKind::Directory && child.is_virtual
+    }));
+    assert!(children.iter().any(|child| {
+        child.path == "/Wiki/foo.md"
+            && child.kind == NodeEntryKind::File
+            && child.etag.as_deref() == Some(created.node.etag.as_str())
+    }));
 
     let hits = search_nodes(SearchNodesRequest {
         query_text: "alpha".to_string(),

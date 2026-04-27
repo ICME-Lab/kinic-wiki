@@ -103,6 +103,25 @@ async fn append_node_command_supports_source_kind() {
 }
 
 #[tokio::test]
+async fn list_children_command_calls_canister_children() {
+    let client = MockClient::default();
+
+    run_command(
+        &client,
+        test_cli(Command::ListChildren {
+            path: "/Wiki".to_string(),
+            json: true,
+        }),
+    )
+    .await
+    .expect("list children command should succeed");
+
+    let requests = client.child_lists.lock().expect("child lists should lock");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].path, "/Wiki");
+}
+
+#[tokio::test]
 async fn write_node_command_rejects_noncanonical_source_path() {
     let dir = tempdir().expect("temp dir should exist");
     let input = PathBuf::from(dir.path()).join("source.md");

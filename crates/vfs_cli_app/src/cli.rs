@@ -39,6 +39,12 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    ListChildren {
+        #[arg(long, default_value = WIKI_ROOT_PATH)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
     WriteNode {
         #[arg(long)]
         path: String,
@@ -214,6 +220,10 @@ impl Command {
             } => Some(VfsCommand::ListNodes {
                 prefix: prefix.clone(),
                 recursive: *recursive,
+                json: *json,
+            }),
+            Self::ListChildren { path, json } => Some(VfsCommand::ListChildren {
+                path: path.clone(),
                 json: *json,
             }),
             Self::WriteNode {

@@ -42,6 +42,12 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    ListChildren {
+        #[arg(long, default_value = WIKI_ROOT_PATH)]
+        path: String,
+        #[arg(long)]
+        json: bool,
+    },
     WriteNode {
         #[arg(long)]
         path: String,

@@ -6,6 +6,15 @@ type AppendNodeRequest = record {
   expected_etag : opt text;
   metadata_json : opt text;
 };
+type ChildNode = record {
+  updated_at : opt int64;
+  etag : opt text;
+  kind : NodeEntryKind;
+  name : text;
+  size_bytes : opt nat64;
+  path : text;
+  is_virtual : bool;
+};
 type DeleteNodeRequest = record { path : text; expected_etag : opt text };
 type DeleteNodeResult = record { path : text };
 type EditNodeRequest = record {
@@ -56,6 +65,7 @@ type GlobNodesRequest = record {
   pattern : text;
   path : opt text;
 };
+type ListChildrenRequest = record { path : text };
 type ListNodesRequest = record { recursive : bool; prefix : text };
 type MkdirNodeRequest = record { path : text };
 type MkdirNodeResult = record { created : bool; path : text };
@@ -109,16 +119,17 @@ type RecentNodeHit = record {
 type RecentNodesRequest = record { path : opt text; limit : nat32 };
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok : DeleteNodeResult; Err : text };
-type Result_10 = variant { Ok : vec RecentNodeHit; Err : text };
-type Result_11 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_10 = variant { Ok : opt Node; Err : text };
+type Result_11 = variant { Ok : vec RecentNodeHit; Err : text };
+type Result_12 = variant { Ok : vec SearchNodeHit; Err : text };
 type Result_2 = variant { Ok : EditNodeResult; Err : text };
 type Result_3 = variant { Ok : ExportSnapshotResponse; Err : text };
 type Result_4 = variant { Ok : FetchUpdatesResponse; Err : text };
 type Result_5 = variant { Ok : vec GlobNodeHit; Err : text };
-type Result_6 = variant { Ok : vec NodeEntry; Err : text };
-type Result_7 = variant { Ok : MkdirNodeResult; Err : text };
-type Result_8 = variant { Ok : MoveNodeResult; Err : text };
-type Result_9 = variant { Ok : opt Node; Err : text };
+type Result_6 = variant { Ok : vec ChildNode; Err : text };
+type Result_7 = variant { Ok : vec NodeEntry; Err : text };
+type Result_8 = variant { Ok : MkdirNodeResult; Err : text };
+type Result_9 = variant { Ok : MoveNodeResult; Err : text };
 type SearchNodeHit = record {
   preview : opt SearchPreview;
   kind : NodeKind;
@@ -162,14 +173,15 @@ service : () -> {
   export_snapshot : (ExportSnapshotRequest) -> (Result_3);
   fetch_updates : (FetchUpdatesRequest) -> (Result_4) query;
   glob_nodes : (GlobNodesRequest) -> (Result_5) query;
-  list_nodes : (ListNodesRequest) -> (Result_6) query;
-  mkdir_node : (MkdirNodeRequest) -> (Result_7) query;
-  move_node : (MoveNodeRequest) -> (Result_8);
+  list_children : (ListChildrenRequest) -> (Result_6) query;
+  list_nodes : (ListNodesRequest) -> (Result_7) query;
+  mkdir_node : (MkdirNodeRequest) -> (Result_8) query;
+  move_node : (MoveNodeRequest) -> (Result_9);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_2);
-  read_node : (text) -> (Result_9) query;
-  recent_nodes : (RecentNodesRequest) -> (Result_10) query;
-  search_node_paths : (SearchNodePathsRequest) -> (Result_11) query;
-  search_nodes : (SearchNodesRequest) -> (Result_11) query;
+  read_node : (text) -> (Result_10) query;
+  recent_nodes : (RecentNodesRequest) -> (Result_11) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_12) query;
+  search_nodes : (SearchNodesRequest) -> (Result_12) query;
   status : () -> (Status) query;
   write_node : (WriteNodeRequest) -> (Result);
 }

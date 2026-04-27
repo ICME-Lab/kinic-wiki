@@ -8,8 +8,9 @@ use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodesRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
+    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
+    WriteNodeRequest,
 };
 use wiki_domain::{WIKI_ROOT_PATH, validate_source_path_for_kind};
 
@@ -47,6 +48,21 @@ pub async fn run_vfs_command(client: &impl VfsApi, command: VfsCommand) -> Resul
             } else {
                 for entry in entries {
                     println!("{}\t{:?}\t{}", entry.path, entry.kind, entry.etag);
+                }
+            }
+        }
+        VfsCommand::ListChildren { path, json } => {
+            let children = client.list_children(ListChildrenRequest { path }).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&children)?);
+            } else {
+                for child in children {
+                    println!(
+                        "{}\t{:?}\t{}",
+                        child.path,
+                        child.kind,
+                        child.etag.unwrap_or_default()
+                    );
                 }
             }
         }
@@ -437,6 +453,7 @@ mod tests {
     #[derive(Default)]
     struct MockClient {
         writes: Mutex<Vec<WriteNodeRequest>>,
+        child_lists: Mutex<Vec<ListChildrenRequest>>,
     }
 
     #[async_trait]
@@ -449,6 +466,18 @@ mod tests {
         }
         async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
             Ok(Vec::new())
+        }
+        async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>> {
+            self.child_lists.lock().unwrap().push(request);
+            Ok(vec![ChildNode {
+                path: "/Wiki/alpha.md".to_string(),
+                name: "alpha.md".to_string(),
+                kind: NodeEntryKind::File,
+                updated_at: Some(10),
+                etag: Some("etag".to_string()),
+                size_bytes: Some(5),
+                is_virtual: false,
+            }])
         }
         async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
             self.writes.lock().unwrap().push(request.clone());
@@ -532,5 +561,20 @@ mod tests {
         .await
         .expect("write should succeed");
         assert_eq!(client.writes.lock().unwrap()[0].kind, NodeKind::Source);
+    }
+
+    #[tokio::test]
+    async fn list_children_sends_path_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            VfsCommand::ListChildren {
+                path: "/Wiki".to_string(),
+                json: true,
+            },
+        )
+        .await
+        .expect("list children should succeed");
+        assert_eq!(client.child_lists.lock().unwrap()[0].path, "/Wiki");
     }
 }

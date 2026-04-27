@@ -1405,6 +1405,12 @@ mod tests {
                 .push(format!("list:{}", request.prefix));
             Ok(Vec::new())
         }
+        async fn list_children(
+            &self,
+            _request: vfs_types::ListChildrenRequest,
+        ) -> Result<Vec<vfs_types::ChildNode>> {
+            unreachable!()
+        }
         async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
             self.ops
                 .lock()

@@ -49,6 +49,12 @@ impl VfsApi for SyncMockClient {
     async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
         Ok(Vec::new())
     }
+    async fn list_children(
+        &self,
+        _request: vfs_types::ListChildrenRequest,
+    ) -> Result<Vec<vfs_types::ChildNode>> {
+        Ok(Vec::new())
+    }
     async fn append_node(&self, _request: AppendNodeRequest) -> Result<WriteNodeResult> {
         unreachable!()
     }

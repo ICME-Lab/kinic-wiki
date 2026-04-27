@@ -42,12 +42,28 @@ pub struct ListNodesRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ListChildrenRequest {
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct NodeEntry {
     pub path: String,
     pub kind: NodeEntryKind,
     pub updated_at: i64,
     pub etag: String,
     pub has_children: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct ChildNode {
+    pub path: String,
+    pub name: String,
+    pub kind: NodeEntryKind,
+    pub updated_at: Option<i64>,
+    pub etag: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub is_virtual: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

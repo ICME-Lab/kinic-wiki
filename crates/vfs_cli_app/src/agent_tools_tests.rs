@@ -44,6 +44,13 @@ impl VfsApi for ToolMockClient {
         Ok(Vec::new())
     }
 
+    async fn list_children(
+        &self,
+        _request: vfs_types::ListChildrenRequest,
+    ) -> Result<Vec<vfs_types::ChildNode>> {
+        Ok(Vec::new())
+    }
+
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
         Ok(WriteNodeResult {
             created: false,

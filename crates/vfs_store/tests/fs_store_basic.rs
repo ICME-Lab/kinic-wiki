@@ -2,9 +2,9 @@ use rusqlite::Connection;
 use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
-    DeleteNodeRequest, ExportSnapshotRequest, ListNodesRequest, MoveNodeRequest, NodeEntryKind,
-    NodeKind, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewField,
-    SearchPreviewMode, WriteNodeRequest,
+    DeleteNodeRequest, ExportSnapshotRequest, ListChildrenRequest, ListNodesRequest,
+    MoveNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewField, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -767,6 +767,90 @@ fn list_search_and_export_respect_deleted_and_prefix() {
     );
     assert_v5_snapshot_revision_without_state_hash(&snapshot.snapshot_revision);
     assert!(beta.starts_with("v4h:"));
+}
+
+#[test]
+fn list_children_returns_direct_children_with_virtual_directories() {
+    let (_dir, store) = new_store();
+    let alpha_etag = write_file(&store, "/Wiki/alpha.md", None, 10);
+    write_file(&store, "/Wiki/zeta.md", None, 11);
+    let tree_etag = write_file(&store, "/Wiki/tree", None, 12);
+    write_file(&store, "/Wiki/nested/beta.md", None, 12);
+    write_file(&store, "/Wiki/aaa/gamma.md", None, 13);
+    write_file(&store, "/Wiki/tree/leaf.md", None, 14);
+
+    let children = store
+        .list_children(ListChildrenRequest {
+            path: "/Wiki/".to_string(),
+        })
+        .expect("children should list");
+    let paths = children
+        .iter()
+        .map(|child| child.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec![
+            "/Wiki/aaa",
+            "/Wiki/nested",
+            "/Wiki/alpha.md",
+            "/Wiki/tree",
+            "/Wiki/zeta.md"
+        ]
+    );
+
+    let directory = children
+        .iter()
+        .find(|child| child.path == "/Wiki/aaa")
+        .expect("virtual directory should exist");
+    assert_eq!(directory.kind, NodeEntryKind::Directory);
+    assert_eq!(directory.name, "aaa");
+    assert_eq!(directory.updated_at, None);
+    assert_eq!(directory.etag, None);
+    assert_eq!(directory.size_bytes, None);
+    assert!(directory.is_virtual);
+
+    let alpha = children
+        .iter()
+        .find(|child| child.path == "/Wiki/alpha.md")
+        .expect("file child should exist");
+    assert_eq!(alpha.kind, NodeEntryKind::File);
+    assert_eq!(alpha.name, "alpha.md");
+    assert_eq!(alpha.updated_at, Some(10));
+    assert_eq!(alpha.etag.as_deref(), Some(alpha_etag.as_str()));
+    assert_eq!(alpha.size_bytes, Some("content revision 10".len() as u64));
+    assert!(!alpha.is_virtual);
+
+    let tree = children
+        .iter()
+        .find(|child| child.path == "/Wiki/tree")
+        .expect("concrete child with descendants should exist");
+    assert_eq!(tree.kind, NodeEntryKind::File);
+    assert_eq!(tree.name, "tree");
+    assert_eq!(tree.updated_at, Some(12));
+    assert_eq!(tree.etag.as_deref(), Some(tree_etag.as_str()));
+    assert_eq!(tree.size_bytes, Some("content revision 12".len() as u64));
+    assert!(!tree.is_virtual);
+}
+
+#[test]
+fn list_children_rejects_non_directory_paths() {
+    let (_dir, store) = new_store();
+    write_file(&store, "/Wiki/alpha.md", None, 10);
+
+    let file_error = store
+        .list_children(ListChildrenRequest {
+            path: "/Wiki/alpha.md".to_string(),
+        })
+        .expect_err("file path should be rejected");
+    assert_eq!(file_error, "not a directory: /Wiki/alpha.md");
+
+    let relative_error = store
+        .list_children(ListChildrenRequest {
+            path: "Wiki".to_string(),
+        })
+        .expect_err("relative path should be rejected");
+    assert_eq!(relative_error, "path must start with '/': Wiki");
 }
 
 fn assert_v5_snapshot_revision_without_state_hash(snapshot_revision: &str) {

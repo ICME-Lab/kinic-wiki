@@ -6,12 +6,12 @@ use async_trait::async_trait;
 use candid::{Decode, Encode};
 use ic_agent::{Agent, export::Principal};
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    Status, WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeEntry, RecentNodeHit, RecentNodesRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 #[async_trait]
@@ -19,6 +19,7 @@ pub trait VfsApi {
     async fn status(&self) -> Result<Status>;
     async fn read_node(&self, path: &str) -> Result<Option<Node>>;
     async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>>;
+    async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>>;
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult>;
     async fn append_node(&self, request: AppendNodeRequest) -> Result<WriteNodeResult>;
     async fn edit_node(&self, request: EditNodeRequest) -> Result<EditNodeResult>;
@@ -112,6 +113,11 @@ impl VfsApi for CanisterVfsClient {
 
     async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
         let result: Result<Vec<NodeEntry>, String> = self.query("list_nodes", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>> {
+        let result: Result<Vec<ChildNode>, String> = self.query("list_children", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

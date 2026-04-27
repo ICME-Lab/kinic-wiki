@@ -12,12 +12,12 @@ use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::VfsService;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    Status, WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeEntry, RecentNodeHit, RecentNodesRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -54,6 +54,11 @@ fn read_node(path: String) -> Result<Option<Node>, String> {
 #[query]
 fn list_nodes(request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
     with_service(|service| service.list_nodes(request))
+}
+
+#[query]
+fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String> {
+    with_service(|service| service.list_children(request))
 }
 
 #[update]
@@ -227,14 +232,26 @@ pub fn candid_interface() -> String {
 
 fn normalize_candid_interface(interface: String) -> String {
     // Where: canister Candid export path.
-    // What: Restore the public nominal request name for mkdir_node.
+    // What: Restore public nominal request names for path-only queries.
     // Why: candid::export_service() deduplicates identical record shapes and
-    //      rewrites MkdirNodeRequest to DeleteNodeResult, but the checked-in
-    //      vfs.did is the public contract and must keep MkdirNodeRequest.
-    let normalized = interface.replace(
-        "mkdir_node : (DeleteNodeResult) -> (Result_7) query;",
-        "mkdir_node : (MkdirNodeRequest) -> (Result_7) query;",
-    );
+    //      rewrites path-only requests to DeleteNodeResult.
+    let normalized = interface
+        .replace(
+            "list_children : (DeleteNodeResult) -> (Result_6) query;",
+            "list_children : (ListChildrenRequest) -> (Result_6) query;",
+        )
+        .replace(
+            "mkdir_node : (DeleteNodeResult) -> (Result_8) query;",
+            "mkdir_node : (MkdirNodeRequest) -> (Result_8) query;",
+        );
+    let normalized = if normalized.contains("type ListChildrenRequest = record { path : text };") {
+        normalized
+    } else {
+        normalized.replace(
+            "type ListNodesRequest = record { recursive : bool; prefix : text };",
+            "type ListChildrenRequest = record { path : text };\ntype ListNodesRequest = record { recursive : bool; prefix : text };",
+        )
+    };
     if normalized.contains("type MkdirNodeRequest = record { path : text };") {
         return normalized;
     }

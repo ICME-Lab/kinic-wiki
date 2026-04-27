@@ -6,6 +6,7 @@
 // That prevents SQLite `snippet()` cost from scaling with all matched rows.
 // Only returned hits pay preview generation cost.
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -13,12 +14,12 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use uuid::Uuid;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, ListChildrenRequest,
+    ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind,
+    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SearchPreviewMode, Status, WriteNodeRequest, WriteNodeResult,
 };
 use wiki_domain::validate_source_path_for_kind;
@@ -54,6 +55,20 @@ const SNAPSHOT_SESSION_CURSOR_INVALID: &str = "cursor is invalid for snapshot_se
 const TARGET_SNAPSHOT_CURSOR_REQUIRED: &str =
     "target_snapshot_revision is required when cursor is set";
 const SNAPSHOT_SESSION_TTL_SECS: i64 = 300;
+
+struct ChildRow {
+    path: String,
+    kind: NodeKind,
+    updated_at: i64,
+    etag: String,
+    size_bytes: u64,
+}
+
+#[derive(Default)]
+struct ChildSlot {
+    concrete: Option<ChildRow>,
+    has_descendant: bool,
+}
 
 // Where: crates/vfs_store/src/fs_store.rs
 // What: Change-log semantics used by delta sync visibility checks.
@@ -110,6 +125,16 @@ impl FsStore {
         let conn = self.open()?;
         let rows = load_scoped_entry_rows(&conn, &prefix)?;
         Ok(build_entries_from_rows(&rows, &prefix, request.recursive))
+    }
+
+    pub fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>, String> {
+        let path = normalize_list_children_path(&request.path)?;
+        let conn = self.open()?;
+        if load_stored_node(&conn, &path)?.is_some() {
+            return Err(format!("not a directory: {path}"));
+        }
+        let rows = load_child_rows(&conn, &path)?;
+        Ok(build_child_nodes(&path, rows))
     }
 
     pub fn write_node(
@@ -1082,6 +1107,117 @@ fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
         |row| row.get::<_, u64>(0),
     )
     .map_err(|error| error.to_string())
+}
+
+fn normalize_list_children_path(path: &str) -> Result<String, String> {
+    let trimmed = if path.len() > 1 && path.ends_with('/') {
+        &path[..path.len() - 1]
+    } else {
+        path
+    };
+    normalize_node_path(trimmed, true)
+}
+
+fn load_child_rows(conn: &Connection, path: &str) -> Result<Vec<ChildRow>, String> {
+    let mut sql = String::from(
+        "SELECT path, kind, updated_at, etag, length(content)
+         FROM fs_nodes WHERE 1 = 1",
+    );
+    let mut values = Vec::new();
+    if path != "/" {
+        sql.push_str(" AND path LIKE ?1");
+        values.push(rusqlite::types::Value::from(format!("{path}/%")));
+    }
+    sql.push_str(" ORDER BY path ASC");
+    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+        let size_bytes = row.get::<_, i64>(4)?;
+        Ok(ChildRow {
+            path: row.get(0)?,
+            kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
+            updated_at: row.get(2)?,
+            etag: row.get(3)?,
+            size_bytes: size_bytes.max(0) as u64,
+        })
+    })
+    .map_err(|error| error.to_string())?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| error.to_string())
+}
+
+fn build_child_nodes(parent_path: &str, rows: Vec<ChildRow>) -> Vec<ChildNode> {
+    let mut slots = BTreeMap::<String, ChildSlot>::new();
+    for row in rows {
+        let Some((name, is_direct)) = child_name(parent_path, &row.path) else {
+            continue;
+        };
+        let slot = slots.entry(name).or_default();
+        if is_direct {
+            slot.concrete = Some(row);
+        } else {
+            slot.has_descendant = true;
+        }
+    }
+
+    let mut children = slots
+        .into_iter()
+        .map(|(name, slot)| {
+            if let Some(row) = slot.concrete {
+                return ChildNode {
+                    path: row.path,
+                    name,
+                    kind: entry_kind_from_node_kind(&row.kind),
+                    updated_at: Some(row.updated_at),
+                    etag: Some(row.etag),
+                    size_bytes: Some(row.size_bytes),
+                    is_virtual: false,
+                };
+            }
+            ChildNode {
+                path: child_path(parent_path, &name),
+                name,
+                kind: NodeEntryKind::Directory,
+                updated_at: None,
+                etag: None,
+                size_bytes: None,
+                is_virtual: true,
+            }
+        })
+        .collect::<Vec<_>>();
+    children.sort_by(|left, right| match (&left.kind, &right.kind) {
+        (NodeEntryKind::Directory, NodeEntryKind::Directory) => left.name.cmp(&right.name),
+        (NodeEntryKind::Directory, _) => std::cmp::Ordering::Less,
+        (_, NodeEntryKind::Directory) => std::cmp::Ordering::Greater,
+        _ => left.name.cmp(&right.name),
+    });
+    children
+}
+
+fn child_name(parent_path: &str, path: &str) -> Option<(String, bool)> {
+    let relative = relative_to_prefix(parent_path, path)?;
+    if relative.is_empty() {
+        return None;
+    }
+    match relative.split_once('/') {
+        Some((name, _)) if !name.is_empty() => Some((name.to_string(), false)),
+        None => Some((relative, true)),
+        _ => None,
+    }
+}
+
+fn child_path(parent_path: &str, name: &str) -> String {
+    if parent_path == "/" {
+        format!("/{name}")
+    } else {
+        format!("{parent_path}/{name}")
+    }
+}
+
+fn entry_kind_from_node_kind(kind: &NodeKind) -> NodeEntryKind {
+    match kind {
+        NodeKind::File => NodeEntryKind::File,
+        NodeKind::Source => NodeEntryKind::Source,
+    }
 }
 
 fn create_new_node(path: String, request: WriteNodeRequest, now: i64) -> Result<Node, String> {

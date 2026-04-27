@@ -455,6 +455,12 @@ mod tests {
         async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
             unreachable!()
         }
+        async fn list_children(
+            &self,
+            _request: vfs_types::ListChildrenRequest,
+        ) -> Result<Vec<vfs_types::ChildNode>> {
+            unreachable!()
+        }
         async fn write_node(&self, _request: WriteNodeRequest) -> Result<WriteNodeResult> {
             unreachable!()
         }
