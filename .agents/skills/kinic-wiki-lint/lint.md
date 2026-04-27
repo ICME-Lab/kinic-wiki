@@ -7,7 +7,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 ## Workflow
 
 1. Decide whether the inspection target is local, remote, or both.
-2. For local structure checks, use `wiki-cli lint-local`.
+2. For local structure checks, use `vfs-cli lint-local`.
 3. For remote checks, read `index.md` first, then inspect the canonical role-matched notes before broad search.
 4. Use `search-remote`, `search-path-remote`, `list-nodes`, `glob-nodes`, and `recent-nodes` only to confirm or expand findings after direct note inspection.
 5. Group findings into:
@@ -23,7 +23,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 ## Working Rules
 
-- Current repo-local note schema lives in [WIKI_CANONICALITY.md](../../../WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
+- Current repo-local note schema lives in [WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
 - When `index.md` is stale, recommend or run `rebuild-scope-index --scope <scope>` for single-scope drift, or `rebuild-index` for broad repair.
 - Recommend `rebuild-scope-index --scope <scope>` for new page creation, deletion, or large single-scope restructures. Recommend `rebuild-index` only for cross-scope restructures. Do not require rebuilds for routine small edits.
 - Keep local lint separate from remote content review.
@@ -46,7 +46,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 ## Repo Contract
 
-- Local lint command: `wiki-cli lint-local --vault-path <path> [--json]`
+- Local lint command: `vfs-cli lint-local --vault-path <path> [--json]`
 - Remote inspection primitives:
   - CLI commands: `read-node`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `rebuild-scope-index`, `rebuild-index`
 

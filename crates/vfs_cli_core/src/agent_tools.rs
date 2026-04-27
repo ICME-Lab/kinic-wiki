@@ -10,11 +10,25 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeKind,
     RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
 };
-use wiki_domain::WIKI_ROOT_PATH;
+
+const DEFAULT_AGENT_PREFIX: &str = "/";
 
 pub struct ToolResult {
     pub text: String,
     pub is_error: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct AgentToolConfig {
+    pub default_prefix: &'static str,
+}
+
+impl Default for AgentToolConfig {
+    fn default() -> Self {
+        Self {
+            default_prefix: DEFAULT_AGENT_PREFIX,
+        }
+    }
 }
 
 pub const READ_ONLY_TOOL_NAMES: [&str; 5] = ["read", "ls", "search", "search_paths", "recent"];
@@ -46,11 +60,21 @@ pub async fn handle_openai_tool_call(
     name: &str,
     arguments_json: &str,
 ) -> Result<ToolResult> {
+    handle_openai_tool_call_with_config(client, name, arguments_json, AgentToolConfig::default())
+        .await
+}
+
+pub async fn handle_openai_tool_call_with_config(
+    client: &impl VfsApi,
+    name: &str,
+    arguments_json: &str,
+    config: AgentToolConfig,
+) -> Result<ToolResult> {
     let input = match serde_json::from_str(arguments_json) {
         Ok(value) => value,
         Err(error) => return Ok(tool_error(format!("invalid tool args: {error}"))),
     };
-    dispatch_tool_call(client, name, input).await
+    dispatch_tool_call(client, name, input, config).await
 }
 
 pub async fn handle_anthropic_tool_call(
@@ -58,11 +82,25 @@ pub async fn handle_anthropic_tool_call(
     name: &str,
     input: Value,
 ) -> Result<ToolResult> {
-    dispatch_tool_call(client, name, input).await
+    handle_anthropic_tool_call_with_config(client, name, input, AgentToolConfig::default()).await
 }
 
-async fn dispatch_tool_call(client: &impl VfsApi, name: &str, input: Value) -> Result<ToolResult> {
-    match dispatch_tool_call_impl(client, name, input).await {
+pub async fn handle_anthropic_tool_call_with_config(
+    client: &impl VfsApi,
+    name: &str,
+    input: Value,
+    config: AgentToolConfig,
+) -> Result<ToolResult> {
+    dispatch_tool_call(client, name, input, config).await
+}
+
+async fn dispatch_tool_call(
+    client: &impl VfsApi,
+    name: &str,
+    input: Value,
+    config: AgentToolConfig,
+) -> Result<ToolResult> {
+    match dispatch_tool_call_impl(client, name, input, config).await {
         Ok(result) => Ok(result),
         Err(error) => Ok(tool_error(error.to_string())),
     }
@@ -72,6 +110,7 @@ async fn dispatch_tool_call_impl(
     client: &impl VfsApi,
     name: &str,
     input: Value,
+    config: AgentToolConfig,
 ) -> Result<ToolResult> {
     let result = match name {
         "read" => tool_ok(
@@ -123,7 +162,7 @@ async fn dispatch_tool_call_impl(
         "ls" => {
             let args: ListArgs = serde_json::from_value(input)?;
             tool_ok(
-                json!({ "entries": client.list_nodes(ListNodesRequest { prefix: args.prefix.unwrap_or_else(|| WIKI_ROOT_PATH.to_string()), recursive: args.recursive.unwrap_or(false) }).await? }),
+                json!({ "entries": client.list_nodes(ListNodesRequest { prefix: args.prefix.unwrap_or_else(|| config.default_prefix.to_string()), recursive: args.recursive.unwrap_or(false) }).await? }),
             )
         }
         "mkdir" => tool_ok(json!(
@@ -149,13 +188,13 @@ async fn dispatch_tool_call_impl(
         "glob" => {
             let args: GlobArgs = serde_json::from_value(input)?;
             tool_ok(
-                json!({ "hits": client.glob_nodes(GlobNodesRequest { pattern: args.pattern, path: args.path, node_type: args.node_type }).await? }),
+                json!({ "hits": client.glob_nodes(GlobNodesRequest { pattern: args.pattern, path: Some(args.path.unwrap_or_else(|| config.default_prefix.to_string())), node_type: args.node_type }).await? }),
             )
         }
         "recent" => {
             let args: RecentArgs = serde_json::from_value(input)?;
             tool_ok(
-                json!({ "hits": client.recent_nodes(RecentNodesRequest { limit: args.limit.unwrap_or(10), path: args.path }).await? }),
+                json!({ "hits": client.recent_nodes(RecentNodesRequest { limit: args.limit.unwrap_or(10), path: Some(args.path.unwrap_or_else(|| config.default_prefix.to_string())) }).await? }),
             )
         }
         "multi_edit" => {
@@ -184,13 +223,13 @@ async fn dispatch_tool_call_impl(
         "search" => {
             let args: SearchArgs = serde_json::from_value(input)?;
             tool_ok(
-                json!({ "hits": client.search_nodes(SearchNodesRequest { query_text: args.query_text, prefix: args.prefix, top_k: args.top_k.unwrap_or(10), preview_mode: None }).await? }),
+                json!({ "hits": client.search_nodes(SearchNodesRequest { query_text: args.query_text, prefix: Some(args.prefix.unwrap_or_else(|| config.default_prefix.to_string())), top_k: args.top_k.unwrap_or(10), preview_mode: None }).await? }),
             )
         }
         "search_paths" => {
             let args: SearchArgs = serde_json::from_value(input)?;
             tool_ok(
-                json!({ "hits": client.search_node_paths(SearchNodePathsRequest { query_text: args.query_text, prefix: args.prefix, top_k: args.top_k.unwrap_or(10) }).await? }),
+                json!({ "hits": client.search_node_paths(SearchNodePathsRequest { query_text: args.query_text, prefix: Some(args.prefix.unwrap_or_else(|| config.default_prefix.to_string())), top_k: args.top_k.unwrap_or(10) }).await? }),
             )
         }
         other => return Ok(tool_error(format!("unknown tool: {other}"))),

@@ -259,12 +259,25 @@ pub(crate) fn prefix_filter_sql_for_column(
     let equal_index = start_index;
     let like_index = start_index + 1;
     (
-        format!(" AND ({column_name} = ?{equal_index} OR {column_name} LIKE ?{like_index})"),
+        format!(
+            " AND ({column_name} = ?{equal_index} OR {column_name} LIKE ?{like_index} ESCAPE '\\')"
+        ),
         vec![
             rusqlite::types::Value::from(prefix.to_string()),
-            rusqlite::types::Value::from(format!("{prefix}/%")),
+            rusqlite::types::Value::from(format!("{}/%", escape_like_pattern(prefix))),
         ],
     )
+}
+
+pub(crate) fn escape_like_pattern(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 pub(crate) fn node_kind_to_db(kind: &NodeKind) -> &'static str {

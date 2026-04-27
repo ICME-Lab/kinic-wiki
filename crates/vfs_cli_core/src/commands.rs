@@ -11,7 +11,6 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
 };
-use wiki_domain::{WIKI_ROOT_PATH, validate_source_path_for_kind};
 
 use crate::cli::VfsCommand;
 
@@ -59,7 +58,6 @@ pub async fn run_vfs_command(client: &impl VfsApi, command: VfsCommand) -> Resul
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            validate_source_path_for_write(&path, kind.to_node_kind())?;
             let result = client
                 .write_node(WriteNodeRequest {
                     path,
@@ -85,9 +83,6 @@ pub async fn run_vfs_command(client: &impl VfsApi, command: VfsCommand) -> Resul
             json,
         } => {
             let content = fs::read_to_string(&input)?;
-            if let Some(kind_arg) = kind {
-                validate_source_path_for_write(&path, kind_arg.to_node_kind())?;
-            }
             let result = client
                 .append_node(AppendNodeRequest {
                     path,
@@ -175,10 +170,6 @@ pub async fn run_vfs_command(client: &impl VfsApi, command: VfsCommand) -> Resul
             overwrite,
             json,
         } => {
-            if let Some(current) = client.read_node(&from_path).await? {
-                validate_source_path_for_kind(&to_path, &current.kind)
-                    .map_err(anyhow::Error::msg)?;
-            }
             let result = client
                 .move_node(MoveNodeRequest {
                     from_path,
@@ -302,7 +293,10 @@ pub async fn run_vfs_command(client: &impl VfsApi, command: VfsCommand) -> Resul
     Ok(())
 }
 
-pub async fn collect_paged_snapshot(client: &impl VfsApi) -> Result<ExportSnapshotResponse> {
+pub async fn collect_paged_snapshot(
+    client: &impl VfsApi,
+    prefix: &str,
+) -> Result<ExportSnapshotResponse> {
     let mut cursor = None;
     let mut snapshot_revision = None;
     let mut snapshot_session_id = None;
@@ -310,7 +304,7 @@ pub async fn collect_paged_snapshot(client: &impl VfsApi) -> Result<ExportSnapsh
     loop {
         let page = client
             .export_snapshot(ExportSnapshotRequest {
-                prefix: Some(WIKI_ROOT_PATH.to_string()),
+                prefix: Some(prefix.to_string()),
                 limit: SYNC_PAGE_LIMIT,
                 cursor: cursor.clone(),
                 snapshot_revision: snapshot_revision.clone(),
@@ -334,6 +328,7 @@ pub async fn collect_paged_snapshot(client: &impl VfsApi) -> Result<ExportSnapsh
 
 pub async fn collect_paged_updates(
     client: &impl VfsApi,
+    prefix: &str,
     known_snapshot_revision: &str,
     target_snapshot_revision: Option<String>,
 ) -> Result<FetchUpdatesResponse> {
@@ -345,7 +340,7 @@ pub async fn collect_paged_updates(
         let page = client
             .fetch_updates(FetchUpdatesRequest {
                 known_snapshot_revision: known_snapshot_revision.to_string(),
-                prefix: Some(WIKI_ROOT_PATH.to_string()),
+                prefix: Some(prefix.to_string()),
                 limit: SYNC_PAGE_LIMIT,
                 cursor: cursor.clone(),
                 target_snapshot_revision: target_snapshot_revision.clone(),
@@ -411,10 +406,6 @@ async fn delete_tree(client: &impl VfsApi, path: &str) -> Result<Vec<String>> {
         deleted_paths.push(result.path);
     }
     Ok(deleted_paths)
-}
-
-fn validate_source_path_for_write(path: &str, kind: vfs_types::NodeKind) -> Result<()> {
-    validate_source_path_for_kind(path, &kind).map_err(anyhow::Error::msg)
 }
 
 fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {

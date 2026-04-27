@@ -12,7 +12,6 @@ use vfs_types::{
     RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     Status, WriteNodeRequest, WriteNodeResult,
 };
-use wiki_domain::validate_source_path_for_kind;
 
 pub struct VfsService {
     fs_store: FsStore,
@@ -46,7 +45,6 @@ impl VfsService {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        validate_source_path_for_kind(&request.path, &request.kind)?;
         self.fs_store.write_node(request, now)
     }
 
@@ -63,9 +61,6 @@ impl VfsService {
         request: AppendNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        if let Some(kind) = request.kind.as_ref() {
-            validate_source_path_for_kind(&request.path, kind)?;
-        }
         self.fs_store.append_node(request, now)
     }
 
@@ -78,9 +73,6 @@ impl VfsService {
     }
 
     pub fn move_node(&self, request: MoveNodeRequest, now: i64) -> Result<MoveNodeResult, String> {
-        if let Some(node) = self.fs_store.read_node(&request.from_path)? {
-            validate_source_path_for_kind(&request.to_path, &node.kind)?;
-        }
         self.fs_store.move_node(request, now)
     }
 

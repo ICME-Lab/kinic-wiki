@@ -8,7 +8,6 @@ bench-disable-fts = ["vfs-store/bench-disable-fts"]
 
 [dependencies]
 vfs-types = { path = "../vfs_types" }
-wiki-domain = { path = "../wiki_domain" }
 vfs-store = { path = "../vfs_store" }
 
 [dev-dependencies]

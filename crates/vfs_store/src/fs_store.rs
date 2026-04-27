@@ -21,7 +21,6 @@ use vfs_types::{
     RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SearchPreviewMode, Status, WriteNodeRequest, WriteNodeResult,
 };
-use wiki_domain::validate_source_path_for_kind;
 
 use crate::{
     fs_helpers::{
@@ -39,7 +38,6 @@ use crate::{
     glob_match::{matches_path, validate_pattern},
     schema,
 };
-use wiki_domain::WIKI_ROOT_PATH;
 
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
@@ -117,7 +115,6 @@ impl FsStore {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        validate_source_path_for_kind(&request.path, &request.kind)?;
         let path = normalize_node_path(&request.path, false)?;
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
@@ -148,14 +145,6 @@ impl FsStore {
         let mut conn = self.open()?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         let existing = load_stored_node(&tx, &path)?;
-        match existing.as_ref() {
-            Some(current) => validate_source_path_for_kind(&path, &current.node.kind)?,
-            None => {
-                if let Some(kind) = request.kind.as_ref() {
-                    validate_source_path_for_kind(&path, kind)?;
-                }
-            }
-        }
         let created = existing.is_none();
         let mut node = match existing.as_ref() {
             Some(current) => append_existing_node(current.node.clone(), request, now)?,
@@ -265,7 +254,7 @@ impl FsStore {
             .as_deref()
             .map(|value| normalize_node_path(value, true))
             .transpose()?
-            .unwrap_or_else(|| WIKI_ROOT_PATH.to_string());
+            .unwrap_or_else(|| "/".to_string());
         let node_type = request.node_type.unwrap_or(GlobNodeType::Any);
         let conn = self.open()?;
         let rows = load_scoped_entry_rows(&conn, &prefix)?;
@@ -295,7 +284,7 @@ impl FsStore {
             .as_deref()
             .map(|value| normalize_node_path(value, true))
             .transpose()?
-            .unwrap_or_else(|| WIKI_ROOT_PATH.to_string());
+            .unwrap_or_else(|| "/".to_string());
         let conn = self.open()?;
         let mut sql = String::from(
             "SELECT path, kind, updated_at, etag
@@ -445,7 +434,7 @@ impl FsStore {
             sql.push_str(&format!(" AND instr(lower(path), ?{index}) > 0"));
             values.push(rusqlite::types::Value::from(term.clone()));
         }
-        if let Some(prefix) = prefix {
+        if let Some(prefix) = prefix.filter(|value| value != "/") {
             let (scope_sql, scope_values) =
                 prefix_filter_sql_for_column("fs_nodes.path", &prefix, values.len() + 1);
             sql.push_str(&scope_sql);

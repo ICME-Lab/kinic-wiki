@@ -3431,7 +3431,6 @@ dependencies = [
  "toml",
  "vfs-client",
  "vfs-types",
- "wiki-domain",
 ]
 
 [[package]]
@@ -3453,7 +3452,6 @@ dependencies = [
  "tempfile",
  "vfs-store",
  "vfs-types",
- "wiki-domain",
 ]
 
 [[package]]
@@ -3468,7 +3466,6 @@ dependencies = [
  "time",
  "uuid",
  "vfs-types",
- "wiki-domain",
 ]
 
 [[package]]

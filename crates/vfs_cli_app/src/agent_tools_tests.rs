@@ -22,8 +22,11 @@ struct ToolMockClient {
     edit_requests: std::sync::Mutex<Vec<EditNodeRequest>>,
     mkdir_requests: std::sync::Mutex<Vec<MkdirNodeRequest>>,
     move_requests: std::sync::Mutex<Vec<MoveNodeRequest>>,
+    list_requests: std::sync::Mutex<Vec<ListNodesRequest>>,
     glob_requests: std::sync::Mutex<Vec<GlobNodesRequest>>,
     recent_requests: std::sync::Mutex<Vec<RecentNodesRequest>>,
+    search_requests: std::sync::Mutex<Vec<SearchNodesRequest>>,
+    search_path_requests: std::sync::Mutex<Vec<SearchNodePathsRequest>>,
     multi_edit_requests: std::sync::Mutex<Vec<MultiEditNodeRequest>>,
 }
 
@@ -40,7 +43,11 @@ impl VfsApi for ToolMockClient {
         Ok(Some(sample_node(path, "body", "etag-1")))
     }
 
-    async fn list_nodes(&self, _request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+    async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>> {
+        self.list_requests
+            .lock()
+            .expect("list lock should succeed")
+            .push(request);
         Ok(Vec::new())
     }
 
@@ -146,14 +153,22 @@ impl VfsApi for ToolMockClient {
         })
     }
 
-    async fn search_nodes(&self, _request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
+    async fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>> {
+        self.search_requests
+            .lock()
+            .expect("search lock should succeed")
+            .push(request);
         Ok(Vec::new())
     }
 
     async fn search_node_paths(
         &self,
-        _request: SearchNodePathsRequest,
+        request: SearchNodePathsRequest,
     ) -> Result<Vec<SearchNodeHit>> {
+        self.search_path_requests
+            .lock()
+            .expect("search path lock should succeed")
+            .push(request);
         Ok(vec![SearchNodeHit {
             path: "/Wiki/nested/beta.md".to_string(),
             kind: NodeKind::File,
@@ -184,6 +199,67 @@ impl VfsApi for ToolMockClient {
             next_cursor: None,
         })
     }
+}
+
+#[tokio::test]
+async fn wiki_agent_tools_default_read_scopes_to_wiki_root() {
+    let client = ToolMockClient::default();
+    for (name, input) in [
+        ("ls", serde_json::json!({})),
+        ("glob", serde_json::json!({ "pattern": "**/*.md" })),
+        ("recent", serde_json::json!({ "limit": 5 })),
+        ("search", serde_json::json!({ "query_text": "nested" })),
+        (
+            "search_paths",
+            serde_json::json!({ "query_text": "nested" }),
+        ),
+    ] {
+        let result = handle_anthropic_tool_call(&client, name, input)
+            .await
+            .expect("tool should succeed");
+        assert!(!result.is_error);
+    }
+
+    assert_eq!(
+        client
+            .list_requests
+            .lock()
+            .expect("list lock should succeed")[0]
+            .prefix,
+        "/Wiki"
+    );
+    assert_eq!(
+        client
+            .glob_requests
+            .lock()
+            .expect("glob lock should succeed")[0]
+            .path,
+        Some("/Wiki".to_string())
+    );
+    assert_eq!(
+        client
+            .recent_requests
+            .lock()
+            .expect("recent lock should succeed")[0]
+            .path,
+        Some("/Wiki".to_string())
+    );
+    assert_eq!(
+        client
+            .search_requests
+            .lock()
+            .expect("search lock should succeed")[0]
+            .prefix,
+        Some("/Wiki".to_string())
+    );
+    assert_eq!(
+        client
+            .search_path_requests
+            .lock()
+            .expect("search path lock should succeed")[0]
+            .prefix,
+        Some("/Wiki".to_string())
+    );
 }
 
 #[test]

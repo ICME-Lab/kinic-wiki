@@ -3,7 +3,7 @@
 // Why: Search behavior blends content, path, and title signals, so isolate it here.
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use vfs_types::{NodeKind, SearchNodeHit, SearchPreview, SearchPreviewField, SearchPreviewMode};
 
 use crate::fs_helpers::{file_search_title, prefix_filter_sql_for_column};
@@ -100,6 +100,11 @@ pub(crate) fn load_ranked_fts_candidates(
     let limit = candidate_limit(top_k);
     let mut candidates = BTreeMap::new();
     for query in [&plan.exact_fts, &plan.recall_fts].into_iter().flatten() {
+        let mut values = vec![rusqlite::types::Value::from(query.clone())];
+        let (scope_sql, scope_values) = non_root_prefix(prefix)
+            .map(|prefix| prefix_filter_sql_for_column("fs_nodes.path", prefix, values.len() + 1))
+            .unwrap_or_else(|| (String::new(), Vec::new()));
+        values.extend(scope_values);
         let sql = format!(
             "SELECT fs_nodes.id,
                     fs_nodes.path,
@@ -110,40 +115,11 @@ pub(crate) fn load_ranked_fts_candidates(
              WHERE fs_nodes_fts MATCH ?1{}
              ORDER BY rank ASC, fs_nodes.path ASC
              LIMIT {limit}",
-            prefix
-                .map(|_| " AND (fs_nodes.path = ?2 OR fs_nodes.path LIKE ?3)")
-                .unwrap_or("")
+            scope_sql
         );
         let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        if let Some(prefix) = prefix {
-            let rows = stmt
-                .query_map(params![query, prefix, format!("{prefix}/%")], |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, f32>(3)?,
-                    ))
-                })
-                .map_err(|error| error.to_string())?;
-            for row in rows {
-                let (row_id, path, kind, rank) = row.map_err(|error| error.to_string())?;
-                let kind = node_kind_from_db(&kind).map_err(|error| error.to_string())?;
-                candidates.entry(row_id).or_insert_with(|| SearchCandidate {
-                    row_id,
-                    path,
-                    kind,
-                    score: rank * FTS_RANK_SCALE,
-                    snippet: None,
-                    preview: None,
-                    match_reasons: BTreeSet::from(["content_fts".to_string()]),
-                    has_content_match: true,
-                });
-            }
-            continue;
-        }
         let rows = stmt
-            .query_map(params![query], |row| {
+            .query_map(rusqlite::params_from_iter(values.iter()), |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
@@ -187,7 +163,7 @@ pub(crate) fn load_path_candidates(
         sql.push_str(&format!(" AND instr(lower(path), ?{index}) > 0"));
         values.push(rusqlite::types::Value::from(term.clone()));
     }
-    if let Some(prefix) = prefix {
+    if let Some(prefix) = non_root_prefix(prefix) {
         let (scope_sql, scope_values) =
             prefix_filter_sql_for_column("fs_nodes.path", prefix, values.len() + 1);
         sql.push_str(&scope_sql);
@@ -220,49 +196,24 @@ pub(crate) fn load_content_substring_candidates(
     if !plan.has_cjk {
         return Ok(Vec::new());
     }
+    let mut values = vec![rusqlite::types::Value::from(plan.raw_query.clone())];
+    let (scope_sql, scope_values) = non_root_prefix(prefix)
+        .map(|prefix| prefix_filter_sql_for_column("path", prefix, values.len() + 1))
+        .unwrap_or_else(|| (String::new(), Vec::new()));
+    values.extend(scope_values);
     let sql = format!(
         "SELECT id, path, kind
          FROM fs_nodes
          WHERE instr(content, ?1) > 0{}
          ORDER BY path ASC
          LIMIT {}",
-        prefix
-            .map(|_| " AND (path = ?2 OR path LIKE ?3)")
-            .unwrap_or(""),
+        scope_sql,
         candidate_limit(top_k)
     );
     let mut candidates = Vec::new();
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    if let Some(prefix) = prefix {
-        let rows = stmt
-            .query_map(
-                params![plan.raw_query, prefix, format!("{prefix}/%")],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
-                },
-            )
-            .map_err(|error| error.to_string())?;
-        for row in rows {
-            let (row_id, path, kind) = row.map_err(|error| error.to_string())?;
-            candidates.push(SearchCandidate {
-                row_id,
-                path,
-                kind: node_kind_from_db(&kind).map_err(|error| error.to_string())?,
-                score: CONTENT_SUBSTRING_SCORE,
-                snippet: None,
-                preview: None,
-                match_reasons: BTreeSet::from(["content_substring".to_string()]),
-                has_content_match: true,
-            });
-        }
-        return Ok(candidates);
-    }
     let rows = stmt
-        .query_map(params![plan.raw_query], |row| {
+        .query_map(rusqlite::params_from_iter(values.iter()), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -284,6 +235,10 @@ pub(crate) fn load_content_substring_candidates(
         });
     }
     Ok(candidates)
+}
+
+fn non_root_prefix(prefix: Option<&str>) -> Option<&str> {
+    prefix.filter(|value| *value != "/")
 }
 
 pub(crate) fn rerank_candidates(

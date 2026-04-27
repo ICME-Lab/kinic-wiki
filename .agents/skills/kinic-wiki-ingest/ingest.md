@@ -12,7 +12,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 4. Read existing wiki context by starting from `index.md` and the canonical role-matched notes before broad search.
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
 6. Choose the minimum coherent set of pages to update.
-7. Edit `/Wiki/...` directly through `wiki-cli` remote VFS commands.
+7. Edit `/Wiki/...` directly through `vfs-cli` remote VFS commands.
 8. When a reorganization needs explicit removal of obsolete `/Wiki/...` page groups, use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
 9. Update `log.md` for every page creation, deletion, or edit done in the workflow.
 10. Read only the recent tail of `log.md` before appending, for example `tail -n 5`, unless a longer window is clearly needed.
@@ -22,7 +22,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 
 ## Working Rules
 
-- Current repo-local note schema lives in [WIKI_CANONICALITY.md](../../../WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
+- Current repo-local note schema lives in [WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
 - Runtime `facts.md` extraction policy currently lives in [facts_policy.rs](../../../crates/vfs_cli_app/src/facts_policy.rs). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
 - Treat local `Wiki/` content as the human review surface.
 - Prefer fewer stronger pages over many shallow stubs.

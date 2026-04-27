@@ -14,7 +14,6 @@ sha2 = "0.10.9"
 time = { version = "0.3.44", features = ["formatting", "macros"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 vfs-types = { path = "../vfs_types" }
-wiki-domain = { path = "../wiki_domain" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 rusqlite = { version = "0.37.0", features = ["bundled"] }

@@ -20,10 +20,12 @@ use vfs_cli::commands::{
 };
 use vfs_client::VfsApi;
 use vfs_types::{DeleteNodeRequest, WriteNodeRequest};
+use wiki_domain::{WIKI_ROOT_PATH, validate_source_path_for_kind};
 
 pub async fn run_command(client: &impl VfsApi, cli: Cli) -> Result<()> {
     let Cli { command, .. } = cli;
     if let Some(vfs_command) = command.as_vfs_command() {
+        preflight_wiki_vfs_command(client, &vfs_command).await?;
         return run_vfs_command(client, vfs_command).await;
     }
     match command {
@@ -97,10 +99,12 @@ pub async fn pull(client: &impl VfsApi, mirror_root: &Path, resync: bool) -> Res
         ));
     }
     if resync || state.snapshot_revision.is_empty() {
-        let snapshot = collect_paged_snapshot(client)
+        let snapshot = collect_paged_snapshot(client, WIKI_ROOT_PATH)
             .await
             .map_err(snapshot_restart_required_error)?;
-        let updates = collect_paged_updates(client, &snapshot.snapshot_revision, None).await?;
+        let updates =
+            collect_paged_updates(client, WIKI_ROOT_PATH, &snapshot.snapshot_revision, None)
+                .await?;
         let nodes = merge_snapshot_and_updates(
             snapshot.nodes,
             updates.changed_nodes,
@@ -127,7 +131,7 @@ pub async fn pull(client: &impl VfsApi, mirror_root: &Path, resync: bool) -> Res
         return Ok(());
     }
 
-    let updates = collect_paged_updates(client, &state.snapshot_revision, None)
+    let updates = collect_paged_updates(client, WIKI_ROOT_PATH, &state.snapshot_revision, None)
         .await
         .map_err(resync_required_error)?;
     let changed_nodes = updates.changed_nodes;
@@ -176,7 +180,7 @@ pub async fn push(client: &impl VfsApi, mirror_root: &Path) -> Result<()> {
         println!("push skipped: no changed wiki files");
         return Ok(());
     }
-    collect_paged_updates(client, &state.snapshot_revision, None)
+    collect_paged_updates(client, WIKI_ROOT_PATH, &state.snapshot_revision, None)
         .await
         .map_err(resync_required_error)?;
     let mut conflicts = 0usize;
@@ -229,7 +233,7 @@ pub async fn push(client: &impl VfsApi, mirror_root: &Path) -> Result<()> {
         }
     }
 
-    let updates = collect_paged_updates(client, &state.snapshot_revision, None)
+    let updates = collect_paged_updates(client, WIKI_ROOT_PATH, &state.snapshot_revision, None)
         .await
         .map_err(resync_required_error)?;
     let changed_nodes = updates.changed_nodes;
@@ -252,6 +256,37 @@ pub async fn push(client: &impl VfsApi, mirror_root: &Path) -> Result<()> {
         "push complete: {} written, {} deleted, {} conflicts",
         writes, deletes, conflicts
     );
+    Ok(())
+}
+
+// CLI preflight gives fast wiki-domain errors; canister entrypoints remain the
+// authoritative policy boundary.
+async fn preflight_wiki_vfs_command(
+    client: &impl VfsApi,
+    command: &vfs_cli::cli::VfsCommand,
+) -> Result<()> {
+    match command {
+        vfs_cli::cli::VfsCommand::WriteNode { path, kind, .. } => {
+            validate_source_path_for_kind(path, &kind.to_node_kind())
+                .map_err(anyhow::Error::msg)?;
+        }
+        vfs_cli::cli::VfsCommand::AppendNode { path, kind, .. } => {
+            if let Some(kind) = kind {
+                validate_source_path_for_kind(path, &kind.to_node_kind())
+                    .map_err(anyhow::Error::msg)?;
+            } else if let Some(node) = client.read_node(path).await? {
+                validate_source_path_for_kind(path, &node.kind).map_err(anyhow::Error::msg)?;
+            }
+        }
+        vfs_cli::cli::VfsCommand::MoveNode {
+            from_path, to_path, ..
+        } => {
+            if let Some(node) = client.read_node(from_path).await? {
+                validate_source_path_for_kind(to_path, &node.kind).map_err(anyhow::Error::msg)?;
+            }
+        }
+        _ => {}
+    }
     Ok(())
 }
 
