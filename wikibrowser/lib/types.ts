@@ -34,9 +34,12 @@ export type DatabaseStatus = "hot" | "restoring" | "archiving" | "archived" | "d
 
 export type DatabaseSummary = {
   databaseId: string;
+  displayName: string;
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
+  billingBalanceE8s: string;
+  billingSuspendedAtMs: string | null;
   archivedAtMs: string | null;
   deletedAtMs: string | null;
 };
@@ -46,6 +49,53 @@ export type DatabaseMember = {
   principal: string;
   role: DatabaseRole;
   createdAtMs: string;
+};
+
+export type BillingTransferResult = {
+  blockIndex: string;
+  balanceE8s: string;
+};
+
+export type PrincipalBillingSummary = {
+  principal: string;
+  balanceE8s: string;
+};
+
+export type PrincipalBillingEntry = {
+  entryId: string;
+  principal: string;
+  kind: string;
+  amountE8s: string;
+  balanceAfterE8s: string;
+  databaseId: string | null;
+  ledgerBlockIndex: string | null;
+  createdAtMs: string;
+};
+
+export type PrincipalBillingEntryPage = {
+  entries: PrincipalBillingEntry[];
+  nextCursor: string | null;
+};
+
+export type DatabaseBillingEntry = {
+  entryId: string;
+  databaseId: string;
+  kind: string;
+  amountE8s: string;
+  balanceAfterE8s: string;
+  caller: string;
+  method: string | null;
+  cyclesDelta: string | null;
+  rateNumeratorE8s: string | null;
+  rateDenominatorCycles: string | null;
+  fixedUpdateFeeE8s: string | null;
+  usageEventId: string | null;
+  createdAtMs: string;
+};
+
+export type DatabaseBillingEntryPage = {
+  entries: DatabaseBillingEntry[];
+  nextCursor: string | null;
 };
 
 export type ChildNode = {

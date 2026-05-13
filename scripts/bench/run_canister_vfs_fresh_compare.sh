@@ -34,7 +34,7 @@ start_clean_replica() {
 deploy_profile() {
   local profile="$1"
   bench_log "deploy ${profile} on fresh replica"
-  VFS_CANISTER_DIAGNOSTIC_PROFILE="${profile}" icp deploy wiki -e local -y >/dev/null
+  VFS_CANISTER_DIAGNOSTIC_PROFILE="${profile}" ICP_ENVIRONMENT=local "${REPO_ROOT}/scripts/local/deploy_wiki.sh" -y >/dev/null
 }
 
 capture_profile_status() {

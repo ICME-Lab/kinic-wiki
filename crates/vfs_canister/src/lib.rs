@@ -8,23 +8,27 @@ use std::ops::Range;
 use std::path::Path;
 use std::path::PathBuf;
 
-use candid::{Principal, export_service};
+use candid::{CandidType, Decode, Deserialize, Nat, Principal, export_service};
+#[cfg(not(test))]
+use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
 use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::{DatabaseMeta, UsageEvent, VfsService};
 use vfs_types::{
-    AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, DatabaseArchiveChunk,
-    DatabaseArchiveInfo, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
+    AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, BillingTransferResult,
+    CanisterHealth, CanonicalRole, ChildNode, DatabaseArchiveChunk, DatabaseArchiveInfo,
+    DatabaseBillingEntryPage, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
     DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
     MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    OutgoingLinksRequest, PrincipalBillingEntryPage, PrincipalBillingSummary, QueryContext,
+    QueryContextRequest, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest,
+    WriteNodeResult,
 };
 
 const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
@@ -40,14 +44,78 @@ thread_local! {
     static SERVICE: RefCell<Option<VfsService>> = const { RefCell::new(None) };
 }
 
+#[derive(Clone, Debug)]
+enum LedgerTransferOutcome {
+    Completed(u64),
+    LedgerErr(String),
+    Ambiguous(String),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct IcrcAccount {
+    owner: Principal,
+    subaccount: Option<Vec<u8>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct TransferArg {
+    from_subaccount: Option<Vec<u8>>,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct TransferFromArg {
+    spender_subaccount: Option<Vec<u8>>,
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum TransferError {
+    BadFee { expected_fee: Nat },
+    BadBurn { min_burn_amount: Nat },
+    InsufficientFunds { balance: Nat },
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: Nat },
+    TemporarilyUnavailable,
+    GenericError { error_code: Nat, message: String },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum TransferFromError {
+    BadFee { expected_fee: Nat },
+    BadBurn { min_burn_amount: Nat },
+    InsufficientFunds { balance: Nat },
+    InsufficientAllowance { allowance: Nat },
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: Nat },
+    TemporarilyUnavailable,
+    GenericError { error_code: Nat, message: String },
+}
+
 #[init]
-fn init_hook() {
-    initialize_or_trap();
+fn init_hook(config: BillingConfig) {
+    initialize_or_trap(Some(config));
 }
 
 #[post_upgrade]
 fn post_upgrade_hook() {
-    initialize_or_trap();
+    initialize_or_trap(None);
 }
 
 #[query]
@@ -104,19 +172,27 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 }
 
 #[update]
-fn create_database() -> Result<String, String> {
-    with_usage("create_database", None, |service, caller, now| {
-        let meta = service.reserve_generated_database(caller, now)?;
+fn create_database(display_name: String, initial_deposit_e8s: u64) -> Result<String, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("create_database", None, |service, caller, now| {
+        let meta = service.create_generated_database_with_initial_deposit(
+            &display_name,
+            caller,
+            initial_deposit_e8s,
+            now,
+        )?;
         if let Err(error) = mount_database_file(&meta) {
+            let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
             let cleanup_error = service
-                .discard_database_reservation(&meta.database_id)
+                .reverse_failed_database_create(&meta.database_id, caller, amount, now)
                 .err();
             return Err(database_create_error(error, cleanup_error));
         }
         if let Err(error) = service.run_database_migrations(&meta.database_id) {
             unmount_database_file(&meta.db_file_name);
+            let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
             let cleanup_error = service
-                .discard_database_reservation(&meta.database_id)
+                .reverse_failed_database_create(&meta.database_id, caller, amount, now)
                 .err();
             return Err(database_create_error(error, cleanup_error));
         }
@@ -125,12 +201,22 @@ fn create_database() -> Result<String, String> {
 }
 
 #[update]
+fn rename_database(database_id: String, display_name: String) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_metered_update(
+        "rename_database",
+        Some(database_id.clone()),
+        |service, caller, now| service.rename_database(&database_id, &display_name, caller, now),
+    )
+}
+
+#[update]
 fn grant_database_access(
     database_id: String,
     principal: String,
     role: DatabaseRole,
 ) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "grant_database_access",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -144,7 +230,7 @@ fn grant_database_access(
 
 #[update]
 fn revoke_database_access(database_id: String, principal: String) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "revoke_database_access",
         Some(database_id.clone()),
         |service, caller, _now| {
@@ -167,8 +253,133 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[update]
+async fn top_up_principal_balance(amount_e8s: u64) -> Result<BillingTransferResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let now = now_millis();
+    let config = with_service(|service| service.billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let block_index = ledger_transfer_from(ledger, caller_principal(), amount_e8s).await?;
+    let balance = with_service(|service| {
+        service.credit_principal_top_up(&caller, amount_e8s, block_index, now)
+    })?;
+    Ok(BillingTransferResult {
+        block_index,
+        balance_e8s: balance,
+    })
+}
+
+#[update]
+async fn withdraw_principal_balance(
+    amount_e8s: u64,
+    to: BillingAccount,
+) -> Result<BillingTransferResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let now = now_millis();
+    let config = with_service(|service| service.billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let fee_e8s = ledger_fee(ledger).await?;
+    with_service(|service| service.begin_principal_withdraw(&caller, amount_e8s, fee_e8s, now))?;
+    match ledger_transfer(ledger, to, amount_e8s, fee_e8s).await {
+        LedgerTransferOutcome::Completed(block_index) => {
+            let balance = with_service(|service| {
+                service.complete_principal_withdraw(&caller, block_index, now)
+            })?;
+            Ok(BillingTransferResult {
+                block_index,
+                balance_e8s: balance,
+            })
+        }
+        LedgerTransferOutcome::LedgerErr(error) => {
+            let _ = with_service(|service| {
+                service.reverse_principal_withdraw(&caller, amount_e8s, fee_e8s, now)
+            });
+            Err(error)
+        }
+        LedgerTransferOutcome::Ambiguous(error) => {
+            let _ = with_service(|service| service.mark_principal_withdraw_ambiguous(&caller, now));
+            Err(format!("withdraw pending; manual repair required: {error}"))
+        }
+    }
+}
+
+#[query]
+fn principal_billing_summary() -> Result<PrincipalBillingSummary, String> {
+    require_authenticated_caller()?;
+    with_service(|service| service.principal_billing_summary(&caller_text()))
+}
+
+#[query]
+fn list_principal_billing_entries(
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<PrincipalBillingEntryPage, String> {
+    require_authenticated_caller()?;
+    with_service(|service| service.list_principal_billing_entries(&caller_text(), cursor, limit))
+}
+
+#[update]
+fn top_up_database(database_id: String, amount_e8s: u64) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "top_up_database",
+        Some(database_id.clone()),
+        |service, caller, now| service.top_up_database(&database_id, caller, amount_e8s, now),
+    )
+}
+
+#[update]
+fn withdraw_database_balance(database_id: String, amount_e8s: u64) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "withdraw_database_balance",
+        Some(database_id.clone()),
+        |service, caller, now| {
+            service.withdraw_database_balance(&database_id, caller, amount_e8s, now)
+        },
+    )
+}
+
+#[query]
+fn list_database_billing_entries(
+    database_id: String,
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<DatabaseBillingEntryPage, String> {
+    with_service(|service| {
+        service.list_database_billing_entries(&database_id, &caller_text(), cursor, limit)
+    })
+}
+
+#[query]
+fn get_billing_config() -> Result<BillingConfig, String> {
+    with_service(|service| service.billing_config())
+}
+
+#[update]
+fn validate_update_billing_config(payload: Vec<u8>) -> Result<(), String> {
+    require_authenticated_caller()?;
+    let update = Decode!(&payload, BillingConfigUpdate)
+        .map_err(|error| format!("invalid billing config payload: {error}"))?;
+    with_service(|service| service.validate_billing_config_update(&update))
+}
+
+#[update]
+fn update_billing_config(payload: Vec<u8>) -> Result<(), String> {
+    require_authenticated_caller()?;
+    let update = Decode!(&payload, BillingConfigUpdate)
+        .map_err(|error| format!("invalid billing config payload: {error}"))?;
+    with_unmetered_update("update_billing_config", None, |service, caller, _now| {
+        service.update_billing_config(update, caller).map(|_| ())
+    })
+}
+
+#[update]
 fn delete_database(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "delete_database",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -187,7 +398,7 @@ fn delete_database(database_id: String) -> Result<(), String> {
 
 #[update]
 fn begin_database_archive(database_id: String) -> Result<DatabaseArchiveInfo, String> {
-    with_usage(
+    with_metered_update(
         "begin_database_archive",
         Some(database_id.clone()),
         |service, caller, now| service.begin_database_archive(&database_id, caller, now),
@@ -209,7 +420,7 @@ fn read_database_archive_chunk(
 
 #[update]
 fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "finalize_database_archive",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -223,7 +434,7 @@ fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Res
 
 #[update]
 fn cancel_database_archive(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "cancel_database_archive",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -239,7 +450,7 @@ fn begin_database_restore(
     snapshot_hash: Vec<u8>,
     size_bytes: u64,
 ) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "begin_database_restore",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -266,7 +477,7 @@ fn begin_database_restore(
 #[update]
 fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_metered_update(
         "write_database_restore_chunk",
         Some(database_id),
         |service, caller, _now| {
@@ -282,7 +493,7 @@ fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<
 
 #[update]
 fn finalize_database_restore(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "finalize_database_restore",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -295,7 +506,7 @@ fn finalize_database_restore(database_id: String) -> Result<(), String> {
 #[update]
 fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("write_node", Some(database_id), |service, caller, now| {
+    with_metered_update("write_node", Some(database_id), |service, caller, now| {
         service.write_node(caller, request, now)
     })
 }
@@ -303,7 +514,7 @@ fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
 #[update]
 fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("append_node", Some(database_id), |service, caller, now| {
+    with_metered_update("append_node", Some(database_id), |service, caller, now| {
         service.append_node(caller, request, now)
     })
 }
@@ -311,7 +522,7 @@ fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, String> {
 #[update]
 fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("edit_node", Some(database_id), |service, caller, now| {
+    with_metered_update("edit_node", Some(database_id), |service, caller, now| {
         service.edit_node(caller, request, now)
     })
 }
@@ -319,7 +530,7 @@ fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, String> {
 #[update]
 fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("delete_node", Some(database_id), |service, caller, now| {
+    with_metered_update("delete_node", Some(database_id), |service, caller, now| {
         service.delete_node(caller, request, now)
     })
 }
@@ -327,7 +538,7 @@ fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, String> {
 #[update]
 fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("move_node", Some(database_id), |service, caller, now| {
+    with_metered_update("move_node", Some(database_id), |service, caller, now| {
         service.move_node(caller, request, now)
     })
 }
@@ -335,7 +546,7 @@ fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
 #[update]
 fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("mkdir_node", Some(database_id), |service, caller, _now| {
+    with_metered_update("mkdir_node", Some(database_id), |service, caller, _now| {
         service.mkdir_node(caller, request)
     })
 }
@@ -388,7 +599,7 @@ fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, Str
 #[update]
 fn multi_edit_node(request: MultiEditNodeRequest) -> Result<MultiEditNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_metered_update(
         "multi_edit_node",
         Some(database_id),
         |service, caller, now| service.multi_edit_node(caller, request, now),
@@ -415,14 +626,18 @@ fn fetch_updates(request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse, S
     with_service(|service| service.fetch_fs_updates(&caller_text(), request))
 }
 
-fn initialize_or_trap() {
-    initialize_service().unwrap_or_else(|error| ic_cdk::trap(&error));
+fn initialize_or_trap(config: Option<BillingConfig>) {
+    initialize_service(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
-fn initialize_service() -> Result<(), String> {
+fn initialize_service(config: Option<BillingConfig>) -> Result<(), String> {
     initialize_wasi_storage()?;
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
-    service.run_index_migrations()?;
+    if let Some(config) = config {
+        service.run_index_migrations_with_config(config)?;
+    } else {
+        service.run_index_migrations()?;
+    }
     for meta in service.list_databases()? {
         mount_database_file(&meta)?;
     }
@@ -502,11 +717,27 @@ fn unmount_database_file(_db_file_name: &str) {}
 #[cfg(test)]
 thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_LEDGER_TRANSFER_OUTCOME: RefCell<Option<LedgerTransferOutcome>> = const { RefCell::new(None) };
+    static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
 }
 
 #[cfg(test)]
 fn fail_next_mount_database_file_for_test() {
     TEST_MOUNT_DATABASE_FILE_FAIL_ONCE.with(|flag| flag.replace(true));
+}
+
+#[cfg(test)]
+fn set_next_ledger_transfer_outcome_for_test(outcome: LedgerTransferOutcome) {
+    TEST_LEDGER_TRANSFER_OUTCOME.with(|slot| {
+        slot.replace(Some(outcome));
+    });
+}
+
+#[cfg(test)]
+fn set_test_caller_principal_for_test(principal: Principal) {
+    TEST_CALLER_PRINCIPAL.with(|slot| {
+        slot.replace(Some(principal));
+    });
 }
 
 fn database_create_error(error: String, cleanup_error: Option<String>) -> String {
@@ -519,11 +750,51 @@ fn database_create_error(error: String, cleanup_error: Option<String>) -> String
 fn caller_text() -> String {
     #[cfg(test)]
     {
-        "2vxsx-fae".to_string()
+        test_caller_principal().to_text()
     }
     #[cfg(not(test))]
     {
         ic_cdk::api::msg_caller().to_text()
+    }
+}
+
+fn caller_principal() -> Principal {
+    #[cfg(test)]
+    {
+        test_caller_principal()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::msg_caller()
+    }
+}
+
+#[cfg(test)]
+fn test_caller_principal() -> Principal {
+    TEST_CALLER_PRINCIPAL.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .copied()
+            .unwrap_or_else(Principal::management_canister)
+    })
+}
+
+fn require_authenticated_caller() -> Result<(), String> {
+    if caller_principal() == Principal::anonymous() {
+        return Err("anonymous caller not allowed".to_string());
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn canister_principal() -> Principal {
+    #[cfg(test)]
+    {
+        Principal::anonymous()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::canister_self()
     }
 }
 
@@ -549,7 +820,139 @@ fn cycle_balance() -> u128 {
     }
 }
 
-fn with_usage<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
+async fn ledger_fee(ledger: Principal) -> Result<u64, String> {
+    #[cfg(test)]
+    {
+        let _ = ledger;
+        Ok(10)
+    }
+    #[cfg(not(test))]
+    {
+        let fee: Nat = Call::bounded_wait(ledger, "icrc1_fee")
+            .await
+            .map_err(|error| format!("icrc1_fee call failed: {error:?}"))?
+            .candid()
+            .map_err(|error| format!("icrc1_fee decode failed: {error}"))?;
+        nat_to_u64(&fee)
+    }
+}
+
+async fn ledger_transfer_from(
+    ledger: Principal,
+    from_owner: Principal,
+    amount_e8s: u64,
+) -> Result<u64, String> {
+    #[cfg(test)]
+    {
+        let _ = (ledger, from_owner, amount_e8s);
+        Ok(1)
+    }
+    #[cfg(not(test))]
+    {
+        let fee = ledger_fee(ledger).await?;
+        let arg = TransferFromArg {
+            spender_subaccount: None,
+            from: IcrcAccount {
+                owner: from_owner,
+                subaccount: None,
+            },
+            to: IcrcAccount {
+                owner: canister_principal(),
+                subaccount: None,
+            },
+            amount: Nat::from(amount_e8s),
+            fee: Some(Nat::from(fee)),
+            memo: None,
+            created_at_time: Some(ic_cdk::api::time()),
+        };
+        let result: Result<Nat, TransferFromError> =
+            Call::bounded_wait(ledger, "icrc2_transfer_from")
+                .with_arg(arg)
+                .await
+                .map_err(|error| format!("icrc2_transfer_from call failed: {error:?}"))?
+                .candid()
+                .map_err(|error| format!("icrc2_transfer_from decode failed: {error}"))?;
+        match result {
+            Ok(block_index) => nat_to_u64(&block_index),
+            Err(error) => Err(format!("icrc2_transfer_from failed: {error:?}")),
+        }
+    }
+}
+
+async fn ledger_transfer(
+    ledger: Principal,
+    to: BillingAccount,
+    amount_e8s: u64,
+    fee_e8s: u64,
+) -> LedgerTransferOutcome {
+    #[cfg(test)]
+    {
+        let _ = (ledger, to, amount_e8s, fee_e8s);
+        TEST_LEDGER_TRANSFER_OUTCOME.with(|outcome| {
+            outcome
+                .borrow_mut()
+                .take()
+                .unwrap_or(LedgerTransferOutcome::Completed(2))
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let arg = TransferArg {
+            from_subaccount: None,
+            to: IcrcAccount {
+                owner: to.owner,
+                subaccount: to.subaccount,
+            },
+            amount: Nat::from(amount_e8s),
+            fee: Some(Nat::from(fee_e8s)),
+            memo: None,
+            created_at_time: Some(ic_cdk::api::time()),
+        };
+        let response = Call::bounded_wait(ledger, "icrc1_transfer")
+            .with_arg(arg)
+            .await
+            .map_err(|error| {
+                LedgerTransferOutcome::Ambiguous(format!("icrc1_transfer call failed: {error:?}"))
+            });
+        let response = match response {
+            Ok(response) => response,
+            Err(outcome) => return outcome,
+        };
+        let result: Result<Nat, TransferError> = match response.candid().map_err(|error| {
+            LedgerTransferOutcome::Ambiguous(format!("icrc1_transfer decode failed: {error}"))
+        }) {
+            Ok(result) => result,
+            Err(outcome) => return outcome,
+        };
+        match result {
+            Ok(block_index) => match nat_to_u64(&block_index) {
+                Ok(block_index) => LedgerTransferOutcome::Completed(block_index),
+                Err(error) => LedgerTransferOutcome::Ambiguous(error),
+            },
+            Err(error) => transfer_error_outcome(error),
+        }
+    }
+}
+
+fn transfer_error_outcome(error: TransferError) -> LedgerTransferOutcome {
+    match error {
+        TransferError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
+            Ok(block_index) => LedgerTransferOutcome::Completed(block_index),
+            Err(error) => LedgerTransferOutcome::Ambiguous(error),
+        },
+        error => LedgerTransferOutcome::LedgerErr(format!("icrc1_transfer failed: {error:?}")),
+    }
+}
+
+fn nat_to_u64(value: &Nat) -> Result<u64, String> {
+    value
+        .0
+        .to_string()
+        .parse::<u64>()
+        .map_err(|_| "nat exceeds u64".to_string())
+}
+
+fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
 where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
@@ -574,6 +977,54 @@ where
             error,
             now,
         });
+        result
+    })
+}
+
+fn with_metered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+{
+    let caller = caller_text();
+    let now = now_millis();
+    let before_cycles = cycle_balance();
+    SERVICE.with(|slot| {
+        let borrowed = slot.borrow();
+        let service = borrowed
+            .as_ref()
+            .ok_or_else(|| "wiki service is not initialized".to_string())?;
+        if let Some(database_id) = database_id.as_deref() {
+            service.require_database_billable(database_id)?;
+        }
+        let result = f(service, &caller, now);
+        let after_cycles = cycle_balance();
+        let cycles_delta = before_cycles.saturating_sub(after_cycles);
+        let error = result.as_ref().err().map(String::as_str);
+        let usage_event_id = service
+            .record_usage_event(UsageEvent {
+                method,
+                database_id: database_id.as_deref(),
+                caller: &caller,
+                success: result.is_ok(),
+                cycles_delta,
+                error,
+                now,
+            })
+            .ok();
+        if result.is_ok()
+            && let Some(database_id) = database_id.as_deref()
+        {
+            if let Err(error) = service.charge_database_update(
+                database_id,
+                &caller,
+                method,
+                cycles_delta,
+                usage_event_id,
+                now,
+            ) {
+                ic_cdk::trap(&format!("billing charge failed after update: {error}"));
+            }
+        }
         result
     })
 }

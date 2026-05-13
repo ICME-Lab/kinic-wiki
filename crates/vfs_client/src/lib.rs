@@ -11,16 +11,18 @@ use ic_agent::{
 };
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
-    AppendNodeRequest, CanisterHealth, ChildNode, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    AppendNodeRequest, BillingAccount, BillingConfig, BillingTransferResult, CanisterHealth,
+    ChildNode, DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
     DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
     ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, PrincipalBillingEntryPage,
+    PrincipalBillingSummary, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 #[async_trait]
@@ -32,8 +34,66 @@ pub trait VfsApi: Sync {
     async fn memory_manifest(&self) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
     }
-    async fn create_database(&self) -> Result<String> {
+    async fn create_database(
+        &self,
+        _display_name: &str,
+        _initial_deposit_e8s: u64,
+    ) -> Result<String> {
         Err(anyhow!("create_database is not implemented by this client"))
+    }
+    async fn rename_database(&self, _database_id: &str, _display_name: &str) -> Result<()> {
+        Err(anyhow!("rename_database is not implemented by this client"))
+    }
+    async fn top_up_principal_balance(&self, _amount_e8s: u64) -> Result<BillingTransferResult> {
+        Err(anyhow!(
+            "top_up_principal_balance is not implemented by this client"
+        ))
+    }
+    async fn withdraw_principal_balance(
+        &self,
+        _amount_e8s: u64,
+        _to: BillingAccount,
+    ) -> Result<BillingTransferResult> {
+        Err(anyhow!(
+            "withdraw_principal_balance is not implemented by this client"
+        ))
+    }
+    async fn principal_billing_summary(&self) -> Result<PrincipalBillingSummary> {
+        Err(anyhow!(
+            "principal_billing_summary is not implemented by this client"
+        ))
+    }
+    async fn list_principal_billing_entries(
+        &self,
+        _cursor: Option<u64>,
+        _limit: u32,
+    ) -> Result<PrincipalBillingEntryPage> {
+        Err(anyhow!(
+            "list_principal_billing_entries is not implemented by this client"
+        ))
+    }
+    async fn top_up_database(&self, _database_id: &str, _amount_e8s: u64) -> Result<()> {
+        Err(anyhow!("top_up_database is not implemented by this client"))
+    }
+    async fn withdraw_database_balance(&self, _database_id: &str, _amount_e8s: u64) -> Result<()> {
+        Err(anyhow!(
+            "withdraw_database_balance is not implemented by this client"
+        ))
+    }
+    async fn list_database_billing_entries(
+        &self,
+        _database_id: &str,
+        _cursor: Option<u64>,
+        _limit: u32,
+    ) -> Result<DatabaseBillingEntryPage> {
+        Err(anyhow!(
+            "list_database_billing_entries is not implemented by this client"
+        ))
+    }
+    async fn get_billing_config(&self) -> Result<BillingConfig> {
+        Err(anyhow!(
+            "get_billing_config is not implemented by this client"
+        ))
     }
     async fn grant_database_access(
         &self,
@@ -338,8 +398,103 @@ impl VfsApi for CanisterVfsClient {
         self.query("memory_manifest", &()).await
     }
 
-    async fn create_database(&self) -> Result<String> {
-        let result: Result<String, String> = self.update("create_database", &()).await?;
+    async fn create_database(
+        &self,
+        display_name: &str,
+        initial_deposit_e8s: u64,
+    ) -> Result<String> {
+        let result: Result<String, String> = self
+            .update2(
+                "create_database",
+                &display_name.to_string(),
+                &initial_deposit_e8s,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn rename_database(&self, database_id: &str, display_name: &str) -> Result<()> {
+        let result: Result<(), String> = self
+            .update2(
+                "rename_database",
+                &database_id.to_string(),
+                &display_name.to_string(),
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn top_up_principal_balance(&self, amount_e8s: u64) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> =
+            self.update("top_up_principal_balance", &amount_e8s).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn withdraw_principal_balance(
+        &self,
+        amount_e8s: u64,
+        to: BillingAccount,
+    ) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> = self
+            .update2("withdraw_principal_balance", &amount_e8s, &to)
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn principal_billing_summary(&self) -> Result<PrincipalBillingSummary> {
+        let result: Result<PrincipalBillingSummary, String> =
+            self.query("principal_billing_summary", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_principal_billing_entries(
+        &self,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<PrincipalBillingEntryPage> {
+        let result: Result<PrincipalBillingEntryPage, String> = self
+            .query2("list_principal_billing_entries", &cursor, &limit)
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn top_up_database(&self, database_id: &str, amount_e8s: u64) -> Result<()> {
+        let result: Result<(), String> = self
+            .update2("top_up_database", &database_id.to_string(), &amount_e8s)
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn withdraw_database_balance(&self, database_id: &str, amount_e8s: u64) -> Result<()> {
+        let result: Result<(), String> = self
+            .update2(
+                "withdraw_database_balance",
+                &database_id.to_string(),
+                &amount_e8s,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_database_billing_entries(
+        &self,
+        database_id: &str,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<DatabaseBillingEntryPage> {
+        let result: Result<DatabaseBillingEntryPage, String> = self
+            .query3(
+                "list_database_billing_entries",
+                &database_id.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn get_billing_config(&self) -> Result<BillingConfig> {
+        let result: Result<BillingConfig, String> = self.query("get_billing_config", &()).await?;
         result.map_err(|error| anyhow!(error))
     }
 

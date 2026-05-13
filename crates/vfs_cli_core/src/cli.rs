@@ -227,7 +227,12 @@ pub enum VfsCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
-    Create,
+    Create {
+        #[arg(long)]
+        display_name: String,
+        #[arg(long)]
+        initial_deposit_e8s: u64,
+    },
     List {
         #[arg(long)]
         json: bool,
@@ -252,6 +257,42 @@ pub enum DatabaseCommand {
     },
     Members {
         database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Rename {
+        database_id: String,
+        display_name: String,
+    },
+    TopUpPrincipal {
+        amount_e8s: u64,
+    },
+    WithdrawPrincipal {
+        amount_e8s: u64,
+        to_principal: String,
+    },
+    PrincipalBilling {
+        #[arg(long)]
+        json: bool,
+    },
+    TopUp {
+        database_id: String,
+        amount_e8s: u64,
+    },
+    Withdraw {
+        database_id: String,
+        amount_e8s: u64,
+    },
+    BillingEntries {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        cursor: Option<u64>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+    },
+    BillingConfig {
         #[arg(long)]
         json: bool,
     },

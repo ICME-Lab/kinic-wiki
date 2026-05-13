@@ -7,6 +7,7 @@ edition = "2024"
 bench-disable-fts = ["vfs-store/bench-disable-fts"]
 
 [dependencies]
+candid = "0.10.26"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 sha2 = "0.10.9"
 vfs-types = { path = "../vfs_types" }

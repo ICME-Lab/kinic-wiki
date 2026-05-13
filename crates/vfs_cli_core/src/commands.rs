@@ -5,13 +5,14 @@ use std::borrow::Cow;
 use std::fs;
 
 use anyhow::{Result, anyhow};
+use candid::Principal;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeRequest,
+    AppendNodeRequest, BillingAccount, DeleteNodeRequest, EditNodeRequest, GlobNodesRequest,
+    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, NodeContextRequest, OutgoingLinksRequest, RecentNodesRequest,
+    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -448,8 +449,13 @@ async fn run_database_command(
     command: DatabaseCommand,
 ) -> Result<()> {
     match command {
-        DatabaseCommand::Create => {
-            let database_id = client.create_database().await?;
+        DatabaseCommand::Create {
+            display_name,
+            initial_deposit_e8s,
+        } => {
+            let database_id = client
+                .create_database(&display_name, initial_deposit_e8s)
+                .await?;
             println!("{database_id}");
         }
         DatabaseCommand::List { json } => {
@@ -459,11 +465,13 @@ async fn run_database_command(
             } else {
                 for database in databases {
                     println!(
-                        "{}\t{:?}\t{:?}\t{}",
+                        "{}\t{}\t{:?}\t{:?}\t{}\t{}",
                         database.database_id,
+                        database.display_name,
                         database.role,
                         database.status,
-                        database.logical_size_bytes
+                        database.logical_size_bytes,
+                        database.billing_balance_e8s
                     );
                 }
             }
@@ -508,6 +516,93 @@ async fn run_database_command(
                         member.database_id, member.principal, member.role, member.created_at_ms
                     );
                 }
+            }
+        }
+        DatabaseCommand::Rename {
+            database_id,
+            display_name,
+        } => {
+            client.rename_database(&database_id, &display_name).await?;
+            println!("{database_id}\t{display_name}");
+        }
+        DatabaseCommand::TopUpPrincipal { amount_e8s } => {
+            let result = client.top_up_principal_balance(amount_e8s).await?;
+            println!("{}\t{}", result.block_index, result.balance_e8s);
+        }
+        DatabaseCommand::WithdrawPrincipal {
+            amount_e8s,
+            to_principal,
+        } => {
+            let owner = Principal::from_text(&to_principal)?;
+            let result = client
+                .withdraw_principal_balance(
+                    amount_e8s,
+                    BillingAccount {
+                        owner,
+                        subaccount: None,
+                    },
+                )
+                .await?;
+            println!("{}\t{}", result.block_index, result.balance_e8s);
+        }
+        DatabaseCommand::PrincipalBilling { json } => {
+            let summary = client.principal_billing_summary().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&summary)?);
+            } else {
+                println!("{}\t{}", summary.principal, summary.balance_e8s);
+            }
+        }
+        DatabaseCommand::TopUp {
+            database_id,
+            amount_e8s,
+        } => {
+            client.top_up_database(&database_id, amount_e8s).await?;
+            println!("{database_id}\t{amount_e8s}");
+        }
+        DatabaseCommand::Withdraw {
+            database_id,
+            amount_e8s,
+        } => {
+            client
+                .withdraw_database_balance(&database_id, amount_e8s)
+                .await?;
+            println!("{database_id}\t{amount_e8s}");
+        }
+        DatabaseCommand::BillingEntries {
+            database_id,
+            json,
+            cursor,
+            limit,
+        } => {
+            let page = client
+                .list_database_billing_entries(&database_id, cursor, limit)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                for entry in page.entries {
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        entry.entry_id, entry.kind, entry.amount_e8s, entry.balance_after_e8s
+                    );
+                }
+            }
+        }
+        DatabaseCommand::BillingConfig { json } => {
+            let config = client.get_billing_config().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&config)?);
+            } else {
+                println!(
+                    "{}\t{}/{}\t{}\t{}\t{}",
+                    config.kinic_ledger_canister_id,
+                    config.rate_numerator_e8s,
+                    config.rate_denominator_cycles,
+                    config.fixed_update_fee_e8s,
+                    config.min_update_balance_e8s,
+                    config.min_initial_deposit_e8s
+                );
             }
         }
     }
@@ -663,7 +758,11 @@ mod tests {
         async fn status(&self, _database_id: &str) -> Result<Status> {
             unreachable!()
         }
-        async fn create_database(&self) -> Result<String> {
+        async fn create_database(
+            &self,
+            _display_name: &str,
+            _initial_deposit_e8s: u64,
+        ) -> Result<String> {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             Ok("db_k7p9x2mq4v8r".to_string())
@@ -673,9 +772,12 @@ mod tests {
             *lists += 1;
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
+                display_name: "Alpha".to_string(),
                 status: DatabaseStatus::Hot,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
+                billing_balance_e8s: 100,
+                billing_suspended_at_ms: None,
                 archived_at_ms: None,
                 deleted_at_ms: None,
             }])
@@ -833,7 +935,10 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::Create,
+                command: super::DatabaseCommand::Create {
+                    display_name: "Alpha".to_string(),
+                    initial_deposit_e8s: 1_000_000,
+                },
             },
         )
         .await

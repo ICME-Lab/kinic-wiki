@@ -38,7 +38,7 @@ cd "${REPO_ROOT}"
 
 if ! CANISTER_ID="$(resolve_canister_id)"; then
   echo "local wiki canister id not found; deploying wiki to local environment" >&2
-  icp deploy -e local
+  ICP_ENVIRONMENT=local scripts/local/deploy_wiki.sh
   CANISTER_ID="$(resolve_canister_id)"
 fi
 

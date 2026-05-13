@@ -7,6 +7,9 @@ import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
   ChildNode,
+  BillingTransferResult,
+  DatabaseBillingEntry,
+  DatabaseBillingEntryPage,
   DatabaseMember,
   DatabaseRole,
   DatabaseStatus,
@@ -15,6 +18,9 @@ import type {
   NodeContext,
   NodeEntryKind,
   NodeKind,
+  PrincipalBillingEntry,
+  PrincipalBillingEntryPage,
+  PrincipalBillingSummary,
   RecentNode,
   SearchNodeHit,
   WikiNode,
@@ -44,6 +50,9 @@ type RawDatabaseSummary = {
   role: Variant;
   logical_size_bytes: bigint;
   database_id: string;
+  display_name: string;
+  billing_balance_e8s: bigint;
+  billing_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
 };
@@ -53,6 +62,53 @@ type RawDatabaseMember = {
   principal: string;
   role: Variant;
   created_at_ms: bigint;
+};
+
+type RawBillingTransferResult = {
+  block_index: bigint;
+  balance_e8s: bigint;
+};
+
+type RawPrincipalBillingSummary = {
+  principal: string;
+  balance_e8s: bigint;
+};
+
+type RawPrincipalBillingEntry = {
+  entry_id: bigint;
+  principal: string;
+  kind: string;
+  amount_e8s: bigint;
+  balance_after_e8s: bigint;
+  database_id: [] | [string];
+  ledger_block_index: [] | [bigint];
+  created_at_ms: bigint;
+};
+
+type RawPrincipalBillingEntryPage = {
+  entries: RawPrincipalBillingEntry[];
+  next_cursor: [] | [bigint];
+};
+
+type RawDatabaseBillingEntry = {
+  entry_id: bigint;
+  database_id: string;
+  kind: string;
+  amount_e8s: bigint;
+  balance_after_e8s: bigint;
+  caller: string;
+  method: [] | [string];
+  cycles_delta: [] | [bigint];
+  rate_numerator_e8s: [] | [bigint];
+  rate_denominator_cycles: [] | [bigint];
+  fixed_update_fee_e8s: [] | [bigint];
+  usage_event_id: [] | [bigint];
+  created_at_ms: bigint;
+};
+
+type RawDatabaseBillingEntryPage = {
+  entries: RawDatabaseBillingEntry[];
+  next_cursor: [] | [bigint];
 };
 
 type RawChild = {
@@ -104,7 +160,15 @@ type RawNodeContext = {
 
 type VfsActor = {
   canister_health: () => Promise<RawCanisterHealth>;
-  create_database: () => Promise<{ Ok: string } | { Err: string }>;
+  create_database: (displayName: string, initialDepositE8s: bigint) => Promise<{ Ok: string } | { Err: string }>;
+  rename_database: (databaseId: string, displayName: string) => Promise<{ Ok: null } | { Err: string }>;
+  top_up_principal_balance: (amountE8s: bigint) => Promise<{ Ok: RawBillingTransferResult } | { Err: string }>;
+  withdraw_principal_balance: (amountE8s: bigint, to: { owner: Principal; subaccount: [] }) => Promise<{ Ok: RawBillingTransferResult } | { Err: string }>;
+  principal_billing_summary: () => Promise<{ Ok: RawPrincipalBillingSummary } | { Err: string }>;
+  list_principal_billing_entries: (cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawPrincipalBillingEntryPage } | { Err: string }>;
+  top_up_database: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
+  withdraw_database_balance: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
+  list_database_billing_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseBillingEntryPage } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
@@ -262,14 +326,100 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity): Promise<string> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, displayName: string, initialDepositE8s: bigint): Promise<string> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database();
+    const result = await actor.create_database(displayName, initialDepositE8s);
     if ("Err" in result) {
       throw new Error(result.Err);
     }
     return result.Ok;
+  });
+}
+
+export async function renameDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, displayName: string): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.rename_database(databaseId, displayName);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+  });
+}
+
+export async function topUpPrincipalBalanceAuthenticated(canisterId: string, identity: Identity, amountE8s: bigint): Promise<BillingTransferResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.top_up_principal_balance(amountE8s);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return normalizeBillingTransferResult(result.Ok);
+  });
+}
+
+export async function withdrawPrincipalBalanceAuthenticated(canisterId: string, identity: Identity, amountE8s: bigint, toPrincipal: string): Promise<BillingTransferResult> {
+  return callVfs(async () => {
+    const owner = Principal.fromText(toPrincipal);
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.withdraw_principal_balance(amountE8s, { owner, subaccount: [] });
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return normalizeBillingTransferResult(result.Ok);
+  });
+}
+
+export async function principalBillingSummaryAuthenticated(canisterId: string, identity: Identity): Promise<PrincipalBillingSummary> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.principal_billing_summary();
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return normalizePrincipalBillingSummary(result.Ok);
+  });
+}
+
+export async function listPrincipalBillingEntriesAuthenticated(canisterId: string, identity: Identity, cursor: string | null, limit: number): Promise<PrincipalBillingEntryPage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.list_principal_billing_entries(cursor ? [BigInt(cursor)] : [], limit);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return normalizePrincipalBillingEntryPage(result.Ok);
+  });
+}
+
+export async function topUpDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, amountE8s: bigint): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.top_up_database(databaseId, amountE8s);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+  });
+}
+
+export async function withdrawDatabaseBalanceAuthenticated(canisterId: string, identity: Identity, databaseId: string, amountE8s: bigint): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.withdraw_database_balance(databaseId, amountE8s);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+  });
+}
+
+export async function listDatabaseBillingEntriesAuthenticated(canisterId: string, identity: Identity, databaseId: string, cursor: string | null, limit: number): Promise<DatabaseBillingEntryPage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.list_database_billing_entries(databaseId, cursor ? [BigInt(cursor)] : [], limit);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return normalizeDatabaseBillingEntryPage(result.Ok);
   });
 }
 
@@ -485,9 +635,12 @@ function normalizeCanisterHealth(raw: RawCanisterHealth): CanisterHealth {
 function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
+    displayName: raw.display_name,
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
+    billingBalanceE8s: raw.billing_balance_e8s.toString(),
+    billingSuspendedAtMs: raw.billing_suspended_at_ms[0]?.toString() ?? null,
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
@@ -499,6 +652,65 @@ function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
     principal: raw.principal,
     role: normalizeDatabaseRole(raw.role),
     createdAtMs: raw.created_at_ms.toString()
+  };
+}
+
+function normalizeBillingTransferResult(raw: RawBillingTransferResult): BillingTransferResult {
+  return {
+    blockIndex: raw.block_index.toString(),
+    balanceE8s: raw.balance_e8s.toString()
+  };
+}
+
+function normalizePrincipalBillingSummary(raw: RawPrincipalBillingSummary): PrincipalBillingSummary {
+  return {
+    principal: raw.principal,
+    balanceE8s: raw.balance_e8s.toString()
+  };
+}
+
+function normalizePrincipalBillingEntry(raw: RawPrincipalBillingEntry): PrincipalBillingEntry {
+  return {
+    entryId: raw.entry_id.toString(),
+    principal: raw.principal,
+    kind: raw.kind,
+    amountE8s: raw.amount_e8s.toString(),
+    balanceAfterE8s: raw.balance_after_e8s.toString(),
+    databaseId: raw.database_id[0] ?? null,
+    ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
+    createdAtMs: raw.created_at_ms.toString()
+  };
+}
+
+function normalizePrincipalBillingEntryPage(raw: RawPrincipalBillingEntryPage): PrincipalBillingEntryPage {
+  return {
+    entries: raw.entries.map(normalizePrincipalBillingEntry),
+    nextCursor: raw.next_cursor[0]?.toString() ?? null
+  };
+}
+
+function normalizeDatabaseBillingEntry(raw: RawDatabaseBillingEntry): DatabaseBillingEntry {
+  return {
+    entryId: raw.entry_id.toString(),
+    databaseId: raw.database_id,
+    kind: raw.kind,
+    amountE8s: raw.amount_e8s.toString(),
+    balanceAfterE8s: raw.balance_after_e8s.toString(),
+    caller: raw.caller,
+    method: raw.method[0] ?? null,
+    cyclesDelta: raw.cycles_delta[0]?.toString() ?? null,
+    rateNumeratorE8s: raw.rate_numerator_e8s[0]?.toString() ?? null,
+    rateDenominatorCycles: raw.rate_denominator_cycles[0]?.toString() ?? null,
+    fixedUpdateFeeE8s: raw.fixed_update_fee_e8s[0]?.toString() ?? null,
+    usageEventId: raw.usage_event_id[0]?.toString() ?? null,
+    createdAtMs: raw.created_at_ms.toString()
+  };
+}
+
+function normalizeDatabaseBillingEntryPage(raw: RawDatabaseBillingEntryPage): DatabaseBillingEntryPage {
+  return {
+    entries: raw.entries.map(normalizeDatabaseBillingEntry),
+    nextCursor: raw.next_cursor[0]?.toString() ?? null
   };
 }
 

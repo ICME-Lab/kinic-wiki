@@ -31,8 +31,8 @@ async fn main() -> Result<()> {
         return Err(anyhow!("unexpected memory manifest entrypoint"));
     }
 
-    let database_id = client.create_database().await?;
-    let isolation_database_id = client.create_database().await?;
+    let database_id = client.create_database("Smoke", 1_000_000).await?;
+    let isolation_database_id = client.create_database("Smoke Isolation", 1_000_000).await?;
     client
         .write_node(WriteNodeRequest {
             database_id: database_id.clone(),

@@ -1,31 +1,64 @@
 // Where: crates/vfs_canister/src/tests.rs
 // What: Entry-point level tests for the FS-first canister surface.
 // Why: Phase 3 replaces the public canister contract, so tests must assert the wrapper behavior directly.
+use candid::Principal;
 use sha2::{Digest, Sha256};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
-    AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteNodeRequest, EditNodeRequest,
-    ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, ListChildrenRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, RecentNodesRequest,
-    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest,
-    WriteNodeRequest,
+    AppendNodeRequest, BillingAccount, DatabaseRole, DatabaseStatus, DeleteNodeRequest,
+    EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest,
+    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, ListChildrenRequest,
+    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
+    RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceEvidenceRequest, WriteNodeRequest,
 };
 
 use super::{
-    SERVICE, append_node, begin_database_archive, begin_database_restore, cancel_database_archive,
-    create_database, delete_node, edit_node, export_snapshot,
-    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive, glob_nodes,
-    grant_database_access, graph_links, graph_neighborhood, incoming_links, list_children,
-    list_databases, list_nodes, memory_manifest, mkdir_node, move_node, multi_edit_node,
-    outgoing_links, query_context, read_database_archive_chunk, read_node, read_node_context,
-    recent_nodes, revoke_database_access, search_node_paths, search_nodes, source_evidence, status,
-    write_node,
+    LedgerTransferOutcome, SERVICE, TransferError, append_node, begin_database_archive,
+    begin_database_restore, cancel_database_archive, create_database, delete_node, edit_node,
+    export_snapshot, fail_next_mount_database_file_for_test, fetch_updates,
+    finalize_database_archive, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
+    incoming_links, list_children, list_databases, list_nodes, list_principal_billing_entries,
+    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
+    principal_billing_summary, query_context, read_database_archive_chunk, read_node,
+    read_node_context, recent_nodes, revoke_database_access, search_node_paths, search_nodes,
+    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test, source_evidence,
+    status, test_caller_principal, transfer_error_outcome, withdraw_principal_balance, write_node,
 };
 
+fn test_caller_text() -> String {
+    test_caller_principal().to_text()
+}
+
+fn block_on_ready<F: Future>(future: F) -> F::Output {
+    fn raw_waker() -> RawWaker {
+        fn clone(_: *const ()) -> RawWaker {
+            raw_waker()
+        }
+        fn wake(_: *const ()) {}
+        fn wake_by_ref(_: *const ()) {}
+        fn drop(_: *const ()) {}
+        RawWaker::new(
+            std::ptr::null(),
+            &RawWakerVTable::new(clone, wake, wake_by_ref, drop),
+        )
+    }
+    let waker = unsafe { Waker::from_raw(raw_waker()) };
+    let mut context = Context::from_waker(&waker);
+    let mut future = Box::pin(future);
+    match Pin::as_mut(&mut future).poll(&mut context) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("test future unexpectedly pending"),
+    }
+}
+
 fn install_test_service() {
+    set_test_caller_principal_for_test(Principal::management_canister());
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
@@ -33,12 +66,13 @@ fn install_test_service() {
         .run_index_migrations()
         .expect("index migrations should run");
     service
-        .create_database("default", "2vxsx-fae", 1_700_000_000_000)
+        .create_database("default", &test_caller_text(), 1_700_000_000_000)
         .expect("default database should create");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
 fn install_empty_test_service() {
+    set_test_caller_principal_for_test(Principal::management_canister());
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
@@ -56,6 +90,16 @@ fn usage_event_count() -> u64 {
             .usage_event_count()
             .expect("usage count should load")
     })
+}
+
+fn fund_test_caller(amount_e8s: u64) {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .credit_principal_top_up(&test_caller_text(), amount_e8s, 999, 1_700_000_000_000)
+            .expect("test caller should fund");
+    });
 }
 
 fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
@@ -112,8 +156,10 @@ fn canister_list_databases_returns_caller_membership_summaries() {
 #[test]
 fn update_entrypoints_record_usage_events() {
     install_empty_test_service();
+    fund_test_caller(1_000_000);
 
-    let database_id = create_database().expect("database should create");
+    let database_id =
+        create_database("Test".to_string(), 1_000_000).expect("database should create");
     assert_eq!(usage_event_count(), 1);
 
     let failed = write_node(WriteNodeRequest {
@@ -131,8 +177,10 @@ fn update_entrypoints_record_usage_events() {
 #[test]
 fn canister_create_database_returns_generated_id_for_followup_reads() {
     install_empty_test_service();
+    fund_test_caller(1_000_000);
 
-    let database_id = create_database().expect("database should create");
+    let database_id =
+        create_database("Test".to_string(), 1_000_000).expect("database should create");
     assert!(database_id.starts_with("db_"));
     assert_eq!(database_id.len(), 15);
 
@@ -145,6 +193,94 @@ fn canister_create_database_returns_generated_id_for_followup_reads() {
     })
     .expect("generated database should list");
     assert!(children.is_empty());
+}
+
+#[test]
+fn principal_withdraw_ledger_error_reverses_balance() {
+    install_empty_test_service();
+    fund_test_caller(1_000);
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::LedgerErr(
+        "ledger rejected".to_string(),
+    ));
+
+    let error = block_on_ready(withdraw_principal_balance(
+        100,
+        BillingAccount {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+    ))
+    .expect_err("ledger error should fail");
+    assert!(error.contains("ledger rejected"));
+
+    let summary = principal_billing_summary().expect("summary should load");
+    assert_eq!(summary.balance_e8s, 1_000);
+    let entries = list_principal_billing_entries(None, 100).expect("entries should load");
+    assert!(
+        entries
+            .entries
+            .iter()
+            .any(|entry| entry.kind == "withdraw_reversal")
+    );
+}
+
+#[test]
+fn principal_withdraw_ambiguous_keeps_pending_debit() {
+    install_empty_test_service();
+    fund_test_caller(1_000);
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+        "call failed".to_string(),
+    ));
+
+    let error = block_on_ready(withdraw_principal_balance(
+        100,
+        BillingAccount {
+            owner: Principal::management_canister(),
+            subaccount: None,
+        },
+    ))
+    .expect_err("ambiguous transfer should fail pending");
+    assert!(error.contains("withdraw pending; manual repair required"));
+
+    let summary = principal_billing_summary().expect("summary should load");
+    assert_eq!(summary.balance_e8s, 890);
+    let entries = list_principal_billing_entries(None, 100).expect("entries should load");
+    assert!(
+        entries
+            .entries
+            .iter()
+            .any(|entry| entry.kind == "withdraw_ambiguous")
+    );
+    assert!(
+        !entries
+            .entries
+            .iter()
+            .any(|entry| entry.kind == "withdraw_reversal")
+    );
+}
+
+#[test]
+fn principal_withdraw_duplicate_error_completes_with_duplicate_block() {
+    match transfer_error_outcome(TransferError::Duplicate {
+        duplicate_of: 42_u64.into(),
+    }) {
+        LedgerTransferOutcome::Completed(block_index) => assert_eq!(block_index, 42),
+        outcome => panic!("duplicate should complete, got {outcome:?}"),
+    }
+}
+
+#[test]
+fn billing_update_entrypoints_reject_anonymous() {
+    install_empty_test_service();
+    set_test_caller_principal_for_test(Principal::anonymous());
+
+    let error =
+        create_database("Test".to_string(), 1_000_000).expect_err("anonymous create should fail");
+    assert!(error.contains("anonymous caller not allowed"));
+
+    let error = principal_billing_summary().expect_err("anonymous summary should fail");
+    assert!(error.contains("anonymous caller not allowed"));
+    set_test_caller_principal_for_test(Principal::management_canister());
 }
 
 #[test]
@@ -190,12 +326,15 @@ fn revoke_database_access_validates_and_canonicalizes_principal() {
 
     grant_database_access(
         "default".to_string(),
-        "aaaaa-aa".to_string(),
+        "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         DatabaseRole::Reader,
     )
     .expect("valid principal should grant");
-    revoke_database_access("default".to_string(), "aaaaa-aa".to_string())
-        .expect("valid principal should revoke");
+    revoke_database_access(
+        "default".to_string(),
+        "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+    )
+    .expect("valid principal should revoke");
 }
 
 #[test]
@@ -213,11 +352,13 @@ fn anonymous_reader_grant_allows_public_read() {
         .grant_database_access("public", "owner", "2vxsx-fae", DatabaseRole::Reader, 2)
         .expect("anonymous reader should grant");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+    set_test_caller_principal_for_test(Principal::anonymous());
 
     let node = read_node("public".to_string(), "/Wiki/missing.md".to_string())
         .expect("anonymous reader query should pass role check");
 
     assert_eq!(node, None);
+    set_test_caller_principal_for_test(Principal::management_canister());
 }
 
 #[test]

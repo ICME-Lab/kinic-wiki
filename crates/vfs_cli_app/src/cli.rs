@@ -386,10 +386,18 @@ impl Command {
         match self {
             Self::Database { command } => matches!(
                 command,
-                DatabaseCommand::Create
+                DatabaseCommand::Create { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::Revoke { .. }
                     | DatabaseCommand::Members { .. }
+                    | DatabaseCommand::Rename { .. }
+                    | DatabaseCommand::TopUpPrincipal { .. }
+                    | DatabaseCommand::WithdrawPrincipal { .. }
+                    | DatabaseCommand::PrincipalBilling { .. }
+                    | DatabaseCommand::TopUp { .. }
+                    | DatabaseCommand::Withdraw { .. }
+                    | DatabaseCommand::BillingEntries { .. }
+                    | DatabaseCommand::BillingConfig { .. }
             ),
             Self::Skill { command } => !matches!(
                 command,

@@ -2982,6 +2982,7 @@ dependencies = [
  "ic-cdk 0.20.0",
  "ic-stable-structures",
  "ic-wasi-polyfill",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
@@ -3021,6 +3022,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "candid",
  "chrono",
  "clap",
  "serde",
@@ -3050,6 +3052,7 @@ dependencies = [
 name = "vfs-runtime"
 version = "0.1.0"
 dependencies = [
+ "candid",
  "rusqlite",
  "sha2 0.10.9",
  "tempfile",

@@ -1,6 +1,7 @@
 // Where: crates/vfs_canister/src/tests_sync_contract.rs
 // What: Additional entry-point tests for search/sync behavior and Candid contract integrity.
 // Why: The VFS validation phase needs API-boundary coverage for behavior and interface drift.
+use candid::Principal;
 use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
@@ -10,10 +11,11 @@ use vfs_types::{
 
 use super::{
     SERVICE, delete_node, export_snapshot, fetch_updates, search_node_paths, search_nodes,
-    write_node,
+    set_test_caller_principal_for_test, test_caller_principal, write_node,
 };
 
 fn install_test_service() {
+    set_test_caller_principal_for_test(Principal::management_canister());
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
@@ -21,7 +23,11 @@ fn install_test_service() {
         .run_index_migrations()
         .expect("index migrations should run");
     service
-        .create_database("default", "2vxsx-fae", 1_700_000_000_000)
+        .create_database(
+            "default",
+            &test_caller_principal().to_text(),
+            1_700_000_000_000,
+        )
         .expect("default database should create");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }

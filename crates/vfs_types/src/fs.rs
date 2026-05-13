@@ -53,11 +53,93 @@ pub struct DatabaseInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseSummary {
     pub database_id: String,
+    pub display_name: String,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
+    pub billing_balance_e8s: u64,
+    pub billing_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
     pub deleted_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct BillingConfig {
+    pub kinic_ledger_canister_id: String,
+    pub sns_governance_id: String,
+    pub rate_numerator_e8s: u64,
+    pub rate_denominator_cycles: u64,
+    pub fixed_update_fee_e8s: u64,
+    pub min_update_balance_e8s: u64,
+    pub min_initial_deposit_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct BillingConfigUpdate {
+    pub rate_numerator_e8s: u64,
+    pub rate_denominator_cycles: u64,
+    pub fixed_update_fee_e8s: u64,
+    pub min_update_balance_e8s: u64,
+    pub min_initial_deposit_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct BillingAccount {
+    pub owner: candid::Principal,
+    pub subaccount: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct BillingTransferResult {
+    pub block_index: u64,
+    pub balance_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct PrincipalBillingSummary {
+    pub principal: String,
+    pub balance_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct PrincipalBillingEntry {
+    pub entry_id: u64,
+    pub principal: String,
+    pub kind: String,
+    pub amount_e8s: i64,
+    pub balance_after_e8s: u64,
+    pub database_id: Option<String>,
+    pub ledger_block_index: Option<u64>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct PrincipalBillingEntryPage {
+    pub entries: Vec<PrincipalBillingEntry>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseBillingEntry {
+    pub entry_id: u64,
+    pub database_id: String,
+    pub kind: String,
+    pub amount_e8s: i64,
+    pub balance_after_e8s: u64,
+    pub caller: String,
+    pub method: Option<String>,
+    pub cycles_delta: Option<u64>,
+    pub rate_numerator_e8s: Option<u64>,
+    pub rate_denominator_cycles: Option<u64>,
+    pub fixed_update_fee_e8s: Option<u64>,
+    pub usage_event_id: Option<u64>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseBillingEntryPage {
+    pub entries: Vec<DatabaseBillingEntry>,
+    pub next_cursor: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

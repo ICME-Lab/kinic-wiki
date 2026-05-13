@@ -27,6 +27,8 @@ Stable-memory mount IDs are partitioned by purpose:
 The index DB tracks database metadata and membership. User DBs hold VFS node data, search data, and link data.
 The index DB also stores an internal `usage_events` ledger for update calls.
 
+The billing index schema is a breaking initial schema. Existing index DBs with an older `schema_migrations` value are rejected with `fresh index required`; operators must install against a fresh index instead of relying on automatic migration.
+
 Hot, archiving, or restoring DBs consume one active user DB slot. Archived and deleted DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database.
 
 ## Status
@@ -57,6 +59,47 @@ Each event stores method, database ID when present, caller principal, success fl
 The cycle delta is an operational observation from canister balance before and after the update, not a guaranteed one-to-one IC billing statement.
 Only the latest 100,000 events are retained. The ledger is internal operational material, not a guaranteed billing statement.
 
+## Billing
+
+KINIC billing uses two internal balances:
+
+- principal balance: KINIC pulled from the external ledger by `top_up_principal_balance`
+- database balance: KINIC allocated from a principal balance to a DB
+
+DB creation requires `create_database(display_name, initial_deposit_e8s)`. The initial deposit is debited from the caller principal balance and credited to the new DB balance. The default minimum initial deposit is `1_000_000` e8s.
+
+External ledger calls are limited to principal top-up and principal withdraw:
+
+- `top_up_principal_balance(amount_e8s)` pulls from the caller through ICRC-2 `approve` + `icrc2_transfer_from`
+- `withdraw_principal_balance(amount_e8s, to)` sends through ICRC-1 `icrc1_transfer`
+
+Principal-to-DB allocation and DB-to-owner withdraw are internal ledger movements. DB withdraw credits the owner principal balance; it does not call the external ledger.
+
+Successful DB update calls are charged after execution. The charge is:
+
+```text
+ceil(cycles_delta * rate_numerator_e8s / rate_denominator_cycles) + fixed_update_fee_e8s
+```
+
+The default rate is `200 / 1_000_000` cycles and the default fixed update fee is `100` e8s. Before a metered update, the DB balance must be at least `min_update_balance_e8s` and the DB must not be suspended. If the post-update charge exceeds the DB balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+
+`database_billing_ledger` and `principal_billing_ledger` are the billing source of truth. `usage_events` remains an operational log only.
+
+`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_billing_config` with a Candid-encoded `BillingConfigUpdate` blob. `validate_update_billing_config` performs the same validation without changing state.
+
+`icp.yaml` carries local development init args with anonymous placeholder principals. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
+
+Normal operator flow:
+
+1. User approves the VFS canister on the KINIC ICRC-2 ledger.
+2. User calls `top_up_principal_balance(amount_e8s)`.
+3. User creates a DB with `create_database(display_name, initial_deposit_e8s)` or allocates existing principal balance with `top_up_database`.
+4. Successful DB updates consume DB balance.
+5. Owner can move DB balance back to principal balance with `withdraw_database_balance`.
+6. User can withdraw principal balance to an external KINIC account with `withdraw_principal_balance`.
+
+If principal withdraw receives an explicit ledger error, the debit is reversed. If the inter-canister call or response decoding is ambiguous, the debit remains pending and the principal ledger records `withdraw_ambiguous`; initial repair is manual.
+
 ## Delete
 
 `delete_database` is owner-only.
@@ -69,6 +112,7 @@ Delete is a soft delete in the index:
 - the stable-memory mount ID is not reused by another DB in v1
 
 Delete is treated as irreversible. If recovery is required, archive first and store the exported bytes outside the canister.
+Deleted DBs remain listed for billing visibility. DB top-up is rejected after delete, but owner-only DB balance withdraw remains available.
 
 ## Archive
 

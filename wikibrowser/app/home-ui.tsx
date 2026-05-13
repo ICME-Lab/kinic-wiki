@@ -131,13 +131,14 @@ function DatabaseSection({
             <tr key={database.databaseId} className="border-t border-line">
               <td className="px-4 py-3">
                 <div className="flex min-w-[180px] flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs text-ink">{database.databaseId}</span>
+                  <span className="text-sm font-medium text-ink">{database.displayName}</span>
+                  <span className="font-mono text-xs text-muted">{database.databaseId}</span>
                   {mode === "member" && database.publicReadable ? <span className="rounded border border-line bg-white px-1.5 py-0.5 text-[11px] font-medium text-muted">Public</span> : null}
                 </div>
               </td>
               <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
               <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
-              <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
+              <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)} / {database.billingBalanceE8s} e8s</td>
               <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
               <td className="px-4 py-3">
                 <div className="flex flex-wrap gap-2">
@@ -205,6 +206,7 @@ function formatBytes(value: string): string {
 }
 
 function databaseMarker(database: DatabaseSummary): string {
+  if (database.billingSuspendedAtMs) return `Suspended ${formatTimestamp(database.billingSuspendedAtMs)}`;
   if (database.deletedAtMs) return `Deleted ${formatTimestamp(database.deletedAtMs)}`;
   if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
   return "-";

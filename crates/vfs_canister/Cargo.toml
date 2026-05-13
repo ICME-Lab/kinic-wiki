@@ -16,6 +16,7 @@ candid = "0.10.26"
 ic-cdk = "0.20.0"
 ic-stable-structures = "0.7.2"
 ic-wasi-polyfill = "0.13.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0.145", optional = true }
 vfs-runtime = { path = "../vfs_runtime" }
 vfs-types = { path = "../vfs_types" }

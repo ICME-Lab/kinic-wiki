@@ -46,7 +46,8 @@ Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then ho
 Create a database before reading or writing:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database create
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database top-up-principal <amount-e8s>
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database create --display-name "Team Wiki" --initial-deposit-e8s 1000000
 cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database list
 cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database grant <database-id> <principal> reader
 cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database link <database-id>
@@ -54,8 +55,34 @@ cargo run -p vfs-cli --bin vfs-cli -- write-node --path /Wiki/file.md --input fi
 cargo run -p vfs-cli --bin vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`database create` prints the generated database ID.
-`database list` prints databases attached to the caller principal.
+Before `database top-up-principal`, the caller wallet must approve the VFS canister on the KINIC ICRC-2 ledger. `database create` debits the caller principal balance and prints the generated database ID. `database list` prints databases attached to the caller principal, including display name, billing balance, and suspension state.
+The WikiBrowser dashboard exposes the same minimal flow after Internet Identity login: principal top-up/withdraw, DB create with display name and initial deposit, DB allocate/withdraw, rename, and billing history.
+
+Billing operations:
+
+```bash
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database rename <database-id> "New name"
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database principal-billing
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database top-up <database-id> <amount-e8s>
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database withdraw <database-id> <amount-e8s>
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database billing-entries <database-id>
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database billing-config
+```
+
+`database top-up` moves caller principal balance into a DB balance. It does not require DB membership. `database withdraw` moves DB balance back to the owner principal balance and is owner-only. External KINIC ledger withdraw uses:
+
+```bash
+cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database withdraw-principal <amount-e8s> <to-principal>
+```
+
+For mainnet fresh installs, use the guarded deploy wrapper:
+
+```bash
+KINIC_LEDGER_CANISTER_ID=<kinic-ledger> SNS_GOVERNANCE_ID=<sns-governance> scripts/mainnet/deploy_wiki.sh
+```
+
+The wrapper rejects unset, empty, or anonymous principal values before passing billing init args to `icp deploy`.
+For local installs, use `scripts/local/deploy_wiki.sh` so anonymous placeholder billing principals stay local-only.
 
 For public browser reads, grant anonymous reader access explicitly:
 

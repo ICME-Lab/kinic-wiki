@@ -452,7 +452,7 @@ function TopBar({
         >
           {databaseOptions.map((database) => (
             <option key={database.databaseId} value={database.databaseId}>
-              {database.databaseId}
+              {database.displayName || database.databaseId}
             </option>
           ))}
         </select>
@@ -506,9 +506,12 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
   return [
     {
       databaseId,
+      displayName: databaseId,
       role: "reader",
       status: "hot",
       logicalSizeBytes: "0",
+      billingBalanceE8s: "0",
+      billingSuspendedAtMs: null,
       archivedAtMs: null,
       deletedAtMs: null
     },

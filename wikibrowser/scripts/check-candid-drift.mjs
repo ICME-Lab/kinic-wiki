@@ -59,7 +59,7 @@ function parseDidFields(body) {
 }
 
 function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\(\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
     const line = raw.trim();
@@ -160,6 +160,10 @@ function normalizeIdlShape(value) {
     .replace(/^Nat$/, "nat")
     .replace(/^Float32$/, "float32")
     .replace(/^Bool$/, "bool")
+    .replace(/^Principal$/, "principal")
+    .replace(/^Vec\(idl\.Nat8\)$/, "blob")
+    .replace(/^Vec\(Nat8\)$/, "blob")
+    .replace(/^Nat8$/, "nat8")
     .replace(/^Null$/, "null")
     .replace(/^Opt\((.+)\)$/, (_, inner) => `opt ${normalizeIdlShape(inner)}`)
     .replace(/^Vec\((.+)\)$/, (_, inner) => `vec ${normalizeIdlShape(inner)}`);
@@ -183,18 +187,23 @@ function normalizeShape(value) {
 
 function normalizeResultAlias(value) {
   const normalized = normalizeShape(value);
-  if (normalized === "Result_9") return "ResultLinks";
-  if (normalized === "Result_10") return "ResultChildren";
+  if (normalized === "Result_8") return "ResultBillingConfig";
+  if (normalized === "Result_10") return "ResultLinks";
+  if (normalized === "Result_11") return "ResultChildren";
+  if (normalized === "Result_12") return "ResultDatabaseBillingEntryPage";
   if (normalized === "Result_2") return "ResultUnit";
   if (normalized === "Result_3") return "ResultCreateDatabase";
-  if (normalized === "Result_11") return "ResultMembers";
-  if (normalized === "Result_12") return "ResultDatabases";
-  if (normalized === "Result_16") return "ResultQueryContext";
-  if (normalized === "Result_18") return "ResultNode";
-  if (normalized === "Result_19") return "ResultNodeContext";
-  if (normalized === "Result_20") return "ResultRecent";
-  if (normalized === "Result_21") return "ResultSearch";
-  if (normalized === "Result_22") return "ResultSourceEvidence";
+  if (normalized === "Result_13") return "ResultMembers";
+  if (normalized === "Result_14") return "ResultDatabases";
+  if (normalized === "Result_16") return "ResultPrincipalBillingEntryPage";
+  if (normalized === "Result_19") return "ResultPrincipalBillingSummary";
+  if (normalized === "Result_20") return "ResultQueryContext";
+  if (normalized === "Result_22") return "ResultNode";
+  if (normalized === "Result_23") return "ResultNodeContext";
+  if (normalized === "Result_24") return "ResultRecent";
+  if (normalized === "Result_25") return "ResultSearch";
+  if (normalized === "Result_26") return "ResultSourceEvidence";
+  if (normalized === "Result_27") return "ResultBillingTransfer";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

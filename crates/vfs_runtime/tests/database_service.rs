@@ -11,8 +11,8 @@ use vfs_runtime::{
     USAGE_EVENTS_RETENTION_LIMIT, UsageEvent, VfsService,
 };
 use vfs_types::{
-    AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteNodeRequest, NodeKind,
-    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    AppendNodeRequest, BillingConfig, BillingConfigUpdate, DatabaseRole, DatabaseStatus,
+    DeleteNodeRequest, NodeKind, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn service() -> VfsService {
@@ -27,6 +27,18 @@ fn service_with_root() -> (VfsService, PathBuf) {
         .run_index_migrations()
         .expect("index migrations should run");
     (service, root)
+}
+
+fn billing_config() -> BillingConfig {
+    BillingConfig {
+        kinic_ledger_canister_id: "2vxsx-fae".to_string(),
+        sns_governance_id: "2vxsx-fae".to_string(),
+        rate_numerator_e8s: 200,
+        rate_denominator_cycles: 1_000_000,
+        fixed_update_fee_e8s: 100,
+        min_update_balance_e8s: 10_000,
+        min_initial_deposit_e8s: 1_000_000,
+    }
 }
 
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
@@ -196,11 +208,17 @@ fn archive_bytes_for_chunk_size(
 }
 
 #[test]
-fn index_migrations_create_usage_events_and_mount_history_once() {
+fn index_migrations_create_billing_schema_once() {
     let (service, root) = service_with_root();
 
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    for table_name in ["usage_events", "database_mount_history"] {
+    for table_name in [
+        "usage_events",
+        "database_mount_history",
+        "principal_billing_accounts",
+        "database_billing_accounts",
+        "billing_config",
+    ] {
         let table_exists: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -211,11 +229,7 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
         assert_eq!(table_exists, 1);
     }
     assert_eq!(
-        schema_migration_count(&root, "database_index:004_usage_events"),
-        1
-    );
-    assert_eq!(
-        schema_migration_count(&root, "database_index:005_mount_history"),
+        schema_migration_count(&root, "database_index:100_billing_initial"),
         1
     );
 
@@ -223,13 +237,307 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
         .run_index_migrations()
         .expect("index migrations should be idempotent");
     assert_eq!(
-        schema_migration_count(&root, "database_index:004_usage_events"),
+        schema_migration_count(&root, "database_index:100_billing_initial"),
         1
     );
-    assert_eq!(
-        schema_migration_count(&root, "database_index:005_mount_history"),
-        1
+}
+
+#[test]
+fn old_index_schema_requires_fresh_index() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let index_path = root.join("index.sqlite3");
+    let conn = Connection::open(&index_path).expect("index should open");
+    conn.execute_batch(
+        "CREATE TABLE schema_migrations (
+           version TEXT PRIMARY KEY,
+           applied_at INTEGER NOT NULL
+         );
+         INSERT INTO schema_migrations (version, applied_at)
+         VALUES ('database_index:005_mount_history', 1);",
+    )
+    .expect("old migration marker should insert");
+    drop(conn);
+
+    let service = VfsService::new(index_path, root.join("databases"));
+    let error = service
+        .run_index_migrations()
+        .expect_err("old index should be rejected");
+    assert!(error.contains("fresh index required"));
+}
+
+#[test]
+fn display_name_validation_and_owner_only_rename() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
+        .expect("reader grant should succeed");
+
+    let reader_error = service
+        .rename_database("alpha", "Reader Name", "reader", 3)
+        .expect_err("reader cannot rename");
+    assert!(reader_error.contains("lacks required database role"));
+
+    let name_error = service
+        .rename_database("alpha", "\n", "owner", 4)
+        .expect_err("blank display name should fail");
+    assert!(name_error.contains("display_name"));
+
+    service
+        .rename_database("alpha", " Alpha Wiki ", "owner", 5)
+        .expect("owner rename should succeed");
+    let summaries = service
+        .list_database_summaries_for_caller("owner")
+        .expect("summaries should load");
+    assert_eq!(summaries[0].display_name, "Alpha Wiki");
+}
+
+#[test]
+fn billing_balance_moves_between_principal_and_database() {
+    let service = service();
+    service
+        .credit_principal_top_up("owner", 2_000_000, 1, 1)
+        .expect("owner top-up should credit");
+    let meta = service
+        .create_generated_database_with_initial_deposit("Team Wiki", "owner", 1_000_000, 2)
+        .expect("database should reserve with initial deposit");
+    service
+        .credit_principal_top_up("donor", 500_000, 2, 3)
+        .expect("donor top-up should credit");
+    service
+        .top_up_database(&meta.database_id, "donor", 250_000, 4)
+        .expect("non-member can top up database");
+    service
+        .withdraw_database_balance(&meta.database_id, "owner", 300_000, 5)
+        .expect("owner can withdraw database balance internally");
+
+    let owner = service
+        .principal_billing_summary("owner")
+        .expect("owner billing should load");
+    let donor = service
+        .principal_billing_summary("donor")
+        .expect("donor billing should load");
+    let summary = service
+        .list_database_summaries_for_caller("owner")
+        .expect("database summary should load")
+        .into_iter()
+        .find(|summary| summary.database_id == meta.database_id)
+        .expect("database should be listed");
+    assert_eq!(owner.balance_e8s, 1_300_000);
+    assert_eq!(donor.balance_e8s, 250_000);
+    assert_eq!(summary.billing_balance_e8s, 950_000);
+    assert!(summary.billing_suspended_at_ms.is_none());
+
+    let principal_entries = service
+        .list_principal_billing_entries("owner", None, 100)
+        .expect("principal ledger should load");
+    assert!(
+        principal_entries
+            .entries
+            .iter()
+            .any(|entry| entry.kind == "database_withdraw")
     );
+    let database_entries = service
+        .list_database_billing_entries(&meta.database_id, "owner", None, 100)
+        .expect("database ledger should load");
+    assert!(
+        database_entries
+            .entries
+            .iter()
+            .any(|entry| entry.kind == "top_up_from_principal")
+    );
+}
+
+#[test]
+fn billing_ledger_pagination_does_not_skip_boundary_entries() {
+    let service = service();
+    service
+        .credit_principal_top_up("owner", 3_000_000, 1, 1)
+        .expect("owner top-up should credit");
+    let meta = service
+        .create_generated_database_with_initial_deposit("Team Wiki", "owner", 1_000_000, 2)
+        .expect("database should reserve with initial deposit");
+    service
+        .top_up_database(&meta.database_id, "owner", 100_000, 3)
+        .expect("owner can top up database");
+    service
+        .withdraw_database_balance(&meta.database_id, "owner", 50_000, 4)
+        .expect("owner can withdraw database balance internally");
+
+    let all_principal_entry_ids: Vec<u64> = service
+        .list_principal_billing_entries("owner", None, 100)
+        .expect("principal ledger should load")
+        .entries
+        .into_iter()
+        .map(|entry| entry.entry_id)
+        .collect();
+    assert!(all_principal_entry_ids.len() >= 3);
+
+    let first_principal_page = service
+        .list_principal_billing_entries("owner", None, 2)
+        .expect("first principal page should load");
+    let second_principal_page = service
+        .list_principal_billing_entries("owner", first_principal_page.next_cursor, 2)
+        .expect("second principal page should load");
+    let paged_principal_entry_ids: Vec<u64> = first_principal_page
+        .entries
+        .into_iter()
+        .chain(second_principal_page.entries)
+        .map(|entry| entry.entry_id)
+        .collect();
+    assert_eq!(paged_principal_entry_ids, all_principal_entry_ids);
+
+    let all_database_entry_ids: Vec<u64> = service
+        .list_database_billing_entries(&meta.database_id, "owner", None, 100)
+        .expect("database ledger should load")
+        .entries
+        .into_iter()
+        .map(|entry| entry.entry_id)
+        .collect();
+    assert!(all_database_entry_ids.len() >= 3);
+
+    let first_database_page = service
+        .list_database_billing_entries(&meta.database_id, "owner", None, 2)
+        .expect("first database page should load");
+    let second_database_page = service
+        .list_database_billing_entries(
+            &meta.database_id,
+            "owner",
+            first_database_page.next_cursor,
+            2,
+        )
+        .expect("second database page should load");
+    let paged_database_entry_ids: Vec<u64> = first_database_page
+        .entries
+        .into_iter()
+        .chain(second_database_page.entries)
+        .map(|entry| entry.entry_id)
+        .collect();
+    assert_eq!(paged_database_entry_ids, all_database_entry_ids);
+}
+
+#[test]
+fn deleted_database_rejects_top_up_but_allows_owner_withdraw() {
+    let service = service();
+    service
+        .credit_principal_top_up("owner", 2_000_000, 1, 1)
+        .expect("owner top-up should credit");
+    let meta = service
+        .create_generated_database_with_initial_deposit("Team Wiki", "owner", 1_000_000, 2)
+        .expect("database should reserve");
+    service
+        .delete_database(&meta.database_id, "owner", 3)
+        .expect("delete should succeed");
+
+    let top_up_error = service
+        .top_up_database(&meta.database_id, "owner", 100_000, 4)
+        .expect_err("deleted database should reject top-up");
+    assert!(top_up_error.contains("deleted"));
+
+    service
+        .withdraw_database_balance(&meta.database_id, "owner", 400_000, 5)
+        .expect("deleted database should still allow owner withdraw");
+    let owner = service
+        .principal_billing_summary("owner")
+        .expect("owner billing should load");
+    assert_eq!(owner.balance_e8s, 1_400_000);
+}
+
+#[test]
+fn failed_database_create_reversal_restores_principal_and_records_db_ledger() {
+    let (service, root) = service_with_root();
+    service
+        .credit_principal_top_up("owner", 1_000_000, 1, 1)
+        .expect("owner top-up should credit");
+    let meta = service
+        .create_generated_database_with_initial_deposit("Team Wiki", "owner", 1_000_000, 2)
+        .expect("database should reserve");
+    service
+        .reverse_failed_database_create(&meta.database_id, "owner", 1_000_000, 3)
+        .expect("failed create should reverse");
+
+    let owner = service
+        .principal_billing_summary("owner")
+        .expect("owner billing should load");
+    assert_eq!(owner.balance_e8s, 1_000_000);
+
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let reversal_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM database_billing_ledger
+             WHERE database_id = ?1 AND kind = 'create_database_reversal'",
+            params![meta.database_id],
+            |row| row.get(0),
+        )
+        .expect("database reversal ledger count should load");
+    assert_eq!(reversal_count, 1);
+}
+
+#[test]
+fn metered_charge_consumes_remaining_balance_and_suspends() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .require_database_billable("alpha")
+        .expect("fresh test database should be billable");
+
+    service
+        .charge_database_update("alpha", "owner", "write_node", 10_000_000_000, Some(7), 2)
+        .expect("charge should succeed");
+    let summary = service
+        .list_database_summaries_for_caller("owner")
+        .expect("summary should load")
+        .remove(0);
+    assert_eq!(summary.billing_balance_e8s, 0);
+    assert!(summary.billing_suspended_at_ms.is_some());
+    let error = service
+        .require_database_billable("alpha")
+        .expect_err("suspended database should reject metered updates");
+    assert!(error.contains("suspended"));
+}
+
+#[test]
+fn billing_config_validation_rejects_invalid_init_and_updates() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let invalid_service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let invalid = BillingConfig {
+        kinic_ledger_canister_id: "not a principal".to_string(),
+        ..billing_config()
+    };
+    let error = invalid_service
+        .run_index_migrations_with_config(invalid)
+        .expect_err("invalid principal should be rejected");
+    assert!(error.contains("principal text is invalid"));
+
+    let service = service();
+    let update = BillingConfigUpdate {
+        rate_numerator_e8s: 200,
+        rate_denominator_cycles: 0,
+        fixed_update_fee_e8s: 100,
+        min_update_balance_e8s: 10_000,
+        min_initial_deposit_e8s: 1_000_000,
+    };
+    let error = service
+        .validate_billing_config_update(&update)
+        .expect_err("zero denominator should fail");
+    assert!(error.contains("rate_denominator_cycles"));
+
+    let update = BillingConfigUpdate {
+        rate_denominator_cycles: 1_000_000,
+        min_update_balance_e8s: 10_000,
+        min_initial_deposit_e8s: 9_999,
+        ..update
+    };
+    let error = service
+        .validate_billing_config_update(&update)
+        .expect_err("initial deposit below update minimum should fail");
+    assert!(error.contains("min_initial_deposit_e8s"));
 }
 
 #[test]
@@ -487,9 +795,9 @@ fn rejects_database_creation_after_mount_capacity() {
     for mount_id in 11..32767 {
         conn.execute(
             "INSERT INTO databases
-             (database_id, db_file_name, mount_id, active_mount_id, status, schema_version,
+             (database_id, display_name, db_file_name, mount_id, active_mount_id, status, schema_version,
               logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?3, 'hot', 'vfs_store:current', 0, 1, 1)",
+             VALUES (?1, ?1, ?2, ?3, ?3, 'hot', 'vfs_store:current', 0, 1, 1)",
             params![
                 format!("reserved_{mount_id}"),
                 format!("reserved_{mount_id}.sqlite3"),
