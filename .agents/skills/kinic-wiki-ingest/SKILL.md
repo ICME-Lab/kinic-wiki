@@ -11,6 +11,7 @@ Use this skill when the user wants to:
 - normalize raw source material before wiki synthesis
 - persist selected source material under `/Sources/raw/...`
 - update existing wiki pages from new evidence
+- repair existing wiki pages only when the edit is part of source intake; otherwise use `kinic-wiki-edit`
 - initialize or repair an LLM Wiki scope with `index.md`, `overview.md`, `log.md`, `schema.md`, and `topics/`
 - generate conversation wiki pages from raw sources, preferring one review-ready page unless the source clearly needs a split
 - create review-ready wiki pages without pushing immediately
@@ -21,6 +22,7 @@ Do not use this skill for:
 - health-only review of an existing wiki
 - hidden publish or push workflows
 - Skill Registry package lifecycle work; use `kinic-skill-registry`
+- leakage cleanup or broad existing-node repair without new source ingestion; use `kinic-wiki-edit`
 
 Core rules:
 

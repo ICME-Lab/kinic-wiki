@@ -34,8 +34,8 @@ async function main() {
   run("open", [`${searchUrl}?q=${encodeURIComponent(fullQuery)}&kind=full`]);
   assertSnapshotIncludes(target.nodePath);
   assertSnapshotIncludes("Full text");
-  run("open", [`${url}?tab=recent`]);
-  assertSnapshotIncludes("Recent");
+  run("open", [`${url}?tab=query`]);
+  assertSnapshotIncludes("Search by default");
   run("open", [`${url}?tab=sources`]);
   assertSnapshotIncludes("Save source URL");
   run("open", [graphUrl]);
