@@ -280,6 +280,11 @@ pub enum DatabaseCommand {
         #[arg(value_enum)]
         role: DatabaseRoleArg,
     },
+    GrantCurrentIdentity {
+        database_id: String,
+        #[arg(value_enum)]
+        role: DatabaseRoleArg,
+    },
     Revoke {
         database_id: String,
         principal: String,

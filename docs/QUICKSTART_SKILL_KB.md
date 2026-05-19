@@ -58,6 +58,20 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill record-run legal-review 
   --notes-file examples/skill-kb/runs/legal-review-success.md
 ```
 
+Hermes/plugin evidence can be recorded without manual schema prompts:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill record-run legal-review \
+  --evidence-json ./run-evidence.json
+```
+
+Export current runtime files for Hermes:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill export legal-review \
+  --out ~/.kinic/hermes-current/skills/legal-review
+```
+
 Promote the skill after review:
 
 ```bash

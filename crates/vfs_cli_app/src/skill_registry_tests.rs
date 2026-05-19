@@ -1,8 +1,9 @@
 use crate::cli::{SkillRunOutcomeArg, SkillStatusArg};
 use crate::skill_registry::{
-    SkillRunInput, approve_proposal, find_skills, inspect_skill, install_skill_lockfile,
-    markdown_target_package_key, propose_improvement, record_skill_run, set_skill_status,
-    upsert_skill,
+    SkillRunEvidenceInput, SkillRunInput, apply_evolution_proposal, approve_proposal, export_skill,
+    find_skills, inspect_skill, install_skill_lockfile, markdown_target_package_key,
+    propose_improvement, record_correction, record_skill_run, record_skill_run_evidence,
+    set_skill_status, upsert_skill,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -550,6 +551,129 @@ async fn skill_install_writes_lockfile_without_local_package_install() {
             .expect("read nonexistent install target"),
         None
     );
+}
+
+#[tokio::test]
+async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    write(
+        temp.path(),
+        "SKILL.md",
+        "# Legal Review\n\nUse [helper](helper.md).",
+    );
+    write(temp.path(), "manifest.md", &manifest("reviewed"));
+    write(temp.path(), "helper.md", "# Helper\n");
+    upsert_skill(
+        &client,
+        "team-db",
+        temp.path(),
+        "legal-review",
+        false,
+        false,
+    )
+    .await
+    .expect("upsert");
+
+    let evidence = temp.path().join("evidence.json");
+    std::fs::write(
+        &evidence,
+        serde_json::json!({
+            "run_id": "run-1",
+            "task_id": "task-1",
+            "task": "review redlines",
+            "task_outcome": "success",
+            "agent_outcome": "success",
+            "agent": "hermes",
+            "summary": "Skill guided the review.",
+            "raw_evidence_excerpt": "tool trace excerpt"
+        })
+        .to_string(),
+    )
+    .expect("evidence json");
+    let run = record_skill_run_evidence(
+        &client,
+        SkillRunEvidenceInput {
+            database_id: "team-db",
+            id: "legal-review",
+            evidence_json: &evidence,
+            public: false,
+        },
+    )
+    .await
+    .expect("record evidence");
+    assert_eq!(run["run_path"], "/Sources/skill-runs/legal-review/run-1.md");
+    let run_content = client
+        .read_node("team-db", "/Sources/skill-runs/legal-review/run-1.md")
+        .await
+        .expect("read run")
+        .expect("run exists")
+        .content;
+    assert!(run_content.contains("schema_version: 2"));
+    assert!(run_content.contains("task_outcome: success"));
+    assert!(run_content.contains("recorded_by: hermes-plugin"));
+
+    let notes = temp.path().join("correction.md");
+    std::fs::write(&notes, "Correction note").expect("correction");
+    let correction = record_correction(&client, "team-db", "legal-review", "run-1", &notes)
+        .await
+        .expect("record correction");
+    assert!(
+        correction["correction_path"]
+            .as_str()
+            .unwrap()
+            .contains(".correction.")
+    );
+
+    let out = temp.path().join("export");
+    let export = export_skill(&client, "team-db", "legal-review", &out, false)
+        .await
+        .expect("export");
+    assert_eq!(
+        export["files"],
+        serde_json::json!(["SKILL.md", "helper.md"])
+    );
+    assert!(out.join("SKILL.md").is_file());
+    assert!(!out.join("manifest.md").exists());
+
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/candidate/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Legal Review\n\nImproved checklist.".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("candidate");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/metrics.json".to_string(),
+            kind: NodeKind::File,
+            content: serde_json::json!({ "base_etag": current.etag }).to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("metrics");
+    let applied = apply_evolution_proposal(&client, "team-db", "legal-review", "p1", None, false)
+        .await
+        .expect("apply");
+    assert_eq!(applied["status"], "auto_applied");
+    let improved = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+    assert!(improved.contains("Improved checklist"));
 }
 
 #[tokio::test]

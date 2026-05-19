@@ -28,6 +28,10 @@ pub enum Command {
         #[command(subcommand)]
         command: DatabaseCommand,
     },
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommand,
+    },
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
@@ -303,12 +307,14 @@ pub enum SkillCommand {
     },
     RecordRun {
         id: String,
+        #[arg(long, conflicts_with_all = ["task", "outcome", "notes_file", "agent"])]
+        evidence_json: Option<PathBuf>,
         #[arg(long)]
-        task: String,
+        task: Option<String>,
         #[arg(long, value_enum)]
-        outcome: SkillRunOutcomeArg,
+        outcome: Option<SkillRunOutcomeArg>,
         #[arg(long)]
-        notes_file: PathBuf,
+        notes_file: Option<PathBuf>,
         #[arg(long, default_value = "cli")]
         agent: String,
         #[arg(long)]
@@ -350,12 +356,63 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
+    RecordCorrection {
+        id: String,
+        run_id: String,
+        #[arg(long)]
+        notes_file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    ApplyProposal {
+        id: String,
+        proposal_id: String,
+        #[arg(long)]
+        projection_dir: Option<PathBuf>,
+        #[arg(long)]
+        public: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Export {
+        id: String,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        public: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    EvolveJobs {
+        #[command(subcommand)]
+        command: SkillEvolveJobsCommand,
+    },
     Install {
         id: String,
         #[arg(long)]
         lockfile: PathBuf,
         #[arg(long)]
         public: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum IdentityCommand {
+    Show {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillEvolveJobsCommand {
+    CreateReady {
+        #[arg(long, default_value_t = 5)]
+        min_new_runs: u32,
+        #[arg(long, default_value_t = 24)]
+        cooldown_hours: u32,
         #[arg(long)]
         json: bool,
     },
@@ -423,6 +480,7 @@ impl Command {
                 DatabaseCommand::Create { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
+                    | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
                     | DatabaseCommand::Members { .. }
                     | DatabaseCommand::ArchiveExport { .. }
@@ -436,6 +494,7 @@ impl Command {
                     | SkillCommand::Inspect { .. }
                     | SkillCommand::Install { public: true, .. }
             ),
+            Self::Identity { .. } => true,
             Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -487,6 +546,7 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
+            | Self::Identity { .. }
             | Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -508,7 +568,7 @@ impl Command {
             self,
             Self::Database {
                 command: DatabaseCommand::List { .. }
-            }
+            } | Self::Identity { .. }
         )
     }
 

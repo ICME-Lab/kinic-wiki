@@ -13,6 +13,10 @@ The product loop is:
 draft skill -> upsert -> find from task context -> inspect -> record run -> promote or deprecate
 ```
 
+Hermes integration uses the same DB copy as the canonical source. Kinic exports the current
+runtime files into a Hermes external skill directory, records run evidence back into `/Sources`,
+and applies evolved candidates only when the proposal `base_etag` still matches current `SKILL.md`.
+
 Access control is database-level.
 Registry nodes follow the same `Owner`, `Writer`, and `Reader` roles as every other node in the database.
 Use separate databases when different skill catalogs need different membership.
@@ -66,6 +70,16 @@ Run evidence is stored as source nodes:
 
 ```text
 /Sources/skill-runs/<name>/<timestamp>.md
+/Sources/skill-runs/<name>/<run-id>.correction.<timestamp>.md
+```
+
+Evolution candidates and applied versions are ordinary wiki nodes:
+
+```text
+/Wiki/skills/<name>/versions/<timestamp-or-hash>.md
+/Wiki/skills/<name>/proposals/<proposal-id>/candidate/SKILL.md
+/Wiki/skills/<name>/proposals/<proposal-id>/metrics.json
+/Wiki/skill-evolution-jobs/<job-id>.md
 ```
 
 ## Manifest
@@ -156,6 +170,10 @@ Command responsibilities:
 - `skill find`: search packages by task context.
 - `skill inspect`: read manifest, entry file, package files, and recent run evidence.
 - `skill record-run`: append usage evidence under `/Sources/skill-runs/...`.
+- `skill record-correction`: append an explicit correction for an existing run.
+- `skill export`: export runtime package files for an external agent skill directory.
+- `skill apply-proposal`: apply an evolution candidate only if `base_etag` matches current.
+- `skill evolve-jobs create-ready`: create pending evolution job records from accumulated runs.
 - `skill set-status`: move a package through `draft`, `reviewed`, `promoted`, or `deprecated`.
 - `skill import github`: import package files from a GitHub source.
 - `skill propose-improvement`: write evidence-backed proposal records.
@@ -167,6 +185,8 @@ Share access with database member commands:
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database grant team-skills <principal> reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database grant team-skills <principal> writer
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- identity show
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database grant-current-identity team-skills writer
 ```
 
 Status values are intentionally simple:
@@ -182,6 +202,42 @@ It records what happened when a skill was used, including skill and manifest has
 Old or invalid run evidence is ignored by `run_summary` but still appears in `recent_runs`.
 `recorded_by: cli` is a v1 placeholder; principal-backed recording is deferred.
 Path timestamps are millis IDs; frontmatter `*_at` timestamps are RFC3339.
+
+Hermes plugin recording passes a JSON evidence file instead of prompting the user for run schema:
+
+```bash
+kinic-vfs-cli skill record-run legal-review --evidence-json ./run-evidence.json
+```
+
+The JSON should include `task_outcome` and `agent_outcome` when known. Accepted values are
+`success`, `partial`, and `fail`. Missing outcomes are allowed for early automatic capture.
+
+Projection into Hermes uses normal skill files only:
+
+```bash
+kinic-vfs-cli skill export legal-review --out ~/.kinic/hermes-current/skills/legal-review
+```
+
+Hermes should then scan the projection as an external skill directory:
+
+```yaml
+skills:
+  external_dirs:
+    - ~/.kinic/hermes-current/skills
+```
+
+The Hermes plugin in `tools/hermes-kinic-plugin` reads `~/.hermes/skills/.usage.json` after each
+turn, combines the sidecar diff with tool/final-output hooks, and calls `skill record-run`.
+
+The Python runner in `tools/kinic-skill-evolve` writes candidates under `proposals/<proposal-id>`.
+It requires explicit provider and model arguments and does not choose defaults:
+
+```bash
+OPENROUTER_API_KEY=... python tools/kinic-skill-evolve/kinic_skill_evolve.py evolve legal-review \
+  --provider openrouter \
+  --model anthropic/claude-sonnet-4.5
+kinic-vfs-cli skill apply-proposal legal-review <proposal-id>
+```
 
 `skill upsert` stores the package, not just the entry file.
 It writes `SKILL.md`, `manifest.md`, optional `provenance.md` and `evals.md`, and direct package-local `.md` links from `SKILL.md`.
