@@ -74,10 +74,21 @@ export function hrefForGraph(canisterId: string, databaseId: string, centerPath?
   return `/${encodeURIComponent(databaseId)}/graph${queryString}`;
 }
 
+export function hrefForHelp(canisterId: string, databaseId: string, readMode?: string | null): string {
+  void canisterId;
+  const params = new URLSearchParams();
+  if (readMode === "anonymous") {
+    params.set("read", "anonymous");
+  }
+  const queryString = params.size > 0 ? `?${params.toString()}` : "";
+  return `/${encodeURIComponent(databaseId)}/help${queryString}`;
+}
+
 export function hrefForDatabaseSwitch(
   canisterId: string,
   databaseId: string,
   state: {
+    isHelpPage?: boolean;
     isSearchPage: boolean;
     isGraphPage: boolean;
     query: string;
@@ -86,6 +97,9 @@ export function hrefForDatabaseSwitch(
     readMode?: string | null;
   }
 ): string {
+  if (state.isHelpPage) {
+    return hrefForHelp(canisterId, databaseId, state.readMode);
+  }
   if (state.isSearchPage) {
     return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, state.readMode);
   }

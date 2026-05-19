@@ -15,6 +15,7 @@ const browserRoutes = [
   "/Wiki?read=anonymous&tab=ingest",
   "/Wiki?read=anonymous&tab=sources",
   "/search?q=Wiki&kind=path&read=anonymous",
+  "/help?read=anonymous",
   "/graph?center=%2FWiki&depth=1&read=anonymous",
   "/graph?read=anonymous"
 ];

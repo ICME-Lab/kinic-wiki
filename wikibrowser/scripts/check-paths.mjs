@@ -13,7 +13,7 @@ const compiled = ts.transpileModule(source, {
   }
 }).outputText;
 const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-const { hrefForDatabaseSwitch, hrefForGraph, hrefForMarkdownLink, hrefForPath, hrefForSearch, pathFromSegments } = await import(moduleUrl);
+const { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForMarkdownLink, hrefForPath, hrefForSearch, pathFromSegments } = await import(moduleUrl);
 
 assert.equal(pathFromSegments([]), "/Wiki");
 assert.equal(pathFromSegments(["Wiki", "100%.md"]), "/Wiki/100%.md");
@@ -54,6 +54,10 @@ assert.equal(
   "/alpha/graph?center=%2FWiki%2Findex.md&depth=2&read=anonymous"
 );
 assert.equal(
+  hrefForHelp("t63gs-up777-77776-aaaba-cai", "alpha", "anonymous"),
+  "/alpha/help?read=anonymous"
+);
+assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
     isSearchPage: false,
     isGraphPage: false,
@@ -87,6 +91,18 @@ assert.equal(
   "/beta/graph?center=%2FWiki&depth=2&read=anonymous"
 );
 assert.equal(
+  hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
+    isHelpPage: true,
+    isSearchPage: false,
+    isGraphPage: false,
+    query: "",
+    searchKind: "path",
+    graphDepth: 1,
+    readMode: "anonymous"
+  }),
+  "/beta/help?read=anonymous"
+);
+assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md"),
   "/alpha/Wiki/beam-full-reset/7/facts.md"
 );
@@ -112,5 +128,6 @@ assert.equal(
 );
 assert.match(browserSource, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.match(browserSource, /pathname === `\/\$\{encodeURIComponent\(databaseId\)\}\/search`/);
+assert.match(browserSource, /pathname === `\/\$\{encodeURIComponent\(databaseId\)\}\/help`/);
 
 console.log(`Path helpers OK: ${pathToFileURL(sourcePath.pathname).pathname}`);

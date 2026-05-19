@@ -121,7 +121,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:
   - Bulk writes: client/canister `write_nodes`
-  - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <json> --expected-etag <etag>`
+  - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
   - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
   - Multi-node edits: no stable single CLI batch command; build a path list, read etags, and run etag-aware per-node edits unless using a deliberate client/canister API script
 - Delete semantics:
