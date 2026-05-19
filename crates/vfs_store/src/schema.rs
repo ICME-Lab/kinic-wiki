@@ -7,7 +7,7 @@ use crate::fs_links::backfill_node_links;
 
 // Keep the persisted version token stable so existing local databases do not
 // require a forced migration just because the crate naming moved from wiki_* to vfs_*.
-const CURRENT_SCHEMA_VERSION: &str = "wiki_store:002_fs_folders";
+const CURRENT_SCHEMA_VERSION: &str = "wiki_store:003_wikilink_alias_links";
 const INITIAL_FS_SCHEMA_SQL: &str = include_str!("../migrations/000_fs_schema.sql");
 const MIGRATIONS: &[(&str, &str)] = &[
     ("wiki_store:000_fs_schema", INITIAL_FS_SCHEMA_SQL),
@@ -16,8 +16,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/001_fs_links.sql"),
     ),
     (
-        CURRENT_SCHEMA_VERSION,
+        "wiki_store:002_fs_folders",
         include_str!("../migrations/002_fs_folders.sql"),
+    ),
+    (
+        CURRENT_SCHEMA_VERSION,
+        include_str!("../migrations/003_wikilink_alias_links.sql"),
     ),
 ];
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
@@ -75,6 +79,9 @@ fn run_post_migration_hook(
     }
     if version == "wiki_store:002_fs_folders" {
         backfill_folder_nodes(conn)?;
+    }
+    if version == "wiki_store:003_wikilink_alias_links" {
+        backfill_node_links(conn)?;
     }
     Ok(())
 }

@@ -9,6 +9,7 @@ const { sortChildNodes } = await importTs("../lib/child-sort.ts");
 const { folderIndexPath, isFolderIndexNode, isReservedFolderIndexName, visibleChildren } = await importTs("../lib/folder-index.ts");
 const { cycleTone, formatCycles, formatRawCycles } = await importTs("../lib/cycles.ts");
 const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-sections.ts");
+const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
 const { publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
@@ -350,6 +351,37 @@ assert.equal(
   xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
   "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Falpha%2520db%2FWiki%3Fread%3Danonymous"
 );
+assert.equal(
+  renderWikilinksAsMarkdown("[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]"),
+  "[opencode.ai/DESIGN.md](</Sources/raw/a/a.md>)"
+);
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md]]"), "[notes/alpha.md](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|]]"), "[notes/alpha.md](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|A|B]]"), "[A|B](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("`[[notes/alpha.md|Alpha]]`"), "`[[notes/alpha.md|Alpha]]`");
+assert.equal(
+  renderWikilinksAsMarkdown("before [[notes/a.md|A]] `[[notes/b.md|B]]` after [[notes/c.md|C]]"),
+  "before [A](<notes/a.md>) `[[notes/b.md|B]]` after [C](<notes/c.md>)"
+);
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md"), "[[notes/alpha.md");
+assert.equal(
+  renderWikilinksAsMarkdown("```md\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
+  "```md\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("~~~md\n[[notes/alpha.md|Alpha]]\n~~~\n[[notes/beta.md|Beta]]"),
+  "~~~md\n[[notes/alpha.md|Alpha]]\n~~~\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("```md\n~~~\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
+  "```md\n~~~\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("~~~md\n```\n[[notes/alpha.md|Alpha]]\n~~~\n[[notes/beta.md|Beta]]"),
+  "~~~md\n```\n[[notes/alpha.md|Alpha]]\n~~~\n[Beta](<notes/beta.md>)"
+);
+assert.equal(renderWikilinksAsMarkdown("![[notes/alpha.md|Alpha]]"), "![[notes/alpha.md|Alpha]]");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|Alpha]]"), "[Alpha](<notes/alpha.md>)");
 
 const cachedNodeContext = {
   node: {

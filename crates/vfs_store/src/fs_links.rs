@@ -235,7 +235,15 @@ fn extract_markdown_links(
         };
         let text = &content[open + 1..close];
         let raw_href = &content[href_start..href_end];
-        push_edge(source_path, text, raw_href, "markdown", updated_at, edges);
+        push_edge(
+            source_path,
+            raw_href,
+            raw_href,
+            text,
+            "markdown",
+            updated_at,
+            edges,
+        );
         offset = href_end + 1;
     }
 }
@@ -251,10 +259,12 @@ fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &
             break;
         };
         let raw_href = &content[href_start..close];
+        let (target_href, link_text) = split_wikilink_alias(raw_href);
         push_edge(
             source_path,
             raw_href,
-            raw_href,
+            target_href,
+            link_text,
             "wikilink",
             updated_at,
             edges,
@@ -265,14 +275,15 @@ fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &
 
 fn push_edge(
     source_path: &str,
-    link_text: &str,
     raw_href: &str,
+    target_href: &str,
+    link_text: &str,
     link_kind: &str,
     updated_at: i64,
     edges: &mut Vec<LinkEdge>,
 ) {
     let strip_title = link_kind == "markdown";
-    let Some(target_path) = resolve_link_target(source_path, raw_href, strip_title) else {
+    let Some(target_path) = resolve_link_target(source_path, target_href, strip_title) else {
         return;
     };
     edges.push(LinkEdge {
@@ -283,6 +294,16 @@ fn push_edge(
         link_kind: link_kind.to_string(),
         updated_at,
     });
+}
+
+fn split_wikilink_alias(raw_href: &str) -> (&str, &str) {
+    let Some((target, alias)) = raw_href.split_once('|') else {
+        return (raw_href, raw_href);
+    };
+    if alias.trim().is_empty() {
+        return (target, target);
+    }
+    (target, alias)
 }
 
 fn resolve_link_target(source_path: &str, raw_href: &str, strip_title: bool) -> Option<String> {
@@ -473,5 +494,26 @@ mod tests {
         assert_eq!(edges[0].raw_href, "Project \"Alpha\".md");
         assert_eq!(edges[1].target_path, "/Wiki/topic/Project (Alpha).md");
         assert_eq!(edges[1].raw_href, "Project (Alpha).md");
+    }
+
+    #[test]
+    fn wikilink_parser_splits_alias_from_target_path() {
+        let edges = edges_for(
+            "[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]] [[relative.md|]] [[note.md|A|B]]",
+        );
+
+        assert_eq!(edges.len(), 3);
+        assert_eq!(edges[0].target_path, "/Sources/raw/a/a.md");
+        assert_eq!(
+            edges[0].raw_href,
+            "/Sources/raw/a/a.md|opencode.ai/DESIGN.md"
+        );
+        assert_eq!(edges[0].link_text, "opencode.ai/DESIGN.md");
+        assert_eq!(edges[1].target_path, "/Wiki/topic/relative.md");
+        assert_eq!(edges[1].raw_href, "relative.md|");
+        assert_eq!(edges[1].link_text, "relative.md");
+        assert_eq!(edges[2].target_path, "/Wiki/topic/note.md");
+        assert_eq!(edges[2].raw_href, "note.md|A|B");
+        assert_eq!(edges[2].link_text, "A|B");
     }
 }
