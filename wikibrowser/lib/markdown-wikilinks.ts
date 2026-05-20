@@ -17,6 +17,9 @@ export function renderWikilinksAsMarkdown(content: string): string {
       fence = nextFence;
       return line;
     }
+    if (isIndentedCodeLine(line)) {
+      return line;
+    }
     return renderLineWikilinks(line);
   }).join("\n");
 }
@@ -32,7 +35,7 @@ function parseWikilink(raw: string): { target: string; label: string } | null {
 }
 
 function escapeMarkdownLabel(value: string): string {
-  return value.replace(/([\\[\]])/g, "\\$1");
+  return value.replace(/([\\[\]|])/g, "\\$1");
 }
 
 function escapeMarkdownDestination(value: string): string {
@@ -99,6 +102,10 @@ function parseFenceLine(line: string): MarkdownFence | null {
   const fence = match[2];
   const marker = fence[0] === "`" ? "`" : "~";
   return { marker, length: fence.length };
+}
+
+function isIndentedCodeLine(line: string): boolean {
+  return line.startsWith("\t") || line.startsWith("    ");
 }
 
 type MarkdownFence = {

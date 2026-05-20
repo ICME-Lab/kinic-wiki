@@ -357,8 +357,11 @@ assert.equal(
 );
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md]]"), "[notes/alpha.md](<notes/alpha.md>)");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|]]"), "[notes/alpha.md](<notes/alpha.md>)");
-assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|A|B]]"), "[A|B](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|A|B]]"), "[A\\|B](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("| [[notes/alpha.md|A|B]] |"), "| [A\\|B](<notes/alpha.md>) |");
 assert.equal(renderWikilinksAsMarkdown("`[[notes/alpha.md|Alpha]]`"), "`[[notes/alpha.md|Alpha]]`");
+assert.equal(renderWikilinksAsMarkdown("    [[notes/alpha.md|Alpha]]"), "    [[notes/alpha.md|Alpha]]");
+assert.equal(renderWikilinksAsMarkdown("\t[[notes/alpha.md|Alpha]]"), "\t[[notes/alpha.md|Alpha]]");
 assert.equal(
   renderWikilinksAsMarkdown("before [[notes/a.md|A]] `[[notes/b.md|B]]` after [[notes/c.md|C]]"),
   "before [A](<notes/a.md>) `[[notes/b.md|B]]` after [C](<notes/c.md>)"
