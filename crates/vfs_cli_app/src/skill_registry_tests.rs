@@ -1,9 +1,11 @@
 use crate::cli::{SkillRunOutcomeArg, SkillStatusArg};
 use crate::skill_registry::{
-    SkillRunEvidenceInput, SkillRunInput, apply_evolution_proposal, approve_proposal, export_skill,
-    find_skills, inspect_skill, install_skill_lockfile, markdown_target_package_key,
-    propose_improvement, record_correction, record_skill_run, record_skill_run_evidence,
-    set_skill_status, upsert_skill,
+    SkillRunEvidenceInput, SkillRunInput, apply_evolution_proposal, approve_proposal,
+    claim_evolution_job, complete_evolution_job, create_ready_evolution_jobs, export_skill,
+    find_skills, inspect_skill, install_skill_lockfile, list_evolution_jobs,
+    markdown_target_package_key, propose_improvement, record_correction, record_skill_run,
+    record_skill_run_evidence, rollback_skill_version, set_skill_status, skill_history,
+    upsert_skill, with_ready_evolution_jobs,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -29,12 +31,30 @@ struct SkillMockClient {
     mkdirs: Mutex<Vec<String>>,
     searches: Mutex<Vec<SearchNodesRequest>>,
     stale_before_batch_path: Mutex<Option<String>>,
+    caller_principal: Mutex<Option<String>>,
     writes: AtomicUsize,
     write_batches: AtomicUsize,
 }
 
+impl SkillMockClient {
+    fn with_caller_principal(principal: &str) -> Self {
+        Self {
+            caller_principal: Mutex::new(Some(principal.to_string())),
+            ..Self::default()
+        }
+    }
+
+    fn set_caller_principal(&self, principal: Option<&str>) {
+        *self.caller_principal.lock().expect("caller lock") = principal.map(str::to_string);
+    }
+}
+
 #[async_trait]
 impl VfsApi for SkillMockClient {
+    fn caller_principal(&self) -> Option<String> {
+        self.caller_principal.lock().expect("caller lock").clone()
+    }
+
     async fn status(&self, _database_id: &str) -> Result<Status> {
         Ok(Status {
             file_count: 0,
@@ -151,7 +171,7 @@ impl VfsApi for SkillMockClient {
 
     async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
         let prefix = request.path.unwrap_or_default();
-        Ok(self
+        let mut hits = self
             .nodes
             .lock()
             .expect("nodes lock")
@@ -163,7 +183,15 @@ impl VfsApi for SkillMockClient {
                 updated_at: node.updated_at,
                 etag: node.etag.clone(),
             })
-            .collect())
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        hits.truncate(request.limit as usize);
+        Ok(hits)
     }
 
     async fn multi_edit_node(&self, _request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {
@@ -583,7 +611,7 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
             "task_id": "task-1",
             "task": "review redlines",
             "task_outcome": "success",
-            "agent_outcome": "success",
+            "agent_outcome": "unknown",
             "agent": "hermes",
             "summary": "Skill guided the review.",
             "raw_evidence_excerpt": "tool trace excerpt"
@@ -611,7 +639,14 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
         .content;
     assert!(run_content.contains("schema_version: 2"));
     assert!(run_content.contains("task_outcome: success"));
+    assert!(run_content.contains("agent_outcome: unknown"));
     assert!(run_content.contains("recorded_by: hermes-plugin"));
+    let inspected = inspect_skill(&client, "team-db", "legal-review", false)
+        .await
+        .expect("inspect after v2 run");
+    assert_eq!(inspected["run_summary"]["runs"], 1);
+    assert_eq!(inspected["run_summary"]["success"], 0);
+    assert_eq!(inspected["run_summary"]["last_outcome"], "unknown");
 
     let notes = temp.path().join("correction.md");
     std::fs::write(&notes, "Correction note").expect("correction");
@@ -657,15 +692,22 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
             database_id: "team-db".to_string(),
             path: "/Wiki/skills/legal-review/proposals/p1/metrics.json".to_string(),
             kind: NodeKind::File,
-            content: serde_json::json!({ "base_etag": current.etag }).to_string(),
+            content: serde_json::json!({
+                "base_etag": current.etag,
+                "candidate_score_gate": "pass",
+                "semantic_drift_gate": "pass",
+                "permission_gate": "pass"
+            })
+            .to_string(),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
         .await
         .expect("metrics");
-    let applied = apply_evolution_proposal(&client, "team-db", "legal-review", "p1", None, false)
-        .await
-        .expect("apply");
+    let applied =
+        apply_evolution_proposal(&client, "team-db", "legal-review", "p1", None, None, false)
+            .await
+            .expect("apply");
     assert_eq!(applied["status"], "auto_applied");
     let improved = client
         .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
@@ -674,6 +716,360 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
         .unwrap()
         .content;
     assert!(improved.contains("Improved checklist"));
+    assert!(
+        client
+            .list_nodes(ListNodesRequest {
+                database_id: "team-db".to_string(),
+                prefix: "/Wiki/skills/legal-review/versions".to_string(),
+                recursive: true,
+            })
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.path.ends_with("/SKILL.md"))
+    );
+}
+
+#[tokio::test]
+async fn skill_apply_proposal_rejects_failed_gates() {
+    let client = SkillMockClient::default();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Legal Review\n".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/candidate/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Legal Review\n\nnetwork access".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/metrics.json".to_string(),
+            kind: NodeKind::File,
+            content: serde_json::json!({
+                "base_etag": current.etag,
+                "candidate_score_gate": "pass",
+                "semantic_drift_gate": "pass",
+                "permission_gate": "fail"
+            })
+            .to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+
+    let applied =
+        apply_evolution_proposal(&client, "team-db", "legal-review", "p1", None, None, false)
+            .await
+            .unwrap();
+
+    assert_eq!(applied["status"], "gate_failed");
+}
+
+#[tokio::test]
+async fn skill_apply_proposal_with_job_rejects_expired_claim_before_update() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    write_apply_proposal_fixture(&client, "# Current\n", "# Improved\n").await;
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: running\nclaimed_by: principal-1\nclaim_expires_at: 2000-01-01T00:00:00Z\n---\n# Job\n",
+    )
+    .await;
+
+    let error = apply_evolution_proposal(
+        &client,
+        "team-db",
+        "legal-review",
+        "p1",
+        Some("job-1"),
+        None,
+        false,
+    )
+    .await
+    .expect_err("expired claim should block apply");
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+
+    assert!(error.to_string().contains("claim has expired"));
+    assert_eq!(current, "# Current\n");
+}
+
+#[tokio::test]
+async fn skill_apply_proposal_with_job_rejects_other_principal_before_update() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    write_apply_proposal_fixture(&client, "# Current\n", "# Improved\n").await;
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: running\nclaimed_by: principal-2\nclaim_expires_at: 2999-01-01T00:00:00Z\n---\n# Job\n",
+    )
+    .await;
+
+    let error = apply_evolution_proposal(
+        &client,
+        "team-db",
+        "legal-review",
+        "p1",
+        Some("job-1"),
+        None,
+        false,
+    )
+    .await
+    .expect_err("other principal should block apply");
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+
+    assert!(error.to_string().contains("claim is held"));
+    assert_eq!(current, "# Current\n");
+}
+
+#[tokio::test]
+async fn skill_rollback_restores_version_and_history_lists_events() {
+    let client = SkillMockClient::default();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Current\n".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/versions/v1/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Old\n".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+
+    let rollback = rollback_skill_version(&client, "team-db", "legal-review", "v1", None, false)
+        .await
+        .unwrap();
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+    let history = skill_history(&client, "team-db", "legal-review", false)
+        .await
+        .unwrap();
+
+    assert_eq!(rollback["status"], "rolled_back");
+    assert!(current.contains("# Old"));
+    assert!(
+        history["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["kind"] == "version")
+    );
+}
+
+#[tokio::test]
+async fn skill_evolution_jobs_create_claim_complete_and_list() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    for run_id in ["0.correction.1", "r1", "r2"] {
+        client
+            .write_node(WriteNodeRequest {
+                database_id: "team-db".to_string(),
+                path: format!("/Sources/skill-runs/legal-review/{run_id}.md"),
+                kind: NodeKind::Source,
+                content: "---\nkind: kinic.skill_run\n---\n# Run\n".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    let created = create_ready_evolution_jobs(&client, "team-db", 2, 24)
+        .await
+        .unwrap();
+    let job_id = created["created"][0]["job_id"].as_str().unwrap();
+    let queued = list_evolution_jobs(&client, "team-db", Some("queued"))
+        .await
+        .unwrap();
+    let claimed = claim_evolution_job(&client, "team-db", job_id, 60)
+        .await
+        .unwrap();
+    let completed = complete_evolution_job(&client, "team-db", job_id, "done", "ok")
+        .await
+        .unwrap();
+
+    assert_eq!(queued["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(claimed["status"], "running");
+    assert_eq!(claimed["claimed_by"], "principal-1");
+    assert_eq!(completed["status"], "done");
+}
+
+#[tokio::test]
+async fn record_run_result_can_create_ready_jobs() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    for run_id in ["r1", "r2", "r3", "r4", "r5"] {
+        client
+            .write_node(WriteNodeRequest {
+                database_id: "team-db".to_string(),
+                path: format!("/Sources/skill-runs/legal-review/{run_id}.md"),
+                kind: NodeKind::Source,
+                content: "---\nkind: kinic.skill_run\n---\n# Run\n".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    let result = with_ready_evolution_jobs(
+        &client,
+        "team-db",
+        serde_json::json!({"run_path": "/Sources/skill-runs/legal-review/r5.md"}),
+        true,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        result["evolution_jobs"]["created"][0]["skill_id"],
+        "legal-review"
+    );
+}
+
+#[tokio::test]
+async fn record_run_result_does_not_create_ready_jobs_by_default() {
+    let client = SkillMockClient::default();
+    let result = with_ready_evolution_jobs(
+        &client,
+        "team-db",
+        serde_json::json!({"run_path": "/Sources/skill-runs/legal-review/r1.md"}),
+        false,
+    )
+    .await
+    .unwrap();
+
+    assert!(result.get("evolution_jobs").is_none());
+}
+
+#[tokio::test]
+async fn skill_evolution_job_complete_requires_running_claim() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: queued\n---\n# Job\n",
+    )
+    .await;
+
+    let error = complete_evolution_job(&client, "team-db", "job-1", "done", "ok")
+        .await
+        .expect_err("queued job should not complete");
+
+    assert!(error.to_string().contains("must be running"));
+}
+
+#[tokio::test]
+async fn skill_evolution_job_complete_rejects_expired_claim() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: running\nclaimed_by: principal-1\nclaim_expires_at: 2000-01-01T00:00:00Z\n---\n# Job\n",
+    )
+    .await;
+
+    let error = complete_evolution_job(&client, "team-db", "job-1", "done", "ok")
+        .await
+        .expect_err("expired claim should not complete");
+
+    assert!(error.to_string().contains("claim has expired"));
+}
+
+#[tokio::test]
+async fn skill_evolution_job_complete_rejects_different_principal() {
+    let client = SkillMockClient::with_caller_principal("principal-1");
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: running\nclaimed_by: principal-2\nclaim_expires_at: 2999-01-01T00:00:00Z\n---\n# Job\n",
+    )
+    .await;
+
+    let error = complete_evolution_job(&client, "team-db", "job-1", "done", "ok")
+        .await
+        .expect_err("other principal should not complete");
+
+    assert!(error.to_string().contains("claim is held"));
+}
+
+#[tokio::test]
+async fn skill_evolution_job_claim_and_complete_require_caller_principal() {
+    let client = SkillMockClient::default();
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: queued\n---\n# Job\n",
+    )
+    .await;
+
+    let claim_error = claim_evolution_job(&client, "team-db", "job-1", 60)
+        .await
+        .expect_err("claim should require caller principal");
+    assert!(
+        claim_error
+            .to_string()
+            .contains("current identity principal is not available")
+    );
+
+    client.set_caller_principal(Some("principal-1"));
+    claim_evolution_job(&client, "team-db", "job-1", 60)
+        .await
+        .expect("claim with principal");
+    client.set_caller_principal(None);
+
+    let complete_error = complete_evolution_job(&client, "team-db", "job-1", "done", "ok")
+        .await
+        .expect_err("complete should require caller principal");
+    assert!(
+        complete_error
+            .to_string()
+            .contains("current identity principal is not available")
+    );
 }
 
 #[tokio::test]
@@ -1327,6 +1723,71 @@ async fn skill_approve_proposal_rejects_wrong_path_and_frontmatter() {
 
 fn write(dir: &Path, name: &str, content: &str) {
     std::fs::write(dir.join(name), content).expect("write fixture");
+}
+
+async fn write_evolution_job(client: &SkillMockClient, job_id: &str, content: &str) {
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: format!("/Wiki/skill-evolution-jobs/{job_id}.md"),
+            kind: NodeKind::File,
+            content: content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("write job fixture");
+}
+
+async fn write_apply_proposal_fixture(
+    client: &SkillMockClient,
+    current_content: &str,
+    candidate_content: &str,
+) {
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: current_content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("write current skill");
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .expect("read current")
+        .expect("current node");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/candidate/SKILL.md".to_string(),
+            kind: NodeKind::File,
+            content: candidate_content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("write candidate");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/metrics.json".to_string(),
+            kind: NodeKind::File,
+            content: serde_json::json!({
+                "base_etag": current.etag,
+                "candidate_score_gate": "pass",
+                "semantic_drift_gate": "pass",
+                "permission_gate": "pass"
+            })
+            .to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("write metrics");
 }
 
 fn assert_rfc3339_field(content: &str, key: &str) {

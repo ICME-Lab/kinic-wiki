@@ -36,6 +36,18 @@ pub enum Command {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    Hermes {
+        #[command(subcommand)]
+        command: HermesCommand,
+    },
+    Codex {
+        #[command(subcommand)]
+        command: CodexCommand,
+    },
+    Claude {
+        #[command(subcommand)]
+        command: ClaudeCommand,
+    },
     Github {
         #[command(subcommand)]
         command: GitHubCommand,
@@ -310,6 +322,8 @@ pub enum SkillCommand {
         #[arg(long, conflicts_with_all = ["task", "outcome", "notes_file", "agent"])]
         evidence_json: Option<PathBuf>,
         #[arg(long)]
+        create_ready_jobs: bool,
+        #[arg(long)]
         task: Option<String>,
         #[arg(long, value_enum)]
         outcome: Option<SkillRunOutcomeArg>,
@@ -368,6 +382,18 @@ pub enum SkillCommand {
         id: String,
         proposal_id: String,
         #[arg(long)]
+        job_id: Option<String>,
+        #[arg(long)]
+        projection_dir: Option<PathBuf>,
+        #[arg(long)]
+        public: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    Rollback {
+        id: String,
+        version_id: String,
+        #[arg(long)]
         projection_dir: Option<PathBuf>,
         #[arg(long)]
         public: bool,
@@ -378,6 +404,25 @@ pub enum SkillCommand {
         id: String,
         #[arg(long)]
         out: PathBuf,
+        #[arg(long)]
+        public: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    ExportGithub {
+        id: String,
+        target: String,
+        #[arg(long)]
+        branch: String,
+        #[arg(long)]
+        message: String,
+        #[arg(long)]
+        public: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    History {
+        id: String,
         #[arg(long)]
         public: bool,
         #[arg(long)]
@@ -407,6 +452,46 @@ pub enum IdentityCommand {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+pub enum HermesCommand {
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+    Pull {
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    FlushPending {
+        #[arg(long)]
+        json: bool,
+    },
+    Shadows {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CodexCommand {
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ClaudeCommand {
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
 pub enum SkillEvolveJobsCommand {
     CreateReady {
         #[arg(long, default_value_t = 5)]
@@ -416,6 +501,37 @@ pub enum SkillEvolveJobsCommand {
         #[arg(long)]
         json: bool,
     },
+    List {
+        #[arg(long, value_enum)]
+        status: Option<SkillEvolutionJobStatusArg>,
+        #[arg(long)]
+        json: bool,
+    },
+    Claim {
+        job_id: String,
+        #[arg(long, default_value_t = 3600)]
+        lease_seconds: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    Complete {
+        job_id: String,
+        #[arg(long, value_enum)]
+        status: SkillEvolutionJobStatusArg,
+        #[arg(long)]
+        summary: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillEvolutionJobStatusArg {
+    Queued,
+    Running,
+    Done,
+    Conflict,
+    Failed,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -494,6 +610,13 @@ impl Command {
                     | SkillCommand::Inspect { .. }
                     | SkillCommand::Install { public: true, .. }
             ),
+            Self::Hermes { command } => matches!(
+                command,
+                HermesCommand::Setup { .. }
+                    | HermesCommand::Pull { .. }
+                    | HermesCommand::FlushPending { .. }
+            ),
+            Self::Codex { .. } | Self::Claude { .. } => false,
             Self::Identity { .. } => true,
             Self::Github { .. }
             | Self::RebuildIndex
@@ -547,6 +670,9 @@ impl Command {
             | Self::Status { .. } => true,
             Self::Database { .. }
             | Self::Identity { .. }
+            | Self::Hermes { .. }
+            | Self::Codex { .. }
+            | Self::Claude { .. }
             | Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -569,6 +695,9 @@ impl Command {
             Self::Database {
                 command: DatabaseCommand::List { .. }
             } | Self::Identity { .. }
+                | Self::Hermes {
+                    command: HermesCommand::Status { .. }
+                }
         )
     }
 
@@ -781,8 +910,8 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Command, DatabaseCommand, IdentityModeArg, NodeKindArg, SkillCommand,
-        SkillImportCommand, SkillStatusArg,
+        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand, IdentityModeArg,
+        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
 
@@ -969,6 +1098,80 @@ mod tests {
         let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
+    }
+
+    #[test]
+    fn main_cli_parses_record_run_create_ready_jobs() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "record-run",
+            "legal-review",
+            "--task",
+            "review redlines",
+            "--outcome",
+            "success",
+            "--notes-file",
+            "notes.md",
+            "--create-ready-jobs",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::RecordRun {
+                    id,
+                    create_ready_jobs,
+                    task,
+                    outcome,
+                    notes_file,
+                    json,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected skill record-run command");
+        };
+        assert_eq!(id, "legal-review");
+        assert!(create_ready_jobs);
+        assert_eq!(task.as_deref(), Some("review redlines"));
+        assert_eq!(outcome, Some(SkillRunOutcomeArg::Success));
+        assert_eq!(notes_file.unwrap().to_string_lossy(), "notes.md");
+        assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_apply_proposal_job_id() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "apply-proposal",
+            "legal-review",
+            "p1",
+            "--job-id",
+            "job-1",
+            "--projection-dir",
+            "skills",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::ApplyProposal {
+                    id,
+                    proposal_id,
+                    job_id,
+                    projection_dir,
+                    json,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected skill apply-proposal command");
+        };
+        assert_eq!(id, "legal-review");
+        assert_eq!(proposal_id, "p1");
+        assert_eq!(job_id.as_deref(), Some("job-1"));
+        assert_eq!(projection_dir.unwrap().to_string_lossy(), "skills");
+        assert!(json);
     }
 
     #[test]
@@ -1243,5 +1446,91 @@ mod tests {
         assert_eq!(id, "legal-review");
         assert_eq!(lockfile.to_string_lossy(), "skill.lock.json");
         assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_hermes_surfaces() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "hermes", "setup", "--json"]);
+        let Command::Hermes {
+            command: HermesCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected hermes setup command");
+        };
+        assert!(*json);
+        assert!(setup.command.requires_identity());
+
+        let pull = Cli::parse_from(["kinic-vfs-cli", "hermes", "pull", "--json"]);
+        let Command::Hermes {
+            command: HermesCommand::Pull { json },
+        } = &pull.command
+        else {
+            panic!("expected hermes pull command");
+        };
+        assert!(*json);
+        assert!(pull.command.requires_identity());
+
+        let status = Cli::parse_from(["kinic-vfs-cli", "hermes", "status"]);
+        let Command::Hermes {
+            command: HermesCommand::Status { json },
+        } = &status.command
+        else {
+            panic!("expected hermes status command");
+        };
+        assert!(!*json);
+        assert!(!status.command.requires_identity());
+        assert!(status.command.prefers_identity_in_auto());
+
+        let flush = Cli::parse_from(["kinic-vfs-cli", "hermes", "flush-pending"]);
+        let Command::Hermes {
+            command: HermesCommand::FlushPending { .. },
+        } = &flush.command
+        else {
+            panic!("expected hermes flush-pending command");
+        };
+        assert!(flush.command.requires_identity());
+
+        let shadows = Cli::parse_from(["kinic-vfs-cli", "hermes", "shadows"]);
+        let Command::Hermes {
+            command: HermesCommand::Shadows { .. },
+        } = &shadows.command
+        else {
+            panic!("expected hermes shadows command");
+        };
+        assert!(!shadows.command.requires_identity());
+
+        let removed_command = ["run", "ready"].join("-");
+        assert!(
+            Cli::try_parse_from(["kinic-vfs-cli", "skill", "evolve-jobs", &removed_command])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn main_cli_parses_codex_setup_as_local_command() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "codex", "setup", "--json"]);
+        let Command::Codex {
+            command: CodexCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected codex setup command");
+        };
+        assert!(*json);
+        assert!(!setup.command.requires_identity());
+        assert!(!setup.command.probes_anonymous_database_read());
+    }
+
+    #[test]
+    fn main_cli_parses_claude_setup_as_local_command() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "claude", "setup", "--json"]);
+        let Command::Claude {
+            command: ClaudeCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected claude setup command");
+        };
+        assert!(*json);
+        assert!(!setup.command.requires_identity());
+        assert!(!setup.command.probes_anonymous_database_read());
     }
 }

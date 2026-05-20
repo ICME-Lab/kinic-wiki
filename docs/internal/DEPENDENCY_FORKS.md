@@ -16,6 +16,14 @@ Before merging this dependency strategy into a long-lived mainline branch, move 
 
 Track upstream PRs for the widening and keep each pinned revision tied to a reviewed diff. Do not update these revisions mechanically.
 
+## WASI audit
+
+The canister SQLite path does not use WASI, wasi2ic, stable-fs, or ic-rusqlite. It uses `ic-sqlite-vfs` over stable memory selected through `MemoryManager`.
+
+Remaining `Cargo.lock` entries for `wasi`, `wasip2`, and `wasip3` are platform/transitive dependencies from `getrandom`, `tempfile`, `proptest`, and `ic-agent` paths. They are not direct canister SQLite dependencies.
+
+Remaining `pnpm-lock.yaml` entries such as `@emnapi/wasi-threads` and `@unrs/resolver-binding-wasm32-wasi` are Node package platform optional bindings in the web workspaces. They are not part of the canister SQLite execution path.
+
 ## Update checks
 
 When changing any patched revision:

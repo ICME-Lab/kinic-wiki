@@ -11,6 +11,7 @@ const CANISTER_ID_ENV: &str = "VFS_CANISTER_ID";
 const DATABASE_ID_ENV: &str = "VFS_DATABASE_ID";
 const LOCAL_REPLICA_HOST: &str = "http://127.0.0.1:8000";
 const MAINNET_REPLICA_HOST: &str = "https://icp0.io";
+const MAINNET_CANISTER_ID: &str = "xis3j-paaaa-aaaai-axumq-cai";
 const WORKSPACE_CONFIG_PATH: &str = ".kinic/config.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +169,16 @@ fn resolve_connection_preview_from_sources(
                 .and_then(|value| value.canister_id.clone())
                 .map(|value| (value, "user config".to_string()))
         })
+        .or_else(|| {
+            if !local && replica_host == MAINNET_REPLICA_HOST {
+                Some((
+                    MAINNET_CANISTER_ID.to_string(),
+                    "mainnet default".to_string(),
+                ))
+            } else {
+                None
+            }
+        })
         .unzip();
     let (database_id, database_id_source) = database_id_arg
         .map(|value| (value, "--database-id".to_string()))
@@ -322,8 +333,9 @@ fn write_workspace_config(path: &Path, config: &UserConfig) -> Result<()> {
 mod tests {
     use super::{
         CANISTER_ID_ENV, ConnectionSources, DATABASE_ID_ENV, LOCAL_REPLICA_HOST,
-        ResolvedConnection, ResolvedConnectionPreview, UserConfig, load_user_config_from_path,
-        resolve_connection_from_sources, resolve_connection_preview_from_sources,
+        MAINNET_CANISTER_ID, MAINNET_REPLICA_HOST, ResolvedConnection, ResolvedConnectionPreview,
+        UserConfig, load_user_config_from_path, resolve_connection_from_sources,
+        resolve_connection_preview_from_sources,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
@@ -406,9 +418,21 @@ mod tests {
     }
 
     #[test]
-    fn missing_canister_id_returns_actionable_error() {
-        let error = resolve_connection_from_sources(ConnectionSources::default())
-            .expect_err("missing canister id should fail");
+    fn mainnet_default_supplies_canister_id() {
+        let resolved = resolve_connection_from_sources(ConnectionSources::default())
+            .expect("mainnet default should provide canister id");
+        assert_eq!(resolved.replica_host, MAINNET_REPLICA_HOST);
+        assert_eq!(resolved.canister_id, MAINNET_CANISTER_ID);
+        assert_eq!(resolved.canister_id_source, "mainnet default");
+    }
+
+    #[test]
+    fn local_missing_canister_id_returns_actionable_error() {
+        let error = resolve_connection_from_sources(ConnectionSources {
+            local: true,
+            ..ConnectionSources::default()
+        })
+        .expect_err("missing canister id should fail");
         let message = error.to_string();
         assert!(message.contains("canister_id"));
         assert!(message.contains(CANISTER_ID_ENV));
@@ -420,11 +444,11 @@ mod tests {
         assert_eq!(
             resolved,
             ResolvedConnectionPreview {
-                replica_host: "https://icp0.io".to_string(),
-                canister_id: None,
+                replica_host: MAINNET_REPLICA_HOST.to_string(),
+                canister_id: Some(MAINNET_CANISTER_ID.to_string()),
                 database_id: None,
                 replica_host_source: "default".to_string(),
-                canister_id_source: None,
+                canister_id_source: Some("mainnet default".to_string()),
                 database_id_source: None,
             }
         );
@@ -440,7 +464,7 @@ mod tests {
             }),
             ..ConnectionSources::default()
         });
-        assert_eq!(resolved.canister_id, None);
+        assert_eq!(resolved.canister_id.as_deref(), Some(MAINNET_CANISTER_ID));
         assert_eq!(resolved.database_id.as_deref(), Some("workspace-db"));
         assert_eq!(
             resolved.database_id_source.as_deref(),

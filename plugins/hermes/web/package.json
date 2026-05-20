@@ -1,0 +1,38 @@
+{
+  "name": "kinic-hermes-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && node scripts/normalize-typegen-tsconfig.mjs",
+    "lint": "eslint .",
+    "test": "node scripts/check-hermes-web.mjs",
+    "typecheck": "next typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
+    "normalize:typegen": "node scripts/normalize-typegen-tsconfig.mjs"
+  },
+  "dependencies": {
+    "@icp-sdk/auth": "5.0.0",
+    "@icp-sdk/core": "^5.4.0",
+    "lucide-react": "0.555.0",
+    "next": "16.2.6",
+    "react": "19.2.5",
+    "react-dom": "19.2.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "autoprefixer": "10.4.22",
+    "eslint": "9.39.1",
+    "eslint-config-next": "16.2.4",
+    "postcss": "8.5.11",
+    "tailwindcss": "3.4.18",
+    "typescript": "5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "next>postcss": "8.5.10"
+    }
+  },
+  "packageManager": "pnpm@11.0.8"
+}

@@ -1,4 +1,4 @@
-"""Where: tools/hermes-kinic-plugin/usage.py
+"""Where: plugins/hermes/kinic_hermes/usage.py
 What: Read and diff Hermes skill usage sidecar checkpoints.
 Why: Native /skill invocations may not appear as tool calls, but Hermes updates .usage.json.
 """
@@ -6,23 +6,30 @@ Why: Native /skill invocations may not appear as tool calls, but Hermes updates 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 
 def default_usage_path() -> Path:
-    return Path.home() / ".hermes" / "skills" / ".usage.json"
+    hermes_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+    return hermes_home / "skills" / ".usage.json"
 
 
 def read_usage(path: Path | None = None) -> dict[str, Any]:
+    data, _ = read_usage_checked(path)
+    return data
+
+
+def read_usage_checked(path: Path | None = None) -> tuple[dict[str, Any], bool]:
     target = path or default_usage_path()
     if not target.exists():
-        return {}
+        return {}, True
     try:
         data = json.loads(target.read_text())
     except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
+        return {}, False
+    return (data, True) if isinstance(data, dict) else ({}, False)
 
 
 def usage_diff(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, dict[str, int]]:

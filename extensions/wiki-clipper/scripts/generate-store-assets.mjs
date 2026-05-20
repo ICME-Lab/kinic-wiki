@@ -17,6 +17,7 @@ await mkdir(resolve(root, "store-listing/screenshots"), { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
   await renderAsset(promoHtml(), "store-listing/assets/promo-small-440x280.png", 440, 280);
+  await renderAsset(marqueeHtml(), "store-listing/assets/marquee-1400x560.png", 1400, 560);
   await renderAsset(optionsHtml(), "store-listing/screenshots/options-1280x800.png", 1280, 800);
   await renderAsset(chatGptHtml(), "store-listing/screenshots/chatgpt-export-1280x800.png", 1280, 800);
 } finally {
@@ -42,6 +43,15 @@ function promoHtml() {
     440,
     280,
     `.promo-wrap{position:relative;width:440px;height:280px;padding:34px;background:#fff}.promo-wrap h1{margin:20px 0 8px;font-size:32px;line-height:1.05;letter-spacing:0}.promo-wrap p{width:270px;margin:0;font-size:15px;line-height:1.45;color:#636161}.decor{display:grid;gap:7px;margin-top:22px}.decor span{height:5px;border-radius:999px;background:#ff2686}.decor span:nth-child(1){width:188px;background:#ff81be26}.decor span:nth-child(2){width:148px;background:#ffcde5}.decor span:nth-child(3){width:108px}.stripe{position:absolute;right:-28px;top:0;width:150px;height:280px;background:linear-gradient(180deg,#ff81be26 0%,#ffcde5 44%,#ff2686 100%);clip-path:polygon(34% 0,100% 0,68% 50%,100% 100%,34% 100%,62% 50%)}`
+  );
+}
+
+function marqueeHtml() {
+  return shell(
+    `<div class="marquee"><div class="copy"><img class="mark" src="${logoDataUri}" alt=""><h1>Kinic Wiki Clipper</h1><p>Capture web pages and ChatGPT conversations into your Kinic Wiki database with Internet Identity authentication.</p><div class="actions"><span>Web URL ingest</span><span>ChatGPT export</span><span>Writable databases</span></div></div><div class="preview"><div class="browser"><div class="bar"><i></i><i></i><i></i></div><div class="rows"><b></b><b></b><b></b><b></b></div><div class="panel"><strong>Kinic Wiki Clipper</strong><p>Export complete. Success 10.</p><button>Saved to wiki</button></div></div></div><div class="stripe"></div></div>`,
+    1400,
+    560,
+    `.marquee{position:relative;width:1400px;height:560px;overflow:hidden;background:#fff;padding:72px 86px}.copy{position:relative;z-index:2;width:560px}.copy .mark{width:64px;height:64px;border-radius:18px}.copy h1{margin:26px 0 14px;font-size:58px;line-height:1.02;letter-spacing:0}.copy p{margin:0;width:540px;color:#4d4d4d;font-size:24px;line-height:1.42}.actions{display:flex;gap:12px;margin-top:34px}.actions span{border:1px solid #ffcde5;border-radius:999px;background:#ff81be26;color:#ff2686;padding:11px 15px;font-size:16px;font-weight:800}.preview{position:absolute;right:90px;top:72px;z-index:2;width:610px;height:416px}.browser{height:416px;border:1px solid #e6e6e6;border-radius:22px;background:#f8f8f8;box-shadow:0 28px 70px rgb(0 0 0 / 15%);overflow:hidden}.bar{height:54px;background:#fff;border-bottom:1px solid #e6e6e6;display:flex;gap:8px;align-items:center;padding-left:22px}.bar i{width:12px;height:12px;border-radius:999px;background:#d0d0d0}.rows{padding:34px 38px}.rows b{display:block;height:18px;border-radius:999px;background:#e6e6e6;margin-bottom:18px}.rows b:nth-child(1){width:420px}.rows b:nth-child(2){width:320px}.rows b:nth-child(3){width:455px}.rows b:nth-child(4){width:260px}.panel{position:absolute;right:34px;bottom:32px;width:360px;background:#fff;border:1px solid #e6e6e6;border-radius:18px;padding:22px;box-shadow:0 22px 55px rgb(0 0 0 / 18%)}.panel strong{font-size:22px}.panel p{font-size:16px;color:#636161;margin:8px 0 18px}.panel button{background:#000;color:#fff;border:0;border-radius:14px;padding:13px 18px;font-weight:800}.stripe{position:absolute;right:-64px;top:0;width:300px;height:560px;background:linear-gradient(180deg,#ff81be26 0%,#ffcde5 44%,#ff2686 100%);clip-path:polygon(32% 0,100% 0,70% 50%,100% 100%,32% 100%,62% 50%)}`
   );
 }
 

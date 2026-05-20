@@ -249,7 +249,7 @@ export function EmptyState() {
   return (
     <section className="rounded-lg border border-line bg-paper p-6 text-sm text-muted">
       <h2 className="text-base font-semibold text-ink">No Skill Packages</h2>
-      <p className="mt-2">No packages found under /Wiki/skills or /Wiki/public-skills.</p>
+      <p className="mt-2">No packages found under /Wiki/skills.</p>
       <p className="mt-2">
         Open <span className="font-medium text-ink">Add Or Update Package</span> to import from GitHub or paste a package.
       </p>

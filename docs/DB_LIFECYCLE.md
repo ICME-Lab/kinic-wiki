@@ -19,7 +19,7 @@ Public browser reads use the normal member model. Grant anonymous reader access 
 
 Stable-memory mount IDs are partitioned by purpose:
 
-- `0..9`: WASI filesystem memory for tmp files and directory metadata
+- `0..9`: reserved for stable-memory system and SQLite VFS internals
 - `10`: index DB
 - `11..=32767`: user DB slots
 - `32768..=65534`: reserved

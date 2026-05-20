@@ -14,7 +14,6 @@ use vfs_types::{
 };
 
 const PRIVATE_SKILL_ROOT: &str = "/Wiki/skills";
-const PUBLIC_SKILL_ROOT: &str = "/Wiki/public-skills";
 const SKILL_RUN_ROOT: &str = "/Sources/skill-runs";
 
 #[derive(Default)]
@@ -94,7 +93,7 @@ pub async fn find_skills(
 ) -> Result<Value> {
     let top_k = top_k.clamp(1, 20);
     let mut grouped: BTreeMap<(String, bool), SkillHitAccumulator> = BTreeMap::new();
-    for prefix in [PRIVATE_SKILL_ROOT, PUBLIC_SKILL_ROOT, SKILL_RUN_ROOT] {
+    for prefix in [PRIVATE_SKILL_ROOT, SKILL_RUN_ROOT] {
         for hit in client
             .search_nodes(SearchNodesRequest {
                 database_id: database_id.to_string(),
@@ -355,10 +354,11 @@ async fn run_summary(client: &impl VfsApi, database_id: &str, id: &str) -> Resul
             continue;
         }
         summary.runs += 1;
-        match run.outcome.as_deref() {
-            Some("success") => summary.success += 1,
-            Some("partial") => summary.partial += 1,
-            Some("fail") => summary.fail += 1,
+        let outcome = run.summary_outcome().unwrap_or("").to_string();
+        match outcome.as_str() {
+            "success" => summary.success += 1,
+            "partial" => summary.partial += 1,
+            "fail" => summary.fail += 1,
             _ => {}
         }
         if let Some(recorded_at) = run.recorded_at {
@@ -367,7 +367,7 @@ async fn run_summary(client: &impl VfsApi, database_id: &str, id: &str) -> Resul
                 .map(|(current, _)| recorded_at > *current)
                 .unwrap_or(true);
             if replace {
-                last_seen = Some((recorded_at, run.outcome.unwrap_or_default()));
+                last_seen = Some((recorded_at, outcome));
             }
         }
     }
@@ -380,9 +380,20 @@ async fn run_summary(client: &impl VfsApi, database_id: &str, id: &str) -> Resul
 
 #[derive(Default)]
 struct RunFrontmatter {
+    schema_version: Option<String>,
     skill_id: Option<String>,
     outcome: Option<String>,
+    agent_outcome: Option<String>,
     recorded_at: Option<String>,
+}
+
+impl RunFrontmatter {
+    fn summary_outcome(&self) -> Option<&str> {
+        match self.schema_version.as_deref() {
+            Some("2") => self.agent_outcome.as_deref(),
+            _ => self.outcome.as_deref(),
+        }
+    }
 }
 
 fn parse_run_frontmatter(content: &str) -> Option<RunFrontmatter> {
@@ -394,8 +405,10 @@ fn parse_run_frontmatter(content: &str) -> Option<RunFrontmatter> {
         };
         let value = clean_yaml_value(value);
         match key.trim() {
+            "schema_version" => run.schema_version = non_empty(value),
             "skill_id" => run.skill_id = non_empty(value),
             "outcome" => run.outcome = non_empty(value),
+            "agent_outcome" => run.agent_outcome = non_empty(value),
             "recorded_at" => run.recorded_at = non_empty(value),
             _ => {}
         }
@@ -449,9 +462,6 @@ fn skill_id_from_path(path: &str) -> Option<(String, bool)> {
     if let Some(rest) = path.strip_prefix(&format!("{PRIVATE_SKILL_ROOT}/")) {
         return first_skill_segment(rest).map(|id| (id, false));
     }
-    if let Some(rest) = path.strip_prefix(&format!("{PUBLIC_SKILL_ROOT}/")) {
-        return first_skill_segment(rest).map(|id| (id, true));
-    }
     path.strip_prefix(&format!("{SKILL_RUN_ROOT}/"))
         .and_then(first_skill_segment)
         .map(|id| (id, false))
@@ -464,15 +474,8 @@ fn first_skill_segment(rest: &str) -> Option<String> {
 }
 
 fn skill_base_path(id: &str, public: bool) -> String {
-    format!(
-        "{}/{}",
-        if public {
-            PUBLIC_SKILL_ROOT
-        } else {
-            PRIVATE_SKILL_ROOT
-        },
-        id
-    )
+    let _ = public;
+    format!("{PRIVATE_SKILL_ROOT}/{id}")
 }
 
 fn skill_catalog(public: bool) -> &'static str {

@@ -1,5 +1,6 @@
 use crate::cli::{
-    SkillCommand, SkillEvolveJobsCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+    SkillCommand, SkillEvolutionJobStatusArg, SkillEvolveJobsCommand, SkillImportCommand,
+    SkillRunOutcomeArg, SkillStatusArg,
 };
 use crate::github_source::{
     fetch_github_optional_package_file, fetch_github_skill_package, github_source_string,
@@ -7,23 +8,25 @@ use crate::github_source::{
 };
 mod model;
 use anyhow::{Context, Result, anyhow};
+use chrono::{DateTime, Utc};
 use model::{
-    PRIVATE_ROOT, PUBLIC_ROOT, RUN_ROOT, SkillId, catalog, extract_frontmatter,
-    manifest_for_source, normalize_manifest, now_millis, now_rfc3339,
-    parse_skill_source_frontmatter, print, run_base_path, set_manifest_provenance_field,
-    set_manifest_status_preserving_content, set_root_frontmatter_field_preserving_content,
-    skill_base_path,
+    PRIVATE_ROOT, RUN_ROOT, SkillId, catalog, extract_frontmatter, manifest_for_source,
+    normalize_manifest, now_millis, now_rfc3339, parse_skill_source_frontmatter, print,
+    run_base_path, set_manifest_provenance_field, set_manifest_status_preserving_content,
+    set_root_frontmatter_field_preserving_content, skill_base_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 pub(crate) use vfs_cli::skill_kb::{find_skills, inspect_skill};
 use vfs_client::VfsApi;
 use vfs_types::{
-    DeleteNodeRequest, ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind,
-    RecentNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    DeleteNodeRequest, ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest,
 };
 
 const SKILL_PACKAGE_FILE_LIMIT_MAX: usize = 100;
@@ -59,6 +62,7 @@ pub async fn run_skill_command(
         SkillCommand::RecordRun {
             id,
             evidence_json,
+            create_ready_jobs,
             task,
             outcome,
             notes_file,
@@ -98,6 +102,8 @@ pub async fn run_skill_command(
                 )
                 .await?
             };
+            let result =
+                with_ready_evolution_jobs(client, database_id, result, create_ready_jobs).await?;
             print(result, json)?
         }
         SkillCommand::SetStatus {
@@ -164,6 +170,7 @@ pub async fn run_skill_command(
         SkillCommand::ApplyProposal {
             id,
             proposal_id,
+            job_id,
             projection_dir,
             public,
             json,
@@ -173,6 +180,25 @@ pub async fn run_skill_command(
                 database_id,
                 &id,
                 &proposal_id,
+                job_id.as_deref(),
+                projection_dir.as_deref(),
+                public,
+            )
+            .await?,
+            json,
+        )?,
+        SkillCommand::Rollback {
+            id,
+            version_id,
+            projection_dir,
+            public,
+            json,
+        } => print(
+            rollback_skill_version(
+                client,
+                database_id,
+                &id,
+                &version_id,
                 projection_dir.as_deref(),
                 public,
             )
@@ -188,6 +214,21 @@ pub async fn run_skill_command(
             export_skill(client, database_id, &id, &out, public).await?,
             json,
         )?,
+        SkillCommand::ExportGithub {
+            id,
+            target,
+            branch,
+            message,
+            public,
+            json,
+        } => print(
+            export_skill_github(client, database_id, &id, &target, &branch, &message, public)
+                .await?,
+            json,
+        )?,
+        SkillCommand::History { id, public, json } => {
+            print(skill_history(client, database_id, &id, public).await?, json)?
+        }
         SkillCommand::EvolveJobs { command } => match command {
             SkillEvolveJobsCommand::CreateReady {
                 min_new_runs,
@@ -195,6 +236,29 @@ pub async fn run_skill_command(
                 json,
             } => print(
                 create_ready_evolution_jobs(client, database_id, min_new_runs, cooldown_hours)
+                    .await?,
+                json,
+            )?,
+            SkillEvolveJobsCommand::List { status, json } => print(
+                list_evolution_jobs(client, database_id, status.map(|value| value.as_str()))
+                    .await?,
+                json,
+            )?,
+            SkillEvolveJobsCommand::Claim {
+                job_id,
+                lease_seconds,
+                json,
+            } => print(
+                claim_evolution_job(client, database_id, &job_id, lease_seconds).await?,
+                json,
+            )?,
+            SkillEvolveJobsCommand::Complete {
+                job_id,
+                status,
+                summary,
+                json,
+            } => print(
+                complete_evolution_job(client, database_id, &job_id, status.as_str(), &summary)
                     .await?,
                 json,
             )?,
@@ -321,6 +385,22 @@ pub(crate) struct SkillRunEvidenceInput<'a> {
     pub(crate) public: bool,
 }
 
+pub(crate) async fn with_ready_evolution_jobs(
+    client: &impl VfsApi,
+    database_id: &str,
+    mut result: serde_json::Value,
+    create_ready_jobs: bool,
+) -> Result<serde_json::Value> {
+    if create_ready_jobs {
+        let jobs = create_ready_evolution_jobs(client, database_id, 5, 24).await?;
+        let object = result
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("record-run result must be a JSON object"))?;
+        object.insert("evolution_jobs".to_string(), jobs);
+    }
+    Ok(result)
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct SkillRunEvidence {
     #[serde(default)]
@@ -347,6 +427,14 @@ pub(crate) async fn record_skill_run_evidence(
     client: &impl VfsApi,
     input: SkillRunEvidenceInput<'_>,
 ) -> Result<serde_json::Value> {
+    record_skill_run_evidence_with_override(client, input, None).await
+}
+
+pub(crate) async fn record_skill_run_evidence_with_override(
+    client: &impl VfsApi,
+    input: SkillRunEvidenceInput<'_>,
+    run_id_override: Option<&str>,
+) -> Result<serde_json::Value> {
     let SkillRunEvidenceInput {
         database_id,
         id,
@@ -371,11 +459,16 @@ pub(crate) async fn record_skill_run_evidence(
         .read_node(database_id, &manifest_path)
         .await?
         .ok_or_else(|| anyhow!("manifest.md not found for skill: {id}"))?;
-    let run_id = evidence
-        .run_id
-        .as_deref()
+    let run_id = run_id_override
         .filter(|value| valid_id_segment(value))
         .map(str::to_string)
+        .or_else(|| {
+            evidence
+                .run_id
+                .as_deref()
+                .filter(|value| valid_id_segment(value))
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| now_millis().to_string());
     let recorded_at = now_rfc3339();
     let run_path = format!("{RUN_ROOT}/{skill_id}/{run_id}.md");
@@ -743,11 +836,51 @@ pub(crate) async fn export_skill(
     )
 }
 
+async fn snapshot_current_skill_version(
+    client: &impl VfsApi,
+    database_id: &str,
+    base_path: &str,
+    current: &vfs_types::Node,
+    manifest: Option<&vfs_types::Node>,
+) -> Result<String> {
+    let version_id = format!("{}-{}", now_millis(), &sha256_hex(&current.content)[..12]);
+    let version_base = format!("{base_path}/versions/{version_id}");
+    let mut nodes = vec![WriteNodeItem {
+        path: format!("{version_base}/SKILL.md"),
+        kind: NodeKind::File,
+        content: current.content.clone(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    }];
+    if let Some(manifest) = manifest {
+        nodes.push(WriteNodeItem {
+            path: format!("{version_base}/manifest.md"),
+            kind: NodeKind::File,
+            content: manifest.content.clone(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        });
+    }
+    let paths = nodes
+        .iter()
+        .map(|node| node.path.clone())
+        .collect::<Vec<_>>();
+    ensure_parent_folders_for_paths(client, database_id, &paths).await?;
+    client
+        .write_nodes(WriteNodesRequest {
+            database_id: database_id.to_string(),
+            nodes,
+        })
+        .await?;
+    Ok(version_id)
+}
+
 pub(crate) async fn apply_evolution_proposal(
     client: &impl VfsApi,
     database_id: &str,
     id: &str,
     proposal_id: &str,
+    job_id: Option<&str>,
     projection_dir: Option<&Path>,
     public: bool,
 ) -> Result<serde_json::Value> {
@@ -755,14 +888,19 @@ pub(crate) async fn apply_evolution_proposal(
     if !valid_id_segment(proposal_id) {
         return Err(anyhow!("proposal id must use a single path-safe name"));
     }
+    if let Some(job_id) = job_id {
+        validate_evolution_job_for_apply(client, database_id, job_id, &skill_id).await?;
+    }
     let base_path = skill_base_path(&skill_id, public);
     let current_path = format!("{base_path}/SKILL.md");
+    let manifest_path = format!("{base_path}/manifest.md");
     let candidate_path = format!("{base_path}/proposals/{proposal_id}/candidate/SKILL.md");
     let metrics_path = format!("{base_path}/proposals/{proposal_id}/metrics.json");
     let current = client
         .read_node(database_id, &current_path)
         .await?
         .ok_or_else(|| anyhow!("current SKILL.md not found: {current_path}"))?;
+    let manifest = client.read_node(database_id, &manifest_path).await?;
     let candidate = client
         .read_node(database_id, &candidate_path)
         .await?
@@ -777,6 +915,26 @@ pub(crate) async fn apply_evolution_proposal(
         .get("base_etag")
         .and_then(|value| value.as_str())
         .ok_or_else(|| anyhow!("metrics.json must contain base_etag"))?;
+    let gate_failure = proposal_gate_failure(&metrics_json);
+    if let Some(gate_failure) = gate_failure {
+        let status_path = format!("{base_path}/proposals/{proposal_id}/status.md");
+        let content =
+            proposal_status_content(&skill_id, proposal_id, "gate_failed", Some(gate_failure));
+        ensure_parent_folders(client, database_id, &status_path).await?;
+        client
+            .write_node(WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: status_path.clone(),
+                kind: NodeKind::File,
+                content,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            })
+            .await?;
+        return Ok(
+            json!({ "id": skill_id.to_string(), "proposal_id": proposal_id, "status": "gate_failed", "error": gate_failure }),
+        );
+    }
     if base_etag != current.etag {
         let status_path = format!("{base_path}/proposals/{proposal_id}/status.md");
         let content =
@@ -796,36 +954,23 @@ pub(crate) async fn apply_evolution_proposal(
             json!({ "id": skill_id.to_string(), "proposal_id": proposal_id, "status": "conflict", "current_etag": current.etag, "base_etag": base_etag }),
         );
     }
-    let version_path = format!(
-        "{base_path}/versions/{}-{}.md",
-        now_millis(),
-        &sha256_hex(&current.content)[..12]
-    );
-    ensure_parent_folders_for_paths(
+    let version_id = snapshot_current_skill_version(
         client,
         database_id,
-        &[version_path.clone(), current_path.clone()],
+        &base_path,
+        &current,
+        manifest.as_ref(),
     )
     .await?;
+    let version_path = format!("{base_path}/versions/{version_id}");
     client
-        .write_nodes(WriteNodesRequest {
+        .write_node(WriteNodeRequest {
             database_id: database_id.to_string(),
-            nodes: vec![
-                WriteNodeItem {
-                    path: version_path.clone(),
-                    kind: NodeKind::File,
-                    content: current.content.clone(),
-                    metadata_json: "{}".to_string(),
-                    expected_etag: None,
-                },
-                WriteNodeItem {
-                    path: current_path.clone(),
-                    kind: NodeKind::File,
-                    content: candidate.content.clone(),
-                    metadata_json: current.metadata_json.clone(),
-                    expected_etag: Some(current.etag.clone()),
-                },
-            ],
+            path: current_path.clone(),
+            kind: NodeKind::File,
+            content: candidate.content.clone(),
+            metadata_json: current.metadata_json.clone(),
+            expected_etag: Some(current.etag.clone()),
         })
         .await?;
     let mut status = "auto_applied";
@@ -863,6 +1008,182 @@ pub(crate) async fn apply_evolution_proposal(
     )
 }
 
+pub(crate) async fn rollback_skill_version(
+    client: &impl VfsApi,
+    database_id: &str,
+    id: &str,
+    version_id: &str,
+    projection_dir: Option<&Path>,
+    public: bool,
+) -> Result<serde_json::Value> {
+    let skill_id = SkillId::parse(id)?;
+    if !valid_version_id(version_id) {
+        return Err(anyhow!(
+            "version id must be a path-safe version directory name"
+        ));
+    }
+    let base_path = skill_base_path(&skill_id, public);
+    let current_path = format!("{base_path}/SKILL.md");
+    let manifest_path = format!("{base_path}/manifest.md");
+    let version_base = format!("{base_path}/versions/{version_id}");
+    let version_skill_path = format!("{version_base}/SKILL.md");
+    let version_manifest_path = format!("{version_base}/manifest.md");
+    let current = client
+        .read_node(database_id, &current_path)
+        .await?
+        .ok_or_else(|| anyhow!("current SKILL.md not found: {current_path}"))?;
+    let current_manifest = client.read_node(database_id, &manifest_path).await?;
+    let version_skill = client
+        .read_node(database_id, &version_skill_path)
+        .await?
+        .ok_or_else(|| anyhow!("version SKILL.md not found: {version_skill_path}"))?;
+    let version_manifest = client
+        .read_node(database_id, &version_manifest_path)
+        .await?;
+    let rollback_snapshot_id = snapshot_current_skill_version(
+        client,
+        database_id,
+        &base_path,
+        &current,
+        current_manifest.as_ref(),
+    )
+    .await?;
+    let mut nodes = vec![WriteNodeItem {
+        path: current_path.clone(),
+        kind: NodeKind::File,
+        content: version_skill.content.clone(),
+        metadata_json: current.metadata_json.clone(),
+        expected_etag: Some(current.etag.clone()),
+    }];
+    if let (Some(current_manifest), Some(version_manifest)) =
+        (current_manifest.as_ref(), version_manifest.as_ref())
+    {
+        nodes.push(WriteNodeItem {
+            path: manifest_path.clone(),
+            kind: NodeKind::File,
+            content: version_manifest.content.clone(),
+            metadata_json: current_manifest.metadata_json.clone(),
+            expected_etag: Some(current_manifest.etag.clone()),
+        });
+    }
+    client
+        .write_nodes(WriteNodesRequest {
+            database_id: database_id.to_string(),
+            nodes,
+        })
+        .await?;
+    let sync_error = sync_projection_skill(&skill_id, &version_skill.content, projection_dir);
+    Ok(json!({
+        "id": skill_id.to_string(),
+        "status": if sync_error.is_some() { "rolled_back_sync_failed" } else { "rolled_back" },
+        "version_id": version_id,
+        "rollback_snapshot_id": rollback_snapshot_id,
+        "current_path": current_path,
+        "sync_error": sync_error
+    }))
+}
+
+pub(crate) async fn skill_history(
+    client: &impl VfsApi,
+    database_id: &str,
+    id: &str,
+    public: bool,
+) -> Result<serde_json::Value> {
+    let skill_id = SkillId::parse(id)?;
+    let base_path = skill_base_path(&skill_id, public);
+    let prefixes = [
+        format!("{base_path}/versions"),
+        format!("{base_path}/proposals"),
+        format!("{RUN_ROOT}/{skill_id}"),
+        "/Wiki/skill-evolution-jobs".to_string(),
+    ];
+    let mut events = Vec::new();
+    for prefix in prefixes {
+        for entry in client
+            .list_nodes(ListNodesRequest {
+                database_id: database_id.to_string(),
+                prefix,
+                recursive: true,
+            })
+            .await?
+        {
+            if entry.kind == NodeEntryKind::Folder {
+                continue;
+            }
+            if entry.path.starts_with("/Wiki/skill-evolution-jobs") {
+                let Some(node) = client.read_node(database_id, &entry.path).await? else {
+                    continue;
+                };
+                if skill_id_from_job_content(&node.content).as_deref() != Some(id) {
+                    continue;
+                }
+            }
+            let kind = if entry.path.contains("/versions/") {
+                "version"
+            } else if entry.path.contains("/proposals/") {
+                "proposal"
+            } else if entry.path.contains(".correction.") {
+                "correction"
+            } else if entry.path.starts_with(RUN_ROOT) {
+                "run"
+            } else {
+                "job"
+            };
+            events.push(json!({
+                "kind": kind,
+                "path": entry.path,
+                "updated_at": entry.updated_at,
+                "etag": entry.etag
+            }));
+        }
+    }
+    events.sort_by(|left, right| {
+        right["updated_at"]
+            .as_i64()
+            .cmp(&left["updated_at"].as_i64())
+            .then_with(|| left["path"].as_str().cmp(&right["path"].as_str()))
+    });
+    Ok(json!({ "id": skill_id.to_string(), "events": events }))
+}
+
+pub(crate) async fn export_skill_github(
+    client: &impl VfsApi,
+    database_id: &str,
+    id: &str,
+    target: &str,
+    branch: &str,
+    message: &str,
+    public: bool,
+) -> Result<serde_json::Value> {
+    let skill_id = SkillId::parse(id)?;
+    let (repo, target_prefix) = parse_github_export_target(target)?;
+    let files = github_export_files(client, database_id, &skill_id, public).await?;
+    if files.is_empty() {
+        return Err(anyhow!("no exportable files found for skill: {id}"));
+    }
+    let mut exported = Vec::new();
+    for (relative_path, content) in files {
+        let target_path = join_github_path(&target_prefix, &relative_path);
+        let sha = github_existing_file_sha(&repo, &target_path, branch)?;
+        let response = github_put_file(
+            &repo,
+            &target_path,
+            branch,
+            message,
+            &content,
+            sha.as_deref(),
+        )?;
+        let commit_sha = response
+            .get("commit")
+            .and_then(|value| value.get("sha"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        exported
+            .push(json!({ "path": target_path, "source": relative_path, "commit": commit_sha }));
+    }
+    Ok(json!({ "id": skill_id.to_string(), "repo": repo, "branch": branch, "files": exported }))
+}
+
 pub(crate) async fn create_ready_evolution_jobs(
     client: &impl VfsApi,
     database_id: &str,
@@ -870,60 +1191,21 @@ pub(crate) async fn create_ready_evolution_jobs(
     cooldown_hours: u32,
 ) -> Result<serde_json::Value> {
     let mut created = Vec::new();
-    let min_new_runs = min_new_runs.max(1);
-    let latest_jobs = latest_evolution_jobs(client, database_id).await?;
-    let cooldown_ms = i64::from(cooldown_hours) * 60 * 60 * 1000;
-    let now_ms = now_millis();
-    for entry in client
-        .list_nodes(ListNodesRequest {
-            database_id: database_id.to_string(),
-            prefix: RUN_ROOT.to_string(),
-            recursive: true,
-        })
-        .await?
+    for spec in ready_evolution_job_specs(client, database_id, min_new_runs, cooldown_hours).await?
     {
-        if entry.kind != NodeEntryKind::Source || !entry.path.ends_with(".md") {
-            continue;
-        }
-        let Some(skill_id) = skill_id_from_run_path(&entry.path) else {
-            continue;
-        };
-        let existing = created
-            .iter()
-            .any(|value: &serde_json::Value| value["skill_id"] == skill_id);
-        if existing {
-            continue;
-        }
-        let latest_job_at = latest_jobs.get(&skill_id).copied().unwrap_or(0);
-        if latest_job_at > 0 && now_ms.saturating_sub(latest_job_at) < cooldown_ms {
-            continue;
-        }
-        let runs = client
-            .recent_nodes(RecentNodesRequest {
-                database_id: database_id.to_string(),
-                path: Some(format!("{RUN_ROOT}/{skill_id}")),
-                limit: min_new_runs,
-            })
-            .await?
-            .into_iter()
-            .filter(|run| {
-                run.path.ends_with(".md")
-                    && !run.path.contains(".correction.")
-                    && run.updated_at > latest_job_at
-            })
-            .collect::<Vec<_>>();
-        if runs.len() < min_new_runs as usize {
-            continue;
-        }
-        let job_id = format!("{}-{}", skill_id, now_millis());
+        let job_id = format!("{}-{}", spec.skill_id, now_millis());
         let job_path = format!("/Wiki/skill-evolution-jobs/{job_id}.md");
-        let source_runs = runs
+        let source_runs = spec
+            .source_runs
             .iter()
-            .map(|run| format!("  - {}", run.path))
+            .map(|run| format!("  - {run}"))
             .collect::<Vec<_>>()
             .join("\n");
         let content = format!(
-            "---\nkind: kinic.skill_evolution_job\nschema_version: 1\njob_id: {job_id}\nskill_id: {skill_id}\nstatus: pending\nmin_new_runs: {min_new_runs}\ncooldown_hours: {cooldown_hours}\nsource_runs:\n{source_runs}\ncreated_at: {}\n---\n# Skill Evolution Job\n",
+            "---\nkind: kinic.skill_evolution_job\nschema_version: 1\njob_id: {job_id}\nskill_id: {}\nstatus: queued\nmin_new_runs: {}\ncooldown_hours: {}\nsource_runs:\n{source_runs}\ncreated_at: {}\n---\n# Skill Evolution Job\n",
+            spec.skill_id,
+            spec.min_new_runs,
+            spec.cooldown_hours,
             now_rfc3339()
         );
         ensure_parent_folders(client, database_id, &job_path).await?;
@@ -937,9 +1219,74 @@ pub(crate) async fn create_ready_evolution_jobs(
                 expected_etag: None,
             })
             .await?;
-        created.push(json!({ "job_id": job_id, "skill_id": skill_id, "job_path": job_path }));
+        created.push(json!({ "job_id": job_id, "skill_id": spec.skill_id, "job_path": job_path }));
     }
     Ok(json!({ "created": created }))
+}
+
+#[derive(Clone)]
+struct ReadyEvolutionJobSpec {
+    skill_id: String,
+    source_runs: Vec<String>,
+    min_new_runs: u32,
+    cooldown_hours: u32,
+}
+
+async fn ready_evolution_job_specs(
+    client: &impl VfsApi,
+    database_id: &str,
+    min_new_runs: u32,
+    cooldown_hours: u32,
+) -> Result<Vec<ReadyEvolutionJobSpec>> {
+    let mut specs = Vec::new();
+    let min_new_runs = min_new_runs.max(1);
+    let latest_jobs = latest_evolution_jobs(client, database_id).await?;
+    let cooldown_ms = i64::from(cooldown_hours) * 60 * 60 * 1000;
+    let now_ms = now_millis();
+    let mut runs_by_skill: BTreeMap<String, Vec<vfs_types::NodeEntry>> = BTreeMap::new();
+    for entry in client
+        .list_nodes(ListNodesRequest {
+            database_id: database_id.to_string(),
+            prefix: RUN_ROOT.to_string(),
+            recursive: true,
+        })
+        .await?
+    {
+        if entry.kind != NodeEntryKind::Source
+            || !entry.path.ends_with(".md")
+            || entry.path.contains(".correction.")
+        {
+            continue;
+        }
+        let Some(skill_id) = skill_id_from_run_path(&entry.path) else {
+            continue;
+        };
+        runs_by_skill.entry(skill_id).or_default().push(entry);
+    }
+    for (skill_id, mut runs) in runs_by_skill {
+        let latest_job_at = latest_jobs.get(&skill_id).copied().unwrap_or(0);
+        if latest_job_at > 0 && now_ms.saturating_sub(latest_job_at) < cooldown_ms {
+            continue;
+        }
+        runs.retain(|run| run.updated_at > latest_job_at);
+        runs.sort_by(|left, right| {
+            right
+                .updated_at
+                .cmp(&left.updated_at)
+                .then_with(|| left.path.cmp(&right.path))
+        });
+        if runs.len() < min_new_runs as usize {
+            continue;
+        }
+        runs.truncate(min_new_runs as usize);
+        specs.push(ReadyEvolutionJobSpec {
+            skill_id,
+            source_runs: runs.into_iter().map(|run| run.path).collect(),
+            min_new_runs,
+            cooldown_hours,
+        });
+    }
+    Ok(specs)
 }
 
 async fn latest_evolution_jobs(
@@ -972,6 +1319,274 @@ async fn latest_evolution_jobs(
     Ok(latest)
 }
 
+struct PendingEvolutionJob {
+    path: String,
+    content: String,
+    etag: String,
+    skill_id: String,
+}
+
+pub(crate) async fn list_evolution_jobs(
+    client: &impl VfsApi,
+    database_id: &str,
+    status: Option<&str>,
+) -> Result<serde_json::Value> {
+    let mut jobs = Vec::new();
+    for entry in client
+        .list_nodes(ListNodesRequest {
+            database_id: database_id.to_string(),
+            prefix: "/Wiki/skill-evolution-jobs".to_string(),
+            recursive: true,
+        })
+        .await?
+    {
+        if entry.kind != NodeEntryKind::File || !entry.path.ends_with(".md") {
+            continue;
+        }
+        let Some(node) = client.read_node(database_id, &entry.path).await? else {
+            continue;
+        };
+        let job_status =
+            frontmatter_scalar(&node.content, "status").unwrap_or_else(|| "queued".to_string());
+        if status.is_some_and(|status| status != job_status) {
+            continue;
+        }
+        let job_id = frontmatter_scalar(&node.content, "job_id")
+            .or_else(|| {
+                entry
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .map(|name| name.trim_end_matches(".md").to_string())
+            })
+            .unwrap_or_default();
+        jobs.push(json!({
+            "job_id": job_id,
+            "path": entry.path,
+            "status": job_status,
+            "skill_id": skill_id_from_job_content(&node.content),
+            "claimed_by": frontmatter_scalar(&node.content, "claimed_by"),
+            "claim_expires_at": frontmatter_scalar(&node.content, "claim_expires_at"),
+            "proposal_id": frontmatter_scalar(&node.content, "proposal_id"),
+            "updated_at": entry.updated_at,
+            "etag": node.etag
+        }));
+    }
+    jobs.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
+    Ok(json!({ "jobs": jobs }))
+}
+
+pub(crate) async fn claim_evolution_job(
+    client: &impl VfsApi,
+    database_id: &str,
+    job_id: &str,
+    lease_seconds: u32,
+) -> Result<serde_json::Value> {
+    let job = read_evolution_job(client, database_id, job_id).await?;
+    let claimed_by = current_identity_principal(client)?;
+    let status = frontmatter_scalar(&job.content, "status").unwrap_or_else(|| "queued".to_string());
+    let expired = frontmatter_scalar(&job.content, "claim_expires_at")
+        .as_deref()
+        .is_some_and(is_claim_expired);
+    if status != "queued" && !(status == "running" && expired) {
+        return Ok(json!({ "job_id": job_id, "status": "not_claimed", "current_status": status }));
+    }
+    let claim_expires_at = (Utc::now() + chrono::Duration::seconds(i64::from(lease_seconds)))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut content =
+        set_root_frontmatter_field_preserving_content(&job.content, "status", "running")?;
+    content = set_root_frontmatter_field_preserving_content(&content, "claimed_by", &claimed_by)?;
+    content = set_root_frontmatter_field_preserving_content(
+        &content,
+        "claim_expires_at",
+        &claim_expires_at,
+    )?;
+    content =
+        set_root_frontmatter_field_preserving_content(&content, "updated_at", &now_rfc3339())?;
+    client
+        .write_node(WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: job.path.clone(),
+            kind: NodeKind::File,
+            content,
+            metadata_json: "{}".to_string(),
+            expected_etag: Some(job.etag),
+        })
+        .await?;
+    Ok(
+        json!({ "job_id": job_id, "path": job.path, "status": "running", "claimed_by": claimed_by, "claim_expires_at": claim_expires_at, "skill_id": job.skill_id }),
+    )
+}
+
+pub(crate) async fn complete_evolution_job(
+    client: &impl VfsApi,
+    database_id: &str,
+    job_id: &str,
+    status: &str,
+    summary: &str,
+) -> Result<serde_json::Value> {
+    if !matches!(status, "done" | "conflict" | "failed") {
+        return Err(anyhow!(
+            "completion status must be done, conflict, or failed"
+        ));
+    }
+    let job = read_evolution_job(client, database_id, job_id).await?;
+    validate_evolution_job_claim(client, &job)?;
+    let mut content =
+        set_root_frontmatter_field_preserving_content(&job.content, "status", status)?;
+    content = set_root_frontmatter_field_preserving_content(&content, "result_summary", summary)?;
+    content =
+        set_root_frontmatter_field_preserving_content(&content, "updated_at", &now_rfc3339())?;
+    client
+        .write_node(WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: job.path.clone(),
+            kind: NodeKind::File,
+            content,
+            metadata_json: "{}".to_string(),
+            expected_etag: Some(job.etag),
+        })
+        .await?;
+    Ok(json!({ "job_id": job_id, "path": job.path, "skill_id": job.skill_id, "status": status }))
+}
+
+fn validate_evolution_job_claim(client: &impl VfsApi, job: &PendingEvolutionJob) -> Result<()> {
+    let status = frontmatter_scalar(&job.content, "status").unwrap_or_else(|| "queued".to_string());
+    if status != "running" {
+        return Err(anyhow!("evolution job must be running to complete"));
+    }
+    let claimed_by = frontmatter_scalar(&job.content, "claimed_by")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("evolution job is missing claimed_by"))?;
+    let caller = current_identity_principal(client)?;
+    if claimed_by != caller {
+        return Err(anyhow!(
+            "evolution job claim is held by {claimed_by}, current identity is {caller}"
+        ));
+    }
+    let claim_expires_at = frontmatter_scalar(&job.content, "claim_expires_at")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("evolution job is missing claim_expires_at"))?;
+    if is_claim_expired(&claim_expires_at) {
+        return Err(anyhow!("evolution job claim has expired"));
+    }
+    Ok(())
+}
+
+async fn validate_evolution_job_for_apply(
+    client: &impl VfsApi,
+    database_id: &str,
+    job_id: &str,
+    skill_id: &SkillId,
+) -> Result<()> {
+    let job = read_evolution_job(client, database_id, job_id).await?;
+    if job.skill_id != skill_id.to_string() {
+        return Err(anyhow!(
+            "evolution job skill_id {} does not match proposal skill {}",
+            job.skill_id,
+            skill_id
+        ));
+    }
+    validate_evolution_job_claim(client, &job)
+}
+
+fn current_identity_principal(client: &impl VfsApi) -> Result<String> {
+    client
+        .caller_principal()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("current identity principal is not available"))
+}
+
+async fn read_evolution_job(
+    client: &impl VfsApi,
+    database_id: &str,
+    job_id: &str,
+) -> Result<PendingEvolutionJob> {
+    if !valid_id_segment(job_id) {
+        return Err(anyhow!("job id must use a single path-safe name"));
+    }
+    let path = format!("/Wiki/skill-evolution-jobs/{job_id}.md");
+    let node = client
+        .read_node(database_id, &path)
+        .await?
+        .ok_or_else(|| anyhow!("evolution job not found: {path}"))?;
+    let skill_id = skill_id_from_job_content(&node.content)
+        .ok_or_else(|| anyhow!("evolution job missing skill_id: {path}"))?;
+    Ok(PendingEvolutionJob {
+        path,
+        content: node.content,
+        etag: node.etag,
+        skill_id,
+    })
+}
+
+fn process_error(runner: &Path, output: &Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    truncate_error(&format!(
+        "{} exited with status {}; stderr: {}; stdout: {}",
+        runner.display(),
+        output.status,
+        stderr.trim(),
+        stdout.trim()
+    ))
+}
+
+fn truncate_error(error: &str) -> String {
+    let mut value = error.replace('\n', " ");
+    if value.len() > 800 {
+        value.truncate(800);
+    }
+    value
+}
+
+fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
+    let frontmatter = extract_frontmatter(content).ok()?;
+    for line in frontmatter.lines() {
+        let Some((field, value)) = line.split_once(':') else {
+            continue;
+        };
+        if field.trim() == key {
+            return Some(value.trim().trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+fn is_claim_expired(value: &str) -> bool {
+    DateTime::parse_from_rfc3339(value)
+        .map(|expires| expires.with_timezone(&Utc) <= Utc::now())
+        .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod skill_evolve_jobs_tests {
+    use super::*;
+
+    #[test]
+    fn frontmatter_scalar_reads_plain_value() {
+        let content =
+            "---\nkind: kinic.skill_evolution_job\nstatus: queued\nskill_id: legal\n---\n# Job\n";
+
+        assert_eq!(
+            frontmatter_scalar(content, "status"),
+            Some("queued".to_string())
+        );
+        assert_eq!(
+            frontmatter_scalar(content, "skill_id"),
+            Some("legal".to_string())
+        );
+    }
+
+    #[test]
+    fn truncate_error_removes_newlines_and_caps_length() {
+        let value = truncate_error(&format!("a\n{}", "b".repeat(1000)));
+
+        assert!(!value.contains('\n'));
+        assert_eq!(value.len(), 800);
+    }
+}
+
 #[derive(Deserialize)]
 struct ProposalFrontmatter {
     kind: String,
@@ -983,8 +1598,7 @@ struct ProposalFrontmatter {
 fn validate_proposal_target(id: &str, proposal_path: &str) -> Result<()> {
     let skill_id = SkillId::parse(id)?;
     let private_prefix = format!("{}/{}/improvement-proposals/", PRIVATE_ROOT, skill_id);
-    let public_prefix = format!("{}/{}/improvement-proposals/", PUBLIC_ROOT, skill_id);
-    if proposal_path.starts_with(&private_prefix) || proposal_path.starts_with(&public_prefix) {
+    if proposal_path.starts_with(&private_prefix) {
         return Ok(());
     }
     Err(anyhow!(
@@ -1218,9 +1832,9 @@ fn read_optional(source_dir: &Path, name: &str) -> Option<String> {
 
 fn validate_outcome(value: Option<&str>, field: &str) -> Result<()> {
     match value {
-        None | Some("") | Some("success" | "partial" | "fail") => Ok(()),
+        None | Some("") | Some("success" | "partial" | "fail" | "unknown") => Ok(()),
         Some(value) => Err(anyhow!(
-            "{field} must be success, partial, or fail when present; got {value}"
+            "{field} must be success, partial, fail, or unknown when present; got {value}"
         )),
     }
 }
@@ -1250,6 +1864,176 @@ fn is_runtime_export_file(relative_path: &str) -> bool {
     !relative_path.starts_with("proposals/")
         && !relative_path.starts_with("versions/")
         && !relative_path.starts_with("improvement-proposals/")
+}
+
+fn is_github_export_file(relative_path: &str) -> bool {
+    !relative_path.starts_with("proposals/")
+        && !relative_path.starts_with("versions/")
+        && !relative_path.starts_with("improvement-proposals/")
+}
+
+async fn github_export_files(
+    client: &impl VfsApi,
+    database_id: &str,
+    skill_id: &SkillId,
+    public: bool,
+) -> Result<BTreeMap<String, String>> {
+    let base_path = skill_base_path(skill_id, public);
+    let mut files = BTreeMap::new();
+    for entry in client
+        .list_nodes(ListNodesRequest {
+            database_id: database_id.to_string(),
+            prefix: base_path.clone(),
+            recursive: true,
+        })
+        .await?
+    {
+        if entry.kind != NodeEntryKind::File {
+            continue;
+        }
+        let Some(relative_path) = entry.path.strip_prefix(&format!("{base_path}/")) else {
+            continue;
+        };
+        if !is_github_export_file(relative_path) {
+            continue;
+        }
+        let Some(node) = client.read_node(database_id, &entry.path).await? else {
+            continue;
+        };
+        files.insert(relative_path.to_string(), node.content);
+    }
+    Ok(files)
+}
+
+fn sync_projection_skill(
+    skill_id: &SkillId,
+    content: &str,
+    projection_dir: Option<&Path>,
+) -> Option<String> {
+    let projection_dir = projection_dir?;
+    let target = projection_dir.join(skill_id.to_string()).join("SKILL.md");
+    if let Some(parent) = target.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        return Some(error.to_string());
+    }
+    std::fs::write(&target, content)
+        .err()
+        .map(|error| error.to_string())
+}
+
+fn valid_version_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn parse_github_export_target(target: &str) -> Result<(String, String)> {
+    let (repo, path) = target
+        .split_once(':')
+        .ok_or_else(|| anyhow!("target must be owner/repo:path"))?;
+    let mut repo_parts = repo.split('/');
+    let owner = repo_parts.next().unwrap_or("");
+    let name = repo_parts.next().unwrap_or("");
+    if owner.is_empty() || name.is_empty() || repo_parts.next().is_some() {
+        return Err(anyhow!("target repo must be owner/repo"));
+    }
+    Ok((repo.to_string(), path.trim_matches('/').to_string()))
+}
+
+fn join_github_path(prefix: &str, relative: &str) -> String {
+    if prefix.is_empty() {
+        relative.to_string()
+    } else {
+        format!("{}/{}", prefix.trim_matches('/'), relative)
+    }
+}
+
+fn github_existing_file_sha(repo: &str, path: &str, branch: &str) -> Result<Option<String>> {
+    let output = Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{repo}/contents/{path}"),
+            "-f",
+            &format!("ref={branch}"),
+        ])
+        .output()
+        .with_context(|| "failed to execute gh")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .with_context(|| "gh contents response was not JSON")?;
+    Ok(value
+        .get("sha")
+        .and_then(|value| value.as_str())
+        .map(str::to_string))
+}
+
+fn github_put_file(
+    repo: &str,
+    path: &str,
+    branch: &str,
+    message: &str,
+    content: &str,
+    sha: Option<&str>,
+) -> Result<serde_json::Value> {
+    let mut body = json!({
+        "message": message,
+        "branch": branch,
+        "content": base64_encode(content.as_bytes()),
+    });
+    if let Some(sha) = sha {
+        body["sha"] = serde_json::Value::String(sha.to_string());
+    }
+    let mut child = Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/{repo}/contents/{path}"),
+            "-X",
+            "PUT",
+            "--input",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| "failed to execute gh")?;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| anyhow!("failed to open gh stdin"))?
+        .write_all(serde_json::to_string(&body)?.as_bytes())?;
+    let output = child.wait_with_output()?;
+    if !output.status.success() {
+        return Err(anyhow!("{}", process_error(Path::new("gh"), &output)));
+    }
+    serde_json::from_slice(&output.stdout).with_context(|| "gh put response was not JSON")
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 fn skill_id_from_run_path(path: &str) -> Option<String> {
@@ -1287,6 +2071,35 @@ fn proposal_status_content(
     )
 }
 
+fn proposal_gate_failure(metrics: &serde_json::Value) -> Option<&'static str> {
+    [
+        "candidate_score_gate",
+        "semantic_drift_gate",
+        "permission_gate",
+    ]
+    .into_iter()
+    .find(|gate| gate_status(metrics, gate) != Some("pass"))
+}
+
+fn gate_status<'a>(metrics: &'a serde_json::Value, gate: &str) -> Option<&'a str> {
+    metrics
+        .get(gate)
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            metrics
+                .get("gates")
+                .and_then(|value| value.get(gate))
+                .and_then(|value| value.as_str())
+        })
+        .or_else(|| {
+            metrics
+                .get("gates")
+                .and_then(|value| value.get(gate))
+                .and_then(|value| value.get("status"))
+                .and_then(|value| value.as_str())
+        })
+}
+
 fn sha256_hex(content: &str) -> String {
     let digest = Sha256::digest(content.as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -1299,6 +2112,18 @@ impl SkillStatusArg {
             Self::Reviewed => "reviewed",
             Self::Promoted => "promoted",
             Self::Deprecated => "deprecated",
+        }
+    }
+}
+
+impl SkillEvolutionJobStatusArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Done => "done",
+            Self::Conflict => "conflict",
+            Self::Failed => "failed",
         }
     }
 }

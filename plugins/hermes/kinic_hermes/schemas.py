@@ -1,4 +1,4 @@
-"""Where: tools/hermes-kinic-plugin/schemas.py
+"""Where: plugins/hermes/kinic_hermes/schemas.py
 What: Small JSON shapes used by the Hermes Kinic plugin.
 Why: The plugin must pass stable run evidence to kinic-vfs-cli without owning DB logic.
 """
@@ -20,14 +20,16 @@ class ToolTrace:
 @dataclass
 class RunBuffer:
     tool_trace: list[ToolTrace] = field(default_factory=list)
+    skill_candidates: set[str] = field(default_factory=set)
     final_response: str = ""
 
-    def to_json(self, skill_id: str, usage_delta: dict[str, Any]) -> dict[str, Any]:
+    def to_json(self, skill_id: str, usage_delta: dict[str, Any], agent_outcome: str = "unknown") -> dict[str, Any]:
         return {
+            "schema_version": 1,
             "skill_id": skill_id,
             "task": "",
             "task_outcome": "",
-            "agent_outcome": "success",
+            "agent_outcome": agent_outcome,
             "agent": "hermes",
             "summary": self._summary(),
             "raw_evidence_excerpt": self._excerpt(),

@@ -7,7 +7,9 @@ use vfs_cli::commands::{print_database_current, run_database_unlink};
 use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
 };
+use vfs_cli_app::claude::run_claude_command;
 use vfs_cli_app::cli::{Cli, Command, DatabaseCommand, IdentityModeArg};
+use vfs_cli_app::codex::run_codex_command;
 use vfs_cli_app::commands::run_command;
 use vfs_cli_app::identity::load_default_identity;
 use vfs_cli_app::identity_mode::{
@@ -37,6 +39,14 @@ async fn main() -> Result<()> {
             }
             _ => {}
         }
+    }
+    if let Command::Codex { command } = cli.command.clone() {
+        run_codex_command(command)?;
+        return Ok(());
+    }
+    if let Command::Claude { command } = cli.command.clone() {
+        run_claude_command(command)?;
+        return Ok(());
     }
     let connection = resolve_connection(
         cli.connection.local,
