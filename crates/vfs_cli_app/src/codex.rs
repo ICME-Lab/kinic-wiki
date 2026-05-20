@@ -10,6 +10,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const PLUGIN_NAME: &str = "kinic-skill-recorder";
+// Codex resolves personal marketplace paths from the marketplace root ($HOME),
+// not from ~/.agents/plugins where marketplace.json is stored.
 const MARKETPLACE_PLUGIN_PATH: &str = "./.codex/plugins/kinic-skill-recorder";
 
 #[derive(Debug, Clone)]
@@ -100,7 +102,7 @@ fn upsert_marketplace_entry(path: &Path) -> Result<()> {
         "display_name": "Kinic Skill Recorder",
         "description": "Record Kinic Skill Registry run evidence and process skill evolution jobs from Codex.",
         "source": {
-            "type": "local",
+            "source": "local",
             "path": MARKETPLACE_PLUGIN_PATH
         },
         "policy": {
@@ -164,7 +166,7 @@ fn home_dir() -> Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PLUGIN_NAME, codex_setup_at_home};
+    use super::{MARKETPLACE_PLUGIN_PATH, PLUGIN_NAME, codex_setup_at_home};
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -215,12 +217,37 @@ mod tests {
             .filter(|entry| entry["name"] == PLUGIN_NAME)
             .collect();
         assert_eq!(kinic.len(), 1);
+        assert_eq!(kinic[0]["source"]["source"], "local");
+        assert_eq!(kinic[0]["source"]["path"], MARKETPLACE_PLUGIN_PATH);
+        let resolved = temp
+            .path()
+            .join(MARKETPLACE_PLUGIN_PATH.strip_prefix("./").unwrap());
         assert_eq!(
-            kinic[0]["source"]["path"],
-            "./.codex/plugins/kinic-skill-recorder"
+            resolved,
+            temp.path().join(".codex/plugins/kinic-skill-recorder")
         );
         assert_eq!(kinic[0]["policy"]["installation"], "AVAILABLE");
         assert_eq!(kinic[0]["policy"]["authentication"], "ON_INSTALL");
         assert_eq!(kinic[0]["category"], "Productivity");
+    }
+
+    #[test]
+    fn codex_setup_is_idempotent() {
+        let temp = TempDir::new().unwrap();
+
+        codex_setup_at_home(temp.path()).unwrap();
+        codex_setup_at_home(temp.path()).unwrap();
+
+        let marketplace = temp.path().join(".agents/plugins/marketplace.json");
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(marketplace).unwrap()).unwrap();
+        let plugins = value["plugins"].as_array().unwrap();
+        assert_eq!(
+            plugins
+                .iter()
+                .filter(|entry| entry["name"] == PLUGIN_NAME)
+                .count(),
+            1
+        );
     }
 }

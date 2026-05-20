@@ -696,7 +696,7 @@ impl Command {
                 command: DatabaseCommand::List { .. }
             } | Self::Identity { .. }
                 | Self::Hermes {
-                    command: HermesCommand::Status { .. }
+                    command: HermesCommand::Status { .. },
                 }
         )
     }

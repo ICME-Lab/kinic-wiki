@@ -27,10 +27,11 @@ Open settings from the extension details page `Extension options`.
 ## Chrome Web Store release
 
 ```bash
+npm run store-assets:generate
 npm run release:package
 ```
 
-The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, and the privacy policy draft live in `store-listing/`. Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL.
+The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies required store image files and dimensions. Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL.
 
 ## Flow
 

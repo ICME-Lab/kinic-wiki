@@ -327,7 +327,7 @@ def safe_complete_job(cli: str, job_id: str, status: str, summary: str) -> None:
 
 
 def job_status_from_apply_status(apply_status: object) -> str:
-    if apply_status in ("auto_applied", "auto_applied_sync_failed"):
+    if apply_status == "auto_applied":
         return "done"
     if apply_status == "conflict":
         return "conflict"

@@ -1,4 +1,5 @@
 use crate::cli::{SkillRunOutcomeArg, SkillStatusArg};
+use crate::hermes::sync_projection;
 use crate::skill_registry::{
     SkillRunEvidenceInput, SkillRunInput, apply_evolution_proposal, approve_proposal,
     claim_evolution_job, complete_evolution_job, create_ready_evolution_jobs, export_skill,
@@ -14,6 +15,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tempfile::TempDir;
 use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
@@ -728,6 +730,91 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
             .iter()
             .any(|entry| entry.path.ends_with("/SKILL.md"))
     );
+}
+
+#[tokio::test]
+async fn hermes_projection_sync_removes_deapproved_skill_dirs() {
+    let client = SkillMockClient::default();
+    let temp = TempDir::new().unwrap();
+    let projection = temp.path().join("projection");
+    std::fs::create_dir_all(projection.join("manual")).unwrap();
+    std::fs::write(projection.join("README.md"), "local note\n").unwrap();
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Wiki/skills/legal-review/manifest.md",
+        &manifest("reviewed"),
+    )
+    .await;
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Wiki/skills/legal-review/SKILL.md",
+        "# Legal Review\n",
+    )
+    .await;
+
+    sync_projection(&client, "team-db", &projection)
+        .await
+        .expect("initial projection");
+    assert!(projection.join("legal-review/SKILL.md").is_file());
+
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Wiki/skills/legal-review/manifest.md",
+        &manifest("draft"),
+    )
+    .await;
+    sync_projection(&client, "team-db", &projection)
+        .await
+        .expect("deapproved projection");
+
+    assert!(!projection.join("legal-review").exists());
+    assert!(projection.join("manual").is_dir());
+    assert!(projection.join("README.md").is_file());
+}
+
+#[tokio::test]
+async fn hermes_projection_sync_removes_deleted_skill_files() {
+    let client = SkillMockClient::default();
+    let temp = TempDir::new().unwrap();
+    let projection = temp.path().join("projection");
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Wiki/skills/legal-review/manifest.md",
+        &manifest("promoted"),
+    )
+    .await;
+    write_skill_file(
+        &client,
+        "team-db",
+        "/Wiki/skills/legal-review/SKILL.md",
+        "# Legal Review\n",
+    )
+    .await;
+    write_skill_file(&client, "team-db", "/Wiki/skills/legal-review/A.md", "A\n").await;
+    write_skill_file(&client, "team-db", "/Wiki/skills/legal-review/B.md", "B\n").await;
+
+    sync_projection(&client, "team-db", &projection)
+        .await
+        .expect("initial projection");
+    assert!(projection.join("legal-review/A.md").is_file());
+    assert!(projection.join("legal-review/B.md").is_file());
+
+    client
+        .nodes
+        .lock()
+        .expect("nodes lock")
+        .remove("/Wiki/skills/legal-review/B.md");
+    sync_projection(&client, "team-db", &projection)
+        .await
+        .expect("pruned file projection");
+
+    assert!(projection.join("legal-review/SKILL.md").is_file());
+    assert!(projection.join("legal-review/A.md").is_file());
+    assert!(!projection.join("legal-review/B.md").exists());
 }
 
 #[tokio::test]
@@ -1808,6 +1895,25 @@ fn assert_mkdirs_include(client: &SkillMockClient, expected: &[&str]) {
             "expected mkdir for {path}, got {mkdirs:?}"
         );
     }
+}
+
+async fn write_skill_file(client: &SkillMockClient, database_id: &str, path: &str, content: &str) {
+    let expected_etag = client
+        .read_node(database_id, path)
+        .await
+        .expect("read skill file")
+        .map(|node| node.etag);
+    client
+        .write_node(WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: path.to_string(),
+            kind: NodeKind::File,
+            content: content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag,
+        })
+        .await
+        .expect("write skill file");
 }
 
 fn proposal_content(skill_id: &str, status: &str) -> String {

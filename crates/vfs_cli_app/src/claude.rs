@@ -110,7 +110,7 @@ fn upsert_claude_settings(paths: &ClaudePaths) -> Result<()> {
     let mut data = read_json_object_or_default(&paths.settings_path)?;
     let root = data.as_object_mut().expect("object checked");
 
-    let marketplaces = object_entry(root, "extraKnownMarketplaces");
+    let marketplaces = object_entry(root, "extraKnownMarketplaces")?;
     marketplaces.insert(
         MARKETPLACE_NAME.to_string(),
         json!({
@@ -121,7 +121,7 @@ fn upsert_claude_settings(paths: &ClaudePaths) -> Result<()> {
         }),
     );
 
-    let enabled = object_entry(root, "enabledPlugins");
+    let enabled = object_entry(root, "enabledPlugins")?;
     enabled.insert(ENABLED_PLUGIN_KEY.to_string(), json!(true));
 
     if let Some(parent) = paths.settings_path.parent() {
@@ -144,15 +144,24 @@ fn read_json_object_or_default(path: &Path) -> Result<Value> {
         &fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?,
     )
     .with_context(|| format!("invalid Claude settings JSON: {}", path.display()))?;
-    Ok(if value.is_object() { value } else { json!({}) })
+    if !value.is_object() {
+        return Err(anyhow!(
+            "Claude settings root must be an object: {}",
+            path.display()
+        ));
+    }
+    Ok(value)
 }
 
-fn object_entry<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
+fn object_entry<'a>(
+    root: &'a mut Map<String, Value>,
+    key: &str,
+) -> Result<&'a mut Map<String, Value>> {
     let entry = root.entry(key.to_string()).or_insert_with(|| json!({}));
     if !entry.is_object() {
-        *entry = json!({});
+        return Err(anyhow!("Claude settings {key} must be an object"));
     }
-    entry.as_object_mut().expect("object checked")
+    Ok(entry.as_object_mut().expect("object checked"))
 }
 
 impl ClaudePaths {
@@ -254,5 +263,72 @@ mod tests {
             value["extraKnownMarketplaces"][MARKETPLACE_NAME]["source"]["source"],
             "directory"
         );
+    }
+
+    #[test]
+    fn claude_setup_is_idempotent() {
+        let temp = TempDir::new().unwrap();
+
+        claude_setup_at_home(temp.path()).unwrap();
+        claude_setup_at_home(temp.path()).unwrap();
+
+        let settings = temp.path().join(".claude/settings.json");
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(settings).unwrap()).unwrap();
+        assert_eq!(value["enabledPlugins"][ENABLED_PLUGIN_KEY], true);
+        assert_eq!(
+            value["extraKnownMarketplaces"][MARKETPLACE_NAME]["source"]["source"],
+            "directory"
+        );
+    }
+
+    #[test]
+    fn claude_setup_rejects_non_object_settings_fields_without_rewrite() {
+        let temp = TempDir::new().unwrap();
+        let settings = temp.path().join(".claude/settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let original = serde_json::to_string_pretty(&json!({
+            "enabledPlugins": ["old"],
+            "extraKnownMarketplaces": "old"
+        }))
+        .unwrap();
+        std::fs::write(&settings, &original).unwrap();
+
+        let error = claude_setup_at_home(temp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("extraKnownMarketplaces"));
+        assert_eq!(std::fs::read_to_string(settings).unwrap(), original);
+    }
+
+    #[test]
+    fn claude_setup_rejects_non_object_enabled_plugins_without_rewrite() {
+        let temp = TempDir::new().unwrap();
+        let settings = temp.path().join(".claude/settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let original = serde_json::to_string_pretty(&json!({
+            "extraKnownMarketplaces": {},
+            "enabledPlugins": ["old"]
+        }))
+        .unwrap();
+        std::fs::write(&settings, &original).unwrap();
+
+        let error = claude_setup_at_home(temp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("enabledPlugins"));
+        assert_eq!(std::fs::read_to_string(settings).unwrap(), original);
+    }
+
+    #[test]
+    fn claude_setup_rejects_non_object_settings_root_without_rewrite() {
+        let temp = TempDir::new().unwrap();
+        let settings = temp.path().join(".claude/settings.json");
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        let original = "[]";
+        std::fs::write(&settings, original).unwrap();
+
+        let error = claude_setup_at_home(temp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("root must be an object"));
+        assert_eq!(std::fs::read_to_string(settings).unwrap(), original);
     }
 }

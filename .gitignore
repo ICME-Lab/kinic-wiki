@@ -46,7 +46,6 @@ __pycache__/
 **/.dev.vars
 
 # Generated copies and store assets
-/crates/vfs_cli_app/assets/
 /extensions/wiki-clipper/store-listing/assets/*.png
 
 # Obsidian plugin artifacts

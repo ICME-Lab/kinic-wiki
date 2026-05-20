@@ -48,6 +48,21 @@ async fn main() -> Result<()> {
         run_claude_command(command)?;
         return Ok(());
     }
+    if let Command::Hermes {
+        command: vfs_cli_app::cli::HermesCommand::Status { json },
+    } = &cli.command
+    {
+        let preview = resolve_connection_optional_canister(
+            cli.connection.local,
+            cli.connection.replica_host.clone(),
+            cli.connection.canister_id.clone(),
+            cli.connection.database_id.clone(),
+        )?;
+        if preview.database_id.is_none() {
+            vfs_cli_app::hermes::run_hermes_local_status(*json)?;
+            return Ok(());
+        }
+    }
     let connection = resolve_connection(
         cli.connection.local,
         cli.connection.replica_host.clone(),

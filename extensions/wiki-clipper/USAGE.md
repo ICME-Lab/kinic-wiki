@@ -32,10 +32,11 @@ The build creates:
 For Chrome Web Store packaging:
 
 ```bash
+npm run store-assets:generate
 npm run release:package
 ```
 
-The release package excludes source files, tests, `node_modules`, and local `.env` files.
+The release package excludes source files, tests, `node_modules`, and local `.env` files. `release:check` verifies required store image files and dimensions before packaging.
 
 ## Load in Chrome
 

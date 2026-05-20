@@ -216,6 +216,7 @@ kinic-vfs-cli hermes pull
 ```
 
 `hermes setup` installs a self-contained plugin under `$HERMES_HOME/plugins/kinic`, enables `kinic` in `$HERMES_HOME/config.yaml`, and keeps skill projection under `$KINIC_HOME/hermes-current/skills`.
+`hermes pull` prunes stale managed skill directories and deleted exported files while leaving unmanaged files directly under the projection root alone.
 Then run this inside Hermes:
 
 ```text
@@ -235,7 +236,8 @@ kinic-vfs-cli codex setup
 ```
 
 The command installs a self-contained plugin under `~/.codex/plugins/kinic-skill-recorder` and updates `~/.agents/plugins/marketplace.json` while preserving unrelated entries.
-For repo development only, `scripts/install-codex-skill-recorder.sh` refreshes generated assets and runs `codex setup`.
+The Codex marketplace entry uses `./.codex/plugins/kinic-skill-recorder`, resolved from the personal marketplace root (`$HOME`), not from `~/.agents/plugins`.
+For repo development only, `scripts/install-codex-skill-recorder.sh` runs `codex setup` from the local build or source tree.
 After a Codex skill materially affects a task, use `kinic-record-skill-run`; it writes an evidence JSON file and calls:
 
 ```bash
