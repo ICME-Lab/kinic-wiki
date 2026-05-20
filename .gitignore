@@ -24,6 +24,7 @@
 node_modules/
 *.tmp
 *.tsbuildinfo
+npm/kinic-vfs-cli/vendor/kinic-vfs-cli
 .playwright-cli/
 .pnpm-store/
 .worktrees/

@@ -232,6 +232,7 @@ The Codex plugin source is versioned in `plugins/codex`; binary installs use the
 Install or refresh the personal plugin with:
 
 ```bash
+npm install -g kinic-vfs-cli
 kinic-vfs-cli codex setup
 ```
 

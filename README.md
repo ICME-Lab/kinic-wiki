@@ -126,7 +126,14 @@ The Browser is the primary public UI. `kinic-vfs-cli` is the single operator and
 
 See [`docs/CLI.md`](docs/CLI.md) for wiki/database flags, search preview modes, and operator examples.
 See [`docs/SKILL_REGISTRY.md`](docs/SKILL_REGISTRY.md) for `kinic-vfs-cli skill ...`, Skill Knowledge Base layout, manifest fields, database-role access, and Browser support.
-See [`docs/RELEASE.md`](docs/RELEASE.md) for GitHub Release artifacts, Homebrew install, and fallback Cargo install. See [`docs/PUBLIC_SMOKE.md`](docs/PUBLIC_SMOKE.md) for the local public-read smoke flow.
+Install the CLI with npm:
+
+```bash
+npm install -g kinic-vfs-cli
+kinic-vfs-cli --help
+```
+
+See [`docs/RELEASE.md`](docs/RELEASE.md) for npm publishing, GitHub Release artifacts, optional Homebrew packaging, and fallback Cargo install. See [`docs/PUBLIC_SMOKE.md`](docs/PUBLIC_SMOKE.md) for the local public-read smoke flow.
 
 Main commands:
 
