@@ -118,7 +118,7 @@ export function hrefForMarkdownLink(canisterId: string, databaseId: string, curr
     return null;
   }
   const target = splitMarkdownHref(trimmed);
-  if (trimmed.startsWith("/Wiki") || trimmed.startsWith("/Sources")) {
+  if (isInternalWikiPath(target.path)) {
     return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, target.path, undefined, undefined, undefined, undefined, readMode), target, readMode);
   }
   if (trimmed.startsWith("/")) {
@@ -157,6 +157,10 @@ function resolveRelativeWikiPath(currentPath: string, href: string): string {
 
 function isExternalHref(href: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
+}
+
+function isInternalWikiPath(path: string): boolean {
+  return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
 }
 
 function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget, readMode?: string | null): string {

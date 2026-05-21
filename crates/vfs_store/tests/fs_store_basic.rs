@@ -165,7 +165,8 @@ fn fs_migrations_create_tables() {
             "wiki_store:000_fs_schema".to_string(),
             "wiki_store:001_fs_links".to_string(),
             "wiki_store:002_fs_folders".to_string(),
-            "wiki_store:003_wikilink_alias_links".to_string()
+            "wiki_store:003_wikilink_alias_links".to_string(),
+            "wiki_store:004_rebuild_links_after_code_filter".to_string()
         ]
     );
 
@@ -967,7 +968,8 @@ fn fs_migrations_are_idempotent() {
             "wiki_store:000_fs_schema".to_string(),
             "wiki_store:001_fs_links".to_string(),
             "wiki_store:002_fs_folders".to_string(),
-            "wiki_store:003_wikilink_alias_links".to_string()
+            "wiki_store:003_wikilink_alias_links".to_string(),
+            "wiki_store:004_rebuild_links_after_code_filter".to_string()
         ]
     );
 
@@ -1167,6 +1169,70 @@ fn wikilink_alias_migration_rebuilds_existing_links() {
         "/Sources/raw/a/a.md|opencode.ai/DESIGN.md"
     );
     assert_eq!(outgoing[0].link_text, "opencode.ai/DESIGN.md");
+}
+
+#[test]
+fn code_filter_migration_rebuilds_existing_links() {
+    let dir = tempdir().expect("temp dir should exist");
+    let database_path = dir.path().join("wiki.sqlite3");
+    let conn = Connection::open(&database_path).expect("db should open");
+    conn.execute_batch(include_str!("../migrations/000_schema_migrations.sql"))
+        .expect("schema migrations table should create");
+    conn.execute_batch(include_str!("../migrations/000_fs_schema.sql"))
+        .expect("base schema should create");
+    conn.execute_batch(include_str!("../migrations/001_fs_links.sql"))
+        .expect("links schema should create");
+    conn.execute_batch(include_str!("../migrations/002_fs_folders.sql"))
+        .expect("folder schema should create");
+    conn.execute_batch(include_str!("../migrations/003_wikilink_alias_links.sql"))
+        .expect("alias migration should apply");
+    conn.execute(
+        "INSERT INTO fs_nodes
+         (path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+         VALUES (?1, 'file', ?2, 10, 20, 'etag-source', '{}', NULL, 'source.md')",
+        params![
+            "/Wiki/source.md",
+            "```md\n[[alpha.md|Alpha]]\n[Alpha](alpha.md)\n```\n[[beta.md|Beta]]",
+        ],
+    )
+    .expect("existing node should insert");
+    conn.execute(
+        "INSERT INTO fs_links
+         (source_path, target_path, raw_href, link_text, link_kind, updated_at)
+         VALUES (?1, ?2, 'alpha.md|Alpha', 'Alpha', 'wikilink', 20)",
+        params!["/Wiki/source.md", "/Wiki/alpha.md"],
+    )
+    .expect("old code link row should insert");
+    for version in [
+        "wiki_store:000_fs_schema",
+        "wiki_store:001_fs_links",
+        "wiki_store:002_fs_folders",
+        "wiki_store:003_wikilink_alias_links",
+    ] {
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+            [version],
+        )
+        .expect("version should insert");
+    }
+    drop(conn);
+
+    let store = FsStore::new(database_path.clone());
+    store
+        .run_fs_migrations()
+        .expect("code filter migration should succeed");
+
+    let outgoing = store
+        .outgoing_links(OutgoingLinksRequest {
+            database_id: "default".to_string(),
+            path: "/Wiki/source.md".to_string(),
+            limit: 10,
+        })
+        .expect("outgoing links should load");
+    assert_eq!(outgoing.len(), 1);
+    assert_eq!(outgoing[0].target_path, "/Wiki/beta.md");
+    assert_eq!(outgoing[0].raw_href, "beta.md|Beta");
+    assert_eq!(outgoing[0].link_text, "Beta");
 }
 
 #[test]
@@ -1496,6 +1562,7 @@ fn fs_migrations_reject_current_schema_missing_parent_columns() {
         "wiki_store:001_fs_links",
         "wiki_store:002_fs_folders",
         "wiki_store:003_wikilink_alias_links",
+        "wiki_store:004_rebuild_links_after_code_filter",
     ] {
         conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",

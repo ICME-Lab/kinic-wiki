@@ -6,13 +6,13 @@ export function renderWikilinksAsMarkdown(content: string): string {
   const lines = content.split("\n");
   let fence: MarkdownFence | null = null;
   return lines.map((line) => {
-    const nextFence = parseFenceLine(line);
     if (fence) {
-      if (nextFence && nextFence.marker === fence.marker && nextFence.length >= fence.length) {
+      if (isClosingFenceLine(line, fence)) {
         fence = null;
       }
       return line;
     }
+    const nextFence = parseOpeningFenceLine(line);
     if (nextFence) {
       fence = nextFence;
       return line;
@@ -94,7 +94,7 @@ function countBacktickRun(line: string, start: number): number {
   return index - start;
 }
 
-function parseFenceLine(line: string): MarkdownFence | null {
+function parseOpeningFenceLine(line: string): MarkdownFence | null {
   const match = /^( {0,3})(`{3,}|~{3,})/.exec(line);
   if (!match) {
     return null;
@@ -102,6 +102,15 @@ function parseFenceLine(line: string): MarkdownFence | null {
   const fence = match[2];
   const marker = fence[0] === "`" ? "`" : "~";
   return { marker, length: fence.length };
+}
+
+function isClosingFenceLine(line: string, fence: MarkdownFence): boolean {
+  const match = /^( {0,3})(`{3,}|~{3,})[ \t]*$/.exec(line);
+  if (!match) {
+    return false;
+  }
+  const closingFence = match[2];
+  return closingFence[0] === fence.marker && closingFence.length >= fence.length;
 }
 
 function isIndentedCodeLine(line: string): boolean {

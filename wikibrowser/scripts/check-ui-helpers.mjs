@@ -11,6 +11,7 @@ const { cycleTone, formatCycles, formatRawCycles } = await importTs("../lib/cycl
 const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-sections.ts");
 const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
+const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
 const { publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
@@ -360,6 +361,7 @@ assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|]]"), "[notes/alpha.md]
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|A|B]]"), "[A\\|B](<notes/alpha.md>)");
 assert.equal(renderWikilinksAsMarkdown("| [[notes/alpha.md|A|B]] |"), "| [A\\|B](<notes/alpha.md>) |");
 assert.equal(renderWikilinksAsMarkdown("`[[notes/alpha.md|Alpha]]`"), "`[[notes/alpha.md|Alpha]]`");
+assert.equal(renderWikilinksAsMarkdown(" [[notes/alpha.md|Alpha]]"), " [Alpha](<notes/alpha.md>)");
 assert.equal(renderWikilinksAsMarkdown("    [[notes/alpha.md|Alpha]]"), "    [[notes/alpha.md|Alpha]]");
 assert.equal(renderWikilinksAsMarkdown("\t[[notes/alpha.md|Alpha]]"), "\t[[notes/alpha.md|Alpha]]");
 assert.equal(
@@ -383,8 +385,16 @@ assert.equal(
   renderWikilinksAsMarkdown("~~~md\n```\n[[notes/alpha.md|Alpha]]\n~~~\n[[notes/beta.md|Beta]]"),
   "~~~md\n```\n[[notes/alpha.md|Alpha]]\n~~~\n[Beta](<notes/beta.md>)"
 );
+assert.equal(
+  renderWikilinksAsMarkdown("```md\n``` not close\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
+  "```md\n``` not close\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
 assert.equal(renderWikilinksAsMarkdown("![[notes/alpha.md|Alpha]]"), "![[notes/alpha.md|Alpha]]");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|Alpha]]"), "[Alpha](<notes/alpha.md>)");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/foo.md"), "/db-1/Wiki/foo.md");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db-1/Sources/foo.md#top");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wikipedia/foo.md"), null);
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/SourcesBackup/foo.md"), null);
 
 const cachedNodeContext = {
   node: {
