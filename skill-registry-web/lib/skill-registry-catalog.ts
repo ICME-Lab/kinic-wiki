@@ -4,14 +4,13 @@ import type { ChildNode } from "@/lib/types";
 import { listChildren, readNode } from "@/lib/vfs-client";
 
 const REGISTRY_ROOTS = [
-  { label: "Team", path: "/Wiki/skills", catalog: "private" }
+  { label: "Team", path: "/Wiki/skills" }
 ] as const;
 const MANIFEST_READ_CONCURRENCY = 8;
 
 export type StatusFilter = "active" | "all" | "deprecated";
 
 export type CatalogSkill = {
-  catalog: "private" | "public";
   rootLabel: string;
   basePath: string;
   manifestPath: string;
@@ -115,7 +114,6 @@ export async function loadSkillCatalog(canisterId: string, databaseId: string, i
     if (!manifest) return null;
     const trust = emptyRunSummary();
     return {
-      catalog: root.catalog,
       rootLabel: root.label,
       basePath: entry.path,
       manifestPath,
@@ -211,7 +209,6 @@ function compareSkills(left: CatalogSkill, right: CatalogSkill): number {
 function searchableSkillText(skill: CatalogSkill): string {
   const manifest = skill.manifest;
   return [
-    skill.catalog,
     skill.basePath,
     manifest.id,
     manifest.title,

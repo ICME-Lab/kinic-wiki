@@ -59,4 +59,4 @@ fi
 
 runtime_path="$(resolve_runtime_path)"
 export PYTHONPATH="$runtime_path${PYTHONPATH:+:$PYTHONPATH}"
-exec python3 -m kinic_agent_runtime.evidence record-run "$skill_id" "$evidence_json"
+exec python3 -m kinic_agent_runtime.evidence record-run "$skill_id" "$evidence_json" --recorded-by claude-code-plugin

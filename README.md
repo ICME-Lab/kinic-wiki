@@ -29,7 +29,7 @@ Detailed structure map:
 - Search, snapshot export, and delta reads
 - Link graph and node-context queries for wiki navigation
 - Agent Memory API v1 for canister-backed long-term context reads
-- Skill Knowledge Base paths for private/team `SKILL.md` packages plus public catalog nodes
+- Skill Knowledge Base paths for team `SKILL.md` packages
 - Benchmark and validation workflows for VFS behavior
 
 Current scope:
@@ -132,6 +132,8 @@ Install the CLI with npm:
 npm install -g kinic-vfs-cli
 kinic-vfs-cli --help
 ```
+
+Canonical npm and agent workflow guide: [`wiki.kinic.xyz/cli`](https://wiki.kinic.xyz/cli).
 
 See [`docs/RELEASE.md`](docs/RELEASE.md) for npm publishing, GitHub Release artifacts, optional Homebrew packaging, and fallback Cargo install. See [`docs/PUBLIC_SMOKE.md`](docs/PUBLIC_SMOKE.md) for the local public-read smoke flow.
 

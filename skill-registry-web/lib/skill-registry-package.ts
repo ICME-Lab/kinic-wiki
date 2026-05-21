@@ -2,8 +2,6 @@ import type { Identity } from "@icp-sdk/core/agent";
 import { readNode, writeNodeAuthenticated } from "@/lib/vfs-client";
 import { ensureParentFoldersAuthenticated } from "@/lib/vfs-folders";
 
-export type SkillCatalog = "private" | "public";
-
 export type SkillPackageFile = {
   name: string;
   content: string;
@@ -11,17 +9,15 @@ export type SkillPackageFile = {
 
 export type SkillPackageInput = {
   id: string;
-  catalog: SkillCatalog;
   files: SkillPackageFile[];
 };
 
 const PRIVATE_ROOT = "/Wiki/skills";
-const PUBLIC_ROOT = PRIVATE_ROOT;
 
 export async function upsertSkillPackage(canisterId: string, databaseId: string, identity: Identity, input: SkillPackageInput): Promise<string[]> {
   const skillId = cleanSkillId(input.id);
   const files = normalizeFiles(input.files, skillId);
-  const basePath = `${input.catalog === "public" ? PUBLIC_ROOT : PRIVATE_ROOT}/${skillId}`;
+  const basePath = `${PRIVATE_ROOT}/${skillId}`;
   const written: string[] = [];
   for (const file of files) {
     const path = `${basePath}/${file.name}`;
@@ -44,7 +40,7 @@ export async function importPublicGitHubSkill(
   canisterId: string,
   databaseId: string,
   identity: Identity,
-  input: { source: string; reference: string; id: string; catalog: SkillCatalog }
+  input: { source: string; reference: string; id: string }
 ): Promise<string[]> {
   const source = parseGitHubSource(input.source);
   const ref = input.reference.trim() || "main";
@@ -63,7 +59,6 @@ export async function importPublicGitHubSkill(
   }
   const written = await upsertSkillPackage(canisterId, databaseId, identity, {
     id: input.id,
-    catalog: input.catalog,
     files: normalizeGitHubManifest(files, input.id, source, sha)
   });
   return written;

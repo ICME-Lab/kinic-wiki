@@ -20,13 +20,13 @@ Hermes内:
 DashboardなどでDB上のskillを更新した後は `kinic-vfs-cli hermes pull` でprojectionだけ再同期する。
 Hermesから `kinic_hermes.register(ctx)` を読み込ませる。
 
-## Web Dashboard
+## Skill Registry Web
 
-Hermes skill evolution dashboardは `web/` に隔離する。
+Skill Registry dashboardは repo root の `skill-registry-web/` に置く。
 
 ```bash
-pnpm --dir plugins/hermes/web install
-pnpm --dir plugins/hermes/web dev
+pnpm --dir skill-registry-web install
+pnpm --dir skill-registry-web dev
 ```
 
 Open:
@@ -38,9 +38,9 @@ http://localhost:3000/skills/<database-id>
 Checks:
 
 ```bash
-pnpm --dir plugins/hermes/web test
-pnpm --dir plugins/hermes/web typecheck
-pnpm --dir plugins/hermes/web build
+pnpm --dir skill-registry-web test
+pnpm --dir skill-registry-web typecheck
+pnpm --dir skill-registry-web build
 ```
 
 ## Environment

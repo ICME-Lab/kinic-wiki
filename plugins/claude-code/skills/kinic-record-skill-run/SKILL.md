@@ -14,4 +14,5 @@ Use this skill only after another skill materially affected the task outcome and
 5. Summarize the script JSON output for the user, including `run_path` and any created evolution jobs.
 
 Do not use MCP for this workflow. The script calls the shared `kinic_agent_runtime.evidence` runner, which runs `kinic-vfs-cli skill record-run --create-ready-jobs --json`.
+The script records `recorded_by: claude-code-plugin`.
 If the user wants the resulting queued improvement processed in Claude Code, use `kinic-evolve-skill-job` next.

@@ -71,7 +71,6 @@ pub struct SkillRunRecord<'a> {
     pub outcome: SkillRunOutcome,
     pub notes: &'a str,
     pub agent: &'a str,
-    pub public: bool,
 }
 
 impl SkillRunOutcome {
@@ -92,7 +91,7 @@ pub async fn find_skills(
     top_k: u32,
 ) -> Result<Value> {
     let top_k = top_k.clamp(1, 20);
-    let mut grouped: BTreeMap<(String, bool), SkillHitAccumulator> = BTreeMap::new();
+    let mut grouped: BTreeMap<String, SkillHitAccumulator> = BTreeMap::new();
     for prefix in [PRIVATE_SKILL_ROOT, SKILL_RUN_ROOT] {
         for hit in client
             .search_nodes(SearchNodesRequest {
@@ -104,15 +103,15 @@ pub async fn find_skills(
             })
             .await?
         {
-            if let Some((id, public)) = skill_id_from_path(&hit.path) {
-                grouped.entry((id, public)).or_default().add(hit);
+            if let Some(id) = skill_id_from_path(&hit.path) {
+                grouped.entry(id).or_default().add(hit);
             }
         }
     }
 
     let mut hits = Vec::new();
-    for ((id, public), acc) in grouped {
-        let manifest = read_skill_manifest(client, database_id, &id, public).await?;
+    for (id, acc) in grouped {
+        let manifest = read_skill_manifest(client, database_id, &id).await?;
         let status = manifest
             .status
             .clone()
@@ -122,7 +121,6 @@ pub async fn find_skills(
         }
         hits.push(json!({
             "id": id,
-            "catalog": skill_catalog(public),
             "status": status,
             "deprecated_reason": manifest.deprecated_reason,
             "title": manifest.title.unwrap_or_default(),
@@ -147,11 +145,10 @@ pub async fn inspect_skill(
     client: &impl VfsApi,
     database_id: &str,
     id: &str,
-    public: bool,
 ) -> Result<Value> {
     validate_skill_id(id)?;
-    let base_path = skill_base_path(id, public);
-    let manifest = read_skill_manifest(client, database_id, id, public).await?;
+    let base_path = skill_base_path(id);
+    let manifest = read_skill_manifest(client, database_id, id).await?;
     let mut files = BTreeMap::new();
     for name in ["manifest.md", "SKILL.md", "provenance.md", "evals.md"] {
         files.insert(name.to_string(), false);
@@ -184,7 +181,6 @@ pub async fn inspect_skill(
     let run_summary = run_summary(client, database_id, id).await?;
     Ok(json!({
         "id": id,
-        "catalog": skill_catalog(public),
         "base_path": base_path,
         "manifest": manifest,
         "files": files,
@@ -201,10 +197,9 @@ pub async fn record_skill_run(client: &impl VfsApi, record: SkillRunRecord<'_>) 
         outcome,
         notes,
         agent,
-        public,
     } = record;
     validate_skill_id(id)?;
-    let base_path = skill_base_path(id, public);
+    let base_path = skill_base_path(id);
     let skill = client
         .read_node(database_id, &format!("{base_path}/SKILL.md"))
         .await?
@@ -263,11 +258,10 @@ pub async fn read_skill_file(
     database_id: &str,
     id: &str,
     file: &str,
-    public: bool,
 ) -> Result<Value> {
     validate_skill_id(id)?;
     let file = validate_package_file(file)?;
-    let path = format!("{}/{}", skill_base_path(id, public), file);
+    let path = format!("{}/{}", skill_base_path(id), file);
     Ok(json!({ "node": client.read_node(database_id, &path).await? }))
 }
 
@@ -275,13 +269,12 @@ async fn read_skill_manifest(
     client: &impl VfsApi,
     database_id: &str,
     id: &str,
-    public: bool,
 ) -> Result<SkillManifestView> {
     validate_skill_id(id)?;
     let Some(node) = client
         .read_node(
             database_id,
-            &format!("{}/manifest.md", skill_base_path(id, public)),
+            &format!("{}/manifest.md", skill_base_path(id)),
         )
         .await?
     else {
@@ -458,13 +451,12 @@ fn non_empty(value: String) -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-fn skill_id_from_path(path: &str) -> Option<(String, bool)> {
+fn skill_id_from_path(path: &str) -> Option<String> {
     if let Some(rest) = path.strip_prefix(&format!("{PRIVATE_SKILL_ROOT}/")) {
-        return first_skill_segment(rest).map(|id| (id, false));
+        return first_skill_segment(rest);
     }
     path.strip_prefix(&format!("{SKILL_RUN_ROOT}/"))
         .and_then(first_skill_segment)
-        .map(|id| (id, false))
 }
 
 fn first_skill_segment(rest: &str) -> Option<String> {
@@ -473,13 +465,8 @@ fn first_skill_segment(rest: &str) -> Option<String> {
     Some(id.to_string())
 }
 
-fn skill_base_path(id: &str, public: bool) -> String {
-    let _ = public;
+fn skill_base_path(id: &str) -> String {
     format!("{PRIVATE_SKILL_ROOT}/{id}")
-}
-
-fn skill_catalog(public: bool) -> &'static str {
-    if public { "public" } else { "private" }
 }
 
 fn validate_skill_id(id: &str) -> Result<()> {

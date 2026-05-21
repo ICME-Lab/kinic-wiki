@@ -1,6 +1,6 @@
-// Where: plugins/hermes/web/lib/vfs-client.ts
-// What: Minimal browser-side VFS client for the Hermes evolution dashboard.
-// Why: Hermes web reads and writes Skill Registry records without importing wikibrowser code.
+// Where: skill-registry-web/lib/vfs-client.ts
+// What: Minimal browser-side VFS client for the Skill Registry dashboard.
+// Why: The web UI reads and writes Skill Registry records without importing the public browser app.
 
 import { Actor, HttpAgent, type Identity } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";

@@ -1,4 +1,4 @@
-// Where: wikibrowser/lib/child-sort.ts
+// Where: skill-registry-web/lib/child-sort.ts
 // What: Keep directory child ordering deterministic for browser views.
 // Why: Canister delivery order is not a useful navigation order.
 import type { ChildNode } from "@/lib/types";

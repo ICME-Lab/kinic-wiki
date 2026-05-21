@@ -20,9 +20,17 @@ from .cli import resolve_cli, run_cli
 PLUGIN_VERSION = "0.1.0"
 
 
-def record_run(cli: str, skill_id: str, evidence: dict[str, Any]) -> tuple[bool, str | None]:
+def with_recorded_by(evidence: dict[str, Any], recorded_by: str | None) -> dict[str, Any]:
+    payload = dict(evidence)
+    if recorded_by:
+        payload["recorded_by"] = recorded_by
+    return payload
+
+
+def record_run(cli: str, skill_id: str, evidence: dict[str, Any], recorded_by: str | None = None) -> tuple[bool, str | None]:
+    payload = with_recorded_by(evidence, recorded_by)
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
-        json.dump(evidence, handle, indent=2)
+        json.dump(payload, handle, indent=2)
         temp_path = Path(handle.name)
     try:
         run_cli(
@@ -41,18 +49,29 @@ def record_run(cli: str, skill_id: str, evidence: dict[str, Any]) -> tuple[bool,
         temp_path.unlink(missing_ok=True)
 
 
-def record_run_file(cli: str, skill_id: str, evidence_json: Path) -> str:
-    result = run_cli(
-        cli,
-        "skill",
-        "record-run",
-        skill_id,
-        "--evidence-json",
-        str(evidence_json),
-        "--create-ready-jobs",
-        "--json",
-    )
-    return result.stdout
+def record_run_file(cli: str, skill_id: str, evidence_json: Path, recorded_by: str | None = None) -> str:
+    if recorded_by:
+        evidence = json.loads(evidence_json.read_text())
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(with_recorded_by(evidence, recorded_by), handle, indent=2)
+            temp_path = Path(handle.name)
+    else:
+        temp_path = evidence_json
+    try:
+        result = run_cli(
+            cli,
+            "skill",
+            "record-run",
+            skill_id,
+            "--evidence-json",
+            str(temp_path),
+            "--create-ready-jobs",
+            "--json",
+        )
+        return result.stdout
+    finally:
+        if temp_path != evidence_json:
+            temp_path.unlink(missing_ok=True)
 
 
 def save_pending(
@@ -82,6 +101,7 @@ def main() -> int:
     record.add_argument("skill_id")
     record.add_argument("evidence_json_file")
     record.add_argument("--cli")
+    record.add_argument("--recorded-by")
 
     args = parser.parse_args()
     if args.command == "record-run":
@@ -102,7 +122,7 @@ def record_run_command(args: argparse.Namespace) -> int:
         print("error: kinic-vfs-cli not found; set KINIC_VFS_CLI or install kinic-vfs-cli in PATH", file=sys.stderr)
         return 69
     try:
-        print(record_run_file(cli, args.skill_id, evidence_json), end="")
+        print(record_run_file(cli, args.skill_id, evidence_json, args.recorded_by), end="")
         return 0
     except subprocess.CalledProcessError as error:
         print(error.stderr or str(error), file=sys.stderr)

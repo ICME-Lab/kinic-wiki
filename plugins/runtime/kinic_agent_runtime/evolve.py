@@ -41,12 +41,10 @@ def main() -> int:
     sync_local.add_argument("skill_id")
     sync_local.add_argument("--cli", default=os.environ.get("KINIC_VFS_CLI", "kinic-vfs-cli"))
     sync_local.add_argument("--projection-dir", required=True)
-    sync_local.add_argument("--public", action="store_true")
 
     history = subcommands.add_parser("history")
     history.add_argument("skill_id")
     history.add_argument("--cli", default=os.environ.get("KINIC_VFS_CLI", "kinic-vfs-cli"))
-    history.add_argument("--public", action="store_true")
 
     args = parser.parse_args()
     if args.command == "prepare-job":
@@ -204,16 +202,12 @@ def finish_job_command(args: argparse.Namespace) -> int:
 def sync_local_command(args: argparse.Namespace) -> int:
     out = Path(args.projection_dir) / args.skill_id
     command = ["skill", "export", args.skill_id, "--out", str(out), "--json"]
-    if args.public:
-        command.append("--public")
     print(run_cli(args.cli, *command), end="")
     return 0
 
 
 def history_command(args: argparse.Namespace) -> int:
     command = ["skill", "history", args.skill_id, "--json"]
-    if args.public:
-        command.append("--public")
     print(run_cli(args.cli, *command), end="")
     return 0
 

@@ -31,6 +31,7 @@ class RunBuffer:
             "task_outcome": "",
             "agent_outcome": agent_outcome,
             "agent": "hermes",
+            "recorded_by": "hermes-plugin",
             "summary": self._summary(),
             "raw_evidence_excerpt": self._excerpt(),
             "usage_delta": usage_delta,

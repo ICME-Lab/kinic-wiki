@@ -35,11 +35,13 @@ class KinicClient:
         self.runner = self._resolve_runner()
 
     def record_run(self, skill_id: str, evidence: dict[str, Any]) -> bool:
+        evidence = dict(evidence)
+        evidence["recorded_by"] = "hermes-plugin"
         if not self.cli:
             self._log("kinic-vfs-cli not found; saving pending run")
             self.save_pending(skill_id, evidence, "kinic-vfs-cli not found")
             return False
-        recorded, error = runtime_evidence.record_run(self.cli, skill_id, evidence)
+        recorded, error = runtime_evidence.record_run(self.cli, skill_id, evidence, "hermes-plugin")
         if recorded:
             self._log(f"recorded run for {skill_id}")
             return True

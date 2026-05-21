@@ -260,17 +260,12 @@ fn yaml_scalar(value: &str) -> String {
     }
 }
 
-pub(super) fn skill_base_path(id: &SkillId, public: bool) -> String {
-    let _ = public;
+pub(super) fn skill_base_path(id: &SkillId) -> String {
     format!("{}/{}", PRIVATE_ROOT, id.name)
 }
 
 pub(super) fn run_base_path(id: &SkillId) -> String {
     format!("{}/{}", RUN_ROOT, id.name)
-}
-
-pub(super) fn catalog(public: bool) -> &'static str {
-    if public { "public" } else { "private" }
 }
 
 pub(super) fn now_millis() -> i64 {

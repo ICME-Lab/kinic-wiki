@@ -10,9 +10,9 @@ mod model;
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use model::{
-    PRIVATE_ROOT, RUN_ROOT, SkillId, catalog, extract_frontmatter, manifest_for_source,
-    normalize_manifest, now_millis, now_rfc3339, parse_skill_source_frontmatter, print,
-    run_base_path, set_manifest_provenance_field, set_manifest_status_preserving_content,
+    PRIVATE_ROOT, RUN_ROOT, SkillId, extract_frontmatter, manifest_for_source, normalize_manifest,
+    now_millis, now_rfc3339, parse_skill_source_frontmatter, print, run_base_path,
+    set_manifest_provenance_field, set_manifest_status_preserving_content,
     set_root_frontmatter_field_preserving_content, skill_base_path,
 };
 use serde::{Deserialize, Serialize};
@@ -40,11 +40,10 @@ pub async fn run_skill_command(
         SkillCommand::Upsert {
             source_dir,
             id,
-            public,
             prune,
             json,
         } => print(
-            upsert_skill(client, database_id, &source_dir, &id, public, prune).await?,
+            upsert_skill(client, database_id, &source_dir, &id, prune).await?,
             json,
         )?,
         SkillCommand::Find {
@@ -56,8 +55,8 @@ pub async fn run_skill_command(
             find_skills(client, database_id, &query, include_deprecated, top_k).await?,
             json,
         )?,
-        SkillCommand::Inspect { id, public, json } => {
-            print(inspect_skill(client, database_id, &id, public).await?, json)?
+        SkillCommand::Inspect { id, json } => {
+            print(inspect_skill(client, database_id, &id).await?, json)?
         }
         SkillCommand::RecordRun {
             id,
@@ -67,7 +66,6 @@ pub async fn run_skill_command(
             outcome,
             notes_file,
             agent,
-            public,
             json,
         } => {
             let result = if let Some(evidence_json) = evidence_json {
@@ -77,7 +75,6 @@ pub async fn run_skill_command(
                         database_id,
                         id: &id,
                         evidence_json: &evidence_json,
-                        public,
                     },
                 )
                 .await?
@@ -97,7 +94,6 @@ pub async fn run_skill_command(
                             anyhow!("--notes-file is required without --evidence-json")
                         })?,
                         agent: &agent,
-                        public,
                     },
                 )
                 .await?
@@ -110,10 +106,9 @@ pub async fn run_skill_command(
             id,
             status,
             reason,
-            public,
             json,
         } => print(
-            set_skill_status(client, database_id, &id, status, reason.as_deref(), public).await?,
+            set_skill_status(client, database_id, &id, status, reason.as_deref()).await?,
             json,
         )?,
         SkillCommand::Import { source } => match source {
@@ -121,12 +116,10 @@ pub async fn run_skill_command(
                 source,
                 id,
                 reference,
-                public,
                 prune,
                 json,
             } => print(
-                import_github_skill(client, database_id, &source, &id, &reference, public, prune)
-                    .await?,
+                import_github_skill(client, database_id, &source, &id, &reference, prune).await?,
                 json,
             )?,
         },
@@ -135,18 +128,9 @@ pub async fn run_skill_command(
             runs,
             summary,
             diff_file,
-            public,
             json,
         } => print(
-            propose_improvement(
-                client,
-                database_id,
-                &id,
-                &runs,
-                &summary,
-                &diff_file,
-                public,
-            )
+            propose_improvement(client, database_id, &id, &runs, &summary, &diff_file)
             .await?,
             json,
         )?,
@@ -172,7 +156,6 @@ pub async fn run_skill_command(
             proposal_id,
             job_id,
             projection_dir,
-            public,
             json,
         } => print(
             apply_evolution_proposal(
@@ -182,7 +165,6 @@ pub async fn run_skill_command(
                 &proposal_id,
                 job_id.as_deref(),
                 projection_dir.as_deref(),
-                public,
             )
             .await?,
             json,
@@ -191,7 +173,6 @@ pub async fn run_skill_command(
             id,
             version_id,
             projection_dir,
-            public,
             json,
         } => print(
             rollback_skill_version(
@@ -200,7 +181,6 @@ pub async fn run_skill_command(
                 &id,
                 &version_id,
                 projection_dir.as_deref(),
-                public,
             )
             .await?,
             json,
@@ -208,10 +188,9 @@ pub async fn run_skill_command(
         SkillCommand::Export {
             id,
             out,
-            public,
             json,
         } => print(
-            export_skill(client, database_id, &id, &out, public).await?,
+            export_skill(client, database_id, &id, &out).await?,
             json,
         )?,
         SkillCommand::ExportGithub {
@@ -219,15 +198,13 @@ pub async fn run_skill_command(
             target,
             branch,
             message,
-            public,
             json,
         } => print(
-            export_skill_github(client, database_id, &id, &target, &branch, &message, public)
-                .await?,
+            export_skill_github(client, database_id, &id, &target, &branch, &message).await?,
             json,
         )?,
-        SkillCommand::History { id, public, json } => {
-            print(skill_history(client, database_id, &id, public).await?, json)?
+        SkillCommand::History { id, json } => {
+            print(skill_history(client, database_id, &id).await?, json)?
         }
         SkillCommand::EvolveJobs { command } => match command {
             SkillEvolveJobsCommand::CreateReady {
@@ -266,10 +243,9 @@ pub async fn run_skill_command(
         SkillCommand::Install {
             id,
             lockfile,
-            public,
             json,
         } => print(
-            install_skill_lockfile(client, database_id, &id, &lockfile, public).await?,
+            install_skill_lockfile(client, database_id, &id, &lockfile).await?,
             json,
         )?,
     }
@@ -281,7 +257,6 @@ pub(crate) async fn upsert_skill(
     database_id: &str,
     source_dir: &Path,
     id: &str,
-    public: bool,
     prune: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
@@ -289,19 +264,18 @@ pub(crate) async fn upsert_skill(
         .with_context(|| format!("missing SKILL.md in {}", source_dir.display()))?;
     let source_frontmatter = parse_skill_source_frontmatter(&skill)?;
     let files = discover_skill_package_files(source_dir, &skill, &skill_id, &source_frontmatter)?;
-    write_skill_package(client, database_id, &skill_id, public, prune, files).await
+    write_skill_package(client, database_id, &skill_id, prune, files).await
 }
 
 async fn write_skill_package(
     client: &impl VfsApi,
     database_id: &str,
     skill_id: &SkillId,
-    public: bool,
     prune: bool,
     files: BTreeMap<String, String>,
 ) -> Result<serde_json::Value> {
     validate_skill_package_file_count(files.len())?;
-    let base_path = skill_base_path(skill_id, public);
+    let base_path = skill_base_path(skill_id);
     let file_names = files.keys().cloned().collect::<BTreeSet<_>>();
     let entries = files.into_iter().collect::<Vec<_>>();
     let paths = entries
@@ -333,9 +307,7 @@ async fn write_skill_package(
     } else {
         Vec::new()
     };
-    Ok(
-        json!({ "id": skill_id.to_string(), "catalog": catalog(public), "base_path": base_path, "written_paths": written_paths, "pruned_paths": pruned_paths }),
-    )
+    Ok(json!({ "id": skill_id.to_string(), "base_path": base_path, "written_paths": written_paths, "pruned_paths": pruned_paths }))
 }
 
 pub(crate) async fn record_skill_run(
@@ -349,7 +321,6 @@ pub(crate) async fn record_skill_run(
         outcome,
         notes_file,
         agent,
-        public,
     } = input;
     let notes = std::fs::read_to_string(notes_file)
         .with_context(|| format!("failed to read {}", notes_file.display()))?;
@@ -362,7 +333,6 @@ pub(crate) async fn record_skill_run(
             outcome: outcome.into(),
             notes: &notes,
             agent,
-            public,
         },
     )
     .await
@@ -375,14 +345,12 @@ pub(crate) struct SkillRunInput<'a> {
     pub(crate) outcome: SkillRunOutcomeArg,
     pub(crate) notes_file: &'a Path,
     pub(crate) agent: &'a str,
-    pub(crate) public: bool,
 }
 
 pub(crate) struct SkillRunEvidenceInput<'a> {
     pub(crate) database_id: &'a str,
     pub(crate) id: &'a str,
     pub(crate) evidence_json: &'a Path,
-    pub(crate) public: bool,
 }
 
 pub(crate) async fn with_ready_evolution_jobs(
@@ -405,6 +373,8 @@ pub(crate) async fn with_ready_evolution_jobs(
 struct SkillRunEvidence {
     #[serde(default)]
     run_id: Option<String>,
+    #[serde(default)]
+    recorded_by: Option<String>,
     #[serde(default)]
     task_id: Option<String>,
     #[serde(default)]
@@ -439,7 +409,6 @@ pub(crate) async fn record_skill_run_evidence_with_override(
         database_id,
         id,
         evidence_json,
-        public,
     } = input;
     let skill_id = SkillId::parse(id)?;
     let evidence_text = std::fs::read_to_string(evidence_json)
@@ -448,7 +417,7 @@ pub(crate) async fn record_skill_run_evidence_with_override(
         .with_context(|| format!("invalid evidence JSON: {}", evidence_json.display()))?;
     validate_outcome(evidence.task_outcome.as_deref(), "task_outcome")?;
     validate_outcome(evidence.agent_outcome.as_deref(), "agent_outcome")?;
-    let base_path = skill_base_path(&skill_id, public);
+    let base_path = skill_base_path(&skill_id);
     let skill_path = format!("{base_path}/SKILL.md");
     let manifest_path = format!("{base_path}/manifest.md");
     let skill = client
@@ -459,19 +428,17 @@ pub(crate) async fn record_skill_run_evidence_with_override(
         .read_node(database_id, &manifest_path)
         .await?
         .ok_or_else(|| anyhow!("manifest.md not found for skill: {id}"))?;
-    let run_id = run_id_override
-        .filter(|value| valid_id_segment(value))
-        .map(str::to_string)
-        .or_else(|| {
-            evidence
-                .run_id
-                .as_deref()
-                .filter(|value| valid_id_segment(value))
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| now_millis().to_string());
+    let run_id = resolve_run_id(run_id_override, evidence.run_id.as_deref())?;
+    let recorded_by = evidence.recorded_by.as_deref().unwrap_or("cli");
+    if !valid_id_segment(recorded_by) {
+        return Err(anyhow!("recorded_by must use a single path-safe name"));
+    }
     let recorded_at = now_rfc3339();
     let run_path = format!("{RUN_ROOT}/{skill_id}/{run_id}.md");
+    if client.read_node(database_id, &run_path).await?.is_some() {
+        return Err(anyhow!("run already exists: {run_path}"));
+    }
+    let evidence_block = markdown_code_block("json", &serde_json::to_string_pretty(&evidence)?);
     let content = format!(
         concat!(
             "---\n",
@@ -486,13 +453,13 @@ pub(crate) async fn record_skill_run_evidence_with_override(
             "task_outcome: {task_outcome}\n",
             "agent_outcome: {agent_outcome}\n",
             "agent: {agent}\n",
-            "recorded_by: hermes-plugin\n",
+            "recorded_by: {recorded_by}\n",
             "recorded_at: {recorded_at}\n",
             "---\n",
             "# Skill Run\n\n",
             "## Summary\n\n{summary}\n\n",
             "## Raw Evidence Excerpt\n\n{raw_evidence_excerpt}\n\n",
-            "## Evidence JSON\n\n```json\n{pretty_evidence}\n```\n"
+            "## Evidence JSON\n\n{evidence_block}\n"
         ),
         id = skill_id,
         skill_etag = yaml_quote(&skill.etag),
@@ -503,10 +470,11 @@ pub(crate) async fn record_skill_run_evidence_with_override(
         task_outcome = yaml_quote(evidence.task_outcome.as_deref().unwrap_or("")),
         agent_outcome = yaml_quote(evidence.agent_outcome.as_deref().unwrap_or("")),
         agent = yaml_quote(evidence.agent.as_deref().unwrap_or("hermes")),
+        recorded_by = recorded_by,
         recorded_at = recorded_at,
         summary = evidence.summary.as_deref().unwrap_or(""),
         raw_evidence_excerpt = evidence.raw_evidence_excerpt.as_deref().unwrap_or(""),
-        pretty_evidence = serde_json::to_string_pretty(&evidence)?,
+        evidence_block = evidence_block,
     );
     ensure_parent_folders(client, database_id, &run_path).await?;
     client
@@ -528,10 +496,9 @@ pub(crate) async fn set_skill_status(
     id: &str,
     status: SkillStatusArg,
     reason: Option<&str>,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
-    let path = format!("{}/manifest.md", skill_base_path(&skill_id, public));
+    let path = format!("{}/manifest.md", skill_base_path(&skill_id));
     let node = client
         .read_node(database_id, &path)
         .await?
@@ -569,7 +536,7 @@ pub(crate) async fn set_skill_status(
             expected_etag: Some(node.etag),
         })
         .await?;
-    Ok(json!({ "id": id, "catalog": catalog(public), "status": status.as_str(), "path": path }))
+    Ok(json!({ "id": id, "status": status.as_str(), "path": path }))
 }
 
 async fn import_github_skill(
@@ -578,7 +545,6 @@ async fn import_github_skill(
     source: &str,
     id: &str,
     reference: &str,
-    public: bool,
     prune: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
@@ -623,7 +589,7 @@ async fn import_github_skill(
             files.insert(relative_path, content);
         }
     }
-    write_skill_package(client, database_id, &skill_id, public, prune, files).await
+    write_skill_package(client, database_id, &skill_id, prune, files).await
 }
 
 pub(crate) async fn propose_improvement(
@@ -633,7 +599,6 @@ pub(crate) async fn propose_improvement(
     runs: &[String],
     summary: &str,
     diff_file: &Path,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
     for run in runs {
@@ -649,7 +614,7 @@ pub(crate) async fn propose_improvement(
     let created_at = now_rfc3339();
     let proposal_path = format!(
         "{}/improvement-proposals/{path_timestamp}.md",
-        skill_base_path(&skill_id, public)
+        skill_base_path(&skill_id)
     );
     let source_runs = runs
         .iter()
@@ -662,7 +627,8 @@ pub(crate) async fn propose_improvement(
         .collect::<Vec<_>>()
         .join("\n");
     let content = format!(
-        "---\nkind: kinic.skill_improvement_proposal\nschema_version: 1\nskill_id: {id}\nstatus: proposed\nsource_runs:\n{source_runs}\ncreated_at: {created_at}\ncreated_by: cli\n---\n# Skill Improvement Proposal\n\n## Summary\n\n{summary}\n\n## Evidence\n\n{evidence_links}\n\n## Proposed Diff\n\n```diff\n{diff}\n```\n"
+        "---\nkind: kinic.skill_improvement_proposal\nschema_version: 1\nskill_id: {id}\nstatus: proposed\nsource_runs:\n{source_runs}\ncreated_at: {created_at}\ncreated_by: cli\n---\n# Skill Improvement Proposal\n\n## Summary\n\n{summary}\n\n## Evidence\n\n{evidence_links}\n\n## Proposed Diff\n\n{}\n",
+        markdown_code_block("diff", &diff)
     );
     ensure_parent_folders(client, database_id, &proposal_path).await?;
     client
@@ -710,10 +676,9 @@ pub(crate) async fn install_skill_lockfile(
     database_id: &str,
     id: &str,
     lockfile: &Path,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
-    let base_path = skill_base_path(&skill_id, public);
+    let base_path = skill_base_path(&skill_id);
     let manifest_path = format!("{base_path}/manifest.md");
     let entry_path = format!("{base_path}/SKILL.md");
     let manifest = client
@@ -728,7 +693,6 @@ pub(crate) async fn install_skill_lockfile(
         "schema_version": 1,
         "database_id": database_id,
         "id": skill_id.to_string(),
-        "public": public,
         "manifest_path": manifest_path,
         "entry_path": entry_path,
         "manifest_etag": manifest.etag.clone(),
@@ -741,7 +705,6 @@ pub(crate) async fn install_skill_lockfile(
         .with_context(|| format!("failed to write {}", lockfile.display()))?;
     Ok(json!({
         "id": skill_id.to_string(),
-        "catalog": catalog(public),
         "lockfile": lockfile.display().to_string(),
         "manifest_path": value["manifest_path"],
         "entry_path": value["entry_path"]
@@ -791,10 +754,9 @@ pub(crate) async fn export_skill(
     database_id: &str,
     id: &str,
     out: &Path,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
-    let base_path = skill_base_path(&skill_id, public);
+    let base_path = skill_base_path(&skill_id);
     let mut exported = Vec::new();
     std::fs::create_dir_all(out).with_context(|| format!("failed to create {}", out.display()))?;
     for entry in client
@@ -831,9 +793,7 @@ pub(crate) async fn export_skill(
         return Err(anyhow!("SKILL.md not found for skill: {id}"));
     }
     exported.sort();
-    Ok(
-        json!({ "id": skill_id.to_string(), "catalog": catalog(public), "out": out.display().to_string(), "files": exported }),
-    )
+    Ok(json!({ "id": skill_id.to_string(), "out": out.display().to_string(), "files": exported }))
 }
 
 async fn snapshot_current_skill_version(
@@ -882,7 +842,6 @@ pub(crate) async fn apply_evolution_proposal(
     proposal_id: &str,
     job_id: Option<&str>,
     projection_dir: Option<&Path>,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
     if !valid_id_segment(proposal_id) {
@@ -891,7 +850,7 @@ pub(crate) async fn apply_evolution_proposal(
     if let Some(job_id) = job_id {
         validate_evolution_job_for_apply(client, database_id, job_id, &skill_id).await?;
     }
-    let base_path = skill_base_path(&skill_id, public);
+    let base_path = skill_base_path(&skill_id);
     let current_path = format!("{base_path}/SKILL.md");
     let manifest_path = format!("{base_path}/manifest.md");
     let candidate_path = format!("{base_path}/proposals/{proposal_id}/candidate/SKILL.md");
@@ -1014,7 +973,6 @@ pub(crate) async fn rollback_skill_version(
     id: &str,
     version_id: &str,
     projection_dir: Option<&Path>,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
     if !valid_version_id(version_id) {
@@ -1022,7 +980,7 @@ pub(crate) async fn rollback_skill_version(
             "version id must be a path-safe version directory name"
         ));
     }
-    let base_path = skill_base_path(&skill_id, public);
+    let base_path = skill_base_path(&skill_id);
     let current_path = format!("{base_path}/SKILL.md");
     let manifest_path = format!("{base_path}/manifest.md");
     let version_base = format!("{base_path}/versions/{version_id}");
@@ -1087,10 +1045,9 @@ pub(crate) async fn skill_history(
     client: &impl VfsApi,
     database_id: &str,
     id: &str,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
-    let base_path = skill_base_path(&skill_id, public);
+    let base_path = skill_base_path(&skill_id);
     let prefixes = [
         format!("{base_path}/versions"),
         format!("{base_path}/proposals"),
@@ -1153,11 +1110,10 @@ pub(crate) async fn export_skill_github(
     target: &str,
     branch: &str,
     message: &str,
-    public: bool,
 ) -> Result<serde_json::Value> {
     let skill_id = SkillId::parse(id)?;
     let (repo, target_prefix) = parse_github_export_target(target)?;
-    let files = github_export_files(client, database_id, &skill_id, public).await?;
+    let files = github_export_files(client, database_id, &skill_id).await?;
     if files.is_empty() {
         return Err(anyhow!("no exportable files found for skill: {id}"));
     }
@@ -1839,11 +1795,41 @@ fn validate_outcome(value: Option<&str>, field: &str) -> Result<()> {
     }
 }
 
+fn resolve_run_id(run_id_override: Option<&str>, evidence_run_id: Option<&str>) -> Result<String> {
+    if let Some(value) = run_id_override
+        && !valid_id_segment(value)
+    {
+        return Err(anyhow!("run_id must use a single path-safe name"));
+    }
+    if let Some(value) = evidence_run_id
+        && !valid_id_segment(value)
+    {
+        return Err(anyhow!("run_id must use a single path-safe name"));
+    }
+    Ok(run_id_override
+        .or(evidence_run_id)
+        .map(str::to_string)
+        .unwrap_or_else(|| now_millis().to_string()))
+}
+
 fn valid_id_segment(value: &str) -> bool {
     !value.is_empty()
         && value
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn markdown_code_block(info: &str, content: &str) -> String {
+    let fence = markdown_fence_delimiter(content);
+    format!("{fence}{info}\n{content}\n{fence}")
+}
+
+fn markdown_fence_delimiter(content: &str) -> String {
+    let mut fence = "```".to_string();
+    while content.contains(&fence) {
+        fence.push('`');
+    }
+    fence
 }
 
 fn yaml_quote(value: &str) -> String {
@@ -1876,9 +1862,8 @@ async fn github_export_files(
     client: &impl VfsApi,
     database_id: &str,
     skill_id: &SkillId,
-    public: bool,
 ) -> Result<BTreeMap<String, String>> {
-    let base_path = skill_base_path(skill_id, public);
+    let base_path = skill_base_path(skill_id);
     let mut files = BTreeMap::new();
     for entry in client
         .list_nodes(ListNodesRequest {

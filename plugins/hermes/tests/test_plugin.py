@@ -16,7 +16,9 @@ from unittest import mock
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOT = PLUGIN_ROOT.parent / "runtime"
 sys.path.insert(0, str(PLUGIN_ROOT))
+sys.path.insert(0, str(RUNTIME_ROOT))
 
 
 class HermesKinicPluginTests(unittest.TestCase):
@@ -66,14 +68,57 @@ class HermesKinicPluginTests(unittest.TestCase):
         from kinic_agent_runtime import cli as runtime_cli
 
         completed = subprocess.CompletedProcess(["kinic-vfs-cli"], 0, stdout="{}", stderr="")
+        payloads: list[dict] = []
+
+        def fake_run(command, **_kwargs):
+            evidence_path = Path(command[command.index("--evidence-json") + 1])
+            payloads.append(json.loads(evidence_path.read_text()))
+            return completed
+
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.dict(os.environ, {"KINIC_HOME": tmp}, clear=False), mock.patch.object(runtime_cli.subprocess, "run", return_value=completed) as run:
+            with mock.patch.dict(os.environ, {"KINIC_HOME": tmp}, clear=False), mock.patch.object(runtime_cli.subprocess, "run", side_effect=fake_run) as run:
                 client = client_module.KinicClient(cli=sys.executable)
-                self.assertTrue(client.record_run("legal-review", {"summary": "x"}))
+                self.assertTrue(client.record_run("legal-review", {"summary": "x", "recorded_by": "wrong-plugin"}))
 
         command = run.call_args.args[0]
         self.assertEqual(command[0], sys.executable)
         self.assertIn("--create-ready-jobs", command)
+        self.assertEqual(payloads[0]["recorded_by"], "hermes-plugin")
+
+    def test_record_run_pending_forces_hermes_recorded_by(self) -> None:
+        from kinic_hermes import client as client_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"KINIC_HOME": tmp}, clear=False):
+                client = client_module.KinicClient(cli="/missing/kinic-vfs-cli")
+                self.assertFalse(client.record_run("legal-review", {"summary": "x", "recorded_by": "wrong-plugin"}))
+                pending = list((Path(tmp) / "pending-runs").glob("*.json"))
+
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(json.loads(pending[0].read_text())["recorded_by"], "hermes-plugin")
+
+    def test_runtime_record_run_file_injects_recorded_by_without_mutating_source(self) -> None:
+        from kinic_agent_runtime import cli as runtime_cli
+        from kinic_agent_runtime import evidence as runtime_evidence
+
+        completed = subprocess.CompletedProcess(["kinic-vfs-cli"], 0, stdout="{}", stderr="")
+        payloads: list[dict] = []
+
+        def fake_run(command, **_kwargs):
+            evidence_path = Path(command[command.index("--evidence-json") + 1])
+            payloads.append(json.loads(evidence_path.read_text()))
+            return completed
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "evidence.json"
+            source.write_text(json.dumps({"summary": "x", "recorded_by": "wrong-plugin"}))
+            with mock.patch.object(runtime_cli.subprocess, "run", side_effect=fake_run):
+                runtime_evidence.record_run_file("kinic-vfs-cli", "legal-review", source, "codex-plugin")
+                runtime_evidence.record_run_file("kinic-vfs-cli", "legal-review", source, "claude-code-plugin")
+
+            self.assertEqual(json.loads(source.read_text()), {"summary": "x", "recorded_by": "wrong-plugin"})
+
+        self.assertEqual([payload["recorded_by"] for payload in payloads], ["codex-plugin", "claude-code-plugin"])
 
     def test_allow_non_ii_env_adds_cli_flag(self) -> None:
         from kinic_hermes import client as client_module

@@ -162,12 +162,11 @@ mod tests {
     }
 
     #[test]
-    fn public_skill_install_can_use_anonymous() {
+    fn skill_install_uses_identity() {
         let command = Command::Skill {
             command: SkillCommand::Install {
                 id: "review".to_string(),
                 lockfile: "skill.lock.json".into(),
-                public: true,
                 json: false,
             },
         };
@@ -175,7 +174,7 @@ mod tests {
         assert_eq!(
             resolve_client_identity_mode(&command, IdentityModeArg::Auto, Some(true), Some(false))
                 .unwrap(),
-            ClientIdentityMode::Anonymous
+            ClientIdentityMode::Identity
         );
     }
 

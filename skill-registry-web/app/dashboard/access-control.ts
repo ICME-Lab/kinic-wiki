@@ -1,4 +1,4 @@
-// Where: wikibrowser/app/dashboard/access-control.ts
+// Where: skill-registry-web/app/dashboard/access-control.ts
 // What: Shared dashboard ACL constants and helpers.
 // Why: Permission UI components need one role parser and one busy-state shape.
 

@@ -9,11 +9,11 @@ const diff = readFileSync(new URL("../lib/skill-registry-diff.ts", import.meta.u
 const operations = readFileSync(new URL("../lib/skill-registry-operations.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
-assert.equal(packageJson.name, "kinic-hermes-web");
+assert.equal(packageJson.name, "kinic-skill-registry-web");
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /loadEvolutionJobs/);
 assert.match(client, /job\.status === "queued" \|\| job\.status === "running"/);
-assert.match(panels, /Skill Evolution Dashboard/);
+assert.match(panels, /Skill Registry Dashboard/);
 assert.match(panels, /EvolutionJobsPanel/);
 assert.match(panels, /Current SKILL\.md/);
 assert.match(details, /\/Wiki\/skill-evolution-jobs/);
@@ -31,4 +31,4 @@ assert.match(operations, /kinic.skill_evolution_proposal_status/);
 assert.doesNotMatch(client, /from ["']..\/..\/..\/wikibrowser/);
 assert.doesNotMatch(panels, /from ["']..\/..\/..\/wikibrowser/);
 
-console.log("Hermes web checks OK");
+console.log("Skill Registry web checks OK");

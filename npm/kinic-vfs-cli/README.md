@@ -10,17 +10,12 @@ kinic-vfs-cli --help
 ```
 
 The npm package downloads the matching release binary from GitHub Releases and verifies its SHA-256 checksum.
+Canonical CLI guide: https://wiki.kinic.xyz/cli
 
 Supported platforms:
 
 - macOS arm64
 - Linux x64
-
-For other platforms, build from source:
-
-```bash
-cargo install --git https://github.com/ICME-Lab/kinic-wiki.git --package kinic-vfs-cli --bin kinic-vfs-cli --locked
-```
 
 ## Codex Plugin
 

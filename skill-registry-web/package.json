@@ -1,12 +1,12 @@
 {
-  "name": "kinic-hermes-web",
+  "name": "kinic-skill-registry-web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build && node scripts/normalize-typegen-tsconfig.mjs",
     "lint": "eslint .",
-    "test": "node scripts/check-hermes-web.mjs",
+    "test": "node scripts/check-skill-registry-web.mjs",
     "typecheck": "next typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
     "normalize:typegen": "node scripts/normalize-typegen-tsconfig.mjs"
   },

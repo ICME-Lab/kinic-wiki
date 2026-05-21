@@ -29,8 +29,8 @@ export function SkillRegistryHeader({
   return (
     <header className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <p className="text-sm text-muted">Kinic Hermes</p>
-        <h1 className="mt-2 text-2xl font-semibold text-ink sm:text-3xl">Skill Evolution Dashboard</h1>
+        <p className="text-sm text-muted">Kinic Skill Registry</p>
+        <h1 className="mt-2 text-2xl font-semibold text-ink sm:text-3xl">Skill Registry Dashboard</h1>
         <p className="mt-1 max-w-full truncate font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">

@@ -9,6 +9,8 @@ const dashboardActionButton = readFileSync(new URL("../app/dashboard/action-butt
 const dashboardAccessControl = readFileSync(new URL("../app/dashboard/access-control.ts", import.meta.url), "utf8");
 const dashboardMemberTable = readFileSync(new URL("../app/dashboard/member-table.tsx", import.meta.url), "utf8");
 const createDatabaseDialog = readFileSync(new URL("../app/create-database-dialog.tsx", import.meta.url), "utf8");
+const cliPage = readFileSync(new URL("../app/cli/page.tsx", import.meta.url), "utf8");
+const cliGuideBlock = readFileSync(new URL("../app/cli/cli-guide-block.tsx", import.meta.url), "utf8");
 const homeUi = readFileSync(new URL("../app/home-ui.tsx", import.meta.url), "utf8");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const wikiLayout = readFileSync(new URL("../app/[databaseId]/layout.tsx", import.meta.url), "utf8");
@@ -23,6 +25,18 @@ const wikiBrowser = readFileSync(new URL("../components/wiki-browser.tsx", impor
 const wranglerConfig = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 
 assert.match(homeUi, /href=\{`\/dashboard\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
+assert.match(homePage, /href="\/cli"/);
+assert.match(cliPage, /npm install -g kinic-vfs-cli/);
+assert.match(cliPage, /VFS_DATABASE_ID=<database-id>/);
+assert.match(cliPage, /--expected-etag <etag>/);
+assert.match(cliPage, /skill find/);
+assert.match(cliPage, /--identity-mode anonymous/);
+assert.match(cliPage, /const installCommands = \["npm install -g kinic-vfs-cli"\]/);
+assert.match(cliPage, /const checkCommands = \["kinic-vfs-cli --version", "kinic-vfs-cli --help"\]/);
+assert.match(cliPage, /title="First Check"/);
+assert.match(cliGuideBlock, /navigator\.clipboard\.writeText\(copyValue \?\? commandText\)/);
+assert.match(cliGuideBlock, /Copy .* commands/);
+assert.match(cliGuideBlock, /absolute right-2 top-2/);
 assert.match(dashboardIndex, /<DashboardDatabaseClient databaseId="" \/>/);
 assert.match(dashboardRoute, /params: Promise<\{ databaseId: string \}>/);
 assert.match(dashboardRoute, /<DashboardDatabaseClient databaseId=\{databaseId\} \/>/);

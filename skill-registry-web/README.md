@@ -1,6 +1,6 @@
-# Kinic Hermes Web
+# Kinic Skill Registry Web
 
-Hermes skill evolution dashboard.
+Skill Registry dashboard for skill status, run evidence, proposals, jobs, and permissions.
 
 ## Local
 

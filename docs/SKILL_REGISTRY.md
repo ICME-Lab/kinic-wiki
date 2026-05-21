@@ -21,7 +21,7 @@ current `SKILL.md`.
 
 Access control is database-level.
 Registry nodes follow the same `Owner`, `Writer`, and `Reader` roles as every other node in the database.
-Use separate databases when different skill catalogs need different membership.
+Use separate databases when different skill sets need different membership.
 
 ## Why Not Just A Skill Store
 
@@ -205,7 +205,7 @@ Run evidence under `/Sources/skill-runs/...` is the product differentiator.
 It records what happened when a skill was used, including skill and manifest hashes, so teams can promote useful skills and retire weak ones.
 `skill find` and `skill inspect` include `run_summary` with total runs, success/partial/fail counts, last use, and last outcome.
 Old or invalid run evidence is ignored by `run_summary` but still appears in `recent_runs`.
-`recorded_by: cli` is a v1 placeholder; principal-backed recording is deferred.
+Evidence JSON can set `recorded_by` to the caller recorder name, such as `hermes-plugin`, `codex-plugin`, or `claude-code-plugin`; direct CLI evidence defaults to `cli`.
 Path timestamps are millis IDs; frontmatter `*_at` timestamps are RFC3339.
 
 Hermes keeps the Hermes-specific hook route:
@@ -216,6 +216,7 @@ kinic-vfs-cli hermes pull
 ```
 
 `hermes setup` installs a self-contained plugin under `$HERMES_HOME/plugins/kinic`, enables `kinic` in `$HERMES_HOME/config.yaml`, and keeps skill projection under `$KINIC_HOME/hermes-current/skills`.
+The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
 `hermes pull` prunes stale managed skill directories and deleted exported files while leaving unmanaged files directly under the projection root alone.
 Then run this inside Hermes:
 
@@ -237,6 +238,7 @@ kinic-vfs-cli codex setup
 ```
 
 The command installs a self-contained plugin under `~/.codex/plugins/kinic-skill-recorder` and updates `~/.agents/plugins/marketplace.json` while preserving unrelated entries.
+The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
 The Codex marketplace entry uses `./.codex/plugins/kinic-skill-recorder`, resolved from the personal marketplace root (`$HOME`), not from `~/.agents/plugins`.
 For repo development only, `scripts/install-codex-skill-recorder.sh` runs `codex setup` from the local build or source tree.
 After a Codex skill materially affects a task, use `kinic-record-skill-run`; it writes an evidence JSON file and calls:
@@ -263,15 +265,16 @@ kinic-vfs-cli claude setup
 ```
 
 The command installs a local Claude Code marketplace under `~/.claude/plugins/kinic`, copies a self-contained plugin into that marketplace, and enables `kinic-skill-recorder@kinic` in `~/.claude/settings.json`.
+The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
 It passes `generator: claude-code-plugin` and `llm_route: claude-code-skill` into proposal metrics.
 
 Set `KINIC_VFS_CLI_ALLOW_NON_II=1` only for explicit non-II operator workflows.
 
-Hermes evolution UI lives outside the public Browser:
+Skill Registry Web lives outside the public Browser:
 
 ```bash
-pnpm --dir plugins/hermes/web install
-pnpm --dir plugins/hermes/web dev
+pnpm --dir skill-registry-web install
+pnpm --dir skill-registry-web dev
 ```
 
 Open `/skills/<database-id>` in that app to inspect evolution jobs, proposal candidates, run evidence, and database permissions. Browser `/skills/<database-id>` remains the general Skill Registry UI.
@@ -301,6 +304,9 @@ kinic-vfs-cli skill evolve-jobs complete <job-id> --status done --summary "propo
 `candidate_score_gate`, `semantic_drift_gate`, and `permission_gate` values. It
 also refuses stale proposals whose `base_etag` no longer matches current
 `SKILL.md`.
+In v1, `apply-proposal --projection-dir` syncs only the applied `SKILL.md`.
+Manifest and sidecar updates are outside proposal apply scope; use `skill upsert`
+or `skill export` when the package file set changes.
 
 The dashboard reads proposal records from:
 
@@ -419,8 +425,8 @@ Run the standard checks after changing registry behavior:
 cargo test --workspace
 pnpm --dir wikibrowser test
 pnpm --dir wikibrowser typecheck
-pnpm --dir plugins/hermes/web test
-pnpm --dir plugins/hermes/web typecheck
-pnpm --dir plugins/hermes/web build
+pnpm --dir skill-registry-web test
+pnpm --dir skill-registry-web typecheck
+pnpm --dir skill-registry-web build
 cargo check -p kinic-vfs-cli --bin kinic-vfs-cli
 ```

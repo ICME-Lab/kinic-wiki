@@ -1,6 +1,6 @@
 "use client";
 
-// Where: wikibrowser/app/dashboard/member-table.tsx
+// Where: skill-registry-web/app/dashboard/member-table.tsx
 // What: Database member role table with owner edit mode and public read-only mode.
 // Why: Public dashboards should expose access state without granting management controls.
 

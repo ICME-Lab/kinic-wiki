@@ -147,7 +147,6 @@ async fn flush_pending_runs(client: &impl VfsApi, database_id: &str) -> Result<s
                     database_id,
                     id: &skill_id,
                     evidence_json: &entry,
-                    public: false,
                 },
             )
             .await
@@ -281,7 +280,7 @@ async fn sync_projection_skill(
 ) -> Result<serde_json::Value> {
     let target = projection_dir.join(skill);
     let temp = unique_projection_work_dir(projection_dir, "tmp")?;
-    let exported = match export_skill(client, database_id, skill, &temp, false).await {
+    let exported = match export_skill(client, database_id, skill, &temp).await {
         Ok(mut value) => {
             replace_projection_dir(&temp, &target)?;
             if let Some(object) = value.as_object_mut() {
