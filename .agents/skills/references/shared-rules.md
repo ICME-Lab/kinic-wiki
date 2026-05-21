@@ -37,6 +37,13 @@ A draft is ready for push when:
 - the page does not obviously duplicate an existing page
 - the human can understand the page directly in Obsidian
 
+## Vault Operations
+
+- keep paths and note names stable
+- avoid breaking backlinks through careless renames
+- prefer explicit note operations over hidden background rewrites
+- do not invent parallel local stores for managed wiki content
+
 ## Optional Guidance
 
 External tools and imported ideas are optional helpers, not workflow authorities.

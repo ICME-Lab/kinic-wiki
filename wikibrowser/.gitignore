@@ -2,6 +2,8 @@
 .open-next/
 .wrangler/
 out/
+test-results/
+playwright-report/
 node_modules/
 tsconfig.tsbuildinfo
 .env.local

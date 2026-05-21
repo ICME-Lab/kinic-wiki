@@ -8,7 +8,7 @@ use anyhow::{Result, anyhow};
 use candid::Encode;
 use serde::Serialize;
 use vfs_client::{CanisterVfsClient, VfsApi};
-use vfs_types::{AppendNodeRequest, NodeKind, WriteNodeRequest};
+use vfs_types::{AppendNodeRequest, MkdirNodeRequest, NodeKind, WriteNodeRequest};
 
 use crate::vfs_bench::common::{
     CallMetric, LatencyOperation, MeasurementMode, SetupStats, io_stats, latency_stats,
@@ -127,6 +127,7 @@ where
     C: VfsApi + Send + Sync + 'static,
 {
     let database_id = args.database_id.clone();
+    ensure_parent_folders(client, &database_id, &latency_path(args)).await?;
     client
         .write_node(WriteNodeRequest {
             database_id: database_id.clone(),
@@ -137,6 +138,28 @@ where
             expected_etag: None,
         })
         .await?;
+    Ok(())
+}
+
+async fn ensure_parent_folders<C>(client: &Arc<C>, database_id: &str, path: &str) -> Result<()>
+where
+    C: VfsApi + Send + Sync + 'static,
+{
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let mut current = String::new();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        current.push('/');
+        current.push_str(segment);
+        client
+            .mkdir_node(MkdirNodeRequest {
+                database_id: database_id.to_string(),
+                path: current.clone(),
+            })
+            .await?;
+    }
     Ok(())
 }
 
@@ -323,8 +346,11 @@ mod tests {
         async fn move_node(&self, _request: MoveNodeRequest) -> Result<MoveNodeResult> {
             unreachable!()
         }
-        async fn mkdir_node(&self, _request: MkdirNodeRequest) -> Result<MkdirNodeResult> {
-            unreachable!()
+        async fn mkdir_node(&self, request: MkdirNodeRequest) -> Result<MkdirNodeResult> {
+            Ok(MkdirNodeResult {
+                path: request.path,
+                created: true,
+            })
         }
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
             unreachable!()

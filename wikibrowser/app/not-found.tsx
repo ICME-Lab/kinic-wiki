@@ -10,7 +10,7 @@ export default function NotFoundPage() {
           Open a wiki browser route with <code>/&lt;database-id&gt;/Wiki</code>, or return to the start page.
         </p>
         <div className="mt-6 flex flex-wrap gap-2 text-sm">
-          <Link className="rounded-lg bg-accent px-3 py-2 text-white no-underline" href="/">
+          <Link className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent" href="/">
             Open start page
           </Link>
           <span className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">

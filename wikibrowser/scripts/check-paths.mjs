@@ -26,6 +26,10 @@ assert.equal(
   "/alpha/Wiki/space%20name.md?view=raw"
 );
 assert.equal(
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/space name.md", "edit"),
+  "/alpha/Wiki/space%20name.md?view=edit"
+);
+assert.equal(
   hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "recent", undefined, undefined, "anonymous"),
   "/alpha/Wiki?tab=recent&read=anonymous"
 );

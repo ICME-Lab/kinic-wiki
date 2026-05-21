@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { Share2 } from "lucide-react";
 import type { FormEvent } from "react";
 import { useState } from "react";
 import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRoleFromValue, isBusyGrant, isBusyRevoke, principalDisplayName, type BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 import { MemberTable } from "./member-table";
 import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
   title: string;
@@ -43,36 +45,46 @@ export function SummaryPanel({
   principal: string;
   publicReadable: boolean;
 }) {
-  const openHref = publicReadable ? `/${encodeURIComponent(databaseId)}/Wiki?read=anonymous` : `/${encodeURIComponent(databaseId)}/Wiki`;
+  const openHref = publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
-      <Field label="Database" value={databaseId} />
-      <Field label="Name" value={database?.displayName ?? "-"} />
+      <Field label="Database" value={database?.name ?? databaseId} />
+      <Field label="Database ID" value={databaseId} />
       <Field label="Role" value={database?.role ?? "-"} />
       <Field label="Status" value={database?.status ?? "-"} />
       <Field label="Logical size" value={database ? formatBytes(database.logicalSizeBytes) : "-"} />
-      <Field label="Balance" value={database ? billingLabel(database) : "-"} />
       <Link className="text-accent no-underline hover:underline" href={openHref}>
         Open
       </Link>
+      {publicReadable ? (
+        <a
+          aria-label={`Share ${database?.name ?? databaseId} on X`}
+          className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"
+          href={xShareDatabaseHref({ databaseId, databaseName: database?.name ?? databaseId })}
+          rel="noreferrer"
+          target="_blank"
+        >
+          <Share2 aria-hidden size={14} />
+          <span>Share</span>
+        </a>
+      ) : null}
     </section>
   );
-}
-
-function billingLabel(database: DatabaseSummary): string {
-  return database.billingSuspendedAtMs ? `${database.billingBalanceE8s} e8s / suspended` : `${database.billingBalanceE8s} e8s`;
 }
 
 export function OwnerPanel(props: {
   busy: boolean;
   busyAction: BusyAction | null;
+  databaseName: string;
   members: DatabaseMember[];
   principal: string;
   onGrant: (principalText: string, role: DatabaseRole) => void;
+  onRename: (name: string) => void;
   onRevoke: (principalText: string) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAclAction | null>(null);
+  const [databaseName, setDatabaseName] = useState(props.databaseName);
   const publicMember = props.members.find((member) => member.principal === ANONYMOUS_PRINCIPAL);
   const publicEnabled = Boolean(publicMember);
   const publicBusy = isBusyGrant(props.busyAction, ANONYMOUS_PRINCIPAL, "reader") || isBusyRevoke(props.busyAction, ANONYMOUS_PRINCIPAL);
@@ -185,16 +197,61 @@ export function OwnerPanel(props: {
     }
     setPendingAction(null);
   }
+  function submitRename(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextName = databaseName.trim();
+    if (!nextName || nextName === props.databaseName || props.busy) return;
+    props.onRename(nextName);
+  }
   return (
     <section className="rounded-lg border border-line bg-paper shadow-sm">
       <div className="grid gap-3 border-b border-line px-4 py-4">
         <h2 className="text-lg font-semibold text-ink">Members</h2>
+        <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={submitRename}>
+          <label className="grid flex-1 gap-1 text-sm">
+            <span className="text-xs uppercase tracking-[0.12em] text-muted">Database name</span>
+            <input
+              className="rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent"
+              maxLength={80}
+              type="text"
+              value={databaseName}
+              onChange={(event) => setDatabaseName(event.target.value)}
+            />
+          </label>
+          <ActionButton disabled={props.busy || databaseName.trim() === "" || databaseName.trim() === props.databaseName} loading={props.busyAction?.kind === "rename"} loadingLabel="Saving..." type="submit" variant="secondary">
+            Rename
+          </ActionButton>
+        </form>
         <AclQuickAction label="Public" enabled={publicEnabled} busy={props.busy} actionBusy={publicBusy} enabledLabel="Disable public" disabledLabel="Enable public" onDisable={() => publicMember && requestRevoke(publicMember)} onEnable={() => requestGrant(ANONYMOUS_PRINCIPAL, "reader")} />
         <AclQuickAction label={LLM_WRITER_LABEL} enabled={llmWriterEnabled} busy={props.busy} actionBusy={llmWriterBusy} enabledLabel="Disable LLM writer" disabledLabel={llmWriterButtonLabel} onDisable={() => llmWriterMember && requestRevoke(llmWriterMember)} onEnable={() => requestGrant(LLM_WRITER_PRINCIPAL, "writer")} />
+        <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-muted">
+          URL ingest trigger sessions are valid for 30 minutes. Revoking writer access does not immediately invalidate an already issued session ticket before it expires.
+        </p>
       </div>
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
+    </section>
+  );
+}
+
+export function ReadonlyMembersPanel(props: { memberError: string | null; members: DatabaseMember[]; principal: string }) {
+  return (
+    <section className="rounded-lg border border-line bg-paper shadow-sm">
+      <div className="grid gap-2 border-b border-line px-4 py-4">
+        <h2 className="text-lg font-semibold text-ink">Members</h2>
+        <p className="text-sm leading-6 text-muted">Public database access is read-only for this principal.</p>
+      </div>
+      {props.memberError ? <div className="border-b border-line px-4 py-3 text-sm text-red-900">{props.memberError}</div> : null}
+      <MemberTable
+        busy={false}
+        busyAction={null}
+        members={props.members}
+        principal={props.principal}
+        readOnly
+        onRevoke={() => {}}
+        onRoleChange={() => {}}
+      />
     </section>
   );
 }

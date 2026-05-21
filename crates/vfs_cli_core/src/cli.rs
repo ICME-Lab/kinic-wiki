@@ -8,7 +8,7 @@ use vfs_types::{DatabaseRole, GlobNodeType, NodeKind, SearchPreviewMode};
 pub const DEFAULT_VFS_ROOT_PATH: &str = "/";
 
 #[derive(Parser, Debug)]
-#[command(name = "vfs-cli")]
+#[command(name = "kinic-vfs-cli")]
 #[command(about = "Generic CLI for the Kinic VFS canister surface")]
 pub struct VfsCli {
     #[command(flatten)]
@@ -20,14 +20,38 @@ pub struct VfsCli {
 
 #[derive(Args, Debug, Clone)]
 pub struct ConnectionArgs {
-    #[arg(long, help = "Use the local replica host http://127.0.0.1:8000")]
+    #[arg(
+        long,
+        conflicts_with = "replica_host",
+        help = "Use the local replica host http://127.0.0.1:8000"
+    )]
     pub local: bool,
+
+    #[arg(long, help = "Override replica host from config")]
+    pub replica_host: Option<String>,
 
     #[arg(long, help = "Override VFS_CANISTER_ID or user config")]
     pub canister_id: Option<String>,
 
-    #[arg(long, help = "Target database id for DB-backed VFS operations")]
+    #[arg(
+        long,
+        help = "Target DB-backed operations; alternatively set VFS_DATABASE_ID or run database link <database-id>"
+    )]
     pub database_id: Option<String>,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = IdentityModeArg::Auto,
+        help = "Canister identity mode: auto, anonymous, or identity"
+    )]
+    pub identity_mode: IdentityModeArg,
+
+    #[arg(
+        long,
+        help = "Allow authenticated calls with a non-Internet Identity icp-cli identity"
+    )]
+    pub allow_non_ii_identity: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -39,6 +63,10 @@ pub enum VfsCommand {
     ReadNode {
         #[arg(long)]
         path: String,
+        #[arg(long)]
+        metadata_only: bool,
+        #[arg(long)]
+        fields: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -106,6 +134,8 @@ pub enum VfsCommand {
         #[arg(long)]
         expected_etag: Option<String>,
         #[arg(long)]
+        expected_folder_index_etag: Option<String>,
+        #[arg(long)]
         json: bool,
     },
     DeleteTree {
@@ -144,7 +174,7 @@ pub enum VfsCommand {
     RecentNodes {
         #[arg(long, help = "Maximum 100; 0 is treated as 1 by the canister")]
         limit: u32,
-        #[arg(long, default_value = DEFAULT_VFS_ROOT_PATH)]
+        #[arg(long, alias = "prefix", default_value = DEFAULT_VFS_ROOT_PATH)]
         path: String,
         #[arg(long)]
         json: bool,
@@ -201,6 +231,7 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(alias = "search-nodes")]
     SearchRemote {
         query_text: String,
         #[arg(long, default_value = DEFAULT_VFS_ROOT_PATH)]
@@ -227,75 +258,72 @@ pub enum VfsCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
-    Create {
-        #[arg(long)]
-        display_name: String,
-        #[arg(long)]
-        initial_deposit_e8s: u64,
-    },
+    #[command(about = "Create a database and print its generated database id")]
+    Create { name: String },
+    #[command(about = "Rename one database")]
+    Rename { database_id: String, name: String },
+    #[command(about = "List databases attached to the current identity")]
     List {
         #[arg(long)]
         json: bool,
     },
-    Link {
-        database_id: String,
-    },
+    #[command(about = "Save a workspace database link so commands can omit --database-id")]
+    Link { database_id: String },
+    #[command(about = "Show the currently linked workspace database")]
     Current {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Remove the workspace database link")]
     Unlink,
+    #[command(about = "Grant owner, writer, or reader access to a principal")]
     Grant {
         database_id: String,
         principal: String,
         #[arg(value_enum)]
         role: DatabaseRoleArg,
     },
+    #[command(about = "Grant the current identity owner, writer, or reader access")]
+    GrantCurrentIdentity {
+        database_id: String,
+        #[arg(value_enum)]
+        role: DatabaseRoleArg,
+    },
+    #[command(about = "Revoke database access from a principal")]
     Revoke {
         database_id: String,
         principal: String,
     },
+    #[command(about = "List database members and roles")]
     Members {
         database_id: String,
         #[arg(long)]
         json: bool,
     },
-    Rename {
+    #[command(about = "Export one database archive snapshot")]
+    ArchiveExport {
         database_id: String,
-        display_name: String,
-    },
-    TopUpPrincipal {
-        amount_e8s: u64,
-    },
-    WithdrawPrincipal {
-        amount_e8s: u64,
-        to_principal: String,
-    },
-    PrincipalBilling {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value_t = 1_048_576)]
+        chunk_size: u32,
         #[arg(long)]
         json: bool,
     },
-    TopUp {
-        database_id: String,
-        amount_e8s: u64,
-    },
-    Withdraw {
-        database_id: String,
-        amount_e8s: u64,
-    },
-    BillingEntries {
+    #[command(about = "Restore one archived or deleted database from a snapshot")]
+    ArchiveRestore {
         database_id: String,
         #[arg(long)]
-        json: bool,
-        #[arg(long)]
-        cursor: Option<u64>,
-        #[arg(long, default_value_t = 100)]
-        limit: u32,
-    },
-    BillingConfig {
+        input: PathBuf,
+        #[arg(long, default_value_t = 1_048_576)]
+        chunk_size: u32,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Cancel an interrupted archive export")]
+    ArchiveCancel { database_id: String },
+    #[command(about = "Cancel an interrupted archive restore")]
+    RestoreCancel { database_id: String },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +351,13 @@ pub enum DatabaseRoleArg {
     Owner,
     Writer,
     Reader,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityModeArg {
+    Auto,
+    Anonymous,
+    Identity,
 }
 
 impl NodeKindArg {

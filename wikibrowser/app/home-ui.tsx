@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { Share2 } from "lucide-react";
 import type { DatabaseSummary } from "@/lib/types";
+import { publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 export type DatabaseRow = DatabaseSummary & {
   member: boolean;
@@ -26,7 +28,7 @@ export function AuthControls({
   if (!principal) {
     return (
       <button
-        className="rounded-lg border border-accent bg-accent px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
         disabled={!authReady}
         data-tid="login-button"
         type="button"
@@ -112,66 +114,132 @@ function DatabaseSection({
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
         </div>
       ) : null}
-      <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-left text-sm">
-        <thead className="bg-white/70 text-xs uppercase tracking-[0.12em] text-muted">
-          <tr>
-            <th className="px-4 py-3 font-medium">Database</th>
-            <th className="px-4 py-3 font-medium">Role</th>
-            <th className="px-4 py-3 font-medium">Status</th>
-            <th className="px-4 py-3 font-medium">Logical size</th>
-            <th className="px-4 py-3 font-medium">Archive</th>
-            <th className="px-4 py-3 font-medium">Open</th>
-            {mode === "member" ? <th className="px-4 py-3 font-medium">Skills</th> : null}
-            {mode === "member" ? <th className="px-4 py-3 font-medium">Manage</th> : null}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((database) => (
-            <tr key={database.databaseId} className="border-t border-line">
-              <td className="px-4 py-3">
-                <div className="flex min-w-[180px] flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-ink">{database.displayName}</span>
-                  <span className="font-mono text-xs text-muted">{database.databaseId}</span>
-                  {mode === "member" && database.publicReadable ? <span className="rounded border border-line bg-white px-1.5 py-0.5 text-[11px] font-medium text-muted">Public</span> : null}
-                </div>
-              </td>
-              <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
-              <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
-              <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)} / {database.billingBalanceE8s} e8s</td>
-              <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
-              <td className="px-4 py-3">
-                <div className="flex flex-wrap gap-2">
-                  <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-                    Open
-                  </Link>
-                  {mode === "member" && database.publicReadable ? (
-                    <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
-                      Open public
-                    </Link>
-                  ) : null}
-                </div>
-              </td>
-              {mode === "member" ? (
+      <div className="grid gap-3 p-3 sm:hidden">
+        {rows.map((database) => (
+          <DatabaseMobileCard key={database.databaseId} database={database} mode={mode} />
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto sm:block">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead className="bg-white/70 text-xs uppercase tracking-[0.12em] text-muted">
+            <tr>
+              <th className="px-4 py-3 font-medium">Database</th>
+              <th className="px-4 py-3 font-medium">Role</th>
+              <th className="px-4 py-3 font-medium">Status</th>
+              <th className="px-4 py-3 font-medium">Logical size</th>
+              <th className="px-4 py-3 font-medium">Archive</th>
+              <th className="px-4 py-3 font-medium">Open</th>
+              <th className="px-4 py-3 font-medium">Share</th>
+              {mode === "member" ? <th className="px-4 py-3 font-medium">Skills</th> : null}
+              <th className="px-4 py-3 font-medium">Access</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((database) => (
+              <tr key={database.databaseId} className="border-t border-line">
                 <td className="px-4 py-3">
-                  <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
-                    Registry
-                  </Link>
+                  <div className="flex min-w-[180px] flex-wrap items-center gap-2">
+                    <span className="font-semibold text-ink">{database.name}</span>
+                    <span className="font-mono text-[11px] text-muted">{database.databaseId}</span>
+                    {mode === "member" && database.publicReadable ? <span className="rounded border border-line bg-white px-1.5 py-0.5 text-[11px] font-medium text-muted">Public</span> : null}
+                  </div>
                 </td>
-              ) : null}
-              {mode === "member" ? (
+                <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
+                <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
+                <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
+                <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+                      Open
+                    </Link>
+                    {mode === "member" && database.publicReadable ? (
+                      <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
+                        Open public
+                      </Link>
+                    ) : null}
+                  </div>
+                </td>
+                <td className="px-4 py-3">{database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
+                {mode === "member" ? (
+                  <td className="px-4 py-3">
+                    <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
+                      Registry
+                    </Link>
+                  </td>
+                ) : null}
                 <td className="px-4 py-3">
                   <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
-                    Manage
+                    Access
                   </Link>
                 </td>
-              ) : null}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </section>
+  );
+}
+
+function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "member" | "public" }) {
+  return (
+    <article className="rounded-lg border border-line bg-white p-4 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="min-w-0 break-words font-semibold text-ink">{database.name}</h4>
+        {mode === "member" && database.publicReadable ? <span className="rounded border border-line bg-paper px-1.5 py-0.5 text-[11px] font-medium text-muted">Public</span> : null}
+      </div>
+      <p className="mt-1 break-all font-mono text-[11px] text-muted">{database.databaseId}</p>
+      <dl className="mt-4 grid grid-cols-2 gap-3">
+        <DatabaseCardMeta label="Role" value={database.role} />
+        <DatabaseCardMeta label="Status" value={database.status} />
+        <DatabaseCardMeta label="Logical size" value={formatBytes(database.logicalSizeBytes)} />
+        <DatabaseCardMeta label="Archive" value={databaseMarker(database)} />
+      </dl>
+      <div className="mt-4 flex flex-wrap gap-3 font-medium">
+        <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+          Open
+        </Link>
+        {mode === "member" && database.publicReadable ? (
+          <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
+            Open public
+          </Link>
+        ) : null}
+        {mode === "member" ? (
+          <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
+            Registry
+          </Link>
+        ) : null}
+        {database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
+        <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
+          Access
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function ShareDatabaseLink({ database }: { database: DatabaseRow }) {
+  return (
+    <a
+      aria-label={`Share ${database.name} on X`}
+      className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"
+      href={xShareDatabaseHref({ databaseId: database.databaseId, databaseName: database.name })}
+      rel="noreferrer"
+      target="_blank"
+    >
+      <Share2 aria-hidden size={14} />
+      <span>Share</span>
+    </a>
+  );
+}
+
+function DatabaseCardMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{label}</dt>
+      <dd className="mt-1 break-words capitalize text-ink">{value}</dd>
+    </div>
   );
 }
 
@@ -180,10 +248,10 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
   return <div className={`rounded-lg border px-4 py-3 text-sm ${toneClass}`}>{message}</div>;
 }
 
-export function CreatedDatabasePanel({ databaseId }: { databaseId: string }) {
+export function CreatedDatabasePanel({ databaseId, name }: { databaseId: string; name: string }) {
   return (
     <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-ink">
-      Created <span className="font-mono">{databaseId}</span>.{" "}
+      Created <span className="font-semibold">{name}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
       <Link className="text-accent no-underline hover:underline" href={`/${encodeURIComponent(databaseId)}/Wiki`}>
         Open
       </Link>
@@ -206,7 +274,6 @@ function formatBytes(value: string): string {
 }
 
 function databaseMarker(database: DatabaseSummary): string {
-  if (database.billingSuspendedAtMs) return `Suspended ${formatTimestamp(database.billingSuspendedAtMs)}`;
   if (database.deletedAtMs) return `Deleted ${formatTimestamp(database.deletedAtMs)}`;
   if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
   return "-";
@@ -218,7 +285,7 @@ function openDatabaseHref(database: DatabaseRow): string {
 }
 
 function openPublicDatabaseHref(database: DatabaseRow): string {
-  return `/${encodeURIComponent(database.databaseId)}/Wiki?read=anonymous`;
+  return publicDatabasePath(database.databaseId);
 }
 
 function formatTimestamp(value: string): string {

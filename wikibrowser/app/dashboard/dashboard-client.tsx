@@ -2,25 +2,22 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import Link from "next/link";
-import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AuthControls, OwnerPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
-import { DELEGATION_TTL_NS, identityProviderUrl } from "@/lib/auth";
-import type { DatabaseBillingEntry, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
   grantDatabaseAccessAuthenticated,
-  listDatabaseBillingEntriesAuthenticated,
   listDatabaseMembersAuthenticated,
+  listDatabaseMembersPublic,
   listDatabasesAuthenticated,
   listDatabasesPublic,
   renameDatabaseAuthenticated,
-  revokeDatabaseAccessAuthenticated,
-  topUpDatabaseAuthenticated,
-  withdrawDatabaseBalanceAuthenticated
+  revokeDatabaseAccessAuthenticated
 } from "@/lib/vfs-client";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
-type BusyAction = { kind: "grant"; principalText: string; role: DatabaseRole } | { kind: "revoke"; principalText: string };
+type BusyAction = { kind: "grant"; principalText: string; role: DatabaseRole } | { kind: "revoke"; principalText: string } | { kind: "rename" };
 type DatabaseAccessSummary = DatabaseSummary & { publicReadable: boolean };
 
 export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) {
@@ -38,10 +35,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [actionTone, setActionTone] = useState<"error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
-  const [billingEntries, setBillingEntries] = useState<DatabaseBillingEntry[]>([]);
-  const [renameValue, setRenameValue] = useState("");
-  const [topUpAmountE8s, setTopUpAmountE8s] = useState("");
-  const [withdrawAmountE8s, setWithdrawAmountE8s] = useState("");
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
   const canManage = database?.role === "owner" && !memberError;
@@ -56,8 +49,13 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         return;
       }
       if (!nextDatabaseId) {
-        setError("Database id is missing.");
-        setLoadState("error");
+        setPrincipal(client?.getIdentity().getPrincipal().toText() ?? null);
+        setDatabases([]);
+        setMembers([]);
+        setError(null);
+        setWarning(null);
+        setMemberError(null);
+        setLoadState("ready");
         return;
       }
       setLoadState("loading");
@@ -84,8 +82,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
         setMembers([]);
-        setBillingEntries([]);
-        setRenameValue(nextDatabase?.displayName ?? "");
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
         }
@@ -101,12 +97,11 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             if (!isCurrentRefresh()) return;
             setMemberError(errorMessage(cause));
           }
-        }
-        if (identity && nextDatabase) {
+        } else if (nextDatabase?.publicReadable) {
           try {
-            const page = await listDatabaseBillingEntriesAuthenticated(canisterId, identity, nextDatabaseId, null, 25);
+            const nextMembers = await listDatabaseMembersPublic(canisterId, nextDatabaseId);
             if (!isCurrentRefresh()) return;
-            setBillingEntries(page.entries);
+            setMembers(nextMembers);
           } catch (cause) {
             if (!isCurrentRefresh()) return;
             setMemberError(errorMessage(cause));
@@ -125,7 +120,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
   useEffect(() => {
     let cancelled = false;
-    AuthClient.create()
+    AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
       .then(async (client) => {
         if (cancelled) return;
         setAuthClient(client);
@@ -149,8 +144,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     if (!authClient) return;
     setError(null);
     await authClient.login({
-      identityProvider: identityProviderUrl(),
-      maxTimeToLive: DELEGATION_TTL_NS,
+      ...authLoginOptions(),
       onSuccess: () => {
         void refresh(authClient, databaseId);
       },
@@ -168,7 +162,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setPrincipal(null);
     setDatabases([]);
     setMembers([]);
-    setBillingEntries([]);
     setError(null);
     setWarning(null);
     setMemberError(null);
@@ -213,71 +206,22 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
-  async function renameDatabase(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function renameDatabase(name: string) {
     if (!authClient || !databaseId) return;
     setBusy(true);
+    setBusyAction({ kind: "rename" });
     setActionMessage(null);
     try {
-      await renameDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId, renameValue);
+      await renameDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId, name);
       setActionTone("info");
-      setActionMessage("Database renamed.");
+      setActionMessage("Database name updated.");
       await refresh(authClient, databaseId);
     } catch (cause) {
       setActionTone("error");
       setActionMessage(errorMessage(cause));
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function topUpDatabase(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!authClient || !databaseId) return;
-    const amount = parseE8s(topUpAmountE8s);
-    if (!amount) {
-      setActionTone("error");
-      setActionMessage("Top-up amount must be a positive integer e8s amount.");
-      return;
-    }
-    setBusy(true);
-    setActionMessage(null);
-    try {
-      await topUpDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId, amount);
-      setTopUpAmountE8s("");
-      setActionTone("info");
-      setActionMessage("Database balance topped up.");
-      await refresh(authClient, databaseId);
-    } catch (cause) {
-      setActionTone("error");
-      setActionMessage(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function withdrawDatabase(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!authClient || !databaseId) return;
-    const amount = parseE8s(withdrawAmountE8s);
-    if (!amount) {
-      setActionTone("error");
-      setActionMessage("Withdraw amount must be a positive integer e8s amount.");
-      return;
-    }
-    setBusy(true);
-    setActionMessage(null);
-    try {
-      await withdrawDatabaseBalanceAuthenticated(canisterId, authClient.getIdentity(), databaseId, amount);
-      setWithdrawAmountE8s("");
-      setActionTone("info");
-      setActionMessage("Database balance withdrawn.");
-      await refresh(authClient, databaseId);
-    } catch (cause) {
-      setActionTone("error");
-      setActionMessage(errorMessage(cause));
-    } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
@@ -294,7 +238,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
                 Skill Registry
               </Link>
             ) : null}
-            <h1 className="mt-2 text-3xl font-semibold text-ink">Database access</h1>
+            <h1 className="mt-2 text-3xl font-semibold text-ink">{database?.name ?? "Database access"}</h1>
             <p className="mt-1 font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
           </div>
           <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
@@ -306,47 +250,24 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
         {database ? <SummaryPanel database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
-        {principal ? (
-          database ? (
-            <>
-              <section className="grid gap-4 rounded-lg border border-line bg-paper p-4 shadow-sm">
-                {canManage ? (
-                  <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={renameDatabase}>
-                    <input className="rounded-lg border border-line px-3 py-2 text-sm" value={renameValue} onChange={(event) => setRenameValue(event.target.value)} placeholder="Display name" />
-                    <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink disabled:opacity-60" disabled={busy} type="submit">
-                      Rename
-                    </button>
-                  </form>
-                ) : null}
-                <div className="grid gap-3 lg:grid-cols-2">
-                  <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={topUpDatabase}>
-                    <input className="rounded-lg border border-line px-3 py-2 font-mono text-sm" inputMode="numeric" value={topUpAmountE8s} onChange={(event) => setTopUpAmountE8s(event.target.value)} placeholder="DB top-up e8s" />
-                    <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink disabled:opacity-60" disabled={busy} type="submit">
-                      Top up DB
-                    </button>
-                  </form>
-                  {canManage ? (
-                    <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={withdrawDatabase}>
-                      <input className="rounded-lg border border-line px-3 py-2 font-mono text-sm" inputMode="numeric" value={withdrawAmountE8s} onChange={(event) => setWithdrawAmountE8s(event.target.value)} placeholder="DB withdraw e8s" />
-                      <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink disabled:opacity-60" disabled={busy} type="submit">
-                        Withdraw DB
-                      </button>
-                    </form>
-                  ) : null}
-                </div>
-              </section>
-              {canManage ? (
-                <OwnerPanel busy={busy} busyAction={busyAction} members={members} principal={principal} onGrant={grantAccess} onRevoke={revokeAccess} />
-              ) : (
-                <StatusPanel tone="info" message={memberError ?? "No owner permission for access management or DB withdraw."} />
-              )}
-              <BillingLedgerTable entries={billingEntries} />
-            </>
+        {database ? (
+          canManage ? (
+            <OwnerPanel busy={busy} busyAction={busyAction} databaseName={database.name} members={members} principal={principal ?? "anonymous"} onGrant={grantAccess} onRename={renameDatabase} onRevoke={revokeAccess} />
+          ) : database.publicReadable ? (
+            <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />
+          ) : principal ? (
+            <StatusPanel tone="info" message={memberError ?? "No management permission for this database."} />
           ) : (
-            <StatusPanel tone="error" message="Database is not linked to this principal or public anonymous reads." />
+            <StatusPanel tone="info" message="Login with Internet Identity to manage database access." />
           )
-        ) : database ? (
-          <StatusPanel tone="info" message="Login with Internet Identity to manage database access." />
+        ) : !databaseId ? (
+          <section className="rounded-lg border border-line bg-paper p-8 shadow-sm">
+            <h2 className="text-lg font-semibold text-ink">Select a database to manage</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">Open the Database dashboard, then choose Access on a database row.</p>
+            <Link className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href="/">
+              Open Database dashboard
+            </Link>
+          </section>
         ) : (
           <section className="rounded-lg border border-line bg-paper p-8 shadow-sm">
             <p className="text-sm leading-6 text-muted">Public anonymous read is not available for this database. Login with Internet Identity to manage database access.</p>
@@ -357,51 +278,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   );
 }
 
-function BillingLedgerTable({ entries }: { entries: DatabaseBillingEntry[] }) {
-  if (entries.length === 0) {
-    return <StatusPanel tone="info" message="No database billing entries." />;
-  }
-  return (
-    <section className="overflow-x-auto rounded-lg border border-line bg-paper shadow-sm">
-      <table className="w-full border-collapse text-left text-xs">
-        <thead className="bg-white/70 uppercase tracking-[0.12em] text-muted">
-          <tr>
-            <th className="px-4 py-3 font-medium">Kind</th>
-            <th className="px-4 py-3 font-medium">Amount</th>
-            <th className="px-4 py-3 font-medium">Balance</th>
-            <th className="px-4 py-3 font-medium">Method</th>
-            <th className="px-4 py-3 font-medium">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={entry.entryId} className="border-t border-line">
-              <td className="px-4 py-3 font-mono">{entry.kind}</td>
-              <td className="px-4 py-3 font-mono">{entry.amountE8s}</td>
-              <td className="px-4 py-3 font-mono">{entry.balanceAfterE8s}</td>
-              <td className="px-4 py-3 font-mono">{entry.method ?? "-"}</td>
-              <td className="px-4 py-3 text-muted">{formatTimestamp(entry.createdAtMs)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}
-
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "Unexpected error";
-}
-
-function parseE8s(value: string): bigint | null {
-  const trimmed = value.trim();
-  if (!/^[1-9][0-9]*$/.test(trimmed)) return null;
-  return BigInt(trimmed);
-}
-
-function formatTimestamp(value: string): string {
-  const milliseconds = Number(value);
-  return Number.isFinite(milliseconds) ? new Date(milliseconds).toLocaleString() : value;
 }
 
 function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseAccessSummary[] {
@@ -413,5 +291,5 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   for (const database of memberDatabases) {
     rows.set(database.databaseId, { ...database, publicReadable: publicIds.has(database.databaseId) });
   }
-  return [...rows.values()].sort((left, right) => left.databaseId.localeCompare(right.databaseId));
+  return [...rows.values()].sort((left, right) => left.name.localeCompare(right.name) || left.databaseId.localeCompare(right.databaseId));
 }

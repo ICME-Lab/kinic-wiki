@@ -1,7 +1,16 @@
 [package]
-name = "vfs-client"
+name = "kinic-vfs-client"
 version = "0.1.0"
 edition = "2024"
+description = "HTTP agent client for Kinic VFS canisters"
+repository = "https://github.com/ICME-Lab/kinic-wiki"
+readme = "../../README.md"
+license = "MIT"
+keywords = ["kinic", "vfs", "icp", "client"]
+categories = ["api-bindings"]
+
+[lib]
+name = "vfs_client"
 
 [dependencies]
 anyhow = "1.0.100"
@@ -9,4 +18,4 @@ async-trait = "0.1.89"
 candid = "0.10.20"
 ic-agent = "0.39.3"
 k256 = { version = "0.13.4", features = ["pem"] }
-vfs-types = { path = "../vfs_types" }
+vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }

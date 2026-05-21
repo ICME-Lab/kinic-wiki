@@ -1,27 +1,46 @@
 # CLI
 
-`vfs-cli` is the shell interface for the canister-backed VFS.
+`kinic-vfs-cli` is the shell interface for the canister-backed VFS.
+This document covers wiki/database operator operations: connection, database management, node reads and writes, search, links, and archive/restore.
+Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
 The canister also exposes read-only Agent Memory API methods such as `memory_manifest`, `query_context`, and `source_evidence`.
 Those are direct canister/client methods, not CLI commands in this document.
 Use the CLI commands below for shell workflows against the remote VFS.
 
+## Build
+
+During development, examples use `cargo run` so they always execute the current checkout.
+For operator use, build the binary once:
+
+```bash
+cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release
+target/release/kinic-vfs-cli --help
+target/release/kinic-vfs-cli --canister-id <canister-id> database current
+```
+
+GitHub Actions also produces unsigned `kinic-vfs-cli` artifacts with SHA-256 checksums. See [`RELEASE.md`](RELEASE.md).
+
+Authenticated commands require `icp-cli` on `PATH`. The CLI signs with the identity selected by `icp identity default`.
+Internet Identity-backed identities are the default authenticated path. Non-II `icp-cli` identities are rejected unless `--allow-non-ii-identity` is passed.
+
 ## Connection
 
-Use `--canister-id` to select a canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
+Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to select a different canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
 ```
 
-Use `--local` for the local replica host.
+Use `--local` for the default local replica host, or `--replica-host` for a project-local network on a custom port.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --local --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.1:8001 --database-id <database-id> status
 ```
 
-`--database-id` takes precedence over `VFS_DATABASE_ID`.
+`--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.
 
 List, search, recent, and graph commands default to the VFS root `/`.
 Pass `--prefix /Wiki` or `--path /Wiki` when the human-facing wiki tree is the intended scope.
@@ -30,80 +49,143 @@ Without `--canister-id`, the CLI reads configuration from:
 
 - `VFS_CANISTER_ID`
 - `.kinic/config.toml`
-- `~/.config/vfs-cli/config.toml`
-- `~/.vfs-cli.toml`
+- `~/.config/kinic-vfs-cli/config.toml`
+- `~/.kinic-vfs-cli.toml`
+- mainnet default `xis3j-paaaa-aaaai-axumq-cai` when the replica host is `https://icp0.io`
 
 Link a workspace once to avoid repeating `--database-id`:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database link <database-id>
-cargo run -p vfs-cli --bin vfs-cli -- database current
-cargo run -p vfs-cli --bin vfs-cli -- skill find "contract review"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link <database-id>
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- status
 ```
 
 Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then host default. Use `database unlink` to remove the workspace DB link.
 
+## Identity Mode
+
+`--identity-mode auto` is the default. Mutating and owner commands always use the selected `icp identity`. Read-only DB commands first check anonymous access; if the selected identity is a DB member, the command still uses identity. Public DB reads use anonymous only when the selected identity is not a member.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode identity --database-id <database-id> read-node --path /Wiki/index.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <public-database-id> read-node --path /Wiki/index.md
+```
+
+`--identity-mode anonymous` rejects write, owner, archive, and restore commands.
+
 Create a database before reading or writing:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database top-up-principal <amount-e8s>
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database create --display-name "Team Wiki" --initial-deposit-e8s 1000000
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database list
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database grant <database-id> <principal> reader
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database link <database-id>
-cargo run -p vfs-cli --bin vfs-cli -- write-node --path /Wiki/file.md --input file.md
-cargo run -p vfs-cli --bin vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-Before `database top-up-principal`, the caller wallet must approve the VFS canister on the KINIC ICRC-2 ledger. `database create` debits the caller principal balance and prints the generated database ID. `database list` prints databases attached to the caller principal, including display name, billing balance, and suspension state.
-The WikiBrowser dashboard exposes the same minimal flow after Internet Identity login: principal top-up/withdraw, DB create with display name and initial deposit, DB allocate/withdraw, rename, and billing history.
+`database create <database-name>` creates a generated database ID and prints it on success.
+`database list` prints databases attached to the caller principal.
 
-Billing operations:
-
-```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database rename <database-id> "New name"
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database principal-billing
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database top-up <database-id> <amount-e8s>
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database withdraw <database-id> <amount-e8s>
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database billing-entries <database-id>
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database billing-config
-```
-
-`database top-up` moves caller principal balance into a DB balance. It does not require DB membership. `database withdraw` moves DB balance back to the owner principal balance and is owner-only. External KINIC ledger withdraw uses:
-
-```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database withdraw-principal <amount-e8s> <to-principal>
-```
-
-For mainnet fresh installs, use the guarded deploy wrapper:
-
-```bash
-KINIC_LEDGER_CANISTER_ID=<kinic-ledger> SNS_GOVERNANCE_ID=<sns-governance> scripts/mainnet/deploy_wiki.sh
-```
-
-The wrapper rejects unset, empty, or anonymous principal values before passing billing init args to `icp deploy`.
-For local installs, use `scripts/local/deploy_wiki.sh` so anonymous placeholder billing principals stay local-only.
+Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 
 For public browser reads, grant anonymous reader access explicitly:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id <canister-id> database grant <database-id> 2vxsx-fae reader
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant <database-id> 2vxsx-fae reader
 ```
 
-Archive and restore are low-level canister APIs for snapshot bytes. The CLI does not yet persist archive bytes for you. See [`DB_LIFECYCLE.md`](DB_LIFECYCLE.md) for status, slot reuse, and restore validation details.
+## Identity Mode
+
+Authenticated CLI calls depend on `icp-cli`.
+`kinic-vfs-cli` shells out to `icp identity default`, `icp identity export <name>`, and expects an Internet Identity delegation created by `icp identity link ii` / refreshed by `icp identity login`.
+Install an `icp` version that supports II linking:
+
+```bash
+icp identity link ii --help
+```
+
+The CLI uses the default `icp identity` for mutating and owner operations.
+Read-only DB commands default to `--identity-mode auto`: private databases use the selected `icp identity`; public databases use the selected identity when it is a DB member, otherwise anonymous.
+The auto check calls `status` as anonymous once. If anonymous can read, it checks `list_databases` with the selected identity so owner/writer/reader context is preserved for public DBs owned by the caller.
+By default, the selected identity must be an Internet Identity identity. Pass `--allow-non-ii-identity` only for explicit operator workflows that need PEM or other non-II `icp-cli` identities.
+
+```bash
+icp identity link ii kinic-ii --host https://<wiki-canister-id>.icp0.io
+icp identity default kinic-ii
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> read-node --path /Wiki/index.md
+```
+
+`--host` must point at the wiki canister origin, not the Cloudflare browser host. The canister serves `/.well-known/ic-cli-login` and `/login`, so Internet Identity derives the same principal used by browser flows that pin the wiki canister as `derivationOrigin`.
+If Internet Identity asks for an identity number during this flow, that is the II account selector, not a Kinic DB index or VFS path. II needs it to choose the user identity before it can issue a delegation to the local `icp` session key.
+The browser posts the delegation to the loopback callback URL opened by `icp-cli`. That local callback must answer CORS preflight with `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods: POST, OPTIONS`, and `Access-Control-Allow-Headers: content-type`. Its `POST` response must also include `Access-Control-Allow-Origin`. If the callback URL carries a state or nonce query, the local CLI must verify it as one-time data before accepting the delegation.
+
+Refresh expired II delegations before running private DB commands:
+
+```bash
+icp identity login kinic-ii
+```
+
+Use explicit modes when automation must avoid auto selection:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode identity --database-id <database-id> read-node --path /Wiki/index.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <public-database-id> read-node --path /Wiki/index.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --identity-mode identity --database-id <database-id> status
+```
+
+`--identity-mode anonymous` is valid only for read-only public operations.
+Writes, database grants, archive operations, private Skill Registry writes, and owner commands require `--identity-mode identity` or `auto`.
+
+## Archive and Restore
+
+Archive exports one database as SQLite snapshot bytes and then finalizes the database into `archived` status.
+Restore imports that snapshot into an `archived` or `deleted` database and returns it to `hot`.
+The canister verifies the SHA-256 digest during both flows.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> \
+  database archive-export <database-id> --output ./database.sqlite --json
+
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> \
+  database archive-restore <database-id> --input ./database.sqlite --json
+```
+
+Chunks default to 1 MiB, the canister limit. Use a smaller chunk size for local testing:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> \
+  database archive-export <database-id> --output ./database.sqlite --chunk-size 65536
+```
+
+If an export fails before finalization, the CLI attempts `database archive-cancel <database-id>`.
+Manual cancel is available when a database is left in `archiving`:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database archive-cancel <database-id>
+```
+
+If restore fails after it begins, the CLI attempts to cancel the restore automatically so the database returns to its previous `archived` or `deleted` state. Manual cancel is available for an interrupted restore:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database restore-cancel <database-id>
+```
+
+See [`DB_LIFECYCLE.md`](DB_LIFECYCLE.md) for status, slot reuse, and restore validation details.
 
 ## Search
 
 Full-text search uses `search-remote`.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
 Path search uses `search-path-remote`.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- search-path-remote "meeting" --prefix /Wiki --top-k 10 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-path-remote "meeting" --prefix /Wiki --top-k 10 --json
 ```
 
 `--preview-mode` is optional. If omitted, canister defaults are preserved:
@@ -120,8 +202,8 @@ Available preview modes:
 Use `content-start` when the caller needs the first 200 normalized body characters without an extra `read-node` call.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- search-path-remote "meeting" --prefix /Wiki --preview-mode content-start --json
-cargo run -p vfs-cli --bin vfs-cli -- search-remote "budget" --prefix /Wiki --preview-mode content-start --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-path-remote "meeting" --prefix /Wiki --preview-mode content-start --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --preview-mode content-start --json
 ```
 
 ## Node Operations
@@ -144,14 +226,14 @@ Common read and write commands:
 Use `read-node-context` when the caller needs a node plus incoming and outgoing links in one response.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- read-node-context --path /Wiki/file.md --link-limit 20 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- read-node-context --path /Wiki/file.md --link-limit 20 --json
 ```
 
 Use graph commands for explicit link inspection.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- graph-neighborhood --center-path /Wiki/file.md --depth 1 --limit 100 --json
-cargo run -p vfs-cli --bin vfs-cli -- graph-links --prefix /Wiki --limit 100 --json
-cargo run -p vfs-cli --bin vfs-cli -- incoming-links --path /Wiki/file.md --limit 20 --json
-cargo run -p vfs-cli --bin vfs-cli -- outgoing-links --path /Wiki/file.md --limit 20 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- graph-neighborhood --center-path /Wiki/file.md --depth 1 --limit 100 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- graph-links --prefix /Wiki --limit 100 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- incoming-links --path /Wiki/file.md --limit 20 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- outgoing-links --path /Wiki/file.md --limit 20 --json
 ```

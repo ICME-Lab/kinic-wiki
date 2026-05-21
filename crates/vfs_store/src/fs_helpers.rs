@@ -3,7 +3,7 @@
 // Why: FsStore behavior must stay deterministic across CRUD, list, search, and sync flows.
 use std::collections::BTreeMap;
 
-use rusqlite::{Connection, OptionalExtension, params};
+use crate::sqlite::{Connection, OptionalExtension, params};
 use vfs_types::{Node, NodeEntry, NodeEntryKind, NodeKind, NodeMutationAck};
 
 use crate::hashing::sha256_hex;
@@ -78,6 +78,7 @@ fn node_kind_tag(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::File => "file",
         NodeKind::Source => "source",
+        NodeKind::Folder => "folder",
     }
 }
 
@@ -115,12 +116,11 @@ pub(crate) fn load_scoped_entry_rows(
     }
     sql.push_str(" ORDER BY path ASC");
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(
-        rusqlite::params_from_iter(values.iter()),
+    crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
         map_scoped_entry_row,
     )
-    .map_err(|error| error.to_string())?
-    .collect::<Result<Vec<_>, _>>()
     .map_err(|error| error.to_string())
 }
 
@@ -145,41 +145,17 @@ pub(crate) fn build_entries_from_rows(
 
     let mut entries = BTreeMap::new();
     for row in rows {
-        if let Some(child_path) = direct_child_path(prefix, &row.path) {
-            entries
-                .entry(child_path.clone())
-                .and_modify(|entry: &mut NodeEntry| {
-                    if child_path == row.path {
-                        entry.kind = entry_kind_from_node_kind(&row.kind);
-                        entry.updated_at = row.updated_at;
-                        entry.etag = row.etag.clone();
-                    } else if entry.kind == NodeEntryKind::Directory {
-                        entry.updated_at = directory_stats
-                            .get(&child_path)
-                            .map(|stats| stats.updated_at)
-                            .unwrap_or(entry.updated_at);
-                    }
-                    entry.has_children = directory_stats.contains_key(&child_path);
-                })
-                .or_insert_with(|| match child_path == row.path {
-                    true => NodeEntry {
-                        path: row.path.clone(),
-                        kind: entry_kind_from_node_kind(&row.kind),
-                        updated_at: row.updated_at,
-                        etag: row.etag.clone(),
-                        has_children: directory_stats.contains_key(&row.path),
-                    },
-                    false => NodeEntry {
-                        path: child_path.clone(),
-                        kind: NodeEntryKind::Directory,
-                        updated_at: directory_stats
-                            .get(&child_path)
-                            .map(|stats| stats.updated_at)
-                            .unwrap_or(0),
-                        etag: String::new(),
-                        has_children: true,
-                    },
-                });
+        if direct_child_path(prefix, &row.path).as_deref() == Some(row.path.as_str()) {
+            entries.insert(
+                row.path.clone(),
+                NodeEntry {
+                    path: row.path.clone(),
+                    kind: entry_kind_from_node_kind(&row.kind),
+                    updated_at: row.updated_at,
+                    etag: row.etag.clone(),
+                    has_children: directory_stats.contains_key(&row.path),
+                },
+            );
         }
     }
 
@@ -191,34 +167,15 @@ pub(crate) fn build_glob_entries_from_rows(
     prefix: &str,
 ) -> Vec<NodeEntry> {
     let directory_stats = directory_stats_by_path(rows, prefix);
-    let mut entries = BTreeMap::new();
-    for row in rows {
-        entries.insert(
-            row.path.clone(),
-            NodeEntry {
-                path: row.path.clone(),
-                kind: entry_kind_from_node_kind(&row.kind),
-                updated_at: row.updated_at,
-                etag: row.etag.clone(),
-                has_children: directory_stats.contains_key(&row.path),
-            },
-        );
-        for directory_path in ancestor_directory_paths(prefix, &row.path) {
-            entries
-                .entry(directory_path.clone())
-                .or_insert_with(|| NodeEntry {
-                    path: directory_path.clone(),
-                    kind: NodeEntryKind::Directory,
-                    updated_at: directory_stats
-                        .get(&directory_path)
-                        .map(|stats| stats.updated_at)
-                        .unwrap_or(0),
-                    etag: String::new(),
-                    has_children: true,
-                });
-        }
-    }
-    entries.into_values().collect()
+    rows.iter()
+        .map(|row| NodeEntry {
+            path: row.path.clone(),
+            kind: entry_kind_from_node_kind(&row.kind),
+            updated_at: row.updated_at,
+            etag: row.etag.clone(),
+            has_children: directory_stats.contains_key(&row.path),
+        })
+        .collect()
 }
 
 pub(crate) fn snapshot_revision_token(prefix: &str, revision: i64) -> String {
@@ -247,7 +204,7 @@ pub(crate) fn file_search_title(path: &str) -> String {
 pub(crate) fn prefix_filter_sql(
     prefix: &str,
     start_index: usize,
-) -> (String, Vec<rusqlite::types::Value>) {
+) -> (String, Vec<crate::sqlite::types::Value>) {
     prefix_filter_sql_for_column("path", prefix, start_index)
 }
 
@@ -255,7 +212,7 @@ pub(crate) fn prefix_filter_sql_for_column(
     column_name: &str,
     prefix: &str,
     start_index: usize,
-) -> (String, Vec<rusqlite::types::Value>) {
+) -> (String, Vec<crate::sqlite::types::Value>) {
     let equal_index = start_index;
     let like_index = start_index + 1;
     (
@@ -263,8 +220,8 @@ pub(crate) fn prefix_filter_sql_for_column(
             " AND ({column_name} = ?{equal_index} OR {column_name} LIKE ?{like_index} ESCAPE '\\')"
         ),
         vec![
-            rusqlite::types::Value::from(prefix.to_string()),
-            rusqlite::types::Value::from(format!("{}/%", escape_like_pattern(prefix))),
+            crate::sqlite::types::Value::from(prefix.to_string()),
+            crate::sqlite::types::Value::from(format!("{}/%", escape_like_pattern(prefix))),
         ],
     )
 }
@@ -284,42 +241,44 @@ pub(crate) fn node_kind_to_db(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::File => "file",
         NodeKind::Source => "source",
+        NodeKind::Folder => "folder",
     }
 }
 
-pub(crate) fn node_kind_from_db(value: &str) -> Result<NodeKind, rusqlite::Error> {
+pub(crate) fn node_kind_from_db(value: &str) -> Result<NodeKind, crate::sqlite::Error> {
     match value {
         "file" => Ok(NodeKind::File),
         "source" => Ok(NodeKind::Source),
-        _ => Err(rusqlite::Error::InvalidColumnType(
+        "folder" => Ok(NodeKind::Folder),
+        _ => Err(crate::sqlite::invalid_column_type(
             1,
             "kind".to_string(),
-            rusqlite::types::Type::Text,
+            crate::sqlite::types::Type::Text,
         )),
     }
 }
 
-fn map_stored_node(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredNode> {
+fn map_stored_node(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<StoredNode> {
     Ok(StoredNode {
-        row_id: row.get(0)?,
+        row_id: crate::sqlite::row_get::<i64>(row, 0)?,
         node: Node {
-            path: row.get(1)?,
-            kind: node_kind_from_db(&row.get::<_, String>(2)?)?,
-            content: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-            etag: row.get(6)?,
-            metadata_json: row.get(7)?,
+            path: crate::sqlite::row_get::<String>(row, 1)?,
+            kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
+            content: crate::sqlite::row_get::<String>(row, 3)?,
+            created_at: crate::sqlite::row_get::<i64>(row, 4)?,
+            updated_at: crate::sqlite::row_get::<i64>(row, 5)?,
+            etag: crate::sqlite::row_get::<String>(row, 6)?,
+            metadata_json: crate::sqlite::row_get::<String>(row, 7)?,
         },
     })
 }
 
-fn map_scoped_entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ScopedEntryRow> {
+fn map_scoped_entry_row(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<ScopedEntryRow> {
     Ok(ScopedEntryRow {
-        path: row.get(0)?,
-        kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-        updated_at: row.get(2)?,
-        etag: row.get(3)?,
+        path: crate::sqlite::row_get::<String>(row, 0)?,
+        kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
+        updated_at: crate::sqlite::row_get::<i64>(row, 2)?,
+        etag: crate::sqlite::row_get::<String>(row, 3)?,
     })
 }
 
@@ -403,5 +362,6 @@ fn entry_kind_from_node_kind(kind: &NodeKind) -> NodeEntryKind {
     match kind {
         NodeKind::File => NodeEntryKind::File,
         NodeKind::Source => NodeEntryKind::Source,
+        NodeKind::Folder => NodeEntryKind::Folder,
     }
 }

@@ -11,6 +11,7 @@ const CANISTER_ID_ENV: &str = "VFS_CANISTER_ID";
 const DATABASE_ID_ENV: &str = "VFS_DATABASE_ID";
 const LOCAL_REPLICA_HOST: &str = "http://127.0.0.1:8000";
 const MAINNET_REPLICA_HOST: &str = "https://icp0.io";
+const MAINNET_CANISTER_ID: &str = "xis3j-paaaa-aaaai-axumq-cai";
 const WORKSPACE_CONFIG_PATH: &str = ".kinic/config.toml";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,63 +54,63 @@ struct UserConfig {
     database_id: Option<String>,
 }
 
-pub fn resolve_connection(
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ConnectionSources {
     local: bool,
-    canister_id_arg: Option<String>,
-    database_id_arg: Option<String>,
-) -> Result<ResolvedConnection> {
-    let config = load_user_config()?;
-    let workspace = load_workspace_config()?;
-    resolve_connection_from_sources(
-        local,
-        canister_id_arg,
-        database_id_arg,
-        env::var(CANISTER_ID_ENV).ok(),
-        env::var(DATABASE_ID_ENV).ok(),
-        workspace,
-        config,
-    )
-}
-
-pub fn resolve_connection_optional_canister(
-    local: bool,
-    canister_id_arg: Option<String>,
-    database_id_arg: Option<String>,
-) -> Result<ResolvedConnectionPreview> {
-    let config = load_user_config()?;
-    let workspace = load_workspace_config()?;
-    Ok(resolve_connection_preview_from_sources(
-        local,
-        canister_id_arg,
-        database_id_arg,
-        env::var(CANISTER_ID_ENV).ok(),
-        env::var(DATABASE_ID_ENV).ok(),
-        workspace,
-        config,
-    ))
-}
-
-fn resolve_connection_from_sources(
-    local: bool,
+    replica_host_arg: Option<String>,
     canister_id_arg: Option<String>,
     database_id_arg: Option<String>,
     canister_id_env: Option<String>,
     database_id_env: Option<String>,
     workspace: Option<UserConfig>,
     config: Option<UserConfig>,
+}
+
+pub fn resolve_connection(
+    local: bool,
+    replica_host_arg: Option<String>,
+    canister_id_arg: Option<String>,
+    database_id_arg: Option<String>,
 ) -> Result<ResolvedConnection> {
-    let preview = resolve_connection_preview_from_sources(
+    let config = load_user_config()?;
+    let workspace = load_workspace_config()?;
+    resolve_connection_from_sources(ConnectionSources {
         local,
+        replica_host_arg,
         canister_id_arg,
         database_id_arg,
-        canister_id_env,
-        database_id_env,
+        canister_id_env: env::var(CANISTER_ID_ENV).ok(),
+        database_id_env: env::var(DATABASE_ID_ENV).ok(),
         workspace,
         config,
-    );
+    })
+}
+
+pub fn resolve_connection_optional_canister(
+    local: bool,
+    replica_host_arg: Option<String>,
+    canister_id_arg: Option<String>,
+    database_id_arg: Option<String>,
+) -> Result<ResolvedConnectionPreview> {
+    let config = load_user_config()?;
+    let workspace = load_workspace_config()?;
+    Ok(resolve_connection_preview_from_sources(ConnectionSources {
+        local,
+        replica_host_arg,
+        canister_id_arg,
+        database_id_arg,
+        canister_id_env: env::var(CANISTER_ID_ENV).ok(),
+        database_id_env: env::var(DATABASE_ID_ENV).ok(),
+        workspace,
+        config,
+    }))
+}
+
+fn resolve_connection_from_sources(sources: ConnectionSources) -> Result<ResolvedConnection> {
+    let preview = resolve_connection_preview_from_sources(sources);
     if preview.canister_id.is_none() {
         bail!(
-            "missing connection setting: canister_id; set --canister-id, {}, .kinic/config.toml, ~/.config/vfs-cli/config.toml, or ~/.vfs-cli.toml",
+            "missing connection setting: canister_id; set --canister-id, {}, .kinic/config.toml, ~/.config/kinic-vfs-cli/config.toml, or ~/.kinic-vfs-cli.toml",
             CANISTER_ID_ENV
         );
     }
@@ -124,16 +125,22 @@ fn resolve_connection_from_sources(
 }
 
 fn resolve_connection_preview_from_sources(
-    local: bool,
-    canister_id_arg: Option<String>,
-    database_id_arg: Option<String>,
-    canister_id_env: Option<String>,
-    database_id_env: Option<String>,
-    workspace: Option<UserConfig>,
-    config: Option<UserConfig>,
+    sources: ConnectionSources,
 ) -> ResolvedConnectionPreview {
+    let ConnectionSources {
+        local,
+        replica_host_arg,
+        canister_id_arg,
+        database_id_arg,
+        canister_id_env,
+        database_id_env,
+        workspace,
+        config,
+    } = sources;
     let (replica_host, replica_host_source) = if local {
         (LOCAL_REPLICA_HOST.to_string(), "--local".to_string())
+    } else if let Some(value) = replica_host_arg {
+        (value, "--replica-host".to_string())
     } else {
         workspace
             .as_ref()
@@ -161,6 +168,16 @@ fn resolve_connection_preview_from_sources(
                 .as_ref()
                 .and_then(|value| value.canister_id.clone())
                 .map(|value| (value, "user config".to_string()))
+        })
+        .or_else(|| {
+            if !local && replica_host == MAINNET_REPLICA_HOST {
+                Some((
+                    MAINNET_CANISTER_ID.to_string(),
+                    "mainnet default".to_string(),
+                ))
+            } else {
+                None
+            }
         })
         .unzip();
     let (database_id, database_id_source) = database_id_arg
@@ -271,11 +288,14 @@ fn find_workspace_root() -> Result<Option<PathBuf>> {
 
 fn find_user_config_path() -> Option<PathBuf> {
     let home = env::var_os("HOME").map(PathBuf::from)?;
-    let primary = home.join(".config").join("vfs-cli").join("config.toml");
+    let primary = home
+        .join(".config")
+        .join("kinic-vfs-cli")
+        .join("config.toml");
     if primary.is_file() {
         return Some(primary);
     }
-    let fallback = home.join(".vfs-cli.toml");
+    let fallback = home.join(".kinic-vfs-cli.toml");
     fallback.is_file().then_some(fallback)
 }
 
@@ -312,32 +332,34 @@ fn write_workspace_config(path: &Path, config: &UserConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CANISTER_ID_ENV, DATABASE_ID_ENV, LOCAL_REPLICA_HOST, ResolvedConnection,
-        ResolvedConnectionPreview, UserConfig, load_user_config_from_path,
-        resolve_connection_from_sources, resolve_connection_preview_from_sources,
+        CANISTER_ID_ENV, ConnectionSources, DATABASE_ID_ENV, LOCAL_REPLICA_HOST,
+        MAINNET_CANISTER_ID, MAINNET_REPLICA_HOST, ResolvedConnection, ResolvedConnectionPreview,
+        UserConfig, load_user_config_from_path, resolve_connection_from_sources,
+        resolve_connection_preview_from_sources,
     };
     use std::path::PathBuf;
     use tempfile::tempdir;
 
     #[test]
     fn args_override_env_and_config() {
-        let resolved = resolve_connection_from_sources(
-            true,
-            Some("arg-canister".to_string()),
-            Some("arg-db".to_string()),
-            Some("env-canister".to_string()),
-            Some("env-db".to_string()),
-            Some(UserConfig {
+        let resolved = resolve_connection_from_sources(ConnectionSources {
+            local: true,
+            canister_id_arg: Some("arg-canister".to_string()),
+            database_id_arg: Some("arg-db".to_string()),
+            canister_id_env: Some("env-canister".to_string()),
+            database_id_env: Some("env-db".to_string()),
+            workspace: Some(UserConfig {
                 replica_host: Some("http://workspace-host".to_string()),
                 canister_id: Some("workspace-canister".to_string()),
                 database_id: Some("workspace-db".to_string()),
             }),
-            Some(UserConfig {
+            config: Some(UserConfig {
                 replica_host: Some("http://config-host".to_string()),
                 canister_id: Some("config-canister".to_string()),
                 database_id: Some("config-db".to_string()),
             }),
-        )
+            ..ConnectionSources::default()
+        })
         .expect("args should win");
         assert_eq!(
             resolved,
@@ -354,23 +376,20 @@ mod tests {
 
     #[test]
     fn env_and_workspace_override_user_config_for_database() {
-        let resolved = resolve_connection_from_sources(
-            false,
-            None,
-            None,
-            None,
-            Some("env-db".to_string()),
-            Some(UserConfig {
+        let resolved = resolve_connection_from_sources(ConnectionSources {
+            database_id_env: Some("env-db".to_string()),
+            workspace: Some(UserConfig {
                 replica_host: Some("http://workspace-host".to_string()),
                 canister_id: Some("workspace-canister".to_string()),
                 database_id: Some("workspace-db".to_string()),
             }),
-            Some(UserConfig {
+            config: Some(UserConfig {
                 replica_host: Some("http://config-host".to_string()),
                 canister_id: Some("config-canister".to_string()),
                 database_id: Some("config-db".to_string()),
             }),
-        )
+            ..ConnectionSources::default()
+        })
         .expect("workspace should provide canister");
         assert_eq!(resolved.replica_host, "http://workspace-host");
         assert_eq!(resolved.canister_id, "workspace-canister");
@@ -399,9 +418,21 @@ mod tests {
     }
 
     #[test]
-    fn missing_canister_id_returns_actionable_error() {
-        let error = resolve_connection_from_sources(false, None, None, None, None, None, None)
-            .expect_err("missing canister id should fail");
+    fn mainnet_default_supplies_canister_id() {
+        let resolved = resolve_connection_from_sources(ConnectionSources::default())
+            .expect("mainnet default should provide canister id");
+        assert_eq!(resolved.replica_host, MAINNET_REPLICA_HOST);
+        assert_eq!(resolved.canister_id, MAINNET_CANISTER_ID);
+        assert_eq!(resolved.canister_id_source, "mainnet default");
+    }
+
+    #[test]
+    fn local_missing_canister_id_returns_actionable_error() {
+        let error = resolve_connection_from_sources(ConnectionSources {
+            local: true,
+            ..ConnectionSources::default()
+        })
+        .expect_err("missing canister id should fail");
         let message = error.to_string();
         assert!(message.contains("canister_id"));
         assert!(message.contains(CANISTER_ID_ENV));
@@ -409,16 +440,15 @@ mod tests {
 
     #[test]
     fn preview_allows_missing_canister_id() {
-        let resolved =
-            resolve_connection_preview_from_sources(false, None, None, None, None, None, None);
+        let resolved = resolve_connection_preview_from_sources(ConnectionSources::default());
         assert_eq!(
             resolved,
             ResolvedConnectionPreview {
-                replica_host: "https://icp0.io".to_string(),
-                canister_id: None,
+                replica_host: MAINNET_REPLICA_HOST.to_string(),
+                canister_id: Some(MAINNET_CANISTER_ID.to_string()),
                 database_id: None,
                 replica_host_source: "default".to_string(),
-                canister_id_source: None,
+                canister_id_source: Some("mainnet default".to_string()),
                 database_id_source: None,
             }
         );
@@ -426,20 +456,15 @@ mod tests {
 
     #[test]
     fn preview_reads_database_without_canister() {
-        let resolved = resolve_connection_preview_from_sources(
-            false,
-            None,
-            None,
-            None,
-            None,
-            Some(UserConfig {
+        let resolved = resolve_connection_preview_from_sources(ConnectionSources {
+            workspace: Some(UserConfig {
                 replica_host: None,
                 canister_id: None,
                 database_id: Some("workspace-db".to_string()),
             }),
-            None,
-        );
-        assert_eq!(resolved.canister_id, None);
+            ..ConnectionSources::default()
+        });
+        assert_eq!(resolved.canister_id.as_deref(), Some(MAINNET_CANISTER_ID));
         assert_eq!(resolved.database_id.as_deref(), Some("workspace-db"));
         assert_eq!(
             resolved.database_id_source.as_deref(),
@@ -448,15 +473,37 @@ mod tests {
     }
 
     #[test]
+    fn replica_host_arg_overrides_config() {
+        let resolved = resolve_connection_from_sources(ConnectionSources {
+            replica_host_arg: Some("http://arg-host".to_string()),
+            canister_id_arg: Some("arg-canister".to_string()),
+            workspace: Some(UserConfig {
+                replica_host: Some("http://workspace-host".to_string()),
+                canister_id: Some("workspace-canister".to_string()),
+                database_id: None,
+            }),
+            config: Some(UserConfig {
+                replica_host: Some("http://config-host".to_string()),
+                canister_id: Some("config-canister".to_string()),
+                database_id: None,
+            }),
+            ..ConnectionSources::default()
+        })
+        .expect("arg host should win");
+        assert_eq!(resolved.replica_host, "http://arg-host");
+        assert_eq!(resolved.replica_host_source, "--replica-host");
+    }
+
+    #[test]
     fn config_path_prefers_xdg_location_over_home_file() {
         let dir = tempdir().expect("temp dir should exist");
         let home = dir.path();
-        let xdg = home.join(".config").join("vfs-cli");
+        let xdg = home.join(".config").join("kinic-vfs-cli");
         std::fs::create_dir_all(&xdg).expect("xdg dir should exist");
         std::fs::write(xdg.join("config.toml"), "replica_host = \"http://xdg\"\n")
             .expect("xdg config should write");
         std::fs::write(
-            home.join(".vfs-cli.toml"),
+            home.join(".kinic-vfs-cli.toml"),
             "replica_host = \"http://home\"\n",
         )
         .expect("home config should write");
@@ -496,11 +543,14 @@ mod tests {
     }
 
     fn find_user_config_path_with_home(home: &std::path::Path) -> Option<PathBuf> {
-        let primary = home.join(".config").join("vfs-cli").join("config.toml");
+        let primary = home
+            .join(".config")
+            .join("kinic-vfs-cli")
+            .join("config.toml");
         if primary.is_file() {
             return Some(primary);
         }
-        let fallback = home.join(".vfs-cli.toml");
+        let fallback = home.join(".kinic-vfs-cli.toml");
         fallback.is_file().then_some(fallback)
     }
 }

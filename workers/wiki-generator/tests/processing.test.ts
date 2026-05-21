@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bestEffortAppendWorkerLog } from "../src/processing.js";
-import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode } from "../src/types.js";
+import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
 
 test("worker log append failure is non-fatal", async () => {
@@ -32,9 +32,10 @@ function failingLogVfs(): VfsClient {
       etag: "etag-log",
       metadataJson: "{}"
     }),
-    writeNode: async (): Promise<void> => {
+    writeNode: async (): Promise<WriteNodeAck> => {
       throw new Error("etag conflict");
     },
+    mkdirNode: async (): Promise<void> => {},
     searchNodes: async (): Promise<SearchNodeHit[]> => [],
     exportSnapshot: async (): Promise<ExportSnapshotPage> => ({ snapshotRevision: "rev", nodes: [], nextCursor: null }),
     fetchUpdates: async (): Promise<FetchUpdatesPage> => ({ snapshotRevision: "rev", changedNodes: [], removedPaths: [], nextCursor: null })

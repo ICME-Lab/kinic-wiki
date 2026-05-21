@@ -1,7 +1,7 @@
 // Where: workers/wiki-generator/src/jobs.ts
 // What: D1 job/cursor state and Queue enqueue helpers.
-// Why: Generation must be idempotent across cron scans and retries.
-import type { QueueMessage, SourceJob } from "./types.js";
+// Why: Generation must be idempotent across explicit triggers and retries.
+import type { SourceJob, SourceQueueMessage } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export async function loadCursor(db: D1Database, databaseId: string, prefix: string): Promise<string | null> {
@@ -42,7 +42,7 @@ export function shouldSkipJob(job: SourceJob | null, sourceEtag: string): boolea
   return job?.source_etag === sourceEtag && job.status === "completed";
 }
 
-export async function enqueueSourceJob(env: RuntimeEnv, message: QueueMessage): Promise<boolean> {
+export async function enqueueSourceJob(env: RuntimeEnv, message: SourceQueueMessage): Promise<boolean> {
   const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
   if (shouldSkipJob(job, message.sourceEtag)) {
     return false;
@@ -52,7 +52,7 @@ export async function enqueueSourceJob(env: RuntimeEnv, message: QueueMessage): 
   return true;
 }
 
-export async function markProcessing(db: D1Database, message: QueueMessage): Promise<void> {
+export async function markProcessing(db: D1Database, message: SourceQueueMessage): Promise<void> {
   await db
     .prepare(
       `UPDATE source_jobs
@@ -66,7 +66,7 @@ export async function markProcessing(db: D1Database, message: QueueMessage): Pro
     .run();
 }
 
-export async function markCompleted(db: D1Database, message: QueueMessage, targetPath: string): Promise<void> {
+export async function markCompleted(db: D1Database, message: SourceQueueMessage, targetPath: string): Promise<void> {
   await db
     .prepare(
       `UPDATE source_jobs
@@ -81,7 +81,7 @@ export async function markCompleted(db: D1Database, message: QueueMessage, targe
     .run();
 }
 
-export async function markFailed(db: D1Database, message: QueueMessage, error: string): Promise<void> {
+export async function markFailed(db: D1Database, message: SourceQueueMessage, error: string): Promise<void> {
   await db
     .prepare(
       `UPDATE source_jobs
@@ -95,7 +95,7 @@ export async function markFailed(db: D1Database, message: QueueMessage, error: s
     .run();
 }
 
-async function upsertQueuedJob(db: D1Database, message: QueueMessage): Promise<void> {
+async function upsertQueuedJob(db: D1Database, message: SourceQueueMessage): Promise<void> {
   await db
     .prepare(
       `INSERT INTO source_jobs

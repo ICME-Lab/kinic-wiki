@@ -13,10 +13,30 @@ test("http and https URLs are normalized", () => {
 test("non-http and local URLs are rejected", () => {
   assert.throws(() => parseAllowedUrl("ftp://example.com/file"), /http or https/);
   assert.throws(() => parseAllowedUrl("http://localhost:3000"), /not allowed/);
+  assert.throws(() => parseAllowedUrl("http://printer.local"), /not allowed/);
   assert.throws(() => parseAllowedUrl("http://127.0.0.1:3000"), /not allowed/);
   assert.throws(() => parseAllowedUrl("http://192.168.0.10"), /not allowed/);
   assert.throws(() => parseAllowedUrl("http://169.254.169.254"), /not allowed/);
   assert.throws(() => parseAllowedUrl("http://[2606:4700:4700::1111]/"), /not allowed/);
+});
+
+test("special and reserved IPv4 host forms are rejected after URL normalization", () => {
+  for (const url of [
+    "http://2130706433/",
+    "http://0x7f000001/",
+    "http://0177.0.0.1/",
+    "http://127.1/",
+    "http://0.0.0.0/",
+    "http://100.64.0.1/",
+    "http://198.18.0.1/",
+    "http://192.0.2.1/",
+    "http://198.51.100.1/",
+    "http://203.0.113.1/",
+    "http://224.0.0.1/",
+    "http://240.0.0.1/"
+  ]) {
+    assert.throws(() => parseAllowedUrl(url), /not allowed/);
+  }
 });
 
 test("safe redirects are followed manually", async () => {

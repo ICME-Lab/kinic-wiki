@@ -5,7 +5,7 @@ import { Actor, HttpAgent } from "@icp-sdk/core/agent";
 import { Principal } from "@icp-sdk/core/principal";
 import { identityFromPem } from "./identity-pem.js";
 import { idlFactory } from "./vfs-idl.js";
-import type { ExportSnapshotPage, FetchUpdatesPage, NodeKind, SearchNodeHit, WikiNode, WorkerConfig, WriteNodeRequest } from "./types.js";
+import type { ExportSnapshotPage, FetchUpdatesPage, MkdirNodeRequest, NodeKind, SearchNodeHit, WikiNode, WorkerConfig, WriteNodeAck, WriteNodeRequest } from "./types.js";
 
 type Variant = Record<string, null>;
 
@@ -52,11 +52,34 @@ type RawWriteNodeRequest = {
   expected_etag: [] | [string];
 };
 
+type RawRecentNodeHit = {
+  path: string;
+  kind: Variant;
+  etag: string;
+  updated_at: bigint;
+};
+
+type RawWriteNodeResult = {
+  created: boolean;
+  node: RawRecentNodeHit;
+};
+
+type RawMkdirNodeRequest = {
+  database_id: string;
+  path: string;
+};
+
+type RawMkdirNodeResult = {
+  created: boolean;
+  path: string;
+};
+
 type Result<T> = { Ok: T } | { Err: string };
 
 type VfsActor = {
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
-  write_node: (request: RawWriteNodeRequest) => Promise<Result<unknown>>;
+  mkdir_node: (request: RawMkdirNodeRequest) => Promise<Result<RawMkdirNodeResult>>;
+  write_node: (request: RawWriteNodeRequest) => Promise<Result<RawWriteNodeResult>>;
   search_nodes: (request: {
     database_id: string;
     query_text: string;
@@ -84,7 +107,8 @@ type VfsActor = {
 
 export type VfsClient = {
   readNode(databaseId: string, path: string): Promise<WikiNode | null>;
-  writeNode(request: WriteNodeRequest): Promise<void>;
+  mkdirNode(request: MkdirNodeRequest): Promise<void>;
+  writeNode(request: WriteNodeRequest): Promise<WriteNodeAck>;
   searchNodes(databaseId: string, queryText: string, limit: number, prefix: string): Promise<SearchNodeHit[]>;
   exportSnapshot(databaseId: string, prefix: string, cursor: string | null, snapshotRevision: string | null): Promise<ExportSnapshotPage>;
   fetchUpdates(databaseId: string, prefix: string, knownRevision: string, cursor: string | null, targetRevision: string | null): Promise<FetchUpdatesPage>;
@@ -102,9 +126,10 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
   });
   return {
     readNode: async (databaseId, path) => normalizeOptionalNode(await unwrap(actor.read_node(databaseId, path))),
-    writeNode: async (request) => {
-      await unwrap(actor.write_node(toRawWriteNodeRequest(request)));
+    mkdirNode: async (request) => {
+      await unwrap(actor.mkdir_node({ database_id: request.databaseId, path: request.path }));
     },
+    writeNode: async (request) => normalizeWriteNodeAck((await unwrap(actor.write_node(toRawWriteNodeRequest(request)))).node),
     searchNodes: async (databaseId, queryText, limit, prefix) =>
       (await unwrap(
         actor.search_nodes({
@@ -144,6 +169,15 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
   };
 }
 
+export async function ensureParentFolders(vfs: VfsClient, databaseId: string, path: string): Promise<void> {
+  const segments = path.split("/").filter(Boolean);
+  let current = "";
+  for (const segment of segments.slice(0, -1)) {
+    current = `${current}/${segment}`;
+    await vfs.mkdirNode({ databaseId, path: current });
+  }
+}
+
 async function unwrap<T>(result: Promise<Result<T>>): Promise<T> {
   const resolved = await result;
   if ("Err" in resolved) {
@@ -164,6 +198,14 @@ function normalizeNode(raw: RawNode): WikiNode {
     content: raw.content,
     etag: raw.etag,
     metadataJson: raw.metadata_json
+  };
+}
+
+function normalizeWriteNodeAck(raw: RawRecentNodeHit): WriteNodeAck {
+  return {
+    path: raw.path,
+    kind: normalizeKind(raw.kind),
+    etag: raw.etag
   };
 }
 
@@ -194,12 +236,14 @@ function normalizeFetchUpdatesPage(raw: RawFetchUpdatesPage): FetchUpdatesPage {
 }
 
 function normalizeKind(kind: Variant): NodeKind {
+  if ("Folder" in kind) return "folder";
   if ("File" in kind) return "file";
   if ("Source" in kind) return "source";
   throw new Error("unknown node kind");
 }
 
 function kindVariant(kind: NodeKind): Variant {
+  if (kind === "folder") return { Folder: null };
   return kind === "source" ? { Source: null } : { File: null };
 }
 

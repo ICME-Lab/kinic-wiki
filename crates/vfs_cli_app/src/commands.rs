@@ -1,10 +1,14 @@
 // Where: crates/vfs_cli_app/src/commands.rs
 // What: Command handlers for FS-first remote reads and writes.
 // Why: The CLI should keep canister operations explicit and path-oriented.
-use crate::cli::{Cli, Command};
+use crate::claude::run_claude_command;
+use crate::cli::{Cli, Command, IdentityCommand};
+use crate::codex::run_codex_command;
 use crate::conversation_wiki::generate_conversation_wiki;
 use crate::github_ingest::run_github_command;
+use crate::hermes::run_hermes_command;
 use crate::maintenance::{rebuild_index, rebuild_scope_index};
+use crate::purge_url_ingest::purge_url_ingest;
 use crate::skill_registry::run_skill_command;
 use anyhow::{Result, anyhow};
 use vfs_cli::commands::{database_id_or_env, run_vfs_command};
@@ -25,11 +29,37 @@ pub async fn run_command(
         return run_vfs_command(client, connection, vfs_command).await;
     }
     match command {
+        Command::Identity { command } => match command {
+            IdentityCommand::Show { json } => {
+                let principal = client
+                    .caller_principal()
+                    .ok_or_else(|| anyhow!("current identity principal is not available"))?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "principal": principal
+                        }))?
+                    );
+                } else {
+                    println!("{principal}");
+                }
+            }
+        },
         Command::Skill { command } => {
             run_skill_command(client, require_database_id(database_id)?, command).await?;
         }
         Command::Github { command } => {
             run_github_command(client, require_database_id(database_id)?, command).await?;
+        }
+        Command::Hermes { command } => {
+            run_hermes_command(client, database_id, command).await?;
+        }
+        Command::Codex { command } => {
+            run_codex_command(command)?;
+        }
+        Command::Claude { command } => {
+            run_claude_command(command)?;
         }
         Command::RebuildIndex => {
             rebuild_index(client, database_id_or_env(database_id)?.as_ref()).await?;
@@ -52,6 +82,24 @@ pub async fn run_command(
                     result.written_paths.len()
                 );
             }
+        }
+        Command::PurgeUrlIngest {
+            url,
+            source_path,
+            yes,
+            force_target_prefix,
+            json,
+        } => {
+            purge_url_ingest(
+                client,
+                require_database_id(database_id)?,
+                url.as_deref(),
+                source_path.as_deref(),
+                yes,
+                force_target_prefix.as_deref(),
+                json,
+            )
+            .await?;
         }
         Command::Status { json } => {
             let database_id = database_id_or_env(database_id)?;

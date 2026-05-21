@@ -1,8 +1,8 @@
 "use client";
 
 // Where: wikibrowser/app/dashboard/member-table.tsx
-// What: Editable database member role table.
-// Why: Owners should change roles directly without revoking and re-granting access.
+// What: Database member role table with owner edit mode and public read-only mode.
+// Why: Public dashboards should expose access state without granting management controls.
 
 import { useState } from "react";
 import { ActionButton } from "./action-button";
@@ -14,6 +14,7 @@ export function MemberTable(props: {
   busyAction: BusyAction | null;
   members: DatabaseMember[];
   principal: string;
+  readOnly?: boolean;
   onRevoke: (member: DatabaseMember) => void;
   onRoleChange: (member: DatabaseMember, role: DatabaseRole) => void;
 }) {
@@ -27,8 +28,8 @@ export function MemberTable(props: {
           <tr>
             <th className="px-4 py-3 font-medium">Principal</th>
             <th className="px-4 py-3 font-medium">Role</th>
-            <th className="px-4 py-3 font-medium">Created</th>
-            <th className="px-4 py-3 font-medium">Revoke</th>
+            {props.readOnly ? null : <th className="px-4 py-3 font-medium">Created</th>}
+            {props.readOnly ? null : <th className="px-4 py-3 font-medium">Revoke</th>}
           </tr>
         </thead>
         <tbody>
@@ -39,6 +40,7 @@ export function MemberTable(props: {
               busyAction={props.busyAction}
               member={member}
               principal={props.principal}
+              readOnly={props.readOnly ?? false}
               onRevoke={props.onRevoke}
               onRoleChange={props.onRoleChange}
             />
@@ -54,6 +56,7 @@ function MemberRow(props: {
   busyAction: BusyAction | null;
   member: DatabaseMember;
   principal: string;
+  readOnly: boolean;
   onRevoke: (member: DatabaseMember) => void;
   onRoleChange: (member: DatabaseMember, role: DatabaseRole) => void;
 }) {
@@ -64,33 +67,39 @@ function MemberRow(props: {
   const roleBusy = isBusyGrant(props.busyAction, props.member.principal, role);
   const changed = role !== props.member.role;
   return (
-    <tr className={`border-t border-line ${revokeBusy || roleBusy ? "bg-blue-50/60" : ""}`}>
+    <tr className={`border-t border-line ${revokeBusy || roleBusy ? "bg-accentSoft/70" : ""}`}>
       <td className="px-4 py-3 font-mono text-xs text-ink">{principalDisplayName(props.member.principal)}</td>
       <td className="px-4 py-3">
-        <div className="flex min-w-[210px] items-center gap-2">
-          <select
-            className="rounded-lg border border-line px-2 py-1.5 text-sm"
-            disabled={props.busy || ownMember || anonymousMember}
-            value={role}
-            onChange={(event) => setRole(databaseRoleFromValue(event.target.value))}
-          >
-            {DATABASE_ROLES.map((item) => (
-              <option key={item} value={item}>
-                {item}
-              </option>
-            ))}
-          </select>
-          <ActionButton disabled={props.busy || ownMember || anonymousMember || !changed} loading={roleBusy} loadingLabel="Saving..." onClick={() => props.onRoleChange(props.member, role)} size="compact" variant="primary">
-            Save
+        {props.readOnly ? (
+          <span className="text-sm text-ink">{props.member.role}</span>
+        ) : (
+          <div className="flex min-w-[210px] items-center gap-2">
+            <select
+              className="rounded-lg border border-line px-2 py-1.5 text-sm"
+              disabled={props.busy || ownMember || anonymousMember}
+              value={role}
+              onChange={(event) => setRole(databaseRoleFromValue(event.target.value))}
+            >
+              {DATABASE_ROLES.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+            <ActionButton disabled={props.busy || ownMember || anonymousMember || !changed} loading={roleBusy} loadingLabel="Saving..." onClick={() => props.onRoleChange(props.member, role)} size="compact" variant="primary">
+              Save
+            </ActionButton>
+          </div>
+        )}
+      </td>
+      {props.readOnly ? null : <td className="px-4 py-3 text-muted">{formatTimestamp(props.member.createdAtMs)}</td>}
+      {props.readOnly ? null : (
+        <td className="px-4 py-3">
+          <ActionButton disabled={props.busy || ownMember} loading={revokeBusy} loadingLabel="Revoking..." onClick={() => props.onRevoke(props.member)} size="compact" variant="secondary">
+            Revoke
           </ActionButton>
-        </div>
-      </td>
-      <td className="px-4 py-3 text-muted">{formatTimestamp(props.member.createdAtMs)}</td>
-      <td className="px-4 py-3">
-        <ActionButton disabled={props.busy || ownMember} loading={revokeBusy} loadingLabel="Revoking..." onClick={() => props.onRevoke(props.member)} size="compact" variant="secondary">
-          Revoke
-        </ActionButton>
-      </td>
+        </td>
+      )}
     </tr>
   );
 }

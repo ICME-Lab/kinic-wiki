@@ -1,6 +1,6 @@
 # Wiki Browser
 
-Read-only browser for Kinic Wiki canisters. The app is a lightweight knowledge IDE and debug UI, not the primary Agent Memory API surface.
+Dashboard for Kinic Wiki canister databases. The app is a lightweight knowledge IDE and debug UI, not the primary Agent Memory API surface.
 
 ## Local
 
@@ -19,14 +19,11 @@ http://localhost:3000/<database-id>/Wiki
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
 
 ```bash
-cargo run -p vfs-cli -- --canister-id <canister-id> database top-up-principal <amount-e8s>
-cargo run -p vfs-cli -- --canister-id <canister-id> database create --display-name "Team Wiki" --initial-deposit-e8s 1000000
-cargo run -p vfs-cli -- --canister-id <canister-id> database grant <database-id> 2vxsx-fae reader
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-Before `database top-up-principal`, approve the VFS canister on the KINIC ICRC-2 ledger. `database create` prints the generated database ID. The dashboard can also run principal top-up/withdraw, create with display name and initial deposit, DB top-up/withdraw, rename, and billing history checks.
-
-`NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. `NEXT_PUBLIC_II_PROVIDER_URL` overrides the Internet Identity frontend URL for local II. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
+`database create <database-name>` creates a generated database ID and prints it on success. `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. `NEXT_PUBLIC_II_PROVIDER_URL` overrides the Internet Identity frontend URL for local II. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash
 # local icp network
@@ -40,22 +37,35 @@ NEXT_PUBLIC_II_PROVIDER_URL=https://id.ai
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<mainnet-wiki-canister-id>
 ```
 
+Query Q&A uses `DEEPSEEK_API_KEY` only in the server runtime. Store it in `wikibrowser/.env.local` for local runs. For production, set it as a Cloudflare Worker secret:
+
+```bash
+pnpm exec wrangler secret put DEEPSEEK_API_KEY
+pnpm exec wrangler kv namespace create QUERY_ANSWER_RATE_LIMIT
+```
+
+Copy the returned KV namespace id into the `QUERY_ANSWER_RATE_LIMIT` binding in `wrangler.jsonc` before deploy. Never expose the API key as `NEXT_PUBLIC_DEEPSEEK_API_KEY`.
+
+Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic counter, so the limit is a practical abuse throttle, not an exact quota under concurrent requests.
+
 ## Scope
 
 - Browse `/Wiki` and `/Sources`
+- Create databases and manage database access
+- Edit Markdown nodes under `/Wiki`
 - Create URL ingest requests under `/Sources/ingest-requests` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
 - Show recent nodes
 - Show incoming backlinks and a lightweight graph view
 - Show lightweight lint hints
-- Show database display names, billing balances, and suspension state in dashboard lists
-- Manage principal and DB billing balances after Internet Identity login
 - Inspect path, etag, update time, size, role, outgoing links, and inferred raw sources
+- Expose Open Graph and X link preview images
+- Share public databases on X through the Web Intent URL
 - Read canister health and Agent Memory API metadata through the hand-written Candid subset
 - Show route-level 404 and VFS not-found states
 
-No full editing or lint workflow is included.
+No full lint workflow is included.
 
 ## URL Ingest
 
@@ -71,8 +81,15 @@ Submitting a URL writes one request node to the same database:
 /Sources/ingest-requests/<request-id>.md
 ```
 
-`workers/wiki-generator` scans those requests, fetches supported `http` / `https` HTML or text URLs, writes the normalized source to `/Sources/raw/<id>/<id>.md`, then generates one review-ready draft under `/Wiki/conversations`.
-The generator Worker principal must have writer access to the target database.
+Ingest request nodes are regular `file` nodes. Only fetched raw web evidence under `/Sources/raw/<id>/<id>.md` is stored as `source`.
+
+When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, the browser asks the VFS canister to authorize a 30 minute session trigger ticket for the II caller, writes the request, then calls `/api/url-ingest/trigger`. That server route checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, and `requestPath` to the generator Worker with bearer auth. The ticket is replayable within its TTL; duplicate jobs are handled by Worker/job idempotency and rate limits. Writer access is checked when the ticket is issued; revoking writer access does not immediately invalidate an already issued ticket before its TTL. `Origin` is only a CORS allowlist, not the authorization boundary.
+The worker fetches supported `http` / `https` HTML or text URLs, writes the normalized source to `/Sources/raw/<id>/<id>.md`, then generates one review-ready draft under `/Wiki/conversations`.
+The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so URL ingest and draft generation can run immediately. Owners can revoke that member, but URL ingest sessions will fail while the service principal lacks writer access.
+
+## Public Access
+
+Granting `reader` to the anonymous principal `2vxsx-fae` makes a database public readable. Public readable databases expose wiki content and the database member list to anonymous browser sessions. The public dashboard shows member principals and roles in read-only mode, including owner, collaborator, anonymous, and service principals such as the default LLM writer.
 
 ## Checks
 
@@ -87,7 +104,7 @@ Internet Identity E2E requires a local wiki canister and the E2E setup script. T
 
 ```bash
 icp network start -d -e local-wiki
-ICP_ENVIRONMENT=local-wiki ../scripts/local/deploy_wiki.sh
+icp deploy -e local-wiki
 pnpm e2e:ii:setup
 pnpm e2e:ii
 ```
@@ -147,7 +164,7 @@ Covered methods:
 ## Public MVP
 
 Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<mainnet-wiki-canister-id>`.
-The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`.
+The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility.
 Canister unreachable / API failures are shown as browser errors and are not treated as not-found states.
 The `/<database-id>/...` and `/dashboard/<database-id>` URLs are App Router dynamic routes. Read and authenticated calls go directly from the browser to the configured IC gateway.
 

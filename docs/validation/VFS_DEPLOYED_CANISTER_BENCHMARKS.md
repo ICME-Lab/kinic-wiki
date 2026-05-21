@@ -130,6 +130,5 @@ Update operations return lightweight acknowledgements, not full node bodies. Any
 
 - `scripts/bench/run_canister_vfs_workload.sh`
 - `scripts/bench/run_canister_vfs_latency.sh`
-- `scripts/bench/run_canister_vfs_fresh_compare.sh`
 
 Both workload and latency wrappers build `vfs_bench` from the workspace root and use either `CARGO_TARGET_DIR/.../debug/vfs_bench` or the default `<repo>/target/debug/vfs_bench`.

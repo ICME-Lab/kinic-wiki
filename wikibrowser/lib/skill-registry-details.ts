@@ -32,7 +32,7 @@ async function loadSkillDetails(canisterId: string, databaseId: string, skill: C
 async function loadRecentRuns(canisterId: string, databaseId: string, skillId: string, identity?: Identity): Promise<SkillRunEvidence[]> {
   const runDir = `/Sources/skill-runs/${skillId}`;
   const entries = await listRegistryChildren(canisterId, databaseId, runDir, identity);
-  const nodes = await Promise.all(entries.filter((entry) => entry.kind !== "directory").slice(-100).map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
+  const nodes = await Promise.all(entries.filter(isFileEntry).slice(-100).map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
   return nodes
     .flatMap((node) => (node ? [parseRunEvidence(node.path, node.content)] : []))
     .filter((run): run is SkillRunEvidence => Boolean(run))
@@ -41,7 +41,7 @@ async function loadRecentRuns(canisterId: string, databaseId: string, skillId: s
 
 async function loadProposals(canisterId: string, databaseId: string, basePath: string, identity?: Identity): Promise<SkillProposal[]> {
   const entries = await listRegistryChildren(canisterId, databaseId, `${basePath}/improvement-proposals`, identity);
-  const nodes = await Promise.all(entries.filter((entry) => entry.kind !== "directory").map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
+  const nodes = await Promise.all(entries.filter(isFileEntry).map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
   return nodes
     .flatMap((node) => (node ? [parseProposal(node.path, node.content)] : []))
     .filter((proposal): proposal is SkillProposal => Boolean(proposal))
@@ -50,7 +50,7 @@ async function loadProposals(canisterId: string, databaseId: string, basePath: s
 
 async function loadEvents(canisterId: string, databaseId: string, skillId: string, identity?: Identity): Promise<SkillEvent[]> {
   const entries = await listRegistryChildren(canisterId, databaseId, `/Sources/skill-events/${skillId}`, identity);
-  const nodes = await Promise.all(entries.filter((entry) => entry.kind !== "directory").slice(-20).map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
+  const nodes = await Promise.all(entries.filter(isFileEntry).slice(-20).map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
   return nodes
     .flatMap((node) => (node ? [parseEvent(node.path, node.content)] : []))
     .filter((event): event is SkillEvent => Boolean(event))
@@ -90,8 +90,12 @@ async function mapConcurrent<Input, Output>(items: Input[], concurrency: number,
 }
 
 function missingPackageFiles(children: ChildNode[]): string[] {
-  const names = new Set(children.filter((child) => child.kind !== "directory").map((child) => child.name));
+  const names = new Set(children.filter(isFileEntry).map((child) => child.name));
   return ["manifest.md", "SKILL.md"].filter((name) => !names.has(name));
+}
+
+function isFileEntry(entry: ChildNode): boolean {
+  return entry.kind !== "directory" && entry.kind !== "folder";
 }
 
 function summarizeRuns(runs: SkillRunEvidence[]): SkillRunSummary {

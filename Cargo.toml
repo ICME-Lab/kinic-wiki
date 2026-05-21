@@ -6,6 +6,7 @@ members = [
     "crates/vfs_runtime",
     "crates/vfs_types",
     "crates/wiki_domain",
+    "crates/ic_sqlite_vfs_probe",
     "crates/vfs_canister",
     "crates/vfs_store",
 ]
@@ -14,5 +15,3 @@ resolver = "2"
 [patch.crates-io]
 # See docs/internal/DEPENDENCY_FORKS.md for fork scope and update policy.
 ic-stable-structures = { git = "https://github.com/humandebri/stable-structures", rev = "a24a7d7572e36eda104abd8280946aeb7ac4e060" }
-stable-fs = { git = "https://github.com/humandebri/stable-fs", rev = "677e54471d683a6a988234dc1675b499ebed23d9" }
-ic-wasi-polyfill = { git = "https://github.com/humandebri/ic-wasi-polyfill", rev = "4a9b462e2e382bec6505f9c98bb4daa145317093" }

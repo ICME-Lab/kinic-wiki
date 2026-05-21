@@ -13,7 +13,6 @@
 優先して取り込む候補:
 
 - `obsidian-markdown`
-- `obsidian-cli`
 - `defuddle`
 
 後回し:
@@ -37,9 +36,6 @@
   vendor/
     obsidian-skills/
       obsidian-markdown/
-        SKILL.md
-        ...
-      obsidian-cli/
         SKILL.md
         ...
       defuddle/
@@ -81,11 +77,6 @@
 - callouts
 - properties
 
-### `vendor/obsidian-cli`
-
-- vault や Obsidian CLI に関する一般知識
-- Obsidian 側の操作文脈
-
 ### `vendor/defuddle`
 
 - web/source から clean markdown を抽出する前処理知識
@@ -96,7 +87,6 @@
 repo skill が vendor skill を参照する。
 
 - `kinic-wiki-ingest` -> `vendor/obsidian-markdown`
-- `kinic-wiki-ingest` -> `vendor/obsidian-cli`
 - `kinic-wiki-ingest` -> `vendor/defuddle`
 - `kinic-wiki-query` -> `vendor/obsidian-markdown` when page write-back is needed
 - `kinic-wiki-lint` -> `vendor/obsidian-markdown` when mirror-shape checks need markdown details

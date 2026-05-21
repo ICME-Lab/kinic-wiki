@@ -1,16 +1,14 @@
 # Dependency Forks
 
-This project patches selected IC stable-memory crates while multi-database canister storage depends on widened mount IDs.
+This project patches selected IC stable-memory crates while multi-database canister storage depends on widened memory IDs.
 
 ## Current patches
 
 - `ic-stable-structures`: `https://github.com/humandebri/stable-structures`, rev `a24a7d7572e36eda104abd8280946aeb7ac4e060`
-- `stable-fs`: `https://github.com/humandebri/stable-fs`, rev `677e54471d683a6a988234dc1675b499ebed23d9`
-- `ic-wasi-polyfill`: `https://github.com/humandebri/ic-wasi-polyfill`, rev `4a9b462e2e382bec6505f9c98bb4daa145317093`
 
 ## Reason
 
-The multi-database VFS canister needs one index DB plus many per-database SQLite files. The upstream mount ID shape is too small for the target layout. These forks widen mount IDs from `u8` to `u16`, allowing user DB mount IDs `11..=32767`.
+The multi-database VFS canister needs one index DB plus many per-database SQLite memories. The upstream memory ID shape is too small for the target layout. This fork widens memory IDs from `u8` to `u16`, allowing user DB memory IDs `11..=32767`.
 
 ## Mainline requirement
 
@@ -18,11 +16,19 @@ Before merging this dependency strategy into a long-lived mainline branch, move 
 
 Track upstream PRs for the widening and keep each pinned revision tied to a reviewed diff. Do not update these revisions mechanically.
 
+## WASI audit
+
+The canister SQLite path does not use WASI, wasi2ic, stable-fs, or ic-rusqlite. It uses `ic-sqlite-vfs` over stable memory selected through `MemoryManager`.
+
+Remaining `Cargo.lock` entries for `wasi`, `wasip2`, and `wasip3` are platform/transitive dependencies from `getrandom`, `tempfile`, `proptest`, and `ic-agent` paths. They are not direct canister SQLite dependencies.
+
+Remaining `pnpm-lock.yaml` entries such as `@emnapi/wasi-threads` and `@unrs/resolver-binding-wasm32-wasi` are Node package platform optional bindings in the web workspaces. They are not part of the canister SQLite execution path.
+
 ## Update checks
 
 When changing any patched revision:
 
-- verify mount IDs above `255` can be allocated and used for a database file
+- verify memory IDs above `255` can be allocated and used for a database
 - run `./.local/check.sh`
 - confirm `crates/vfs_canister/vfs.did` still matches the generated Candid interface
-- review archive/restore smoke coverage because restore allocates a fresh mount ID
+- review archive/restore smoke coverage because restore allocates a fresh memory ID

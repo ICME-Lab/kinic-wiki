@@ -1,4 +1,8 @@
 .tmp-test/
+.wrangler/
+.dev.vars
+.env
+.env.local
 node_modules/
 dist/
 worker-configuration.d.ts

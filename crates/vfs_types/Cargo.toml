@@ -1,7 +1,16 @@
 [package]
-name = "vfs-types"
+name = "kinic-vfs-types"
 version = "0.1.0"
 edition = "2024"
+description = "Shared VFS request and response types for Kinic Wiki canisters and clients"
+repository = "https://github.com/ICME-Lab/kinic-wiki"
+readme = "../../README.md"
+license = "MIT"
+keywords = ["kinic", "vfs", "icp", "wiki"]
+categories = ["data-structures"]
+
+[lib]
+name = "vfs_types"
 
 [dependencies]
 candid = "0.10.26"

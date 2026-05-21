@@ -2,50 +2,97 @@
 // What: ICP canister entrypoints backed by VfsService with an FS-first public API.
 // Why: The canister now exposes node-oriented operations directly and keeps the runtime boundary thin.
 use std::cell::RefCell;
+#[cfg(target_arch = "wasm32")]
+use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs::create_dir_all;
-use std::ops::Range;
-#[cfg(not(test))]
-use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(any(target_arch = "wasm32", test))]
+use candid::utils::decode_args;
 use candid::{CandidType, Decode, Deserialize, Nat, Principal, export_service};
 #[cfg(not(test))]
 use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
+use ic_http_certification::{
+    CERTIFICATE_EXPRESSION_HEADER_NAME, DefaultCelBuilder, DefaultResponseCertification,
+    HttpCertification, HttpCertificationPath, HttpCertificationTree, HttpCertificationTreeEntry,
+    HttpResponse as CertifiedHttpResponse, utils::add_v2_certificate_header,
+};
+#[cfg(target_arch = "wasm32")]
+use ic_sqlite_vfs::{Db, DbHandle};
+#[cfg(target_arch = "wasm32")]
 use ic_stable_structures::DefaultMemoryImpl;
+#[cfg(target_arch = "wasm32")]
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::{DatabaseMeta, UsageEvent, VfsService};
 use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, BillingTransferResult,
-    CanisterHealth, CanonicalRole, ChildNode, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseBillingEntryPage, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
-    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
+    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, PrincipalBillingEntryPage, PrincipalBillingSummary, QueryContext,
-    QueryContextRequest, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest,
-    WriteNodeResult,
+    QueryContextRequest, RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
+#[cfg(not(target_arch = "wasm32"))]
 const DATABASES_DIR: &str = "./DB/databases";
-// WASI filesystem memory is for tmp files and directory metadata, not DB slots.
-// SQLite DB files are mounted separately with dedicated MemoryId values.
-const WASI_FS_MEMORY_RANGE: Range<u16> = 0..10;
+const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
+const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci"]}"#;
+const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
+const ICP_CLI_LOGIN_PATH: &str = "/login";
+const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
+#[cfg(target_arch = "wasm32")]
 const INDEX_DB_MEMORY_ID: u16 = 10;
 
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HttpRequest {
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    certificate_version: Option<u16>,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct HttpResponse {
+    status_code: u16,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    upgrade: Option<bool>,
+}
+
 thread_local! {
+    #[cfg(target_arch = "wasm32")]
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
         RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static SERVICE: RefCell<Option<VfsService>> = const { RefCell::new(None) };
+    #[cfg(target_arch = "wasm32")]
+    static DATABASE_HANDLES: RefCell<BTreeMap<u16, DbHandle>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 #[derive(Clone, Debug)]
 enum LedgerTransferOutcome {
+    Completed(u64),
+    LedgerErr(String),
+    Ambiguous(String),
+}
+
+#[derive(Clone, Debug)]
+enum LedgerTransferFromOutcome {
     Completed(u64),
     LedgerErr(String),
     Ambiguous(String),
@@ -111,11 +158,42 @@ enum TransferFromError {
 #[init]
 fn init_hook(config: BillingConfig) {
     initialize_or_trap(Some(config));
+    certify_http_responses();
 }
 
 #[post_upgrade]
 fn post_upgrade_hook() {
-    initialize_or_trap(None);
+    let config = post_upgrade_billing_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
+    initialize_upgrade_or_trap(config);
+    certify_http_responses();
+}
+
+#[query]
+fn http_request(request: HttpRequest) -> HttpResponse {
+    if request.method != "GET" {
+        return HttpResponse {
+            status_code: 405,
+            headers: text_headers(),
+            body: b"Method not allowed".to_vec(),
+            upgrade: Some(false),
+        };
+    }
+    let request_path = request_path(&request.url);
+    let Some((path, entry, tree, mut response)) = certified_static_response(request_path) else {
+        return HttpResponse {
+            status_code: 404,
+            headers: text_headers(),
+            body: b"Not found".to_vec(),
+            upgrade: Some(false),
+        };
+    };
+    if let Some(certificate) = data_certificate() {
+        let witness = tree.witness(&entry, request_path).unwrap_or_else(|error| {
+            ic_cdk::trap(format!("HTTP certification witness failed: {error}"))
+        });
+        add_v2_certificate_header(&certificate, &mut response, &witness, &path.to_expr_path());
+    }
+    http_response_from_certified(response)
 }
 
 #[query]
@@ -172,41 +250,55 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 }
 
 #[update]
-fn create_database(display_name: String, initial_deposit_e8s: u64) -> Result<String, String> {
+fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
-    with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.create_generated_database_with_initial_deposit(
-            &display_name,
-            caller,
-            initial_deposit_e8s,
-            now,
-        )?;
-        if let Err(error) = mount_database_file(&meta) {
-            let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
-            let cleanup_error = service
-                .reverse_failed_database_create(&meta.database_id, caller, amount, now)
-                .err();
-            return Err(database_create_error(error, cleanup_error));
-        }
-        if let Err(error) = service.run_database_migrations(&meta.database_id) {
-            unmount_database_file(&meta.db_file_name);
-            let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
-            let cleanup_error = service
-                .reverse_failed_database_create(&meta.database_id, caller, amount, now)
-                .err();
-            return Err(database_create_error(error, cleanup_error));
-        }
-        Ok(meta.database_id)
-    })
+    with_usage_derived_database_id(
+        "create_database",
+        None,
+        |service, caller, now| {
+            let initial_deposit_e8s = match request.initial_deposit_e8s {
+                Some(value) => value,
+                None => service.billing_config()?.min_initial_deposit_e8s,
+            };
+            let meta = service.create_generated_database_with_initial_deposit(
+                &request.name,
+                caller,
+                initial_deposit_e8s,
+                now,
+            )?;
+            if let Err(error) = mount_database_file(&meta) {
+                let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
+                let cleanup_error = service
+                    .reverse_failed_database_create(&meta.database_id, caller, amount, now)
+                    .err();
+                return Err(database_create_error(error, cleanup_error));
+            }
+            if let Err(error) = service.run_database_migrations(&meta.database_id) {
+                unmount_database_file(&meta.db_file_name);
+                let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
+                let cleanup_error = service
+                    .reverse_failed_database_create(&meta.database_id, caller, amount, now)
+                    .err();
+                return Err(database_create_error(error, cleanup_error));
+            }
+            Ok(CreateDatabaseResult {
+                database_id: meta.database_id,
+                name: meta.name,
+            })
+        },
+        |result| Some(result.database_id.clone()),
+    )
 }
 
 #[update]
-fn rename_database(database_id: String, display_name: String) -> Result<(), String> {
-    require_authenticated_caller()?;
+fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
     with_metered_update(
         "rename_database",
-        Some(database_id.clone()),
-        |service, caller, now| service.rename_database(&database_id, &display_name, caller, now),
+        Some(database_id),
+        |service, caller, now| {
+            service.rename_database(&request.database_id, caller, &request.name, now)
+        },
     )
 }
 
@@ -260,14 +352,24 @@ async fn top_up_principal_balance(amount_e8s: u64) -> Result<BillingTransferResu
     let config = with_service(|service| service.billing_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let block_index = ledger_transfer_from(ledger, caller_principal(), amount_e8s).await?;
-    let balance = with_service(|service| {
-        service.credit_principal_top_up(&caller, amount_e8s, block_index, now)
-    })?;
-    Ok(BillingTransferResult {
-        block_index,
-        balance_e8s: balance,
-    })
+    match ledger_transfer_from(ledger, caller_principal(), amount_e8s).await {
+        LedgerTransferFromOutcome::Completed(block_index) => {
+            let balance = with_service(|service| {
+                service.credit_principal_top_up(&caller, amount_e8s, block_index, now)
+            })?;
+            Ok(BillingTransferResult {
+                block_index,
+                balance_e8s: balance,
+            })
+        }
+        LedgerTransferFromOutcome::LedgerErr(error) => Err(error),
+        LedgerTransferFromOutcome::Ambiguous(error) => {
+            let _ = with_service(|service| {
+                service.mark_principal_top_up_ambiguous(&caller, amount_e8s, now)
+            });
+            Err(format!("top-up pending; manual repair required: {error}"))
+        }
+    }
 }
 
 #[update]
@@ -504,11 +606,68 @@ fn finalize_database_restore(database_id: String) -> Result<(), String> {
 }
 
 #[update]
+fn cancel_database_restore(database_id: String) -> Result<(), String> {
+    with_usage(
+        "cancel_database_restore",
+        Some(database_id.clone()),
+        |service, caller, now| {
+            let meta = service.cancel_database_restore(&database_id, caller, now)?;
+            unmount_database_file(&meta.db_file_name);
+            Ok(())
+        },
+    )
+}
+
+#[update]
 fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
     with_metered_update("write_node", Some(database_id), |service, caller, now| {
         service.write_node(caller, request, now)
     })
+}
+
+#[update]
+fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
+    let database_id = request.database_id.clone();
+    with_usage("write_nodes", Some(database_id), |service, caller, now| {
+        service.write_nodes(caller, request, now)
+    })
+}
+
+#[update]
+fn authorize_url_ingest_trigger_session(
+    request: UrlIngestTriggerSessionRequest,
+) -> Result<(), String> {
+    let database_id = request.database_id.clone();
+    with_usage(
+        "authorize_url_ingest_trigger_session",
+        Some(database_id),
+        |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
+    )
+}
+
+#[query]
+fn check_url_ingest_trigger_session(
+    request: UrlIngestTriggerSessionCheckRequest,
+) -> Result<(), String> {
+    with_service(|service| service.check_url_ingest_trigger_session(request, now_millis()))
+}
+
+#[update]
+fn authorize_ops_answer_session(request: OpsAnswerSessionRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
+    with_usage(
+        "authorize_ops_answer_session",
+        Some(database_id),
+        |service, caller, now| service.authorize_ops_answer_session(caller, request, now),
+    )
+}
+
+#[query]
+fn check_ops_answer_session(
+    request: OpsAnswerSessionCheckRequest,
+) -> Result<OpsAnswerSessionCheckResult, String> {
+    with_service(|service| service.check_ops_answer_session(request, now_millis()))
 }
 
 #[update]
@@ -546,8 +705,8 @@ fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
 #[update]
 fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("mkdir_node", Some(database_id), |service, caller, _now| {
-        service.mkdir_node(caller, request)
+    with_usage("mkdir_node", Some(database_id), |service, caller, now| {
+        service.mkdir_node(caller, request, now)
     })
 }
 
@@ -627,12 +786,19 @@ fn fetch_updates(request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse, S
 }
 
 fn initialize_or_trap(config: Option<BillingConfig>) {
-    initialize_service(config).unwrap_or_else(|error| ic_cdk::trap(&error));
+    initialize_service_with_config(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
-fn initialize_service(config: Option<BillingConfig>) -> Result<(), String> {
-    initialize_wasi_storage()?;
+fn initialize_upgrade_or_trap(config: Option<BillingConfig>) {
+    initialize_service_for_upgrade(config).unwrap_or_else(|error| ic_cdk::trap(&error));
+}
+
+fn initialize_service_with_config(config: Option<BillingConfig>) -> Result<(), String> {
+    initialize_sqlite_storage()?;
+    #[cfg(not(target_arch = "wasm32"))]
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
+    #[cfg(target_arch = "wasm32")]
+    let service = VfsService::stable(database_handle);
     if let Some(config) = config {
         service.run_index_migrations_with_config(config)?;
     } else {
@@ -645,79 +811,98 @@ fn initialize_service(config: Option<BillingConfig>) -> Result<(), String> {
     Ok(())
 }
 
-fn initialize_wasi_storage() -> Result<(), String> {
+fn initialize_service_for_upgrade(config: Option<BillingConfig>) -> Result<(), String> {
+    initialize_sqlite_storage()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
+    #[cfg(target_arch = "wasm32")]
+    let service = VfsService::stable(database_handle);
+    service.run_index_migrations_for_upgrade(config)?;
+    for meta in service.list_databases()? {
+        mount_database_file(&meta)?;
+    }
+    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn parse_upgrade_billing_config_arg(bytes: &[u8]) -> Result<Option<BillingConfig>, String> {
+    if bytes.is_empty() || bytes == b"DIDL\0\0" {
+        return Ok(None);
+    }
+    if let Ok((config,)) = decode_args::<(BillingConfig,)>(bytes) {
+        return Ok(Some(config));
+    }
+    if let Ok((config,)) = decode_args::<(Option<BillingConfig>,)>(bytes) {
+        return Ok(config);
+    }
+    Err(
+        "post_upgrade billing config arg must be empty, BillingConfig, or opt BillingConfig"
+            .to_string(),
+    )
+}
+
+fn post_upgrade_billing_config_arg() -> Result<Option<BillingConfig>, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        parse_upgrade_billing_config_arg(&ic_cdk::api::msg_arg_data())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(None)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn initialize_sqlite_storage() -> Result<(), String> {
+    create_dir_all(DATABASES_DIR).map_err(|error| error.to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn initialize_sqlite_storage() -> Result<(), String> {
     MEMORY_MANAGER.with(|manager| {
         let manager = manager.borrow();
-        ic_wasi_polyfill::init_with_memory_manager(
-            &[0u8; 32],
-            &[("SQLITE_TMPDIR", "tmp")],
-            &manager,
-            WASI_FS_MEMORY_RANGE.clone(),
-        );
-
-        create_dir_all("tmp").map_err(|error| error.to_string())?;
-        create_dir_all(DATABASES_DIR).map_err(|error| error.to_string())?;
-
-        ic_wasi_polyfill::unmount_memory_file(INDEX_DB_PATH);
         let memory = manager.get(MemoryId::new(INDEX_DB_MEMORY_ID));
-        let mount_result = ic_wasi_polyfill::mount_memory_file(
-            INDEX_DB_PATH,
-            Box::new(memory),
-            ic_wasi_polyfill::MountedFileSizePolicy::MemoryPages,
-        );
-        if mount_result > 0 {
-            return Err(format!(
-                "failed to mount index database file: {mount_result}"
-            ));
-        }
-        Ok(())
+        Db::init(memory).map_err(|error| error.to_string())
     })
 }
 
-#[cfg(not(test))]
+#[cfg(target_arch = "wasm32")]
+fn database_handle(mount_id: u16) -> Result<DbHandle, String> {
+    DATABASE_HANDLES.with(|handles| {
+        if let Some(handle) = handles.borrow().get(&mount_id).copied() {
+            return Ok(handle);
+        }
+        let handle = MEMORY_MANAGER.with(|manager| {
+            let memory = manager.borrow().get(MemoryId::new(mount_id));
+            DbHandle::init(memory).map_err(|error| error.to_string())
+        })?;
+        handles.borrow_mut().insert(mount_id, handle);
+        Ok(handle)
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
 fn mount_database_file(meta: &DatabaseMeta) -> Result<(), String> {
-    MEMORY_MANAGER.with(|manager| {
-        let manager = manager.borrow();
-        if let Some(parent) = Path::new(&meta.db_file_name).parent() {
-            create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        ic_wasi_polyfill::unmount_memory_file(&meta.db_file_name);
-        let memory = manager.get(MemoryId::new(meta.mount_id));
-        let mount_result = ic_wasi_polyfill::mount_memory_file(
-            &meta.db_file_name,
-            Box::new(memory),
-            ic_wasi_polyfill::MountedFileSizePolicy::MemoryPages,
-        );
-        if mount_result > 0 {
-            return Err(format!(
-                "failed to mount database file {}: {}",
-                meta.database_id, mount_result
-            ));
-        }
-        Ok(())
-    })
+    database_handle(meta.mount_id).map(|_| ())
 }
 
-#[cfg(test)]
+#[cfg(not(target_arch = "wasm32"))]
 fn mount_database_file(_meta: &DatabaseMeta) -> Result<(), String> {
+    #[cfg(test)]
     if TEST_MOUNT_DATABASE_FILE_FAIL_ONCE.with(|flag| flag.replace(false)) {
         return Err("test mount failure".to_string());
     }
     Ok(())
 }
 
-#[cfg(not(test))]
-fn unmount_database_file(db_file_name: &str) {
-    ic_wasi_polyfill::unmount_memory_file(db_file_name);
-}
-
-#[cfg(test)]
 fn unmount_database_file(_db_file_name: &str) {}
 
 #[cfg(test)]
 thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_LEDGER_TRANSFER_OUTCOME: RefCell<Option<LedgerTransferOutcome>> = const { RefCell::new(None) };
+    static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
 }
 
@@ -729,6 +914,13 @@ fn fail_next_mount_database_file_for_test() {
 #[cfg(test)]
 fn set_next_ledger_transfer_outcome_for_test(outcome: LedgerTransferOutcome) {
     TEST_LEDGER_TRANSFER_OUTCOME.with(|slot| {
+        slot.replace(Some(outcome));
+    });
+}
+
+#[cfg(test)]
+fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOutcome) {
+    TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|slot| {
         slot.replace(Some(outcome));
     });
 }
@@ -775,7 +967,7 @@ fn test_caller_principal() -> Principal {
         slot.borrow()
             .as_ref()
             .copied()
-            .unwrap_or_else(Principal::management_canister)
+            .unwrap_or_else(Principal::anonymous)
     })
 }
 
@@ -841,15 +1033,23 @@ async fn ledger_transfer_from(
     ledger: Principal,
     from_owner: Principal,
     amount_e8s: u64,
-) -> Result<u64, String> {
+) -> LedgerTransferFromOutcome {
     #[cfg(test)]
     {
         let _ = (ledger, from_owner, amount_e8s);
-        Ok(1)
+        TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
+            outcome
+                .borrow_mut()
+                .take()
+                .unwrap_or(LedgerTransferFromOutcome::Completed(1))
+        })
     }
     #[cfg(not(test))]
     {
-        let fee = ledger_fee(ledger).await?;
+        let fee = match ledger_fee(ledger).await {
+            Ok(fee) => fee,
+            Err(error) => return LedgerTransferFromOutcome::LedgerErr(error),
+        };
         let arg = TransferFromArg {
             spender_subaccount: None,
             from: IcrcAccount {
@@ -865,16 +1065,32 @@ async fn ledger_transfer_from(
             memo: None,
             created_at_time: Some(ic_cdk::api::time()),
         };
-        let result: Result<Nat, TransferFromError> =
-            Call::bounded_wait(ledger, "icrc2_transfer_from")
-                .with_arg(arg)
-                .await
-                .map_err(|error| format!("icrc2_transfer_from call failed: {error:?}"))?
-                .candid()
-                .map_err(|error| format!("icrc2_transfer_from decode failed: {error}"))?;
+        let response = Call::bounded_wait(ledger, "icrc2_transfer_from")
+            .with_arg(arg)
+            .await
+            .map_err(|error| {
+                LedgerTransferFromOutcome::Ambiguous(format!(
+                    "icrc2_transfer_from call failed: {error:?}"
+                ))
+            });
+        let response = match response {
+            Ok(response) => response,
+            Err(outcome) => return outcome,
+        };
+        let result: Result<Nat, TransferFromError> = match response.candid().map_err(|error| {
+            LedgerTransferFromOutcome::Ambiguous(format!(
+                "icrc2_transfer_from decode failed: {error}"
+            ))
+        }) {
+            Ok(result) => result,
+            Err(outcome) => return outcome,
+        };
         match result {
-            Ok(block_index) => nat_to_u64(&block_index),
-            Err(error) => Err(format!("icrc2_transfer_from failed: {error:?}")),
+            Ok(block_index) => match nat_to_u64(&block_index) {
+                Ok(block_index) => LedgerTransferFromOutcome::Completed(block_index),
+                Err(error) => LedgerTransferFromOutcome::Ambiguous(error),
+            },
+            Err(error) => transfer_from_error_outcome(error),
         }
     }
 }
@@ -944,6 +1160,18 @@ fn transfer_error_outcome(error: TransferError) -> LedgerTransferOutcome {
     }
 }
 
+fn transfer_from_error_outcome(error: TransferFromError) -> LedgerTransferFromOutcome {
+    match error {
+        TransferFromError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
+            Ok(block_index) => LedgerTransferFromOutcome::Completed(block_index),
+            Err(error) => LedgerTransferFromOutcome::Ambiguous(error),
+        },
+        error => {
+            LedgerTransferFromOutcome::LedgerErr(format!("icrc2_transfer_from failed: {error:?}"))
+        }
+    }
+}
+
 fn nat_to_u64(value: &Nat) -> Result<u64, String> {
     value
         .0
@@ -955,6 +1183,26 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
 fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
 where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+{
+    with_usage_derived_database_id(method, database_id, f, |_| None)
+}
+
+fn with_usage<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+{
+    with_metered_update(method, database_id, f)
+}
+
+fn with_usage_derived_database_id<T, F, D>(
+    method: &str,
+    database_id: Option<String>,
+    f: F,
+    database_id_from_success: D,
+) -> Result<T, String>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+    D: FnOnce(&T) -> Option<String>,
 {
     let caller = caller_text();
     let now = now_millis();
@@ -968,9 +1216,11 @@ where
         let after_cycles = cycle_balance();
         let cycles_delta = before_cycles.saturating_sub(after_cycles);
         let error = result.as_ref().err().map(String::as_str);
+        let derived_database_id = result.as_ref().ok().and_then(database_id_from_success);
+        let usage_database_id = database_id.as_deref().or(derived_database_id.as_deref());
         let _ = service.record_usage_event(UsageEvent {
             method,
-            database_id: database_id.as_deref(),
+            database_id: usage_database_id,
             caller: &caller,
             success: result.is_ok(),
             cycles_delta,
@@ -1106,6 +1356,167 @@ fn canonical_roles() -> Vec<CanonicalRole> {
     .collect()
 }
 
+fn certify_http_responses() {
+    let tree = certified_static_tree();
+    set_certified_data(tree.root_hash());
+}
+
+fn certified_static_response(
+    request_path: &str,
+) -> Option<(
+    HttpCertificationPath<'static>,
+    HttpCertificationTreeEntry<'static>,
+    HttpCertificationTree,
+    CertifiedHttpResponse<'static>,
+)> {
+    let responses = certified_static_responses();
+    let tree = certified_static_tree_from_entries(
+        responses
+            .iter()
+            .map(|(_, entry, _)| entry.clone())
+            .collect::<Vec<_>>(),
+    );
+    responses
+        .into_iter()
+        .find(|(path, _, _)| *path == request_path)
+        .map(|(path, entry, response)| (HttpCertificationPath::exact(path), entry, tree, response))
+}
+
+fn certified_static_tree() -> HttpCertificationTree {
+    certified_static_tree_from_entries(
+        certified_static_responses()
+            .into_iter()
+            .map(|(_, entry, _)| entry)
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn certified_static_tree_from_entries(
+    entries: Vec<HttpCertificationTreeEntry<'static>>,
+) -> HttpCertificationTree {
+    let mut tree = HttpCertificationTree::default();
+    for entry in entries {
+        tree.insert(&entry);
+    }
+    tree
+}
+
+fn certified_static_responses() -> Vec<(
+    &'static str,
+    HttpCertificationTreeEntry<'static>,
+    CertifiedHttpResponse<'static>,
+)> {
+    vec![
+        certified_static_response_entry(
+            II_ALTERNATIVE_ORIGINS_PATH,
+            II_ALTERNATIVE_ORIGINS_BODY.as_bytes().to_vec(),
+            "application/json; charset=utf-8",
+            true,
+        ),
+        certified_static_response_entry(
+            ICP_CLI_LOGIN_DISCOVERY_PATH,
+            ICP_CLI_LOGIN_PATH.as_bytes().to_vec(),
+            "text/plain; charset=utf-8",
+            true,
+        ),
+        certified_static_response_entry(
+            ICP_CLI_LOGIN_PATH,
+            ICP_CLI_LOGIN_HTML.as_bytes().to_vec(),
+            "text/html; charset=utf-8",
+            false,
+        ),
+    ]
+}
+
+fn certified_static_response_entry(
+    path: &'static str,
+    body: Vec<u8>,
+    content_type: &'static str,
+    cors: bool,
+) -> (
+    &'static str,
+    HttpCertificationTreeEntry<'static>,
+    CertifiedHttpResponse<'static>,
+) {
+    let cel_expr = DefaultCelBuilder::response_only_certification()
+        .with_response_certification(DefaultResponseCertification::certified_response_headers(
+            vec![
+                "Content-Type",
+                "Cache-Control",
+                "Access-Control-Allow-Origin",
+            ],
+        ))
+        .build();
+    let response = static_response(body, content_type, cors, cel_expr.to_string());
+    let certification = HttpCertification::response_only(&cel_expr, &response, None)
+        .unwrap_or_else(|error| ic_cdk::trap(format!("HTTP certification failed: {error}")));
+    let entry = HttpCertificationTreeEntry::new(HttpCertificationPath::exact(path), certification);
+    (path, entry, response)
+}
+
+fn static_response(
+    body: Vec<u8>,
+    content_type: &str,
+    cors: bool,
+    certificate_expression: String,
+) -> CertifiedHttpResponse<'static> {
+    let mut headers = vec![
+        ("Content-Type".to_string(), content_type.to_string()),
+        (
+            "Cache-Control".to_string(),
+            "public, max-age=300".to_string(),
+        ),
+        (
+            CERTIFICATE_EXPRESSION_HEADER_NAME.to_string(),
+            certificate_expression,
+        ),
+    ];
+    if cors {
+        headers.push(("Access-Control-Allow-Origin".to_string(), "*".to_string()));
+    }
+    CertifiedHttpResponse::ok(body, headers)
+        .with_upgrade(false)
+        .build()
+}
+
+fn http_response_from_certified(response: CertifiedHttpResponse<'static>) -> HttpResponse {
+    HttpResponse {
+        status_code: response.status_code().as_u16(),
+        headers: response.headers().to_vec(),
+        body: response.body().to_vec(),
+        upgrade: response.upgrade(),
+    }
+}
+
+fn request_path(url: &str) -> &str {
+    url.split_once('?').map_or(url, |(path, _)| path)
+}
+
+fn text_headers() -> Vec<(String, String)> {
+    vec![(
+        "Content-Type".to_string(),
+        "text/plain; charset=utf-8".to_string(),
+    )]
+}
+
+#[cfg(target_arch = "wasm32")]
+fn set_certified_data(data: impl AsRef<[u8]>) {
+    ic_cdk::api::certified_data_set(data);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_certified_data(_data: impl AsRef<[u8]>) {}
+
+#[cfg(target_arch = "wasm32")]
+fn data_certificate() -> Option<Vec<u8>> {
+    ic_cdk::api::data_certificate()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn data_certificate() -> Option<Vec<u8>> {
+    None
+}
+
 export_service!();
 
 pub fn candid_interface() -> String {
@@ -1119,7 +1530,13 @@ fn normalize_candid_interface(interface: String) -> String {
         "IncomingLinksRequest",
         "OutgoingLinksRequest",
     );
-    ensure_outgoing_links_request(normalized)
+    let normalized = normalize_candid_method_input(
+        &normalized,
+        "rename_database",
+        "CreateDatabaseResult",
+        "RenameDatabaseRequest",
+    );
+    ensure_rename_database_request(ensure_outgoing_links_request(normalized))
 }
 
 fn normalize_candid_method_input(
@@ -1132,7 +1549,7 @@ fn normalize_candid_method_input(
         .lines()
         .map(|line| {
             let prefix = format!("  {method} : ({exported_input}) -> (");
-            if line.starts_with(&prefix) && line.ends_with(" query;") {
+            if line.starts_with(&prefix) {
                 line.replacen(
                     &format!("{method} : ({exported_input})"),
                     &format!("{method} : ({public_input})"),
@@ -1157,6 +1574,16 @@ fn ensure_outgoing_links_request(interface: String) -> String {
     interface.replace(
         "type LinkEdge = record {",
         "type OutgoingLinksRequest = record { path : text; limit : nat32; database_id : text };\ntype LinkEdge = record {",
+    )
+}
+
+fn ensure_rename_database_request(interface: String) -> String {
+    if interface.contains("type RenameDatabaseRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type DatabaseArchiveChunk = record {",
+        "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DatabaseArchiveChunk = record {",
     )
 }
 

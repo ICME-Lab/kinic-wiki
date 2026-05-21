@@ -3,6 +3,7 @@ import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
 import type { CatalogSkill } from "@/lib/skill-registry-catalog";
 import type { WikiNode } from "@/lib/types";
 import { readNode, writeNodeAuthenticated } from "@/lib/vfs-client";
+import { ensureParentFoldersAuthenticated } from "@/lib/vfs-folders";
 
 export type SkillStatus = "draft" | "reviewed" | "promoted" | "deprecated";
 export type RunOutcome = "success" | "partial" | "fail";
@@ -68,6 +69,7 @@ export async function recordSkillRun(
     "",
     input.notes.trim() || "- no notes"
   ].join("\n");
+  await ensureParentFoldersAuthenticated(canisterId, databaseId, identity, path);
   await writeNodeAuthenticated(canisterId, identity, {
     databaseId,
     path,
@@ -130,6 +132,7 @@ export async function recordSkillEvent(
     "---",
     "# Skill Event"
   ].join("\n");
+  await ensureParentFoldersAuthenticated(canisterId, databaseId, identity, path);
   await writeNodeAuthenticated(canisterId, identity, {
     databaseId,
     path,

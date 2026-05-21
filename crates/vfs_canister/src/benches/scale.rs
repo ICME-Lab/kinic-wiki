@@ -1,6 +1,7 @@
 // Where: crates/vfs_canister/src/benches/scale.rs
 // What: Shared setup and measured bodies for scale-oriented canbench entrypoints.
 // Why: Keeping seed shape and metadata emission centralized makes benchmark tables comparable.
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::hint::black_box;
 
@@ -8,12 +9,14 @@ use canbench_rs::{BenchResult, bench_fn, bench_scope};
 use serde_json::to_vec;
 use vfs_types::{
     AppendNodeRequest, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    MoveNodeRequest, NodeKind, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    MkdirNodeRequest, MoveNodeRequest, NodeKind, SearchNodesRequest, SearchPreviewMode,
+    WriteNodeRequest,
 };
 
 use crate::{
-    SERVICE, append_node, caller_text, export_snapshot, fetch_updates, initialize_service,
-    move_node, now_millis, read_node, search_nodes, with_service, write_node,
+    SERVICE, append_node, caller_text, export_snapshot, fetch_updates,
+    initialize_service_with_config, move_node, now_millis, read_node, search_nodes, with_service,
+    write_node,
 };
 
 const BENCH_DATABASE_ID: &str = "canbench";
@@ -44,7 +47,7 @@ struct SnapshotMetrics {
 fn ensure_bench_service() {
     let initialized = SERVICE.with(|slot| slot.borrow().is_some());
     if !initialized {
-        initialize_service().expect("bench service should initialize");
+        initialize_service_with_config(None).expect("bench service should initialize");
     }
     with_service(|service| {
         let exists = service
@@ -116,8 +119,51 @@ fn write_seed(path: &str, content: &str, expected_etag: Option<String>, now: i64
     .etag
 }
 
+fn ensure_seed_parent_folders(parent_paths: &BTreeSet<String>, now: i64) {
+    for parent_path in parent_paths {
+        with_service(|service| {
+            let caller = caller_text();
+            service.mkdir_node(
+                &caller,
+                MkdirNodeRequest {
+                    database_id: BENCH_DATABASE_ID.to_string(),
+                    path: parent_path.clone(),
+                },
+                now,
+            )
+        })
+        .expect("bench seed parent folder should exist or be created");
+    }
+}
+
+fn ensure_seed_parent_folders_for_path(path: &str, now: i64) {
+    let parent_paths = parent_folder_paths(path).into_iter().collect();
+    ensure_seed_parent_folders(&parent_paths, now);
+}
+
+fn parent_folder_paths(path: &str) -> Vec<String> {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let mut current = String::new();
+    let mut parents = Vec::new();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        current.push('/');
+        current.push_str(segment);
+        parents.push(current.clone());
+    }
+    parents
+}
+
 fn seed_dataset(case: BenchCase, prefix: &str) {
     ensure_bench_service();
+    let mut parent_paths = BTreeSet::new();
+    for index in 0..case.n {
+        let path = node_path(prefix, index);
+        parent_paths.extend(parent_folder_paths(&path));
+    }
+    ensure_seed_parent_folders(&parent_paths, 9_000);
     for index in 0..case.n {
         let path = node_path(prefix, index);
         let content = node_content(index, index % SEARCH_HIT_INTERVAL == 0);
@@ -222,6 +268,7 @@ pub(super) fn run_move(case: BenchCase) -> BenchResult {
     seed_dataset(case, &prefix);
     let from_path = node_path(&prefix, case.n / 2);
     let to_path = node_path(&prefix, case.n + 1);
+    ensure_seed_parent_folders_for_path(&to_path, 19_000);
     let metrics = snapshot_metrics(&prefix);
     emit_metadata(case, &metrics);
     let expected_etag = current_etag(&from_path);
@@ -319,8 +366,22 @@ pub(super) fn run_fetch_updates(case: BenchCase) -> BenchResult {
 
 #[cfg(test)]
 mod tests {
-    use super::snapshot_json_bytes;
+    use super::{parent_folder_paths, snapshot_json_bytes};
     use vfs_types::{ExportSnapshotResponse, Node, NodeKind};
+
+    #[test]
+    fn parent_folder_paths_returns_ordered_ancestors_without_leaf() {
+        assert_eq!(
+            parent_folder_paths("/Wiki/canbench/write/n-001000/l1-00/node.md"),
+            vec![
+                "/Wiki",
+                "/Wiki/canbench",
+                "/Wiki/canbench/write",
+                "/Wiki/canbench/write/n-001000",
+                "/Wiki/canbench/write/n-001000/l1-00"
+            ]
+        );
+    }
 
     #[test]
     fn snapshot_json_bytes_matches_serialized_response_size() {

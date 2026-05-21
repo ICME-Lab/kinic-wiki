@@ -1,7 +1,7 @@
 use clap::Parser;
 use vfs_types::{Node, NodeKind};
 
-use crate::cli::{Cli, Command, ConnectionArgs};
+use crate::cli::{Cli, Command, ConnectionArgs, IdentityModeArg};
 use crate::commands::run_command;
 use crate::commands_fs_tests::MockClient;
 use crate::maintenance::{rebuild_index, rebuild_scope_index};
@@ -24,6 +24,9 @@ fn test_cli(command: Command) -> Cli {
         connection: ConnectionArgs {
             database_id: Some("default".to_string()),
             local: false,
+            replica_host: None,
+            identity_mode: IdentityModeArg::Auto,
+            allow_non_ii_identity: false,
             canister_id: Some("aaaaa-aa".to_string()),
         },
         command,
@@ -432,23 +435,32 @@ fn workflow_commands_are_not_in_cli_anymore() {
         "apply-workflow-result",
         "apply-integrate",
     ] {
-        let parsed = Cli::try_parse_from(["vfs-cli", "--canister-id", "aaaaa-aa", removed]);
+        let parsed = Cli::try_parse_from(["kinic-vfs-cli", "--canister-id", "aaaaa-aa", removed]);
         assert!(parsed.is_err(), "{removed} should be removed");
     }
 }
 
 #[test]
 fn connection_flags_are_optional_in_cli() {
-    let parsed = Cli::try_parse_from(["vfs-cli", "rebuild-index"]);
+    let parsed = Cli::try_parse_from(["kinic-vfs-cli", "rebuild-index"]);
     assert!(parsed.is_ok(), "connection flags should be optional");
 
-    let scoped = Cli::try_parse_from(["vfs-cli", "rebuild-scope-index", "--scope", "foo"]);
+    let scoped = Cli::try_parse_from(["kinic-vfs-cli", "rebuild-scope-index", "--scope", "foo"]);
     assert!(scoped.is_ok(), "scope rebuild command should parse");
 
-    let scoped_path =
-        Cli::try_parse_from(["vfs-cli", "rebuild-scope-index", "--scope", "/Wiki/foo"]);
+    let scoped_path = Cli::try_parse_from([
+        "kinic-vfs-cli",
+        "rebuild-scope-index",
+        "--scope",
+        "/Wiki/foo",
+    ]);
     assert!(scoped_path.is_ok(), "canonical scope path should parse");
 
-    let nested = Cli::try_parse_from(["vfs-cli", "rebuild-scope-index", "--scope", "foo/child"]);
+    let nested = Cli::try_parse_from([
+        "kinic-vfs-cli",
+        "rebuild-scope-index",
+        "--scope",
+        "foo/child",
+    ]);
     assert!(nested.is_ok(), "nested scope rebuild command should parse");
 }

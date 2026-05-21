@@ -160,10 +160,6 @@ function normalizeIdlShape(value) {
     .replace(/^Nat$/, "nat")
     .replace(/^Float32$/, "float32")
     .replace(/^Bool$/, "bool")
-    .replace(/^Principal$/, "principal")
-    .replace(/^Vec\(idl\.Nat8\)$/, "blob")
-    .replace(/^Vec\(Nat8\)$/, "blob")
-    .replace(/^Nat8$/, "nat8")
     .replace(/^Null$/, "null")
     .replace(/^Opt\((.+)\)$/, (_, inner) => `opt ${normalizeIdlShape(inner)}`)
     .replace(/^Vec\((.+)\)$/, (_, inner) => `vec ${normalizeIdlShape(inner)}`);
@@ -186,24 +182,24 @@ function normalizeShape(value) {
 }
 
 function normalizeResultAlias(value) {
-  const normalized = normalizeShape(value);
-  if (normalized === "Result_8") return "ResultBillingConfig";
+  const normalized = normalizeShape(value).replace(/,$/, "").trim();
   if (normalized === "Result_10") return "ResultLinks";
-  if (normalized === "Result_11") return "ResultChildren";
-  if (normalized === "Result_12") return "ResultDatabaseBillingEntryPage";
-  if (normalized === "Result_2") return "ResultUnit";
-  if (normalized === "Result_3") return "ResultCreateDatabase";
-  if (normalized === "Result_13") return "ResultMembers";
-  if (normalized === "Result_14") return "ResultDatabases";
-  if (normalized === "Result_16") return "ResultPrincipalBillingEntryPage";
-  if (normalized === "Result_19") return "ResultPrincipalBillingSummary";
-  if (normalized === "Result_20") return "ResultQueryContext";
-  if (normalized === "Result_22") return "ResultNode";
-  if (normalized === "Result_23") return "ResultNodeContext";
-  if (normalized === "Result_24") return "ResultRecent";
-  if (normalized === "Result_25") return "ResultSearch";
-  if (normalized === "Result_26") return "ResultSourceEvidence";
-  if (normalized === "Result_27") return "ResultBillingTransfer";
+  if (normalized === "Result_11") return "ResultLinks";
+  if (normalized === "Result_12") return "ResultChildren";
+  if (normalized === "Result_1") return "ResultUnit";
+  if (normalized === "Result_4") return "ResultCreateDatabase";
+  if (normalized === "Result_5") return "ResultDeleteNode";
+  if (normalized === "Result_14") return "ResultMembers";
+  if (normalized === "Result_15") return "ResultDatabases";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_19") return "ResultMoveNode";
+  if (normalized === "Result_21") return "ResultQueryContext";
+  if (normalized === "Result_23") return "ResultNode";
+  if (normalized === "Result_24") return "ResultNodeContext";
+  if (normalized === "Result_25") return "ResultRecent";
+  if (normalized === "Result_26") return "ResultSearch";
+  if (normalized === "Result_27") return "ResultSourceEvidence";
+  if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -227,7 +223,9 @@ function compareMethod(label, actual, expected) {
     failures.push(`${label} missing`);
     return;
   }
-  if (JSON.stringify(actual.input) !== JSON.stringify(expected.input)) {
+  const actualInput = actual.input.map(canonicalTypeName);
+  const expectedInput = expected.input.map(canonicalTypeName);
+  if (JSON.stringify(actualInput) !== JSON.stringify(expectedInput)) {
     failures.push(`${label} input mismatch: ${actual.input.join(", ")} != ${expected.input.join(", ")}`);
   }
   if (actual.output !== expected.output) {
@@ -236,6 +234,10 @@ function compareMethod(label, actual, expected) {
   if (actual.mode !== expected.mode) {
     failures.push(`${label} mode mismatch: ${actual.mode} != ${expected.mode}`);
   }
+}
+
+function canonicalTypeName(name) {
+  return didTypeAliases[name] ?? name;
 }
 
 function compareMap(label, actual, expected) {

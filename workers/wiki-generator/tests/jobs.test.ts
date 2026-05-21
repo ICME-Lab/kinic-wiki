@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/tests/jobs.test.ts
 // What: Job idempotency tests.
-// Why: Cron scans must not reprocess an unchanged completed source.
+// Why: Retries must not reprocess an unchanged completed source.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { shouldSkipJob } from "../src/jobs.js";

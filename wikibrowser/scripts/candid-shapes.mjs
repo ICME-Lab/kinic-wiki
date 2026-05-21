@@ -8,62 +8,17 @@ export const expectedTypes = {
       status: "DatabaseStatus",
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
-      display_name: "text",
-      billing_suspended_at_ms: "opt int64",
       database_id: "text",
+      name: "text",
+      billing_balance_e8s: "opt nat64",
+      billing_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64",
-      billing_balance_e8s: "nat64",
       deleted_at_ms: "opt int64"
     }
   },
-  BillingConfig: {
-    kind: "record",
-    fields: {
-      min_update_balance_e8s: "nat64",
-      fixed_update_fee_e8s: "nat64",
-      rate_denominator_cycles: "nat64",
-      kinic_ledger_canister_id: "text",
-      rate_numerator_e8s: "nat64",
-      min_initial_deposit_e8s: "nat64",
-      sns_governance_id: "text"
-    }
-  },
-  BillingTransferResult: { kind: "record", fields: { block_index: "nat64", balance_e8s: "nat64" } },
-  BillingAccount: { kind: "record", fields: { owner: "principal", subaccount: "opt blob" } },
-  PrincipalBillingSummary: { kind: "record", fields: { principal: "text", balance_e8s: "nat64" } },
-  PrincipalBillingEntry: {
-    kind: "record",
-    fields: {
-      entry_id: "nat64",
-      principal: "text",
-      kind: "text",
-      amount_e8s: "int64",
-      balance_after_e8s: "nat64",
-      database_id: "opt text",
-      ledger_block_index: "opt nat64",
-      created_at_ms: "int64"
-    }
-  },
-  PrincipalBillingEntryPage: { kind: "record", fields: { entries: "vec PrincipalBillingEntry", next_cursor: "opt nat64" } },
-  DatabaseBillingEntry: {
-    kind: "record",
-    fields: {
-      method: "opt text",
-      fixed_update_fee_e8s: "opt nat64",
-      kind: "text",
-      rate_denominator_cycles: "opt nat64",
-      created_at_ms: "int64",
-      amount_e8s: "int64",
-      rate_numerator_e8s: "opt nat64",
-      database_id: "text",
-      balance_after_e8s: "nat64",
-      caller: "text",
-      cycles_delta: "opt nat64",
-      entry_id: "nat64",
-      usage_event_id: "opt nat64"
-    }
-  },
-  DatabaseBillingEntryPage: { kind: "record", fields: { entries: "vec DatabaseBillingEntry", next_cursor: "opt nat64" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text", initial_deposit_e8s: "opt nat64" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -103,8 +58,8 @@ export const expectedTypes = {
       metadata_json: "text"
     }
   },
-  NodeEntryKind: { kind: "variant", cases: { File: "null", Source: "null", Directory: "null" } },
-  NodeKind: { kind: "variant", cases: { File: "null", Source: "null" } },
+  NodeEntryKind: { kind: "variant", cases: { File: "null", Source: "null", Directory: "null", Folder: "null" } },
+  NodeKind: { kind: "variant", cases: { File: "null", Source: "null", Folder: "null" } },
   WriteNodeRequest: {
     kind: "record",
     fields: {
@@ -119,6 +74,59 @@ export const expectedTypes = {
   WriteNodeResult: {
     kind: "record",
     fields: { created: "bool", node: "RecentNodeHit" }
+  },
+  DeleteNodeRequest: {
+    kind: "record",
+    fields: {
+      path: "text",
+      expected_etag: "opt text",
+      expected_folder_index_etag: "opt text",
+      database_id: "text"
+    }
+  },
+  DeleteNodeResult: {
+    kind: "record",
+    fields: { path: "text" }
+  },
+  MkdirNodeRequest: { kind: "record", fields: { path: "text", database_id: "text" } },
+  MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
+  MoveNodeRequest: {
+    kind: "record",
+    fields: {
+      from_path: "text",
+      to_path: "text",
+      expected_etag: "opt text",
+      overwrite: "bool",
+      database_id: "text"
+    }
+  },
+  MoveNodeResult: {
+    kind: "record",
+    fields: { from_path: "text", node: "NodeMutationAck", overwrote: "bool" }
+  },
+  NodeMutationAck: {
+    kind: "record",
+    fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
+  },
+  UrlIngestTriggerSessionRequest: {
+    kind: "record",
+    fields: { database_id: "text", session_nonce: "text" }
+  },
+  UrlIngestTriggerSessionCheckRequest: {
+    kind: "record",
+    fields: { database_id: "text", request_path: "text", session_nonce: "text" }
+  },
+  OpsAnswerSessionRequest: {
+    kind: "record",
+    fields: { database_id: "text", session_nonce: "text" }
+  },
+  OpsAnswerSessionCheckRequest: {
+    kind: "record",
+    fields: { database_id: "text", session_nonce: "text" }
+  },
+  OpsAnswerSessionCheckResult: {
+    kind: "record",
+    fields: { principal: "text" }
   },
   MemoryCapability: { kind: "record", fields: { name: "text", description: "text" } },
   MemoryManifest: {
@@ -187,11 +195,14 @@ export const expectedTypes = {
     fields: { incoming_links: "vec LinkEdge", node: "Node", outgoing_links: "vec LinkEdge" }
   },
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
-  ResultCreateDatabase: { kind: "variant", cases: { Ok: "text", Err: "text" } },
+  ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
   ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
+  ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "text" } },
+  ResultMkdirNode: { kind: "variant", cases: { Ok: "MkdirNodeResult", Err: "text" } },
+  ResultMoveNode: { kind: "variant", cases: { Ok: "MoveNodeResult", Err: "text" } },
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
@@ -199,11 +210,6 @@ export const expectedTypes = {
   ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
-  ResultBillingConfig: { kind: "variant", cases: { Ok: "BillingConfig", Err: "text" } },
-  ResultBillingTransfer: { kind: "variant", cases: { Ok: "BillingTransferResult", Err: "text" } },
-  ResultPrincipalBillingSummary: { kind: "variant", cases: { Ok: "PrincipalBillingSummary", Err: "text" } },
-  ResultPrincipalBillingEntryPage: { kind: "variant", cases: { Ok: "PrincipalBillingEntryPage", Err: "text" } },
-  ResultDatabaseBillingEntryPage: { kind: "variant", cases: { Ok: "DatabaseBillingEntryPage", Err: "text" } },
   SearchNodeHit: {
     kind: "record",
     fields: {
@@ -263,56 +269,55 @@ export const expectedTypes = {
 };
 
 export const didTypeAliases = {
-  ResultChildren: "Result_11",
-  ResultCreateDatabase: "Result_3",
-  ResultDatabases: "Result_14",
-  ResultMembers: "Result_13",
-  ResultUnit: "Result_2",
+  OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
+  RenameDatabaseRequest: "CreateDatabaseResult",
+  UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
+  ResultChildren: "Result_12",
+  ResultCreateDatabase: "Result_4",
+  ResultDatabases: "Result_15",
+  ResultDeleteNode: "Result_5",
+  ResultMkdirNode: "Result_18",
+  ResultMoveNode: "Result_19",
+  ResultMembers: "Result_14",
+  ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultLinks: "Result_10",
-  ResultNode: "Result_22",
-  ResultNodeContext: "Result_23",
-  ResultQueryContext: "Result_20",
-  ResultRecent: "Result_24",
-  ResultSearch: "Result_25",
-  ResultSourceEvidence: "Result_26",
-  ResultBillingConfig: "Result_8",
-  ResultBillingTransfer: "Result_27",
-  ResultDatabaseBillingEntryPage: "Result_12",
-  ResultPrincipalBillingEntryPage: "Result_16",
-  ResultPrincipalBillingSummary: "Result_19"
+  ResultLinks: "Result_11",
+  ResultNode: "Result_23",
+  ResultNodeContext: "Result_24",
+  ResultQueryContext: "Result_21",
+  ResultRecent: "Result_25",
+  ResultSearch: "Result_26",
+  ResultSourceEvidence: "Result_27",
+  ResultOpsAnswerSessionCheck: "Result_3"
 };
 
 export const expectedMethods = {
+  authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
+  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
-  create_database: { input: ["text", "nat64"], output: "ResultCreateDatabase", mode: "update" },
-  get_billing_config: { input: [], output: "ResultBillingConfig", mode: "query" },
+  check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
+  check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
+  create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
+  delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
+  rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },
   incoming_links: { input: ["IncomingLinksRequest"], output: "ResultLinks", mode: "query" },
   list_children: { input: ["ListChildrenRequest"], output: "ResultChildren", mode: "query" },
-  list_database_billing_entries: { input: ["text", "opt nat64", "nat32"], output: "ResultDatabaseBillingEntryPage", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
-  list_principal_billing_entries: { input: ["opt nat64", "nat32"], output: "ResultPrincipalBillingEntryPage", mode: "query" },
   memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },
+  mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
+  move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
-  principal_billing_summary: { input: [], output: "ResultPrincipalBillingSummary", mode: "query" },
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
   recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
-  rename_database: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
-  top_up_database: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
-  top_up_principal_balance: { input: ["nat64"], output: "ResultBillingTransfer", mode: "update" },
-  update_billing_config: { input: ["blob"], output: "ResultUnit", mode: "update" },
-  validate_update_billing_config: { input: ["blob"], output: "ResultUnit", mode: "update" },
-  withdraw_database_balance: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
-  withdraw_principal_balance: { input: ["nat64", "BillingAccount"], output: "ResultBillingTransfer", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" }
 };

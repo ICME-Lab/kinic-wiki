@@ -4,7 +4,7 @@ set -euo pipefail
 # Where: scripts/bench/run_canister_vfs_workload.sh
 # What: Run API-centric repeated-request benchmarks against a deployed local canister.
 # Why: We want operation-level cycle, latency, and wire-IO costs for the real canister API.
-# Why: The local `wiki` canister id should auto-resolve from `.icp/cache/mappings/local.ids.json`.
+# Why: The local `wiki` canister id should auto-resolve from the active icp environment mapping.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=./common.sh
@@ -41,9 +41,10 @@ if [[ -z "${CANISTER_ID}" ]]; then
   exit 1
 fi
 bench_log "resolved canister id ${CANISTER_ID} (${CANISTER_ID_SOURCE})"
-REPLICA_HOST="http://127.0.0.1:8000"
-LOCAL_ARGS=(--local)
-CANISTER_STATUS_ENVIRONMENT="local"
+REPLICA_HOST="${BENCH_REPLICA_HOST:-$(bench_replica_host)}"
+LOCAL_ARGS=(--replica-host "${REPLICA_HOST}")
+CLI_ARGS=(--allow-non-ii-identity "${LOCAL_ARGS[@]}")
+CANISTER_STATUS_ENVIRONMENT="$(bench_icp_environment)"
 unset CANISTER_STATUS_NETWORK
 
 RESULT_DIR="$(bench_results_dir "canister_vfs_workload")"
@@ -58,8 +59,14 @@ augment_environment_json "${ENVIRONMENT_FILE}" "${REPLICA_HOST}" "${CANISTER_ID}
 
 bench_log "building vfs_bench binary"
 cd "$(bench_repo_root)"
-cargo build -p vfs-cli --bin vfs_bench >/dev/null
+cargo build -p kinic-vfs-cli --bin vfs_bench --bin kinic-vfs-cli >/dev/null
 BENCH_BIN="$(bench_vfs_bench_bin)"
+CLI_BIN="$(bench_kinic_vfs_cli_bin)"
+bench_log "creating benchmark database"
+DATABASE_NAME="${DATABASE_NAME:-Benchmark workload}"
+DATABASE_ID="$("${CLI_BIN}" "${CLI_ARGS[@]}" --canister-id "${CANISTER_ID}" database create "${DATABASE_NAME}")"
+"${CLI_BIN}" "${CLI_ARGS[@]}" --canister-id "${CANISTER_ID}" database grant "${DATABASE_ID}" 2vxsx-fae writer >/dev/null
+printf 'database_id=%s\n' "${DATABASE_ID}" >> "${SUMMARY_FILE}"
 
 node -e '
   const fs = require("fs");
@@ -91,12 +98,6 @@ node -e '
     "create", "update", "append", "edit", "move_same_dir", "move_cross_dir", "delete", "read", "list", "search",
     "mkdir", "glob", "recent", "multi_edit"
   ];
-  if (!process.env.WORKLOAD_OPERATIONS && diagnosticProfile === "fts_disabled_for_bench") {
-    const searchIndex = defaultOperations.indexOf("search");
-    if (searchIndex >= 0) {
-      defaultOperations.splice(searchIndex, 1);
-    }
-  }
   const operations = parseList(process.env.WORKLOAD_OPERATIONS, defaultOperations);
   const directoryShapes = parseList(process.env.WORKLOAD_DIRECTORY_SHAPES, ["flat"]);
   const fileCount = Number(process.env.WORKLOAD_FILE_COUNT || 100);
@@ -316,6 +317,7 @@ node -e '
       --benchmark-name "${scenario}" \
       "${LOCAL_ARGS[@]}" \
       --canister-id "${CANISTER_ID}" \
+      --database-id "${DATABASE_ID}" \
       --prefix "${prefix}" \
       --payload-size-bytes "${payload_size}" \
       --file-count "${file_count}" \
@@ -340,6 +342,7 @@ node -e '
       --benchmark-name "${scenario}" \
       "${LOCAL_ARGS[@]}" \
       --canister-id "${CANISTER_ID}" \
+      --database-id "${DATABASE_ID}" \
       --prefix "${prefix}" \
       --payload-size-bytes "${payload_size}" \
       --file-count "${file_count}" \
@@ -365,6 +368,7 @@ node -e '
     --benchmark-name "${scenario}" \
     "${LOCAL_ARGS[@]}" \
     --canister-id "${CANISTER_ID}" \
+    --database-id "${DATABASE_ID}" \
     --prefix "${prefix}" \
     --payload-size-bytes "${payload_size}" \
     --file-count "${file_count}" \

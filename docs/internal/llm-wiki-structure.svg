@@ -42,7 +42,7 @@
   <rect class="box" x="442" y="210" width="286" height="96" fill="#ffffff"/>
   <text class="label" x="462" y="240">vfs_canister</text>
   <text class="body" x="462" y="265">IC query/update entrypoints</text>
-  <text class="small" x="462" y="288">WASI mount, stable memory, migration bootstrap</text>
+  <text class="small" x="462" y="288">ic-sqlite-vfs stable memory, migrations</text>
   <rect class="box" x="442" y="330" width="286" height="88" fill="#ffffff"/>
   <text class="label" x="462" y="360">vfs_runtime</text>
   <text class="body" x="462" y="385">VfsService boundary</text>

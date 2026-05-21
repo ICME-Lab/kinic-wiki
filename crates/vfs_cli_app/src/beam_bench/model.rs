@@ -250,7 +250,7 @@ Benchmark-specific answer-shape rules:
 {answer_shape}
 
 Runtime constraints:
-- Use shell commands only through `cargo run -p vfs-cli --bin vfs-cli -- ...`
+- Use shell commands only through `cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- ...`
 - Allowed read-only subcommands only:
   - read-node
   - read-node-context
@@ -269,15 +269,15 @@ Runtime constraints:
 Use this exact argument order. Do not put connection flags after the subcommand. Always request JSON output:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} read-node --path /Wiki/index.md --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} read-node-context --path {namespace_index_path} --link-limit 20 --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} list-nodes --prefix {namespace_path} --recursive --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} list-nodes --prefix {base_path} --recursive --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} search-remote --prefix {base_path} "query text" --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} search-path-remote "query text" --prefix {base_path} --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} read-node-context --path {base_path}/index.md --link-limit 20 --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} read-node-context --path <discovered path> --link-limit 20 --json
-cargo run -p vfs-cli --bin vfs-cli -- {connection_args} graph-neighborhood --center-path <discovered path> --depth 1 --limit 100 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} read-node --path /Wiki/index.md --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} read-node-context --path {namespace_index_path} --link-limit 20 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} list-nodes --prefix {namespace_path} --recursive --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} list-nodes --prefix {base_path} --recursive --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} search-remote --prefix {base_path} "query text" --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} search-path-remote "query text" --prefix {base_path} --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} read-node-context --path {base_path}/index.md --link-limit 20 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} read-node-context --path <discovered path> --link-limit 20 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- {connection_args} graph-neighborhood --center-path <discovered path> --depth 1 --limit 100 --json
 ```
 
 Connection:
@@ -435,7 +435,8 @@ fn parse_codex_tool_calls(events: &[Value]) -> Vec<ToolCallRecord> {
         .filter_map(|event| event.get("item"))
         .filter_map(|item| {
             let command = item.get("command").and_then(Value::as_str)?;
-            if !command.contains("vfs-cli") && !command.contains("target/debug/vfs-cli") {
+            if !command.contains("kinic-vfs-cli") && !command.contains("target/debug/kinic-vfs-cli")
+            {
                 return None;
             }
             Some(ToolCallRecord {

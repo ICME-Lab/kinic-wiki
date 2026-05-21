@@ -1,0 +1,22 @@
+{
+  "name": "kinic-wiki-clipper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "release:check": "node scripts/release-check.mjs",
+    "release:package": "npm run build && npm run release:check && node scripts/release-package.mjs",
+    "store-assets:generate": "node scripts/generate-store-assets.mjs",
+    "test": "node scripts/check-candid-drift.mjs && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@icp-sdk/auth": "^5.0.0",
+    "@icp-sdk/core": "^5.4.0",
+    "@preact/signals": "^2.9.0",
+    "preact": "^10.29.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.0"
+  }
+}

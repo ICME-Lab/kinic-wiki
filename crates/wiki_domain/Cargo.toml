@@ -1,7 +1,16 @@
 [package]
-name = "wiki-domain"
+name = "kinic-wiki-domain"
 version = "0.1.0"
 edition = "2024"
+description = "Path and domain helpers for Kinic Wiki VFS data"
+repository = "https://github.com/ICME-Lab/kinic-wiki"
+readme = "../../README.md"
+license = "MIT"
+keywords = ["kinic", "wiki", "vfs", "paths"]
+categories = ["data-structures"]
+
+[lib]
+name = "wiki_domain"
 
 [dependencies]
-vfs-types = { path = "../vfs_types" }
+vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }

@@ -26,5 +26,5 @@ function compareChildNodes(left: ChildNode, right: ChildNode): number {
 }
 
 function childKindOrder(child: ChildNode): number {
-  return child.kind === "directory" ? 0 : 1;
+  return child.kind === "directory" || child.kind === "folder" ? 0 : 1;
 }

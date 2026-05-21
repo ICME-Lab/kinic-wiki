@@ -1,5 +1,5 @@
-export type NodeKind = "file" | "source";
-export type NodeEntryKind = "file" | "source" | "directory";
+export type NodeKind = "file" | "source" | "folder";
+export type NodeEntryKind = "file" | "source" | "directory" | "folder";
 
 export type WikiNode = {
   path: string;
@@ -25,6 +25,66 @@ export type WriteNodeResult = {
   node: RecentNode;
 };
 
+export type DeleteNodeRequest = {
+  databaseId: string;
+  path: string;
+  expectedEtag: string;
+  expectedFolderIndexEtag: string | null;
+};
+
+export type DeleteNodeResult = {
+  path: string;
+};
+
+export type MkdirNodeRequest = {
+  databaseId: string;
+  path: string;
+};
+
+export type MkdirNodeResult = {
+  path: string;
+  created: boolean;
+};
+
+export type MoveNodeRequest = {
+  databaseId: string;
+  fromPath: string;
+  toPath: string;
+  expectedEtag: string | null;
+  overwrite: boolean;
+};
+
+export type MoveNodeResult = {
+  fromPath: string;
+  node: RecentNode;
+  overwrote: boolean;
+};
+
+export type UrlIngestTriggerSessionRequest = {
+  databaseId: string;
+  sessionNonce: string;
+};
+
+export type UrlIngestTriggerSessionCheckRequest = {
+  databaseId: string;
+  requestPath: string;
+  sessionNonce: string;
+};
+
+export type QueryAnswerSessionRequest = {
+  databaseId: string;
+  sessionNonce: string;
+};
+
+export type QueryAnswerSessionCheckRequest = {
+  databaseId: string;
+  sessionNonce: string;
+};
+
+export type QueryAnswerSessionCheckResult = {
+  principal: string;
+};
+
 export type CanisterHealth = {
   cyclesBalance: bigint;
 };
@@ -34,7 +94,7 @@ export type DatabaseStatus = "hot" | "restoring" | "archiving" | "archived" | "d
 
 export type DatabaseSummary = {
   databaseId: string;
-  displayName: string;
+  name: string;
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
@@ -49,53 +109,6 @@ export type DatabaseMember = {
   principal: string;
   role: DatabaseRole;
   createdAtMs: string;
-};
-
-export type BillingTransferResult = {
-  blockIndex: string;
-  balanceE8s: string;
-};
-
-export type PrincipalBillingSummary = {
-  principal: string;
-  balanceE8s: string;
-};
-
-export type PrincipalBillingEntry = {
-  entryId: string;
-  principal: string;
-  kind: string;
-  amountE8s: string;
-  balanceAfterE8s: string;
-  databaseId: string | null;
-  ledgerBlockIndex: string | null;
-  createdAtMs: string;
-};
-
-export type PrincipalBillingEntryPage = {
-  entries: PrincipalBillingEntry[];
-  nextCursor: string | null;
-};
-
-export type DatabaseBillingEntry = {
-  entryId: string;
-  databaseId: string;
-  kind: string;
-  amountE8s: string;
-  balanceAfterE8s: string;
-  caller: string;
-  method: string | null;
-  cyclesDelta: string | null;
-  rateNumeratorE8s: string | null;
-  rateDenominatorCycles: string | null;
-  fixedUpdateFeeE8s: string | null;
-  usageEventId: string | null;
-  createdAtMs: string;
-};
-
-export type DatabaseBillingEntryPage = {
-  entries: DatabaseBillingEntry[];
-  nextCursor: string | null;
 };
 
 export type ChildNode = {
@@ -129,6 +142,15 @@ export type NodeContext = {
   node: WikiNode;
   incomingLinks: LinkEdge[];
   outgoingLinks: LinkEdge[];
+};
+
+export type QueryContext = {
+  namespace: string;
+  task: string;
+  searchHits: SearchNodeHit[];
+  nodes: NodeContext[];
+  graphLinks: LinkEdge[];
+  truncated: boolean;
 };
 
 export type SearchPreviewField = "path" | "content";

@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
+const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
+const panels = readFileSync(new URL("../app/skills/skill-registry-panels.tsx", import.meta.url), "utf8");
+const details = readFileSync(new URL("../lib/skill-registry-details.ts", import.meta.url), "utf8");
+const diff = readFileSync(new URL("../lib/skill-registry-diff.ts", import.meta.url), "utf8");
+const operations = readFileSync(new URL("../lib/skill-registry-operations.ts", import.meta.url), "utf8");
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
+assert.equal(packageJson.name, "kinic-skill-registry-web");
+assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
+assert.match(client, /loadEvolutionJobs/);
+assert.match(client, /job\.status === "queued" \|\| job\.status === "running"/);
+assert.match(panels, /Skill Registry Dashboard/);
+assert.match(panels, /EvolutionJobsPanel/);
+assert.match(panels, /Current SKILL\.md/);
+assert.match(details, /\/Wiki\/skill-evolution-jobs/);
+assert.match(details, /candidate\/SKILL\.md/);
+assert.match(details, /metrics\.json/);
+assert.match(diff, /candidatePath/);
+assert.match(diff, /base_etag/);
+assert.match(diff, /assertProposalGates/);
+assert.match(diff, /candidate_score_gate/);
+assert.match(diff, /semantic_drift_gate/);
+assert.match(diff, /permission_gate/);
+assert.match(diff, /proposal\.metricsPath/);
+assert.equal((diff.match(/proposal\.metricsPath/g) ?? []).length, 2);
+assert.match(operations, /kinic.skill_evolution_proposal_status/);
+assert.doesNotMatch(client, /from ["']..\/..\/..\/wikibrowser/);
+assert.doesNotMatch(panels, /from ["']..\/..\/..\/wikibrowser/);
+
+console.log("Skill Registry web checks OK");

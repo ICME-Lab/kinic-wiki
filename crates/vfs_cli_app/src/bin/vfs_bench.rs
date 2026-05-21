@@ -56,6 +56,8 @@ enum Command {
         #[arg(long)]
         local: bool,
         #[arg(long)]
+        replica_host: Option<String>,
+        #[arg(long)]
         canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
@@ -86,6 +88,8 @@ enum Command {
         #[arg(long)]
         local: bool,
         #[arg(long)]
+        replica_host: Option<String>,
+        #[arg(long)]
         canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
@@ -107,6 +111,8 @@ enum Command {
         benchmark_name: String,
         #[arg(long)]
         local: bool,
+        #[arg(long)]
+        replica_host: Option<String>,
         #[arg(long)]
         canister_id: Option<String>,
         #[arg(long)]
@@ -136,6 +142,8 @@ enum Command {
         #[arg(long)]
         local: bool,
         #[arg(long)]
+        replica_host: Option<String>,
+        #[arg(long)]
         canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
@@ -164,6 +172,8 @@ enum Command {
         #[arg(long)]
         local: bool,
         #[arg(long)]
+        replica_host: Option<String>,
+        #[arg(long)]
         canister_id: Option<String>,
         #[arg(long)]
         prefix: String,
@@ -181,6 +191,8 @@ enum Command {
         benchmark_name: String,
         #[arg(long)]
         local: bool,
+        #[arg(long)]
+        replica_host: Option<String>,
         #[arg(long)]
         canister_id: Option<String>,
         #[arg(long)]
@@ -203,6 +215,7 @@ async fn main() -> Result<()> {
             output_json,
             benchmark_name,
             local,
+            replica_host,
             canister_id,
             prefix,
             database_id,
@@ -215,7 +228,8 @@ async fn main() -> Result<()> {
             operation,
             preview_mode,
         } => {
-            let connection = resolve_connection(local, canister_id, Some(database_id.clone()))?;
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
             let result = run_workload_bench(WorkloadBenchArgs {
                 benchmark_name,
                 replica_host: connection.replica_host,
@@ -239,6 +253,7 @@ async fn main() -> Result<()> {
             output_json,
             benchmark_name,
             local,
+            replica_host,
             canister_id,
             prefix,
             database_id,
@@ -247,7 +262,8 @@ async fn main() -> Result<()> {
             warmup_iterations,
             operation,
         } => {
-            let connection = resolve_connection(local, canister_id, Some(database_id.clone()))?;
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
             let result = run_latency_bench(LatencyBenchArgs {
                 benchmark_name,
                 replica_host: connection.replica_host,
@@ -267,6 +283,7 @@ async fn main() -> Result<()> {
             output_json,
             benchmark_name,
             local,
+            replica_host,
             canister_id,
             prefix,
             database_id,
@@ -278,7 +295,8 @@ async fn main() -> Result<()> {
             operation,
             preview_mode,
         } => {
-            let connection = resolve_connection(local, canister_id, Some(database_id.clone()))?;
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
             write_setup(
                 output_json,
                 setup_workload_bench(WorkloadBenchArgs {
@@ -304,6 +322,7 @@ async fn main() -> Result<()> {
             output_json,
             benchmark_name,
             local,
+            replica_host,
             canister_id,
             prefix,
             database_id,
@@ -315,7 +334,8 @@ async fn main() -> Result<()> {
             operation,
             preview_mode,
         } => {
-            let connection = resolve_connection(local, canister_id, Some(database_id.clone()))?;
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
             let result = measure_workload_bench(WorkloadBenchArgs {
                 benchmark_name,
                 replica_host: connection.replica_host,
@@ -339,13 +359,15 @@ async fn main() -> Result<()> {
             output_json,
             benchmark_name,
             local,
+            replica_host,
             canister_id,
             prefix,
             database_id,
             payload_size_bytes,
             operation,
         } => {
-            let connection = resolve_connection(local, canister_id, Some(database_id.clone()))?;
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
             write_setup(
                 output_json,
                 setup_latency_bench(LatencyBenchArgs {
@@ -367,6 +389,7 @@ async fn main() -> Result<()> {
             output_json,
             benchmark_name,
             local,
+            replica_host,
             canister_id,
             prefix,
             database_id,
@@ -374,7 +397,8 @@ async fn main() -> Result<()> {
             iterations,
             operation,
         } => {
-            let connection = resolve_connection(local, canister_id, Some(database_id.clone()))?;
+            let connection =
+                resolve_connection(local, replica_host, canister_id, Some(database_id.clone()))?;
             let result = measure_latency_bench(LatencyBenchArgs {
                 benchmark_name,
                 replica_host: connection.replica_host,

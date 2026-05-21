@@ -7,26 +7,32 @@ use candid::{Decode, Encode};
 use ic_agent::{
     Agent,
     export::Principal,
-    identity::{BasicIdentity, Secp256k1Identity},
+    identity::{BasicIdentity, Prime256v1Identity, Secp256k1Identity},
 };
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingTransferResult, CanisterHealth,
-    ChildNode, DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    ChildNode, CreateDatabaseRequest, CreateDatabaseResult, DatabaseArchiveChunk,
+    DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseMember, DatabaseRestoreChunkRequest,
+    DatabaseRole, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, PrincipalBillingEntryPage,
     PrincipalBillingSummary, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 #[async_trait]
 pub trait VfsApi: Sync {
+    fn caller_principal(&self) -> Option<String> {
+        None
+    }
+
     async fn status(&self, database_id: &str) -> Result<Status>;
     async fn canister_health(&self) -> Result<CanisterHealth> {
         Err(anyhow!("canister_health is not implemented by this client"))
@@ -36,12 +42,12 @@ pub trait VfsApi: Sync {
     }
     async fn create_database(
         &self,
-        _display_name: &str,
+        _name: &str,
         _initial_deposit_e8s: u64,
-    ) -> Result<String> {
+    ) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
-    async fn rename_database(&self, _database_id: &str, _display_name: &str) -> Result<()> {
+    async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
         Err(anyhow!("rename_database is not implemented by this client"))
     }
     async fn top_up_principal_balance(&self, _amount_e8s: u64) -> Result<BillingTransferResult> {
@@ -173,6 +179,11 @@ pub trait VfsApi: Sync {
             "finalize_database_restore is not implemented by this client"
         ))
     }
+    async fn cancel_database_restore(&self, _database_id: &str) -> Result<()> {
+        Err(anyhow!(
+            "cancel_database_restore is not implemented by this client"
+        ))
+    }
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>>;
     async fn read_node_context(&self, _request: NodeContextRequest) -> Result<Option<NodeContext>> {
         Err(anyhow!(
@@ -182,6 +193,9 @@ pub trait VfsApi: Sync {
     async fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>>;
     async fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>>;
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult>;
+    async fn write_nodes(&self, _request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
+        Err(anyhow!("write_nodes is not implemented by this client"))
+    }
     async fn append_node(&self, request: AppendNodeRequest) -> Result<WriteNodeResult>;
     async fn edit_node(&self, request: EditNodeRequest) -> Result<EditNodeResult>;
     async fn delete_node(&self, request: DeleteNodeRequest) -> Result<DeleteNodeResult>;
@@ -229,6 +243,7 @@ pub trait VfsApi: Sync {
 pub struct CanisterVfsClient {
     agent: Agent,
     canister_id: Principal,
+    caller_principal: String,
 }
 
 impl CanisterVfsClient {
@@ -237,7 +252,7 @@ impl CanisterVfsClient {
             .with_url(replica_host)
             .build()
             .context("failed to build IC agent")?;
-        Self::from_agent(replica_host, canister_id, agent).await
+        Self::from_agent(replica_host, canister_id, agent, Principal::anonymous()).await
     }
 
     pub async fn new_with_identity_pem(
@@ -246,15 +261,31 @@ impl CanisterVfsClient {
         identity_pem: &[u8],
     ) -> Result<Self> {
         let identity = identity_from_pem(identity_pem)?;
+        Self::new_with_boxed_identity(replica_host, canister_id, identity).await
+    }
+
+    pub async fn new_with_boxed_identity(
+        replica_host: &str,
+        canister_id: &str,
+        identity: Box<dyn ic_agent::Identity>,
+    ) -> Result<Self> {
+        let caller = identity
+            .sender()
+            .map_err(|error| anyhow!("failed to read identity principal: {error}"))?;
         let agent = Agent::builder()
             .with_url(replica_host)
             .with_boxed_identity(identity)
             .build()
             .context("failed to build IC agent")?;
-        Self::from_agent(replica_host, canister_id, agent).await
+        Self::from_agent(replica_host, canister_id, agent, caller).await
     }
 
-    async fn from_agent(replica_host: &str, canister_id: &str, agent: Agent) -> Result<Self> {
+    async fn from_agent(
+        replica_host: &str,
+        canister_id: &str,
+        agent: Agent,
+        caller: Principal,
+    ) -> Result<Self> {
         if is_local_replica(replica_host) {
             agent
                 .fetch_root_key()
@@ -265,6 +296,7 @@ impl CanisterVfsClient {
             agent,
             canister_id: Principal::from_text(canister_id)
                 .context("failed to parse canister principal")?,
+            caller_principal: caller.to_text(),
         })
     }
 
@@ -371,8 +403,11 @@ impl CanisterVfsClient {
     }
 }
 
-fn identity_from_pem(identity_pem: &[u8]) -> Result<Box<dyn ic_agent::Identity>> {
+pub fn identity_from_pem(identity_pem: &[u8]) -> Result<Box<dyn ic_agent::Identity>> {
     if let Ok(identity) = Secp256k1Identity::from_pem(identity_pem) {
+        return Ok(Box::new(identity));
+    }
+    if let Ok(identity) = Prime256v1Identity::from_pem(identity_pem) {
         return Ok(Box::new(identity));
     }
     if let Ok(identity) = BasicIdentity::from_pem(identity_pem) {
@@ -386,6 +421,10 @@ fn identity_from_pem(identity_pem: &[u8]) -> Result<Box<dyn ic_agent::Identity>>
 
 #[async_trait]
 impl VfsApi for CanisterVfsClient {
+    fn caller_principal(&self) -> Option<String> {
+        Some(self.caller_principal.clone())
+    }
+
     async fn status(&self, database_id: &str) -> Result<Status> {
         self.query("status", &database_id.to_string()).await
     }
@@ -400,25 +439,29 @@ impl VfsApi for CanisterVfsClient {
 
     async fn create_database(
         &self,
-        display_name: &str,
+        name: &str,
         initial_deposit_e8s: u64,
-    ) -> Result<String> {
-        let result: Result<String, String> = self
-            .update2(
+    ) -> Result<CreateDatabaseResult> {
+        let result: Result<CreateDatabaseResult, String> = self
+            .update(
                 "create_database",
-                &display_name.to_string(),
-                &initial_deposit_e8s,
+                &CreateDatabaseRequest {
+                    name: name.to_string(),
+                    initial_deposit_e8s: Some(initial_deposit_e8s),
+                },
             )
             .await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn rename_database(&self, database_id: &str, display_name: &str) -> Result<()> {
+    async fn rename_database(&self, database_id: &str, name: &str) -> Result<()> {
         let result: Result<(), String> = self
-            .update2(
+            .update(
                 "rename_database",
-                &database_id.to_string(),
-                &display_name.to_string(),
+                &RenameDatabaseRequest {
+                    database_id: database_id.to_string(),
+                    name: name.to_string(),
+                },
             )
             .await?;
         result.map_err(|error| anyhow!(error))
@@ -626,6 +669,13 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn cancel_database_restore(&self, database_id: &str) -> Result<()> {
+        let result: Result<(), String> = self
+            .update("cancel_database_restore", &database_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn read_node(&self, database_id: &str, path: &str) -> Result<Option<Node>> {
         let result: Result<Option<Node>, String> = self
             .query2("read_node", &database_id.to_string(), &path.to_string())
@@ -651,6 +701,12 @@ impl VfsApi for CanisterVfsClient {
 
     async fn write_node(&self, request: WriteNodeRequest) -> Result<WriteNodeResult> {
         let result: Result<WriteNodeResult, String> = self.update("write_node", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn write_nodes(&self, request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
+        let result: Result<Vec<WriteNodeResult>, String> =
+            self.update("write_nodes", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

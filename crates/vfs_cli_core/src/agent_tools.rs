@@ -6,14 +6,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest,
-    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeKind, OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
+    AppendNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest,
+    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeKind,
+    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
     SearchPreviewMode, WriteNodeRequest,
 };
 
 use crate::cli::DEFAULT_VFS_ROOT_PATH;
+use crate::commands::delete_node_with_folder_index;
 use crate::skill_kb;
 
 pub struct ToolResult {
@@ -231,14 +232,17 @@ async fn dispatch_tool_call_impl(
         }
         "rm" => {
             let args: DeleteArgs = serde_json::from_value(input)?;
+            let database_id = database_id(args.database_id)?;
             tool_ok(json!(
-                client
-                    .delete_node(DeleteNodeRequest {
-                        database_id: database_id(args.database_id)?,
-                        path: args.path,
-                        expected_etag: args.expected_etag
-                    })
-                    .await?
+                delete_node_with_folder_index(
+                    client,
+                    database_id.as_ref(),
+                    args.path,
+                    args.expected_etag,
+                    args.expected_folder_index_etag,
+                    None
+                )
+                .await?
             ))
         }
         "search" => {
@@ -269,13 +273,7 @@ async fn dispatch_tool_call_impl(
         "skill_inspect" => {
             let args: SkillInspectArgs = serde_json::from_value(input)?;
             tool_ok(
-                skill_kb::inspect_skill(
-                    client,
-                    &database_id(args.database_id)?,
-                    &args.id,
-                    args.public.unwrap_or(false),
-                )
-                .await?,
+                skill_kb::inspect_skill(client, &database_id(args.database_id)?, &args.id).await?,
             )
         }
         "skill_read" => {
@@ -286,7 +284,6 @@ async fn dispatch_tool_call_impl(
                     &database_id(args.database_id)?,
                     &args.id,
                     &args.file,
-                    args.public.unwrap_or(false),
                 )
                 .await?,
             )
@@ -304,7 +301,6 @@ async fn dispatch_tool_call_impl(
                         outcome: skill_run_outcome(&args.outcome)?,
                         notes: &args.notes,
                         agent: &args.agent,
-                        public: args.public.unwrap_or(false),
                     },
                 )
                 .await?,
@@ -481,7 +477,7 @@ fn multi_edit_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"expected_etag":{"type":"string"},"edits":{"type":"array","items":{"type":"object","properties":{"old_text":{"type":"string"},"new_text":{"type":"string"}},"required":["old_text","new_text"],"additionalProperties":false}}},"required":["database_id","path","edits"],"additionalProperties":false})
 }
 fn delete_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"expected_etag":{"type":"string"}},"required":["database_id","path"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"path":{"type":"string"},"expected_etag":{"type":"string"},"expected_folder_index_etag":{"type":"string"}},"required":["database_id","path"],"additionalProperties":false})
 }
 fn search_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"query_text":{"type":"string"},"prefix":{"type":"string"},"top_k":{"type":"integer","minimum":1,"maximum":100},"preview_mode":{"type":"string","enum":["none","light","content_start"]}},"required":["database_id","query_text"],"additionalProperties":false})
@@ -490,13 +486,13 @@ fn skill_find_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"query_text":{"type":"string"},"top_k":{"type":"integer","minimum":1,"maximum":20},"include_deprecated":{"type":"boolean"}},"required":["database_id","query_text"],"additionalProperties":false})
 }
 fn skill_id_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"public":{"type":"boolean"}},"required":["database_id","id"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"}},"required":["database_id","id"],"additionalProperties":false})
 }
 fn skill_read_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"file":{"type":"string"},"public":{"type":"boolean"}},"required":["database_id","id","file"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"file":{"type":"string"}},"required":["database_id","id","file"],"additionalProperties":false})
 }
 fn skill_record_run_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"task":{"type":"string"},"outcome":{"type":"string","enum":["success","partial","fail"]},"notes":{"type":"string"},"agent":{"type":"string"},"public":{"type":"boolean"}},"required":["database_id","id","task","outcome","notes","agent"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"task":{"type":"string"},"outcome":{"type":"string","enum":["success","partial","fail"]},"notes":{"type":"string"},"agent":{"type":"string"}},"required":["database_id","id","task","outcome","notes","agent"],"additionalProperties":false})
 }
 
 fn database_id(value: Option<String>) -> Result<String> {
@@ -607,6 +603,7 @@ struct DeleteArgs {
     database_id: Option<String>,
     path: String,
     expected_etag: Option<String>,
+    expected_folder_index_etag: Option<String>,
 }
 #[derive(Deserialize)]
 struct SearchArgs {
@@ -627,14 +624,12 @@ struct SkillFindArgs {
 struct SkillInspectArgs {
     database_id: Option<String>,
     id: String,
-    public: Option<bool>,
 }
 #[derive(Deserialize)]
 struct SkillReadArgs {
     database_id: Option<String>,
     id: String,
     file: String,
-    public: Option<bool>,
 }
 #[derive(Deserialize)]
 struct SkillRecordRunArgs {
@@ -644,7 +639,6 @@ struct SkillRecordRunArgs {
     outcome: String,
     notes: String,
     agent: String,
-    public: Option<bool>,
 }
 
 fn skill_run_outcome(value: &str) -> Result<skill_kb::SkillRunOutcome> {

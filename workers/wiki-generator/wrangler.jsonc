@@ -7,17 +7,18 @@
   "observability": {
     "enabled": true
   },
-  "triggers": {
-    "crons": ["0 * * * *"]
-  },
+  "routes": [
+    {
+      "pattern": "wiki-generator.kinic.xyz",
+      "custom_domain": true
+    }
+  ],
   "vars": {
     "KINIC_WIKI_CANISTER_ID": "xis3j-paaaa-aaaai-axumq-cai",
     "KINIC_WIKI_IC_HOST": "https://icp0.io",
-    "KINIC_WIKI_DATABASE_IDS": "db_l2wldrknfcl2",
     "KINIC_WIKI_WORKER_MODEL": "deepseek-v4-flash",
     "KINIC_WIKI_WORKER_TARGET_ROOT": "/Wiki/conversations",
     "KINIC_WIKI_WORKER_SOURCE_PREFIX": "/Sources/raw",
-    "KINIC_WIKI_WORKER_INGEST_REQUEST_PREFIX": "/Sources/ingest-requests",
     "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/Wiki"
   },
   "d1_databases": [

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Kinic Capture Settings</title>
+  </head>
+  <body>
+    <main>
+      <header class="brand-header">
+        <img src="../icons/icon-48.png" alt="" />
+        <div>
+          <strong>Kinic Wiki Clipper</strong>
+          <p>Save pages and ChatGPT sources</p>
+        </div>
+      </header>
+      <section class="auth-card">
+        <div>
+          <strong>Internet Identity</strong>
+          <p id="principal">Checking...</p>
+        </div>
+        <div class="auth-actions">
+          <button id="login" class="primary" type="button">Login</button>
+          <button id="logout" class="secondary" type="button">Logout</button>
+        </div>
+      </section>
+      <label class="field">
+        <span>Database</span>
+        <select id="database-id"></select>
+      </label>
+      <div class="settings-actions">
+        <button id="refresh-databases" class="secondary" type="button">Refresh</button>
+        <button id="save-settings" class="primary" type="button">Save settings</button>
+      </div>
+      <section class="latest-card">
+        <strong>Latest URL ingest</strong>
+        <p id="latest-status">No run yet.</p>
+      </section>
+      <p id="status"></p>
+    </main>
+    <script src="../dist/popup.js" type="module"></script>
+  </body>
+</html>

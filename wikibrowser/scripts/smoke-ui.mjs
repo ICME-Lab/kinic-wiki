@@ -34,8 +34,8 @@ async function main() {
   run("open", [`${searchUrl}?q=${encodeURIComponent(fullQuery)}&kind=full`]);
   assertSnapshotIncludes(target.nodePath);
   assertSnapshotIncludes("Full text");
-  run("open", [`${url}?tab=recent`]);
-  assertSnapshotIncludes("Recent");
+  run("open", [`${url}?tab=query`]);
+  assertSnapshotIncludes("Search by default");
   run("open", [`${url}?tab=sources`]);
   assertSnapshotIncludes("Save source URL");
   run("open", [graphUrl]);
@@ -181,7 +181,7 @@ function normalizeNodeContext(raw) {
   return {
     node: {
       path: raw.node.path,
-      kind: "File" in raw.node.kind ? "file" : "source",
+      kind: "Folder" in raw.node.kind ? "folder" : "File" in raw.node.kind ? "file" : "source",
       content: raw.node.content
     },
     incomingLinks: raw.incoming_links,
@@ -202,7 +202,7 @@ function decodePathSegment(segment) {
 }
 
 function idlFactory({ IDL: idl }) {
-  const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null });
+  const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const LinkEdge = idl.Record({
     source_path: idl.Text,
     target_path: idl.Text,

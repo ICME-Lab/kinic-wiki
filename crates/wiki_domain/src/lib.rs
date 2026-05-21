@@ -9,7 +9,7 @@ pub const WIKI_SOURCES_PREFIX: &str = "/Wiki/sources";
 pub const WIKI_ENTITIES_PREFIX: &str = "/Wiki/entities";
 pub const WIKI_CONCEPTS_PREFIX: &str = "/Wiki/concepts";
 pub const SKILL_REGISTRY_ROOT: &str = "/Wiki/skills";
-pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = "/Wiki/public-skills";
+pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = SKILL_REGISTRY_ROOT;
 pub const WIKI_BEAM_SECTION_TITLE: &str = "Benchmarks";
 pub const RAW_SOURCES_PREFIX: &str = "/Sources/raw";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
@@ -18,6 +18,9 @@ pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
     let is_source_path = path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX)
         || path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX);
+    if *kind == NodeKind::Folder {
+        return Ok(());
+    }
     if *kind != NodeKind::Source {
         if is_source_path {
             return Err(format!(

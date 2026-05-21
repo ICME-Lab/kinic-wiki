@@ -3,29 +3,22 @@ set -euo pipefail
 
 # Where: scripts/build-vfs-canister.sh
 # What: Build the release wasm artifact used by the canister CI job and deployment flow.
-# Why: The canister target pulls in bundled sqlite C code, so wasm32-wasip1 builds need a WASI sysroot when running on Linux.
+# Why: The canister uses ic-sqlite-vfs directly, so the IC artifact is built as wasm32-unknown-unknown.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # Always emit wasm under the repo `target/` tree. Cursor/agent shells may set
-# CARGO_TARGET_DIR to a sandbox cache, which would make cargo and wasi2ic disagree on paths.
+# CARGO_TARGET_DIR to a sandbox cache, which would move the deployment artifact.
 unset CARGO_TARGET_DIR
-TARGET_DIR="${REPO_ROOT}/target/wasm32-wasip1/release"
+TARGET_DIR="${REPO_ROOT}/target/wasm32-unknown-unknown/release"
 INPUT_WASM="${TARGET_DIR}/vfs_canister.wasm"
-OUTPUT_WASM="${TARGET_DIR}/vfs_canister_nowasi.wasm"
+OUTPUT_WASM="${INPUT_WASM}"
 # `icp deploy` sets this; standalone runs default to the repo artifact path.
 ICP_WASM_OUTPUT_PATH="${ICP_WASM_OUTPUT_PATH:-${OUTPUT_WASM}}"
-
-# shellcheck source=./wasi-env.sh
-source "${SCRIPT_DIR}/wasi-env.sh"
-configure_wasi_cc_env
 
 EXTRA_FEATURES=""
 case "${VFS_CANISTER_DIAGNOSTIC_PROFILE:-baseline}" in
   baseline)
-    ;;
-  fts_disabled_for_bench)
-    EXTRA_FEATURES="bench-disable-fts"
     ;;
   *)
     echo "unknown VFS_CANISTER_DIAGNOSTIC_PROFILE: ${VFS_CANISTER_DIAGNOSTIC_PROFILE}" >&2
@@ -39,7 +32,7 @@ build_cmd=(
   --package vfs-canister
   --release
   --locked
-  --target wasm32-wasip1
+  --target wasm32-unknown-unknown
 )
 
 if [[ -n "${EXTRA_FEATURES}" ]]; then
@@ -61,14 +54,7 @@ maybe_dump_wasm_sections() {
 
 "${build_cmd[@]}"
 
-# `wasi2ic` currently emits walrus warnings for data-name indices while parsing
-# Rust-produced name sections. The converted module still retains a name section
-# and remains usable. If the warning changes, set
-# `VFS_CANISTER_WASM_DEBUG_SECTIONS=1` to dump pre/post conversion section
-# layouts without changing the emitted artifact.
 maybe_dump_wasm_sections "cargo-build output" "${INPUT_WASM}"
-wasi2ic "${INPUT_WASM}" "${OUTPUT_WASM}"
-maybe_dump_wasm_sections "wasi2ic output" "${OUTPUT_WASM}"
 if [[ "${OUTPUT_WASM}" != "${ICP_WASM_OUTPUT_PATH}" ]]; then
   cp "${OUTPUT_WASM}" "${ICP_WASM_OUTPUT_PATH}"
 fi

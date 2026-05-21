@@ -68,14 +68,14 @@ function titleForState(state: HealthState, cycles: bigint | null): string {
 }
 
 function toneClass(tone: CycleTone): string {
-  if (tone === "blue") return "border-blue-200 bg-blue-50 text-blue-700";
+  if (tone === "blue") return "border-infoLine bg-infoSoft text-infoText";
   if (tone === "amber") return "border-yellow-200 bg-yellow-50 text-yellow-800";
   if (tone === "red") return "border-red-200 bg-red-50 text-red-700";
   return "border-line bg-white text-muted";
 }
 
 function fillClass(tone: CycleTone): string {
-  if (tone === "blue") return "bg-blue-500";
+  if (tone === "blue") return "bg-kinicCyan";
   if (tone === "amber") return "bg-yellow-500";
   if (tone === "red") return "bg-red-500";
   return "bg-muted";

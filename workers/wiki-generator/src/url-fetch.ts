@@ -144,16 +144,35 @@ function decodeEntities(value: string): string {
 }
 
 function isBlockedHostname(hostname: string): boolean {
+  // DNS resolution is not inspected here. This Worker assumes public Cloudflare
+  // fetch egress; move to an allowlist or DNS-result IP checks for a stricter
+  // security boundary.
   const normalized = hostname.toLowerCase();
   if (normalized.startsWith("[") || normalized.includes(":")) return true;
-  if (normalized === "localhost" || normalized.endsWith(".localhost")) return true;
-  if (normalized === "0.0.0.0" || normalized === "::1") return true;
-  const ipv4 = normalized.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
-  if (!ipv4) return false;
-  const first = Number(ipv4[1]);
-  const second = Number(ipv4[2]);
-  if (first === 10 || first === 127) return true;
+  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local")) return true;
+  const ipv4 = parseIpv4(normalized);
+  return ipv4 ? isBlockedIpv4(ipv4) : false;
+}
+
+function parseIpv4(hostname: string): [number, number, number, number] | null {
+  const ipv4 = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (!ipv4) return null;
+  const octets = [Number(ipv4[1]), Number(ipv4[2]), Number(ipv4[3]), Number(ipv4[4])];
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return [octets[0], octets[1], octets[2], octets[3]];
+}
+
+function isBlockedIpv4([first, second, third]: [number, number, number, number]): boolean {
+  if (first === 0 || first === 10 || first === 127) return true;
+  if (first === 100 && second >= 64 && second <= 127) return true;
   if (first === 169 && second === 254) return true;
   if (first === 172 && second >= 16 && second <= 31) return true;
-  return first === 192 && second === 168;
+  if (first === 192 && second === 0) return true;
+  if (first === 192 && second === 168) return true;
+  if (first === 192 && second === 0 && third === 2) return true;
+  if (first === 198 && (second === 18 || second === 19)) return true;
+  if (first === 198 && second === 51 && third === 100) return true;
+  if (first === 203 && second === 0 && third === 113) return true;
+  if (first >= 224) return true;
+  return false;
 }

@@ -51,7 +51,7 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
 
 async function seedPrivateDatabase(readerPrincipal: string): Promise<string> {
   const seedIdentity = Ed25519KeyIdentity.generate();
-  const databaseId = await createDatabaseAuthenticated(CANISTER_ID, seedIdentity, "E2E", 1_000_000n);
+  const { database_id: databaseId } = await createDatabaseAuthenticated(CANISTER_ID, seedIdentity, `II e2e ${Date.now()}`);
   await writeNodeAuthenticated(CANISTER_ID, seedIdentity, {
     databaseId,
     path: E2E_PATH,

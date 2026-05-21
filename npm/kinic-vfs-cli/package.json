@@ -1,0 +1,30 @@
+{
+  "name": "kinic-vfs-cli",
+  "version": "0.1.2",
+  "description": "Operator CLI for Kinic VFS-backed wiki databases and Skill Registry packages.",
+  "license": "MIT",
+  "homepage": "https://github.com/ICME-Lab/kinic-wiki#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ICME-Lab/kinic-wiki.git",
+    "directory": "npm/kinic-vfs-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/ICME-Lab/kinic-wiki/issues"
+  },
+  "bin": {
+    "kinic-vfs-cli": "bin/kinic-vfs-cli.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install.js",
+    "test": "node --test"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

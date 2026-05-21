@@ -1,0 +1,7 @@
+dist/
+node_modules/
+release/
+.env
+.env.local
+!icons/
+!icons/icon-*.png

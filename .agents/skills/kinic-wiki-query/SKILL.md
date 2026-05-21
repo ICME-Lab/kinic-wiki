@@ -16,6 +16,7 @@ Do not use this skill for:
 - first-pass source ingestion
 - health-only wiki inspection
 - routine page creation or repair
+- Skill Registry package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 

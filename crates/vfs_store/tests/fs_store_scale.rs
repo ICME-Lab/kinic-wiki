@@ -4,8 +4,8 @@ use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
-    GlobNodesRequest, ListNodesRequest, NodeEntryKind, NodeKind, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -33,6 +33,7 @@ fn write_file(
     expected_etag: Option<&str>,
     now: i64,
 ) -> String {
+    ensure_parent_folders(store, path, now - 1);
     store
         .write_node(
             WriteNodeRequest {
@@ -50,6 +51,27 @@ fn write_file(
         .etag
 }
 
+fn ensure_parent_folders(store: &FsStore, path: &str, now: i64) {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let mut current = String::new();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        current.push('/');
+        current.push_str(segment);
+        store
+            .mkdir_node(
+                MkdirNodeRequest {
+                    database_id: "default".to_string(),
+                    path: current.clone(),
+                },
+                now,
+            )
+            .expect("parent folder should exist or be created");
+    }
+}
+
 #[test]
 fn markdown_size_variants_roundtrip_through_write_append_and_edit() {
     let (_dir, store) = new_store();
@@ -58,6 +80,7 @@ fn markdown_size_variants_roundtrip_through_write_append_and_edit() {
         let path = format!("/Wiki/sizes/{size}.md");
         let marker = format!("TARGET_{size}");
         let content = markdown_of_size(size, &marker);
+        ensure_parent_folders(&store, &path, 99 + index as i64);
         let created = store
             .write_node(
                 WriteNodeRequest {
@@ -149,7 +172,7 @@ fn list_nodes_scales_to_thousand_entries() {
         .expect("root list should succeed");
     assert_eq!(root_entries.len(), 10);
     assert!(root_entries.iter().all(|entry| {
-        entry.kind == NodeEntryKind::Directory
+        entry.kind == NodeEntryKind::Folder
             && entry.has_children
             && entry.path.starts_with("/Wiki/scale/bucket-")
     }));
@@ -161,7 +184,14 @@ fn list_nodes_scales_to_thousand_entries() {
             recursive: true,
         })
         .expect("recursive list should succeed");
-    assert_eq!(recursive_entries.len(), 1_000);
+    assert_eq!(recursive_entries.len(), 1_011);
+    assert_eq!(
+        recursive_entries
+            .iter()
+            .filter(|entry| entry.kind == NodeEntryKind::File)
+            .count(),
+        1_000
+    );
 }
 
 #[test]
@@ -185,6 +215,7 @@ fn glob_and_search_scale_cases_respect_scope_and_physical_deletes() {
                         database_id: "default".to_string(),
                         path,
                         expected_etag: Some(etag),
+                        expected_folder_index_etag: None,
                     },
                     500 + index as i64,
                 )
@@ -333,6 +364,7 @@ fn fetch_updates_reports_small_delta_against_large_snapshot() {
                 database_id: "default".to_string(),
                 path: "/Wiki/snapshot/note-0002.md".to_string(),
                 expected_etag: Some(deleted_etag),
+                expected_folder_index_etag: None,
             },
             5_001,
         )

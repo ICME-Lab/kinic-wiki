@@ -1,0 +1,171 @@
+/* Where: extensions/wiki-clipper/popup/popup.css
+   What: Compact popup layout for destination settings.
+   Why: Users need a persistent canister target for page-level export. */
+body {
+  --kinic-white: #ffffff;
+  --kinic-paper: #f8f8f8;
+  --kinic-ink: #000000;
+  --kinic-body: #636161;
+  --kinic-support: #4d4d4d;
+  --kinic-line: #e6e6e6;
+  --kinic-mid-line: #d0d0d0;
+  --kinic-hot-pink: #ff2686;
+  --kinic-pale-pink: #ffcde5;
+  --kinic-soft-pink: #ff81be26;
+  --kinic-success: #11845b;
+  --kinic-error: #dc2b2b;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--kinic-ink);
+  background: var(--kinic-white);
+  font: 13px/1.45 Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+main {
+  display: grid;
+  box-sizing: border-box;
+  gap: 12px;
+  width: min(380px, calc(100vw - 28px));
+  margin: 0 auto;
+  padding: max(14px, calc((100vh - 430px) / 2)) 0 24px;
+}
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px 6px;
+}
+
+.brand-header img {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px #14142b0a;
+}
+
+.brand-header strong {
+  display: block;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.brand-header p {
+  margin: 2px 0 0;
+  color: var(--kinic-body);
+}
+
+.auth-card,
+.latest-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--kinic-line);
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--kinic-paper);
+  box-shadow: none;
+}
+
+.auth-card p,
+.latest-card p {
+  overflow-wrap: anywhere;
+  margin: 4px 0 0;
+  color: var(--kinic-body);
+}
+
+.auth-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  font-weight: 600;
+}
+
+input,
+select {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--kinic-mid-line);
+  border-radius: 12px;
+  padding: 9px 10px;
+  background: var(--kinic-white);
+  color: var(--kinic-ink);
+  font: inherit;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--kinic-hot-pink);
+  outline: 2px solid var(--kinic-soft-pink);
+  outline-offset: 1px;
+}
+
+.settings-actions {
+  display: grid;
+  grid-template-columns: 0.72fr 1fr;
+  gap: 8px;
+}
+
+button {
+  min-height: 38px;
+  border-radius: 16px;
+  padding: 8px 12px;
+  font-weight: 700;
+  transition:
+    background 0.3s ease,
+    border-color 0.3s ease,
+    color 0.3s ease,
+    transform 0.3s ease;
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-3px);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--kinic-soft-pink);
+  outline-offset: 2px;
+}
+
+button.primary {
+  border: 1px solid var(--kinic-ink);
+  background: var(--kinic-ink);
+  color: var(--kinic-white);
+  box-shadow: none;
+}
+
+button.primary:not(:disabled):hover {
+  background: var(--kinic-hot-pink);
+  border-color: var(--kinic-hot-pink);
+}
+
+button.secondary {
+  border: 1px solid var(--kinic-line);
+  background: var(--kinic-white);
+  color: var(--kinic-ink);
+  box-shadow: 0 4px 10px #14142b0a;
+}
+
+button.secondary:not(:disabled):hover {
+  border-color: var(--kinic-hot-pink);
+  background: var(--kinic-hot-pink);
+  color: var(--kinic-white);
+}
+
+button:disabled {
+  border-color: var(--kinic-line);
+  background: var(--kinic-paper);
+  color: var(--kinic-body);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+#status {
+  min-height: 18px;
+  margin: 0;
+  color: var(--kinic-support);
+}

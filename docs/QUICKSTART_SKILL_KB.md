@@ -1,12 +1,8 @@
 # Skill Knowledge Base Quickstart
 
-This walkthrough turns a repo into a DB-linked skill catalog.
-GitHub remains provenance and source history.
-The Kinic DB copy is the searchable team record used by agents and CLI workflows.
-
-This is different from a Vercel-style skill store.
-A store helps distribute and install skills.
-Skill KB helps a team find skills by task context, inspect provenance and evals, record run evidence, and promote or deprecate skills based on real usage.
+This walkthrough creates a DB-linked skill catalog and runs the sample Skill KB loop.
+For layout, manifest fields, status values, access rules, and Browser support, see
+[`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
 ## Prerequisites
 
@@ -26,38 +22,37 @@ Use `--local` in each database setup command when targeting a local replica.
 
 Create and link a database.
 `database create` is only needed the first time.
-If `team-skills` already exists and you have access, start from `database link`.
+If the database already exists and you have access, start from `database link <database-id>`.
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id "$CANISTER_ID" database create team-skills
-cargo run -p vfs-cli --bin vfs-cli -- --canister-id "$CANISTER_ID" database link team-skills
-cargo run -p vfs-cli --bin vfs-cli -- database current
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database create "Team skills")"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database link "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
 ```
 
 Upload the sample skill:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- skill upsert \
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill upsert \
   --source-dir examples/skill-kb/skills/legal-review \
   --id legal-review \
   --prune
 ```
 
 `skill upsert` uploads the package.
-It stores `SKILL.md`, `manifest.md`, optional `provenance.md` and `evals.md`, plus direct package-local `.md` links from `SKILL.md`.
 `--prune` removes stale package files already in the DB but no longer present in the source package.
 
 Find and inspect it:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- skill find "contract review"
-cargo run -p vfs-cli --bin vfs-cli -- skill inspect legal-review
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill find "contract review"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill inspect legal-review
 ```
 
 Record evidence from a real or demo run:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- skill record-run legal-review \
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill record-run legal-review \
   --task "review vendor MSA redlines before counsel handoff" \
   --outcome success \
   --notes-file examples/skill-kb/runs/legal-review-success.md
@@ -66,28 +61,38 @@ cargo run -p vfs-cli --bin vfs-cli -- skill record-run legal-review \
 Promote the skill after review:
 
 ```bash
-cargo run -p vfs-cli --bin vfs-cli -- skill set-status legal-review --status promoted
-cargo run -p vfs-cli --bin vfs-cli -- skill inspect legal-review
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill set-status legal-review --status promoted
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill inspect legal-review
 ```
 
-## Team Operation
+Automated evidence can also be recorded without manual schema prompts:
 
-- `draft`: imported or experimental skill.
-- `reviewed`: checked by the owning team.
-- `promoted`: recommended for common use.
-- `deprecated`: hidden from default `skill find`; use `--include-deprecated` to audit old skills.
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill record-run legal-review \
+  --evidence-json ./run-evidence.json
+```
 
-Store private team skills under `/Wiki/skills`.
-Store curated public catalog skills under `/Wiki/public-skills`.
-Store usage evidence under `/Sources/skill-runs`.
-Access follows database roles: `Owner`, `Writer`, and `Reader`.
+Set up Hermes once, then run evolution from inside Hermes:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- hermes setup
+```
+
+```text
+/kinic_evolve_job
+```
 
 ## Troubleshooting
 
 - Missing database link: run `database current`; if `database_id` is empty, run `database link <database-id>`.
 - Permission denied: ask a database owner to grant `reader` for find/inspect or `writer` for upsert/record-run/set-status.
-- Invalid manifest: check `kind`, `schema_version`, `id`, and `entry: SKILL.md`.
-- Deprecated skill missing from search: rerun `skill find <query> --include-deprecated`.
+- Invalid manifest: check the required fields in [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
+- Missing skill in search: rerun `skill find <query> --include-deprecated` if auditing old skills.
+- Stale Hermes projection after browser apply: run `kinic-vfs-cli hermes pull`.
+- Hermes projection check: run `kinic-vfs-cli hermes status`.
+- Pending Hermes evidence: run `kinic-vfs-cli hermes flush-pending`.
+- Shadow correction files: run `kinic-vfs-cli hermes shadows`.
+- Evolution job debugging: run `kinic-vfs-cli skill evolve-jobs create-ready` and `kinic-vfs-cli skill evolve-jobs list --status queued --json`.
 
 ## Demo Script
 

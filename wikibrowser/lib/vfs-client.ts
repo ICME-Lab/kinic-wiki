@@ -7,22 +7,28 @@ import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
   ChildNode,
-  BillingTransferResult,
-  DatabaseBillingEntry,
-  DatabaseBillingEntryPage,
+  DeleteNodeRequest,
+  DeleteNodeResult,
   DatabaseMember,
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
   LinkEdge,
+  MkdirNodeRequest,
+  MkdirNodeResult,
+  MoveNodeRequest,
+  MoveNodeResult,
   NodeContext,
   NodeEntryKind,
   NodeKind,
-  PrincipalBillingEntry,
-  PrincipalBillingEntryPage,
-  PrincipalBillingSummary,
+  QueryContext,
+  QueryAnswerSessionCheckRequest,
+  QueryAnswerSessionCheckResult,
+  QueryAnswerSessionRequest,
   RecentNode,
   SearchNodeHit,
+  UrlIngestTriggerSessionCheckRequest,
+  UrlIngestTriggerSessionRequest,
   WikiNode,
   WriteNodeRequest,
   WriteNodeResult
@@ -50,11 +56,16 @@ type RawDatabaseSummary = {
   role: Variant;
   logical_size_bytes: bigint;
   database_id: string;
-  display_name: string;
-  billing_balance_e8s: bigint;
+  name: string;
+  billing_balance_e8s: [] | [bigint];
   billing_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
+};
+
+type RawCreateDatabaseResult = {
+  database_id: string;
+  name: string;
 };
 
 type RawDatabaseMember = {
@@ -62,53 +73,6 @@ type RawDatabaseMember = {
   principal: string;
   role: Variant;
   created_at_ms: bigint;
-};
-
-type RawBillingTransferResult = {
-  block_index: bigint;
-  balance_e8s: bigint;
-};
-
-type RawPrincipalBillingSummary = {
-  principal: string;
-  balance_e8s: bigint;
-};
-
-type RawPrincipalBillingEntry = {
-  entry_id: bigint;
-  principal: string;
-  kind: string;
-  amount_e8s: bigint;
-  balance_after_e8s: bigint;
-  database_id: [] | [string];
-  ledger_block_index: [] | [bigint];
-  created_at_ms: bigint;
-};
-
-type RawPrincipalBillingEntryPage = {
-  entries: RawPrincipalBillingEntry[];
-  next_cursor: [] | [bigint];
-};
-
-type RawDatabaseBillingEntry = {
-  entry_id: bigint;
-  database_id: string;
-  kind: string;
-  amount_e8s: bigint;
-  balance_after_e8s: bigint;
-  caller: string;
-  method: [] | [string];
-  cycles_delta: [] | [bigint];
-  rate_numerator_e8s: [] | [bigint];
-  rate_denominator_cycles: [] | [bigint];
-  fixed_update_fee_e8s: [] | [bigint];
-  usage_event_id: [] | [bigint];
-  created_at_ms: bigint;
-};
-
-type RawDatabaseBillingEntryPage = {
-  entries: RawDatabaseBillingEntry[];
-  next_cursor: [] | [bigint];
 };
 
 type RawChild = {
@@ -143,6 +107,66 @@ type RawWriteNodeResult = {
   node: RawRecent;
 };
 
+type RawDeleteNodeRequest = {
+  database_id: string;
+  path: string;
+  expected_etag: [] | [string];
+  expected_folder_index_etag: [] | [string];
+};
+
+type RawDeleteNodeResult = {
+  path: string;
+};
+
+type RawMkdirNodeRequest = {
+  database_id: string;
+  path: string;
+};
+
+type RawMkdirNodeResult = {
+  path: string;
+  created: boolean;
+};
+
+type RawMoveNodeRequest = {
+  database_id: string;
+  from_path: string;
+  to_path: string;
+  expected_etag: [] | [string];
+  overwrite: boolean;
+};
+
+type RawMoveNodeResult = {
+  from_path: string;
+  node: RawRecent;
+  overwrote: boolean;
+};
+
+type RawUrlIngestTriggerSessionRequest = {
+  database_id: string;
+  session_nonce: string;
+};
+
+type RawUrlIngestTriggerSessionCheckRequest = {
+  database_id: string;
+  request_path: string;
+  session_nonce: string;
+};
+
+type RawQueryAnswerSessionRequest = {
+  database_id: string;
+  session_nonce: string;
+};
+
+type RawQueryAnswerSessionCheckRequest = {
+  database_id: string;
+  session_nonce: string;
+};
+
+type RawQueryAnswerSessionCheckResult = {
+  principal: string;
+};
+
 type RawLinkEdge = {
   source_path: string;
   target_path: string;
@@ -158,21 +182,31 @@ type RawNodeContext = {
   outgoing_links: RawLinkEdge[];
 };
 
+type RawQueryContext = {
+  namespace: string;
+  task: string;
+  search_hits: RawSearchHit[];
+  nodes: RawNodeContext[];
+  graph_links: RawLinkEdge[];
+  truncated: boolean;
+};
+
 type VfsActor = {
+  // Query answer wrappers keep the public browser naming while the current canister Candid surface still exposes ops_* session methods.
+  authorize_ops_answer_session: (request: RawQueryAnswerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
+  authorize_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   canister_health: () => Promise<RawCanisterHealth>;
-  create_database: (displayName: string, initialDepositE8s: bigint) => Promise<{ Ok: string } | { Err: string }>;
-  rename_database: (databaseId: string, displayName: string) => Promise<{ Ok: null } | { Err: string }>;
-  top_up_principal_balance: (amountE8s: bigint) => Promise<{ Ok: RawBillingTransferResult } | { Err: string }>;
-  withdraw_principal_balance: (amountE8s: bigint, to: { owner: Principal; subaccount: [] }) => Promise<{ Ok: RawBillingTransferResult } | { Err: string }>;
-  principal_billing_summary: () => Promise<{ Ok: RawPrincipalBillingSummary } | { Err: string }>;
-  list_principal_billing_entries: (cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawPrincipalBillingEntryPage } | { Err: string }>;
-  top_up_database: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
-  withdraw_database_balance: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
-  list_database_billing_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseBillingEntryPage } | { Err: string }>;
+  check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
+  check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
+  create_database: (request: { name: string; initial_deposit_e8s: [] | [bigint] }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
+  mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
+  move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: string }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
+  rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   recent_nodes: (request: { database_id: string; path: [] | [string]; limit: number }) => Promise<
@@ -183,6 +217,15 @@ type VfsActor = {
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
+  query_context: (request: {
+    database_id: string;
+    task: string;
+    entities: string[];
+    namespace: [] | [string];
+    budget_tokens: number;
+    include_evidence: boolean;
+    depth: number;
+  }) => Promise<{ Ok: RawQueryContext } | { Err: string }>;
   search_node_paths: (request: {
     database_id: string;
     query_text: string;
@@ -326,10 +369,10 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, displayName: string, initialDepositE8s: bigint): Promise<string> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string, initialDepositE8s = 1_000_000n): Promise<RawCreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database(displayName, initialDepositE8s);
+    const result = await actor.create_database({ name, initial_deposit_e8s: [initialDepositE8s] });
     if ("Err" in result) {
       throw new Error(result.Err);
     }
@@ -337,89 +380,13 @@ export async function createDatabaseAuthenticated(canisterId: string, identity: 
   });
 }
 
-export async function renameDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, displayName: string): Promise<void> {
+export async function renameDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, name: string): Promise<void> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.rename_database(databaseId, displayName);
+    const result = await actor.rename_database({ database_id: databaseId, name });
     if ("Err" in result) {
       throw new Error(result.Err);
     }
-  });
-}
-
-export async function topUpPrincipalBalanceAuthenticated(canisterId: string, identity: Identity, amountE8s: bigint): Promise<BillingTransferResult> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.top_up_principal_balance(amountE8s);
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-    return normalizeBillingTransferResult(result.Ok);
-  });
-}
-
-export async function withdrawPrincipalBalanceAuthenticated(canisterId: string, identity: Identity, amountE8s: bigint, toPrincipal: string): Promise<BillingTransferResult> {
-  return callVfs(async () => {
-    const owner = Principal.fromText(toPrincipal);
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.withdraw_principal_balance(amountE8s, { owner, subaccount: [] });
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-    return normalizeBillingTransferResult(result.Ok);
-  });
-}
-
-export async function principalBillingSummaryAuthenticated(canisterId: string, identity: Identity): Promise<PrincipalBillingSummary> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.principal_billing_summary();
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-    return normalizePrincipalBillingSummary(result.Ok);
-  });
-}
-
-export async function listPrincipalBillingEntriesAuthenticated(canisterId: string, identity: Identity, cursor: string | null, limit: number): Promise<PrincipalBillingEntryPage> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.list_principal_billing_entries(cursor ? [BigInt(cursor)] : [], limit);
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-    return normalizePrincipalBillingEntryPage(result.Ok);
-  });
-}
-
-export async function topUpDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, amountE8s: bigint): Promise<void> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.top_up_database(databaseId, amountE8s);
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-  });
-}
-
-export async function withdrawDatabaseBalanceAuthenticated(canisterId: string, identity: Identity, databaseId: string, amountE8s: bigint): Promise<void> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.withdraw_database_balance(databaseId, amountE8s);
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-  });
-}
-
-export async function listDatabaseBillingEntriesAuthenticated(canisterId: string, identity: Identity, databaseId: string, cursor: string | null, limit: number): Promise<DatabaseBillingEntryPage> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.list_database_billing_entries(databaseId, cursor ? [BigInt(cursor)] : [], limit);
-    if ("Err" in result) {
-      throw new Error(result.Err);
-    }
-    return normalizeDatabaseBillingEntryPage(result.Ok);
   });
 }
 
@@ -444,9 +411,124 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
   });
 }
 
+export async function deleteNodeAuthenticated(canisterId: string, identity: Identity, request: DeleteNodeRequest): Promise<DeleteNodeResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.delete_node({
+      database_id: request.databaseId,
+      path: request.path,
+      expected_etag: request.expectedEtag ? [request.expectedEtag] : [],
+      expected_folder_index_etag: request.expectedFolderIndexEtag ? [request.expectedFolderIndexEtag] : []
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok;
+  });
+}
+
+export async function mkdirNodeAuthenticated(canisterId: string, identity: Identity, request: MkdirNodeRequest): Promise<MkdirNodeResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.mkdir_node({
+      database_id: request.databaseId,
+      path: request.path
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok;
+  });
+}
+
+export async function moveNodeAuthenticated(canisterId: string, identity: Identity, request: MoveNodeRequest): Promise<MoveNodeResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.move_node({
+      database_id: request.databaseId,
+      from_path: request.fromPath,
+      to_path: request.toPath,
+      expected_etag: request.expectedEtag ? [request.expectedEtag] : [],
+      overwrite: request.overwrite
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return {
+      fromPath: result.Ok.from_path,
+      node: normalizeRecentNode(result.Ok.node),
+      overwrote: result.Ok.overwrote
+    };
+  });
+}
+
+export async function authorizeUrlIngestTriggerSession(
+  canisterId: string,
+  identity: Identity,
+  request: UrlIngestTriggerSessionRequest
+): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.authorize_url_ingest_trigger_session(rawUrlIngestTriggerSessionRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+  });
+}
+
+export async function checkUrlIngestTriggerSession(canisterId: string, request: UrlIngestTriggerSessionCheckRequest): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.check_url_ingest_trigger_session(rawUrlIngestTriggerSessionCheckRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+  });
+}
+
+export async function authorizeQueryAnswerSession(
+  canisterId: string,
+  identity: Identity,
+  request: QueryAnswerSessionRequest
+): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    // Compatibility note: the canister method is still ops_*; callers should use the query answer wrapper names above.
+    const result = await actor.authorize_ops_answer_session(rawQueryAnswerSessionRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+  });
+}
+
+export async function checkQueryAnswerSession(canisterId: string, request: QueryAnswerSessionCheckRequest): Promise<QueryAnswerSessionCheckResult> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    // Compatibility note: the canister method is still ops_*; callers should use the query answer wrapper names above.
+    const result = await actor.check_ops_answer_session(rawQueryAnswerSessionCheckRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return {
+      principal: result.Ok.principal
+    };
+  });
+}
+
 export async function listDatabaseMembersAuthenticated(canisterId: string, identity: Identity, databaseId: string): Promise<DatabaseMember[]> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.list_database_members(databaseId);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return result.Ok.map(normalizeDatabaseMember);
+  });
+}
+
+export async function listDatabaseMembersPublic(canisterId: string, databaseId: string): Promise<DatabaseMember[]> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
     const result = await actor.list_database_members(databaseId);
     if ("Err" in result) {
       throw new Error(result.Err);
@@ -566,6 +648,32 @@ export async function graphNeighborhood(canisterId: string, databaseId: string, 
   });
 }
 
+export async function queryContext(
+  canisterId: string,
+  databaseId: string,
+  task: string,
+  budgetTokens: number,
+  identity?: Identity,
+  namespace = "/Wiki"
+): Promise<QueryContext> {
+  return callVfs(async () => {
+    const actor = await createReadActor(canisterId, identity);
+    const result = await actor.query_context({
+      database_id: databaseId,
+      task,
+      entities: [],
+      namespace: [namespace],
+      budget_tokens: budgetTokens,
+      include_evidence: false,
+      depth: 1
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeQueryContext(result.Ok);
+  });
+}
+
 export async function searchNodePaths(
   canisterId: string,
   databaseId: string,
@@ -635,11 +743,11 @@ function normalizeCanisterHealth(raw: RawCanisterHealth): CanisterHealth {
 function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
-    displayName: raw.display_name,
+    name: raw.name,
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
-    billingBalanceE8s: raw.billing_balance_e8s.toString(),
+    billingBalanceE8s: raw.billing_balance_e8s[0]?.toString() ?? "0",
     billingSuspendedAtMs: raw.billing_suspended_at_ms[0]?.toString() ?? null,
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
@@ -652,65 +760,6 @@ function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
     principal: raw.principal,
     role: normalizeDatabaseRole(raw.role),
     createdAtMs: raw.created_at_ms.toString()
-  };
-}
-
-function normalizeBillingTransferResult(raw: RawBillingTransferResult): BillingTransferResult {
-  return {
-    blockIndex: raw.block_index.toString(),
-    balanceE8s: raw.balance_e8s.toString()
-  };
-}
-
-function normalizePrincipalBillingSummary(raw: RawPrincipalBillingSummary): PrincipalBillingSummary {
-  return {
-    principal: raw.principal,
-    balanceE8s: raw.balance_e8s.toString()
-  };
-}
-
-function normalizePrincipalBillingEntry(raw: RawPrincipalBillingEntry): PrincipalBillingEntry {
-  return {
-    entryId: raw.entry_id.toString(),
-    principal: raw.principal,
-    kind: raw.kind,
-    amountE8s: raw.amount_e8s.toString(),
-    balanceAfterE8s: raw.balance_after_e8s.toString(),
-    databaseId: raw.database_id[0] ?? null,
-    ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
-    createdAtMs: raw.created_at_ms.toString()
-  };
-}
-
-function normalizePrincipalBillingEntryPage(raw: RawPrincipalBillingEntryPage): PrincipalBillingEntryPage {
-  return {
-    entries: raw.entries.map(normalizePrincipalBillingEntry),
-    nextCursor: raw.next_cursor[0]?.toString() ?? null
-  };
-}
-
-function normalizeDatabaseBillingEntry(raw: RawDatabaseBillingEntry): DatabaseBillingEntry {
-  return {
-    entryId: raw.entry_id.toString(),
-    databaseId: raw.database_id,
-    kind: raw.kind,
-    amountE8s: raw.amount_e8s.toString(),
-    balanceAfterE8s: raw.balance_after_e8s.toString(),
-    caller: raw.caller,
-    method: raw.method[0] ?? null,
-    cyclesDelta: raw.cycles_delta[0]?.toString() ?? null,
-    rateNumeratorE8s: raw.rate_numerator_e8s[0]?.toString() ?? null,
-    rateDenominatorCycles: raw.rate_denominator_cycles[0]?.toString() ?? null,
-    fixedUpdateFeeE8s: raw.fixed_update_fee_e8s[0]?.toString() ?? null,
-    usageEventId: raw.usage_event_id[0]?.toString() ?? null,
-    createdAtMs: raw.created_at_ms.toString()
-  };
-}
-
-function normalizeDatabaseBillingEntryPage(raw: RawDatabaseBillingEntryPage): DatabaseBillingEntryPage {
-  return {
-    entries: raw.entries.map(normalizeDatabaseBillingEntry),
-    nextCursor: raw.next_cursor[0]?.toString() ?? null
   };
 }
 
@@ -755,11 +804,26 @@ function normalizeNodeContext(raw: RawNodeContext): NodeContext {
   };
 }
 
+function normalizeQueryContext(raw: RawQueryContext): QueryContext {
+  return {
+    namespace: raw.namespace,
+    task: raw.task,
+    searchHits: raw.search_hits.map(normalizeSearchHit),
+    nodes: raw.nodes.map(normalizeNodeContext),
+    graphLinks: raw.graph_links.map(normalizeLinkEdge),
+    truncated: raw.truncated
+  };
+}
+
 function normalizeNodeKind(kind: Variant): NodeKind {
+  if ("Folder" in kind) return "folder";
   return "Source" in kind ? "source" : "file";
 }
 
 function normalizeEntryKind(kind: Variant): NodeEntryKind {
+  if ("Folder" in kind) {
+    return "folder";
+  }
   if ("Directory" in kind) {
     return "directory";
   }
@@ -787,8 +851,38 @@ function databaseRoleVariant(role: DatabaseRole): Variant {
 }
 
 function nodeKindVariant(kind: NodeKind): Variant {
+  if (kind === "folder") return { Folder: null };
   if (kind === "source") return { Source: null };
   return { File: null };
+}
+
+function rawUrlIngestTriggerSessionRequest(request: UrlIngestTriggerSessionRequest): RawUrlIngestTriggerSessionRequest {
+  return {
+    database_id: request.databaseId,
+    session_nonce: request.sessionNonce
+  };
+}
+
+function rawUrlIngestTriggerSessionCheckRequest(request: UrlIngestTriggerSessionCheckRequest): RawUrlIngestTriggerSessionCheckRequest {
+  return {
+    database_id: request.databaseId,
+    request_path: request.requestPath,
+    session_nonce: request.sessionNonce
+  };
+}
+
+function rawQueryAnswerSessionRequest(request: QueryAnswerSessionRequest): RawQueryAnswerSessionRequest {
+  return {
+    database_id: request.databaseId,
+    session_nonce: request.sessionNonce
+  };
+}
+
+function rawQueryAnswerSessionCheckRequest(request: QueryAnswerSessionCheckRequest): RawQueryAnswerSessionCheckRequest {
+  return {
+    database_id: request.databaseId,
+    session_nonce: request.sessionNonce
+  };
 }
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {

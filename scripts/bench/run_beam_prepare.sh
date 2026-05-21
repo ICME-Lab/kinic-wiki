@@ -9,4 +9,4 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 cd "${REPO_ROOT}"
-cargo run -p vfs-cli --bin beam_prepare -- "$@"
+cargo run -p kinic-vfs-cli --bin beam_prepare -- "$@"

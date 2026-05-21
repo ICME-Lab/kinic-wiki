@@ -8,7 +8,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-management-ui";
 import { usePackageManager } from "@/app/skills/skill-registry-package-state";
 import { EmptyState, SkillCard, StatusPanel, SummaryStrip } from "@/app/skills/skill-registry-ui";
-import { DELEGATION_TTL_NS, identityProviderUrl } from "@/lib/auth";
+import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
 import { loadSkillCatalogDetails } from "@/lib/skill-registry-details";
 import { applyProposalDiff, previewApplyProposalDiff, type ProposalDiffPreview } from "@/lib/skill-registry-diff";
@@ -101,7 +101,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    AuthClient.create()
+    AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
       .then(async (client) => {
         if (cancelled) return;
         setAuthClient(client);
@@ -128,8 +128,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     if (!authClient) return;
     setError(null);
     await authClient.login({
-      identityProvider: identityProviderUrl(),
-      maxTimeToLive: DELEGATION_TTL_NS,
+      ...authLoginOptions(),
       onSuccess: () => {
         const identity = authClient.getIdentity();
         setPrincipal(identity.getPrincipal().toText());
@@ -213,7 +212,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                 Logout
               </button>
             ) : (
-              <button className="rounded-lg border border-accent bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={!authClient} type="button" onClick={() => void login()}>
+              <button className="rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:translate-y-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={!authClient} type="button" onClick={() => void login()}>
                 Login
               </button>
             )}
@@ -239,7 +238,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
               </label>
               <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-line bg-white text-sm">
                 {(["active", "all", "deprecated"] as const).map((value) => (
-                  <button key={value} className={`px-3 py-2 capitalize hover:bg-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${statusFilter === value ? "bg-accent text-white hover:bg-blue-700" : "text-ink"}`} type="button" onClick={() => setStatusFilter(value)}>
+                  <button key={value} className={`px-3 py-2 capitalize hover:bg-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${statusFilter === value ? "bg-accent text-white hover:bg-accentHover" : "text-ink"}`} type="button" onClick={() => setStatusFilter(value)}>
                     {value}
                   </button>
                 ))}

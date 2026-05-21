@@ -102,6 +102,7 @@ async fn run_workload_bench_with_client<C>(
 where
     C: VfsApi + Send + Sync + 'static,
 {
+    ensure_folder_path(&client, &args.database_id, &args.prefix).await?;
     if args.warmup_iterations > 0 {
         let warmup_args = phase_args(
             &args,
@@ -159,6 +160,7 @@ async fn setup_workload_with_client<C>(
 where
     C: VfsApi + Send + Sync + 'static,
 {
+    ensure_folder_path(&client, &args.database_id, &args.prefix).await?;
     let request_count = match args.operation {
         WorkloadOperation::Create => 0,
         WorkloadOperation::Update => seed_nodes(
@@ -250,6 +252,7 @@ async fn measure_workload_with_client<C>(
 where
     C: VfsApi + Send + Sync + 'static,
 {
+    ensure_folder_path(&client, &args.database_id, &args.prefix).await?;
     let started_at = Instant::now();
     let metrics = run_isolated_operation(&client, &args).await?;
     let total_seconds = started_at.elapsed().as_secs_f64();
@@ -290,6 +293,28 @@ where
         avg_request_payload_bytes: io.avg_request_payload_bytes,
         avg_response_payload_bytes: io.avg_response_payload_bytes,
     })
+}
+
+async fn ensure_folder_path<C>(client: &Arc<C>, database_id: &str, path: &str) -> Result<()>
+where
+    C: VfsApi + Send + Sync + 'static,
+{
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let mut current = String::new();
+    for segment in segments {
+        current.push('/');
+        current.push_str(segment);
+        client
+            .mkdir_node(MkdirNodeRequest {
+                database_id: database_id.to_string(),
+                path: current.clone(),
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 fn phase_args(args: &WorkloadBenchArgs, prefix: String, iterations: usize) -> WorkloadBenchArgs {
@@ -586,6 +611,7 @@ where
                 database_id: database_id.clone(),
                 path: path.clone(),
                 expected_etag: Some(state.etag.clone()),
+                expected_folder_index_etag: None,
             };
             let started_at = Instant::now();
             let delete_result = client.delete_node(delete_request.clone()).await?;
@@ -797,6 +823,7 @@ where
                 database_id: database_id.clone(),
                 path,
                 expected_etag: Some(state.etag.clone()),
+                expected_folder_index_etag: None,
             };
             let started_at = Instant::now();
             let result = client.delete_node(request.clone()).await?;

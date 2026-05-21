@@ -16,6 +16,7 @@ type ProvenanceState = {
 export function Inspector({
   canisterId,
   databaseId,
+  databaseName,
   path,
   node,
   childNodes,
@@ -28,6 +29,7 @@ export function Inspector({
 }: {
   canisterId: string;
   databaseId: string;
+  databaseName: string;
   path: string;
   node: WikiNode | null;
   childNodes: ChildNode[];
@@ -76,14 +78,18 @@ export function Inspector({
   return (
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4 text-sm">
       <InspectorCard title="Identity" icon={<Info size={15} />}>
+        <Meta label="database" value={databaseName} />
+        <Meta label="database_id" value={databaseId} />
         <Meta label="path" value={path} />
         <Meta label="kind" value={kind} />
         <Meta label="role" value={noteRole} />
         {node ? <Meta label="size_bytes" value={size} /> : <Meta label="children" value={String(childNodes.length)} />}
       </InspectorCard>
       <InspectorCard title="Metadata" icon={<Sparkles size={15} />}>
+        <Meta label="created_at" value={node?.createdAt ?? "virtual"} />
         <Meta label="updated_at" value={node?.updatedAt ?? "virtual"} />
         <Meta label="etag" value={node?.etag ?? "virtual"} />
+        <Meta label="metadata_json" value={node?.metadataJson ?? "{}"} />
       </InspectorCard>
       <InspectorCard title="Lint Hints" icon={<AlertTriangle size={15} />}>
         {hints.length > 0 ? (

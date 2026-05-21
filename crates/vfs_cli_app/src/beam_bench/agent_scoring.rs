@@ -649,13 +649,13 @@ mod tests {
                 "March 15, 2024",
                 vec![ToolCallRecord {
                     name: "read-node".to_string(),
-                    arguments: "cargo run -p vfs-cli --bin vfs-cli -- --local read-node --path /Wiki/run/conv-1/facts.md --json".to_string(),
+                    arguments: "cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local read-node --path /Wiki/run/conv-1/facts.md --json".to_string(),
                     is_error: false,
                 }],
                 vec![json!({
                     "type": "item.completed",
                     "item": {
-                        "command": "cargo run -p vfs-cli --bin vfs-cli -- --local search-path-remote meeting --prefix /Wiki/run/conv-1 --json",
+                        "command": "cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local search-path-remote meeting --prefix /Wiki/run/conv-1 --json",
                         "stdout": "[{\"path\":\"/Wiki/run/conv-1/facts.md\"}]"
                     }
                 })],
@@ -704,7 +704,7 @@ mod tests {
                 "March 15, 2024",
                 vec![ToolCallRecord {
                     name: "read-node-context".to_string(),
-                    arguments: "cargo run -p vfs-cli --bin vfs-cli -- --local read-node-context --path /Wiki/run/conv-1/facts.md --link-limit 20 --json".to_string(),
+                    arguments: "cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local read-node-context --path /Wiki/run/conv-1/facts.md --link-limit 20 --json".to_string(),
                     is_error: false,
                 }],
                 Vec::new(),
@@ -731,7 +731,7 @@ mod tests {
                 vec![json!({
                     "type": "item.completed",
                     "item": {
-                        "command": "cargo run -p vfs-cli --bin vfs-cli -- --local graph-neighborhood --center-path /Wiki/run/conv-1/index.md --depth 1 --limit 100 --json",
+                        "command": "cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local graph-neighborhood --center-path /Wiki/run/conv-1/index.md --depth 1 --limit 100 --json",
                         "stdout": "[{\"source_path\":\"/Wiki/run/conv-1/index.md\",\"target_path\":\"/Wiki/run/conv-1/facts.md\"}]"
                     }
                 })],
@@ -756,7 +756,7 @@ mod tests {
                 vec![json!({
                     "type": "item.completed",
                     "item": {
-                        "command": "cargo run -p vfs-cli --bin vfs-cli -- --local graph-neighborhood --center-path /Wiki/run/conv-1/facts.md --depth 1 --limit 100 --json",
+                        "command": "cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local graph-neighborhood --center-path /Wiki/run/conv-1/facts.md --depth 1 --limit 100 --json",
                         "stdout": "[]"
                     }
                 })],
@@ -840,7 +840,7 @@ mod tests {
                 "March 15, 2024",
                 vec![ToolCallRecord {
                     name: "read-node".to_string(),
-                    arguments: "cargo run -p vfs-cli --bin vfs-cli -- --local read-node --path /Wiki/run/conv-1/provenance.md --json".to_string(),
+                    arguments: "cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local read-node --path /Wiki/run/conv-1/provenance.md --json".to_string(),
                     is_error: false,
                 }],
                 Vec::new(),

@@ -6,7 +6,7 @@ import { Actor } from "@icp-sdk/core/agent";
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
-  const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null });
+  const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     updated_at: idl.Int64,
     content: idl.Text,
@@ -46,6 +46,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     metadata_json: idl.Text,
     database_id: idl.Text
   });
+  const MkdirNodeRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
   const SearchNodesRequest = idl.Record({
     database_id: idl.Text,
     query_text: idl.Text,
@@ -82,14 +83,17 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     next_cursor: idl.Opt(idl.Text)
   });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const MkdirNodeResult = idl.Record({ created: idl.Bool, path: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
+  const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
   const ResultExportSnapshot = idl.Variant({ Ok: ExportSnapshotResponse, Err: idl.Text });
   const ResultFetchUpdates = idl.Variant({ Ok: FetchUpdatesResponse, Err: idl.Text });
 
   return idl.Service({
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
+    mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     export_snapshot: idl.Func([ExportSnapshotRequest], [ResultExportSnapshot], ["query"]),

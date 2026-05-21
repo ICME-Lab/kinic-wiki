@@ -18,6 +18,7 @@ Do not use this skill for:
 - primary source ingestion
 - ordinary question answering
 - hidden repair runs
+- Skill Registry package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 

@@ -7,12 +7,19 @@
   "vars": {
     "NEXT_PUBLIC_WIKI_IC_HOST": "https://icp0.io",
     "NEXT_PUBLIC_II_PROVIDER_URL": "https://id.ai",
-    "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID": "xis3j-paaaa-aaaai-axumq-cai"
+    "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID": "xis3j-paaaa-aaaai-axumq-cai",
+    "KINIC_WIKI_GENERATOR_URL": "https://wiki-generator.kinic.xyz"
   },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "kv_namespaces": [
+    {
+      "binding": "QUERY_ANSWER_RATE_LIMIT",
+      "id": "72995eb374a14e71b1a35a545beca160"
+    }
+  ],
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",

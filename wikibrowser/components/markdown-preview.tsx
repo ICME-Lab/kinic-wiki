@@ -4,6 +4,7 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
+import { renderWikilinksAsMarkdown } from "@/lib/markdown-wikilinks";
 import { hrefForMarkdownLink } from "@/lib/paths";
 
 export function MarkdownPreview({
@@ -20,7 +21,7 @@ export function MarkdownPreview({
   readMode?: "anonymous" | null;
 }) {
   const frontmatter = splitMarkdownFrontmatter(content);
-  const markdown = frontmatter ? frontmatter.body : content;
+  const markdown = renderWikilinksAsMarkdown(frontmatter ? frontmatter.body : content);
   return (
     <>
       {frontmatter && frontmatter.fields.length > 0 ? <FrontmatterSummary fields={frontmatter.fields} /> : null}

@@ -9,7 +9,7 @@ export const LLM_WRITER_LABEL = "LLM writer";
 export const LLM_WRITER_PRINCIPAL = "ckurn-x74ln-nemlm-42vfv-gej7r-4cc3e-v22e5-otcod-jndlh-pbst4-3qe";
 export const DATABASE_ROLES: DatabaseRole[] = ["reader", "writer", "owner"];
 
-export type BusyAction = { kind: "grant"; principalText: string; role: DatabaseRole } | { kind: "revoke"; principalText: string };
+export type BusyAction = { kind: "grant"; principalText: string; role: DatabaseRole } | { kind: "revoke"; principalText: string } | { kind: "rename" };
 
 export function databaseRoleFromValue(value: string): DatabaseRole {
   if (value === "owner") return "owner";

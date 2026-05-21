@@ -9,5 +9,8 @@ mod fs_store;
 mod glob_match;
 mod hashing;
 mod schema;
+mod sqlite;
 
 pub use crate::fs_store::FsStore;
+#[cfg(target_arch = "wasm32")]
+pub use crate::fs_store::StableFsStore;

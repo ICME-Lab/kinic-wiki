@@ -21,6 +21,7 @@ struct ToolMockClient {
     nodes: std::sync::Mutex<std::collections::BTreeMap<String, Node>>,
     append_requests: std::sync::Mutex<Vec<AppendNodeRequest>>,
     edit_requests: std::sync::Mutex<Vec<EditNodeRequest>>,
+    delete_requests: std::sync::Mutex<Vec<DeleteNodeRequest>>,
     mkdir_requests: std::sync::Mutex<Vec<MkdirNodeRequest>>,
     move_requests: std::sync::Mutex<Vec<MoveNodeRequest>>,
     list_requests: std::sync::Mutex<Vec<ListNodesRequest>>,
@@ -88,6 +89,7 @@ impl VfsApi for ToolMockClient {
                     kind: match node.kind {
                         NodeKind::File => NodeEntryKind::File,
                         NodeKind::Source => NodeEntryKind::Source,
+                        NodeKind::Folder => NodeEntryKind::Folder,
                     },
                     updated_at: node.updated_at,
                     etag: node.etag.clone(),
@@ -142,6 +144,10 @@ impl VfsApi for ToolMockClient {
     }
 
     async fn delete_node(&self, request: DeleteNodeRequest) -> Result<DeleteNodeResult> {
+        self.delete_requests
+            .lock()
+            .expect("delete lock should succeed")
+            .push(request.clone());
         Ok(DeleteNodeResult { path: request.path })
     }
 
@@ -461,6 +467,9 @@ fn tool_schemas_cap_query_result_limits() {
     let graph = openai_tool_parameters(&openai, "graph_neighborhood");
     assert_eq!(graph["properties"]["depth"]["maximum"], 2);
     assert_eq!(graph["properties"]["limit"]["maximum"], 100);
+
+    let rm = openai_tool_parameters(&openai, "rm");
+    assert!(rm["properties"].get("expected_folder_index_etag").is_some());
 }
 
 fn openai_tool_parameters<'a>(tools: &'a [Value], name: &str) -> &'a Value {
@@ -546,6 +555,93 @@ async fn anthropic_dispatch_routes_mkdir() {
         .expect("mkdir lock should succeed");
     assert_eq!(mkdirs.len(), 1);
     assert_eq!(mkdirs[0].path, "/Wiki/new-dir");
+}
+
+#[tokio::test]
+async fn anthropic_dispatch_rm_autofills_folder_index_etag() {
+    let client = ToolMockClient::default();
+    {
+        let mut nodes = client.nodes.lock().expect("nodes lock should succeed");
+        nodes.insert(
+            "/Wiki/topic".to_string(),
+            Node {
+                kind: NodeKind::Folder,
+                etag: "etag-folder".to_string(),
+                ..sample_node("/Wiki/topic", "", "etag-folder")
+            },
+        );
+        nodes.insert(
+            "/Wiki/topic/index.md".to_string(),
+            sample_node("/Wiki/topic/index.md", "", "etag-index"),
+        );
+    }
+
+    let result = handle_anthropic_tool_call(
+        &client,
+        "rm",
+        serde_json::json!({
+            "database_id": "default",
+            "path": "/Wiki/topic",
+            "expected_etag": "etag-folder"
+        }),
+    )
+    .await
+    .expect("rm tool should dispatch");
+
+    assert!(!result.is_error);
+    let deletes = client
+        .delete_requests
+        .lock()
+        .expect("delete lock should succeed");
+    assert_eq!(deletes[0].path, "/Wiki/topic");
+    assert_eq!(deletes[0].expected_etag.as_deref(), Some("etag-folder"));
+    assert_eq!(
+        deletes[0].expected_folder_index_etag.as_deref(),
+        Some("etag-index")
+    );
+}
+
+#[tokio::test]
+async fn anthropic_dispatch_rm_keeps_explicit_folder_index_etag() {
+    let client = ToolMockClient::default();
+    {
+        let mut nodes = client.nodes.lock().expect("nodes lock should succeed");
+        nodes.insert(
+            "/Wiki/topic".to_string(),
+            Node {
+                kind: NodeKind::Folder,
+                etag: "etag-folder".to_string(),
+                ..sample_node("/Wiki/topic", "", "etag-folder")
+            },
+        );
+        nodes.insert(
+            "/Wiki/topic/index.md".to_string(),
+            sample_node("/Wiki/topic/index.md", "", "etag-index"),
+        );
+    }
+
+    let result = handle_anthropic_tool_call(
+        &client,
+        "rm",
+        serde_json::json!({
+            "database_id": "default",
+            "path": "/Wiki/topic",
+            "expected_etag": "etag-folder",
+            "expected_folder_index_etag": "stale"
+        }),
+    )
+    .await
+    .expect("rm tool should dispatch");
+
+    assert!(!result.is_error);
+    let deletes = client
+        .delete_requests
+        .lock()
+        .expect("delete lock should succeed");
+    assert_eq!(
+        deletes[0].expected_folder_index_etag.as_deref(),
+        Some("stale")
+    );
 }
 
 #[tokio::test]

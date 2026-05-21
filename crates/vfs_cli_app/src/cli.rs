@@ -1,16 +1,18 @@
 // Where: crates/vfs_cli_app/src/cli.rs
-// What: clap definitions for the FS-first CLI surface.
-// Why: Agents need direct node operations against the canister-backed wiki.
+// What: clap definitions for the single published kinic-vfs-cli surface.
+// Why: Wiki/operator commands and Skill Registry commands share one canister connection.
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, DatabaseCommand, GlobNodeTypeArg, NodeKindArg, SearchPreviewModeArg,
+    ConnectionArgs, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
+    SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
 #[derive(Parser, Debug)]
-#[command(name = "vfs-cli")]
+#[command(name = "kinic-vfs-cli")]
+#[command(version)]
 #[command(about = "Agent-facing CLI for the Kinic FS-first wiki")]
 pub struct Cli {
     #[command(flatten)]
@@ -22,35 +24,67 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
     },
+    #[command(about = "Show the current authenticated canister identity")]
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommand,
+    },
+    #[command(about = "Manage Skill Registry packages, discovery, status, and run evidence")]
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    #[command(about = "Install and sync the Kinic Hermes skill plugin")]
+    Hermes {
+        #[command(subcommand)]
+        command: HermesCommand,
+    },
+    #[command(about = "Install the Kinic Codex skill recorder plugin")]
+    Codex {
+        #[command(subcommand)]
+        command: CodexCommand,
+    },
+    #[command(about = "Install the Kinic Claude Code skill recorder plugin")]
+    Claude {
+        #[command(subcommand)]
+        command: ClaudeCommand,
+    },
+    #[command(about = "Ingest GitHub issue or pull request context into the wiki")]
     Github {
         #[command(subcommand)]
         command: GitHubCommand,
     },
+    #[command(about = "Rebuild the full wiki search index")]
     RebuildIndex,
+    #[command(about = "Rebuild the search index for one path scope")]
     RebuildScopeIndex {
         #[arg(long)]
         scope: String,
     },
+    #[command(about = "Generate wiki nodes from a local conversation source")]
     GenerateConversationWiki {
         #[arg(long)]
         source_path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Read one node by path; agents should prefer --json")]
     ReadNode {
         #[arg(long)]
         path: String,
         #[arg(long)]
+        metadata_only: bool,
+        #[arg(long)]
+        fields: Option<String>,
+        #[arg(long)]
         json: bool,
     },
+    #[command(about = "List nodes under a prefix")]
     ListNodes {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         prefix: String,
@@ -59,12 +93,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List direct children under one wiki path; agents should prefer --json")]
     ListChildren {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Write or replace one node; use --expected-etag after read-node for safe edits"
+    )]
     WriteNode {
         #[arg(long)]
         path: String,
@@ -74,11 +112,14 @@ pub enum Command {
         input: PathBuf,
         #[arg(long, default_value = "{}")]
         metadata_json: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the write if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Append content to one node; use --expected-etag after read-node for safe edits"
+    )]
     AppendNode {
         #[arg(long)]
         path: String,
@@ -88,13 +129,16 @@ pub enum Command {
         kind: Option<NodeKindArg>,
         #[arg(long)]
         metadata_json: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Reject the append if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         separator: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Replace text inside one node; use --expected-etag after read-node for safe edits"
+    )]
     EditNode {
         #[arg(long)]
         path: String,
@@ -102,45 +146,72 @@ pub enum Command {
         old_text: String,
         #[arg(long)]
         new_text: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the edit if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         replace_all: bool,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Delete one node; use etag guards for safe destructive edits")]
     DeleteNode {
         #[arg(long)]
         path: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the delete if the current node etag differs")]
         expected_etag: Option<String>,
+        #[arg(
+            long,
+            help = "Reject the delete if the parent folder index etag differs"
+        )]
+        expected_folder_index_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Delete a node tree")]
     DeleteTree {
         #[arg(long)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Remove URL ingest source and generated target nodes")]
+    PurgeUrlIngest {
+        #[arg(
+            long,
+            conflicts_with = "source_path",
+            required_unless_present = "source_path"
+        )]
+        url: Option<String>,
+        #[arg(long, conflicts_with = "url", required_unless_present = "url")]
+        source_path: Option<String>,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        force_target_prefix: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Create a directory node")]
     MkdirNode {
         #[arg(long)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Move or rename one node; use --expected-etag for safe edits")]
     MoveNode {
         #[arg(long)]
         from_path: String,
         #[arg(long)]
         to_path: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the move if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         overwrite: bool,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Find nodes by glob pattern under a path")]
     GlobNodes {
         pattern: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -150,14 +221,18 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List recently changed nodes under a path")]
     RecentNodes {
         #[arg(long, help = "Maximum 100; 0 is treated as 1 by the canister")]
         limit: u32,
-        #[arg(long, default_value = WIKI_ROOT_PATH)]
+        #[arg(long, alias = "prefix", default_value = WIKI_ROOT_PATH)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Read one node with incoming and outgoing link context; agents should prefer --json"
+    )]
     ReadNodeContext {
         #[arg(long)]
         path: String,
@@ -166,6 +241,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Inspect nearby wiki links around one node")]
     GraphNeighborhood {
         #[arg(long)]
         center_path: String,
@@ -176,6 +252,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List graph links under a path prefix")]
     GraphLinks {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         prefix: String,
@@ -184,6 +261,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List nodes that link to one path")]
     IncomingLinks {
         #[arg(long)]
         path: String,
@@ -192,6 +270,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List links written by one node")]
     OutgoingLinks {
         #[arg(long)]
         path: String,
@@ -200,16 +279,19 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Apply multiple text edits to one node with an optional etag guard")]
     MultiEditNode {
         #[arg(long)]
         path: String,
         #[arg(long)]
         edits_file: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Reject the edits if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(alias = "search-nodes")]
+    #[command(about = "Search node content; agents should prefer --json before read-node")]
     SearchRemote {
         query_text: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -225,6 +307,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Search node paths; agents should prefer --json")]
     SearchPathRemote {
         query_text: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -240,6 +323,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Show target canister and database access status")]
     Status {
         #[arg(long)]
         json: bool,
@@ -248,18 +332,18 @@ pub enum Command {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum SkillCommand {
+    #[command(about = "Store or update a Skill Registry package from a local directory")]
     Upsert {
         #[arg(long)]
         source_dir: PathBuf,
         #[arg(long)]
         id: String,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         prune: bool,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Find Skill Registry packages for a task query")]
     Find {
         query: String,
         #[arg(long)]
@@ -269,28 +353,31 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Inspect one Skill Registry package, files, and recent run evidence")]
     Inspect {
         id: String,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Record run evidence after a skill was used")]
     RecordRun {
         id: String,
+        #[arg(long, conflicts_with_all = ["task", "outcome", "notes_file", "agent"])]
+        evidence_json: Option<PathBuf>,
         #[arg(long)]
-        task: String,
+        create_ready_jobs: bool,
+        #[arg(long)]
+        task: Option<String>,
         #[arg(long, value_enum)]
-        outcome: SkillRunOutcomeArg,
+        outcome: Option<SkillRunOutcomeArg>,
         #[arg(long)]
-        notes_file: PathBuf,
+        notes_file: Option<PathBuf>,
         #[arg(long, default_value = "cli")]
         agent: String,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Move a skill through draft, reviewed, promoted, or deprecated")]
     SetStatus {
         id: String,
         #[arg(long, value_enum)]
@@ -298,14 +385,14 @@ pub enum SkillCommand {
         #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Import a Skill Registry package from an external source")]
     Import {
         #[command(subcommand)]
         source: SkillImportCommand,
     },
+    #[command(about = "Write an evidence-backed skill improvement proposal")]
     ProposeImprovement {
         id: String,
         #[arg(long = "runs", required = true)]
@@ -315,28 +402,196 @@ pub enum SkillCommand {
         #[arg(long)]
         diff_file: PathBuf,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Mark a skill improvement proposal as approved")]
     ApproveProposal {
         id: String,
         proposal_path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Record a correction for an existing skill run")]
+    RecordCorrection {
+        id: String,
+        run_id: String,
+        #[arg(long)]
+        notes_file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Apply an approved skill proposal when the base etag still matches")]
+    ApplyProposal {
+        id: String,
+        proposal_id: String,
+        #[arg(long)]
+        job_id: Option<String>,
+        #[arg(long)]
+        projection_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Restore a previous skill version")]
+    Rollback {
+        id: String,
+        version_id: String,
+        #[arg(long)]
+        projection_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one skill package to a local agent skill directory")]
+    Export {
+        id: String,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one skill package to GitHub through gh")]
+    ExportGithub {
+        id: String,
+        target: String,
+        #[arg(long)]
+        branch: String,
+        #[arg(long)]
+        message: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List skill versions, proposals, jobs, runs, and corrections")]
+    History {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Manage queued Skill Registry evolution jobs")]
+    EvolveJobs {
+        #[command(subcommand)]
+        command: SkillEvolveJobsCommand,
+    },
+    #[command(about = "Write a lockfile for a selected skill package")]
+    Install {
+        id: String,
+        #[arg(long)]
+        lockfile: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum IdentityCommand {
+    #[command(about = "Show the selected icp-cli identity principal")]
+    Show {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum HermesCommand {
+    #[command(about = "Install the Hermes plugin and export reviewed or promoted skills")]
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Refresh the local Hermes skill projection")]
+    Pull {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Show Hermes plugin and projection status")]
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Submit pending Hermes skill run evidence")]
+    FlushPending {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List Hermes shadow correction files")]
+    Shadows {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CodexCommand {
+    #[command(about = "Install the Codex skill recorder plugin")]
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ClaudeCommand {
+    #[command(about = "Install the Claude Code skill recorder plugin")]
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillEvolveJobsCommand {
+    #[command(about = "Create queued evolution jobs for skills with enough new evidence")]
+    CreateReady {
+        #[arg(long, default_value_t = 5)]
+        min_new_runs: u32,
+        #[arg(long, default_value_t = 24)]
+        cooldown_hours: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List skill evolution jobs")]
+    List {
+        #[arg(long, value_enum)]
+        status: Option<SkillEvolutionJobStatusArg>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Claim one queued evolution job")]
+    Claim {
+        job_id: String,
+        #[arg(long, default_value_t = 3600)]
+        lease_seconds: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Complete one evolution job with a terminal status")]
+    Complete {
+        job_id: String,
+        #[arg(long, value_enum)]
+        status: SkillEvolutionJobStatusArg,
+        #[arg(long)]
+        summary: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillEvolutionJobStatusArg {
+    Queued,
+    Running,
+    Done,
+    Conflict,
+    Failed,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum SkillImportCommand {
+    #[command(about = "Import a skill package from GitHub")]
     Github {
         source: String,
         #[arg(long)]
         id: String,
         #[arg(long = "ref", default_value = "HEAD")]
         reference: String,
-        #[arg(long)]
-        public: bool,
         #[arg(long)]
         prune: bool,
         #[arg(long)]
@@ -361,6 +616,7 @@ pub enum SkillRunOutcomeArg {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum GitHubCommand {
+    #[command(about = "Ingest GitHub issue or pull request content")]
     Ingest {
         #[command(subcommand)]
         command: GitHubIngestCommand,
@@ -369,11 +625,13 @@ pub enum GitHubCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum GitHubIngestCommand {
+    #[command(about = "Ingest one GitHub issue into source nodes")]
     Issue {
         target: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Ingest one GitHub pull request into source nodes")]
     Pr {
         target: String,
         #[arg(long)]
@@ -387,22 +645,28 @@ impl Command {
             Self::Database { command } => matches!(
                 command,
                 DatabaseCommand::Create { .. }
+                    | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
+                    | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
                     | DatabaseCommand::Members { .. }
-                    | DatabaseCommand::Rename { .. }
-                    | DatabaseCommand::TopUpPrincipal { .. }
-                    | DatabaseCommand::WithdrawPrincipal { .. }
-                    | DatabaseCommand::PrincipalBilling { .. }
-                    | DatabaseCommand::TopUp { .. }
-                    | DatabaseCommand::Withdraw { .. }
-                    | DatabaseCommand::BillingEntries { .. }
-                    | DatabaseCommand::BillingConfig { .. }
+                    | DatabaseCommand::ArchiveExport { .. }
+                    | DatabaseCommand::ArchiveRestore { .. }
+                    | DatabaseCommand::ArchiveCancel { .. }
+                    | DatabaseCommand::RestoreCancel { .. }
             ),
             Self::Skill { command } => !matches!(
                 command,
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
+            Self::Hermes { command } => matches!(
+                command,
+                HermesCommand::Setup { .. }
+                    | HermesCommand::Pull { .. }
+                    | HermesCommand::FlushPending { .. }
+            ),
+            Self::Codex { .. } | Self::Claude { .. } => false,
+            Self::Identity { .. } => true,
             Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -412,6 +676,7 @@ impl Command {
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
             | Self::DeleteTree { .. }
+            | Self::PurgeUrlIngest { .. }
             | Self::MkdirNode { .. }
             | Self::MoveNode { .. }
             | Self::MultiEditNode { .. } => true,
@@ -431,13 +696,72 @@ impl Command {
         }
     }
 
+    pub fn probes_anonymous_database_read(&self) -> bool {
+        match self {
+            Self::Skill { command } => matches!(
+                command,
+                SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
+            ),
+            Self::ReadNode { .. }
+            | Self::ListNodes { .. }
+            | Self::ListChildren { .. }
+            | Self::GlobNodes { .. }
+            | Self::RecentNodes { .. }
+            | Self::ReadNodeContext { .. }
+            | Self::GraphNeighborhood { .. }
+            | Self::GraphLinks { .. }
+            | Self::IncomingLinks { .. }
+            | Self::OutgoingLinks { .. }
+            | Self::SearchRemote { .. }
+            | Self::SearchPathRemote { .. }
+            | Self::Status { .. } => true,
+            Self::Database { .. }
+            | Self::Identity { .. }
+            | Self::Hermes { .. }
+            | Self::Codex { .. }
+            | Self::Claude { .. }
+            | Self::Github { .. }
+            | Self::RebuildIndex
+            | Self::RebuildScopeIndex { .. }
+            | Self::GenerateConversationWiki { .. }
+            | Self::WriteNode { .. }
+            | Self::AppendNode { .. }
+            | Self::EditNode { .. }
+            | Self::DeleteNode { .. }
+            | Self::DeleteTree { .. }
+            | Self::PurgeUrlIngest { .. }
+            | Self::MkdirNode { .. }
+            | Self::MoveNode { .. }
+            | Self::MultiEditNode { .. } => false,
+        }
+    }
+
+    pub fn prefers_identity_in_auto(&self) -> bool {
+        matches!(
+            self,
+            Self::Database {
+                command: DatabaseCommand::List { .. }
+            } | Self::Identity { .. }
+                | Self::Hermes {
+                    command: HermesCommand::Status { .. },
+                }
+        )
+    }
+
     pub fn as_vfs_command(&self) -> Option<VfsCommand> {
         match self {
             Self::Database { command } => Some(VfsCommand::Database {
                 command: command.clone(),
             }),
-            Self::ReadNode { path, json } => Some(VfsCommand::ReadNode {
+            Self::ReadNode {
+                path,
+                metadata_only,
+                fields,
+                json,
+            } => Some(VfsCommand::ReadNode {
                 path: path.clone(),
+                metadata_only: *metadata_only,
+                fields: fields.clone(),
                 json: *json,
             }),
             Self::ListNodes {
@@ -503,16 +827,19 @@ impl Command {
             Self::DeleteNode {
                 path,
                 expected_etag,
+                expected_folder_index_etag,
                 json,
             } => Some(VfsCommand::DeleteNode {
                 path: path.clone(),
                 expected_etag: expected_etag.clone(),
+                expected_folder_index_etag: expected_folder_index_etag.clone(),
                 json: *json,
             }),
             Self::DeleteTree { path, json } => Some(VfsCommand::DeleteTree {
                 path: path.clone(),
                 json: *json,
             }),
+            Self::PurgeUrlIngest { .. } => None,
             Self::MkdirNode { path, json } => Some(VfsCommand::MkdirNode {
                 path: path.clone(),
                 json: *json,
@@ -629,7 +956,10 @@ impl Command {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Command, DatabaseCommand, SkillCommand, SkillImportCommand, SkillStatusArg};
+    use super::{
+        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand, IdentityModeArg,
+        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+    };
     use clap::{CommandFactory, Parser};
 
     #[test]
@@ -641,9 +971,59 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_help_describes_agent_entrypoints() {
+        let mut command = Cli::command();
+        let help = command.render_long_help().to_string();
+
+        assert!(help.contains("Manage database creation"));
+        assert!(help.contains("Manage Skill Registry packages"));
+        assert!(help.contains("Read one node by path"));
+        assert!(help.contains("Search node content"));
+    }
+
+    #[test]
+    fn skill_help_describes_standard_registry_loop() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("skill")
+            .expect("skill subcommand")
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("Find Skill Registry packages"));
+        assert!(help.contains("Inspect one Skill Registry package"));
+        assert!(help.contains("Record run evidence"));
+    }
+
+    #[test]
+    fn database_help_describes_connection_commands() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("database")
+            .expect("database subcommand")
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("workspace database link"));
+        assert!(help.contains("List databases attached"));
+        assert!(help.contains("Grant owner, writer, or reader access"));
+    }
+
+    #[test]
+    fn main_cli_exposes_package_version() {
+        let command = Cli::command();
+        let version = command.render_version().to_string();
+
+        assert_eq!(
+            version.trim(),
+            concat!("kinic-vfs-cli ", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
     fn main_cli_parses_link_commands() {
         let cli = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "read-node-context",
             "--path",
             "/Wiki/a.md",
@@ -664,7 +1044,7 @@ mod tests {
         assert!(json);
 
         let cli = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "graph-neighborhood",
             "--center-path",
             "/Wiki/a.md",
@@ -690,7 +1070,27 @@ mod tests {
 
     #[test]
     fn main_cli_parses_database_link_commands() {
-        let cli = Cli::parse_from(["vfs-cli", "database", "link", "team-db"]);
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "create", "team-db"]);
+        let Command::Database {
+            command: DatabaseCommand::Create { name },
+        } = cli.command
+        else {
+            panic!("expected database create command");
+        };
+        assert_eq!(name, "team-db");
+        assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
+
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
+        let Command::Database {
+            command: DatabaseCommand::Rename { database_id, name },
+        } = cli.command
+        else {
+            panic!("expected database rename command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert_eq!(name, "Alpha");
+
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "link", "team-db"]);
         let Command::Database {
             command: DatabaseCommand::Link { database_id },
         } = cli.command
@@ -699,7 +1099,7 @@ mod tests {
         };
         assert_eq!(database_id, "team-db");
 
-        let cli = Cli::parse_from(["vfs-cli", "database", "current", "--json"]);
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "current", "--json"]);
         let Command::Database {
             command: DatabaseCommand::Current { json },
         } = cli.command
@@ -707,18 +1107,72 @@ mod tests {
             panic!("expected database current command");
         };
         assert!(json);
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "archive-export",
+            "team-db",
+            "--output",
+            "team-db.sqlite",
+            "--chunk-size",
+            "512",
+            "--json",
+        ]);
+        let Command::Database {
+            command:
+                DatabaseCommand::ArchiveExport {
+                    database_id,
+                    output,
+                    chunk_size,
+                    json,
+                },
+        } = cli.command
+        else {
+            panic!("expected archive-export command");
+        };
+        assert_eq!(database_id, "team-db");
+        assert_eq!(output.to_string_lossy(), "team-db.sqlite");
+        assert_eq!(chunk_size, 512);
+        assert!(json);
     }
 
     #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
-        let read = Cli::parse_from(["vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
+        let read = Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
         assert!(!read.command.requires_identity());
+        assert!(read.command.probes_anonymous_database_read());
 
-        let status = Cli::parse_from(["vfs-cli", "status"]);
+        let status = Cli::parse_from(["kinic-vfs-cli", "status"]);
         assert!(!status.command.requires_identity());
+        assert!(status.command.probes_anonymous_database_read());
+
+        let private_install = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "install",
+            "legal-review",
+            "--lockfile",
+            "skill.lock.json",
+        ]);
+        assert!(private_install.command.requires_identity());
+        assert!(!private_install.command.probes_anonymous_database_read());
+
+        assert!(
+            Cli::try_parse_from([
+                "kinic-vfs-cli",
+                "skill",
+                "install",
+                "legal-review",
+                "--lockfile",
+                "skill.lock.json",
+                "--public",
+            ])
+            .is_err()
+        );
 
         let write = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "write-node",
             "--path",
             "/Wiki/index.md",
@@ -726,12 +1180,248 @@ mod tests {
             "index.md",
         ]);
         assert!(write.command.requires_identity());
+        assert!(!write.command.probes_anonymous_database_read());
+
+        let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
+        assert!(!list.command.requires_identity());
+        assert!(list.command.prefers_identity_in_auto());
+    }
+
+    #[test]
+    fn main_cli_parses_record_run_create_ready_jobs() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "record-run",
+            "legal-review",
+            "--task",
+            "review redlines",
+            "--outcome",
+            "success",
+            "--notes-file",
+            "notes.md",
+            "--create-ready-jobs",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::RecordRun {
+                    id,
+                    create_ready_jobs,
+                    task,
+                    outcome,
+                    notes_file,
+                    json,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected skill record-run command");
+        };
+        assert_eq!(id, "legal-review");
+        assert!(create_ready_jobs);
+        assert_eq!(task.as_deref(), Some("review redlines"));
+        assert_eq!(outcome, Some(SkillRunOutcomeArg::Success));
+        assert_eq!(notes_file.unwrap().to_string_lossy(), "notes.md");
+        assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_apply_proposal_job_id() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "apply-proposal",
+            "legal-review",
+            "p1",
+            "--job-id",
+            "job-1",
+            "--projection-dir",
+            "skills",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::ApplyProposal {
+                    id,
+                    proposal_id,
+                    job_id,
+                    projection_dir,
+                    json,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected skill apply-proposal command");
+        };
+        assert_eq!(id, "legal-review");
+        assert_eq!(proposal_id, "p1");
+        assert_eq!(job_id.as_deref(), Some("job-1"));
+        assert_eq!(projection_dir.unwrap().to_string_lossy(), "skills");
+        assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_identity_mode() {
+        let default_cli =
+            Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
+        assert_eq!(default_cli.connection.identity_mode, IdentityModeArg::Auto);
+        assert!(!default_cli.connection.allow_non_ii_identity);
+
+        let anonymous_cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "--identity-mode",
+            "anonymous",
+            "read-node",
+            "--path",
+            "/Wiki/index.md",
+        ]);
+        assert_eq!(
+            anonymous_cli.connection.identity_mode,
+            IdentityModeArg::Anonymous
+        );
+
+        let identity_cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "--identity-mode",
+            "identity",
+            "write-node",
+            "--path",
+            "/Wiki/index.md",
+            "--input",
+            "index.md",
+        ]);
+        assert_eq!(
+            identity_cli.connection.identity_mode,
+            IdentityModeArg::Identity
+        );
+
+        let non_ii_cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "--allow-non-ii-identity",
+            "read-node",
+            "--path",
+            "/Wiki/index.md",
+        ]);
+        assert!(non_ii_cli.connection.allow_non_ii_identity);
+    }
+
+    #[test]
+    fn main_cli_rejects_local_and_replica_host_together() {
+        let parsed = Cli::try_parse_from([
+            "kinic-vfs-cli",
+            "--local",
+            "--replica-host",
+            "http://127.0.0.1:8001",
+            "status",
+        ]);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn main_cli_rejects_folder_kind_for_write_and_append() {
+        let write = Cli::try_parse_from([
+            "kinic-vfs-cli",
+            "write-node",
+            "--path",
+            "/Wiki/folder",
+            "--kind",
+            "folder",
+            "--input",
+            "folder.md",
+        ]);
+        assert!(write.is_err());
+
+        let append = Cli::try_parse_from([
+            "kinic-vfs-cli",
+            "append-node",
+            "--path",
+            "/Wiki/folder",
+            "--kind",
+            "folder",
+            "--input",
+            "folder.md",
+        ]);
+        assert!(append.is_err());
+
+        let source = Cli::parse_from([
+            "kinic-vfs-cli",
+            "write-node",
+            "--path",
+            "/Sources/raw/source/source.md",
+            "--kind",
+            "source",
+            "--input",
+            "source.md",
+        ]);
+        let Command::WriteNode { kind, .. } = source.command else {
+            panic!("expected write-node command");
+        };
+        assert_eq!(kind, NodeKindArg::Source);
+    }
+
+    #[test]
+    fn main_cli_parses_accident_response_aliases() {
+        let search = Cli::parse_from([
+            "kinic-vfs-cli",
+            "search-nodes",
+            "incident",
+            "--prefix",
+            "/Wiki/run",
+            "--json",
+        ]);
+        let Command::SearchRemote {
+            query_text,
+            prefix,
+            json,
+            ..
+        } = search.command
+        else {
+            panic!("expected search-remote command");
+        };
+        assert_eq!(query_text, "incident");
+        assert_eq!(prefix, "/Wiki/run");
+        assert!(json);
+
+        let recent = Cli::parse_from([
+            "kinic-vfs-cli",
+            "recent-nodes",
+            "--limit",
+            "7",
+            "--prefix",
+            "/Sources",
+        ]);
+        let Command::RecentNodes { limit, path, .. } = recent.command else {
+            panic!("expected recent-nodes command");
+        };
+        assert_eq!(limit, 7);
+        assert_eq!(path, "/Sources");
+
+        let read = Cli::parse_from([
+            "kinic-vfs-cli",
+            "read-node",
+            "--path",
+            "/Wiki/index.md",
+            "--metadata-only",
+            "--fields",
+            "path,kind,etag",
+        ]);
+        let Command::ReadNode {
+            metadata_only,
+            fields,
+            ..
+        } = read.command
+        else {
+            panic!("expected read-node command");
+        };
+        assert!(metadata_only);
+        assert_eq!(fields.as_deref(), Some("path,kind,etag"));
     }
 
     #[test]
     fn main_cli_parses_skill_commands() {
         let cli = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "skill",
             "find",
             "contract review",
@@ -755,7 +1445,7 @@ mod tests {
         assert!(json);
 
         let cli = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "skill",
             "upsert",
             "--source-dir",
@@ -775,7 +1465,7 @@ mod tests {
         assert!(json);
 
         let cli = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "skill",
             "set-status",
             "legal-review",
@@ -791,7 +1481,7 @@ mod tests {
         assert_eq!(status, SkillStatusArg::Deprecated);
 
         let cli = Cli::parse_from([
-            "vfs-cli",
+            "kinic-vfs-cli",
             "skill",
             "import",
             "github",
@@ -822,5 +1512,112 @@ mod tests {
         assert_eq!(id, "foo");
         assert_eq!(reference, "main");
         assert!(prune);
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "install",
+            "legal-review",
+            "--lockfile",
+            "skill.lock.json",
+            "--json",
+        ]);
+        let Command::Skill {
+            command: SkillCommand::Install {
+                id, lockfile, json, ..
+            },
+        } = cli.command
+        else {
+            panic!("expected skill install command");
+        };
+        assert_eq!(id, "legal-review");
+        assert_eq!(lockfile.to_string_lossy(), "skill.lock.json");
+        assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_hermes_surfaces() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "hermes", "setup", "--json"]);
+        let Command::Hermes {
+            command: HermesCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected hermes setup command");
+        };
+        assert!(*json);
+        assert!(setup.command.requires_identity());
+
+        let pull = Cli::parse_from(["kinic-vfs-cli", "hermes", "pull", "--json"]);
+        let Command::Hermes {
+            command: HermesCommand::Pull { json },
+        } = &pull.command
+        else {
+            panic!("expected hermes pull command");
+        };
+        assert!(*json);
+        assert!(pull.command.requires_identity());
+
+        let status = Cli::parse_from(["kinic-vfs-cli", "hermes", "status"]);
+        let Command::Hermes {
+            command: HermesCommand::Status { json },
+        } = &status.command
+        else {
+            panic!("expected hermes status command");
+        };
+        assert!(!*json);
+        assert!(!status.command.requires_identity());
+        assert!(status.command.prefers_identity_in_auto());
+
+        let flush = Cli::parse_from(["kinic-vfs-cli", "hermes", "flush-pending"]);
+        let Command::Hermes {
+            command: HermesCommand::FlushPending { .. },
+        } = &flush.command
+        else {
+            panic!("expected hermes flush-pending command");
+        };
+        assert!(flush.command.requires_identity());
+
+        let shadows = Cli::parse_from(["kinic-vfs-cli", "hermes", "shadows"]);
+        let Command::Hermes {
+            command: HermesCommand::Shadows { .. },
+        } = &shadows.command
+        else {
+            panic!("expected hermes shadows command");
+        };
+        assert!(!shadows.command.requires_identity());
+
+        let removed_command = ["run", "ready"].join("-");
+        assert!(
+            Cli::try_parse_from(["kinic-vfs-cli", "skill", "evolve-jobs", &removed_command])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn main_cli_parses_codex_setup_as_local_command() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "codex", "setup", "--json"]);
+        let Command::Codex {
+            command: CodexCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected codex setup command");
+        };
+        assert!(*json);
+        assert!(!setup.command.requires_identity());
+        assert!(!setup.command.probes_anonymous_database_read());
+    }
+
+    #[test]
+    fn main_cli_parses_claude_setup_as_local_command() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "claude", "setup", "--json"]);
+        let Command::Claude {
+            command: ClaudeCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected claude setup command");
+        };
+        assert!(*json);
+        assert!(!setup.command.requires_identity());
+        assert!(!setup.command.probes_anonymous_database_read());
     }
 }

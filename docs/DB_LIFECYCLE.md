@@ -19,7 +19,7 @@ Public browser reads use the normal member model. Grant anonymous reader access 
 
 Stable-memory mount IDs are partitioned by purpose:
 
-- `0..9`: WASI filesystem memory for tmp files and directory metadata
+- `0..9`: reserved for stable-memory system and SQLite VFS internals
 - `10`: index DB
 - `11..=32767`: user DB slots
 - `32768..=65534`: reserved
@@ -87,7 +87,7 @@ The default rate is `200 / 1_000_000` cycles and the default fixed update fee is
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_billing_config` with a Candid-encoded `BillingConfigUpdate` blob. `validate_update_billing_config` performs the same validation without changing state.
 
-`icp.yaml` carries local development init args with anonymous placeholder principals. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
+`scripts/local/deploy_wiki.sh` carries local development init args with anonymous placeholder principals. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
 
 Normal operator flow:
 
@@ -143,6 +143,7 @@ Restore can only begin from `archived` or `deleted`. It cannot begin from `hot` 
 If the canister cannot mount the newly allocated DB file during begin, the DB rolls back to its previous `archived` or `deleted` state. The failed mount ID remains in mount history and is not reused.
 
 If finalize fails because the file size is wrong, the DB stays `restoring`. The caller can write missing bytes and retry finalize.
+If the restore must be abandoned, `cancel_database_restore(database_id)` returns the DB to the pre-restore `archived` or `deleted` state and removes partial restore chunks and bytes. The restore mount ID remains in mount history and is not reused.
 Restore rejects chunks larger than 1 MiB and declared DB sizes larger than `i64::MAX`.
 Restore finalize also hashes the whole restored SQLite file in one update, so large imports have the same instruction and cycle-cost concern as archive finalize.
 
@@ -162,5 +163,5 @@ Busy DBs may require caller retry by restarting the snapshot export flow.
 ## Follow-ups
 
 - `delete_database` currently deletes the SQLite file before marking the DB `deleted`. A later lifecycle change should add a `deleting` state or equivalent two-phase flow before reordering this safely.
-- Archive/restore APIs are canister-level primitives. The CLI does not yet provide archive export/import commands.
+- The CLI exposes archive export/import as `database archive-export` and `database archive-restore`. External object storage integration is still caller-owned.
 - Caffeine or external object storage integration is out of scope for v1.

@@ -26,8 +26,8 @@ export function IngestPanel({
     setMessage(null);
     try {
       const created = await createUrlIngestRequest(canisterId, databaseId, readIdentity, url);
-      setTone("info");
-      setMessage(`Queued ${created.requestPath}`);
+      setTone(created.triggered ? "info" : "error");
+      setMessage(created.triggered ? `Queued and accepted ${created.requestPath}` : `Queued ${created.requestPath}. ${created.triggerError}`);
       setUrl("");
     } catch (cause) {
       setTone("error");
@@ -47,6 +47,8 @@ export function IngestPanel({
     );
   }
 
+  const submitDisabled = busy || !url.trim();
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 text-sm">
       <form className="grid gap-3" onSubmit={submit}>
@@ -59,12 +61,13 @@ export function IngestPanel({
             className="mt-2 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm outline-none focus:border-accent"
             placeholder="https://example.com/article"
             value={url}
+            disabled={busy}
             onChange={(event) => setUrl(event.target.value)}
           />
         </div>
         <button
-          className="rounded-lg border border-accent bg-accent px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={busy || !url.trim()}
+          className="rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+          disabled={submitDisabled}
           type="submit"
         >
           {busy ? "Queueing..." : "Queue URL"}

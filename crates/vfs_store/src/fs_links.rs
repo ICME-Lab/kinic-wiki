@@ -3,7 +3,7 @@
 // Why: Backlinks should be cheap to query, so writes maintain a small edge table.
 use std::collections::{BTreeSet, VecDeque};
 
-use rusqlite::{Connection, Transaction, params};
+use crate::sqlite::{Connection, Transaction, params};
 use vfs_types::{LinkEdge, Node};
 
 use crate::fs_helpers::{normalize_node_path, prefix_filter_sql_for_column};
@@ -33,17 +33,15 @@ pub(crate) fn backfill_node_links(tx: &Transaction<'_>) -> Result<(), String> {
     let mut stmt = tx
         .prepare("SELECT path, content, updated_at FROM fs_nodes ORDER BY path ASC")
         .map_err(|error| error.to_string())?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })
-        .map_err(|error| error.to_string())?;
-    for row in rows {
-        let (source_path, content, updated_at) = row.map_err(|error| error.to_string())?;
+    let rows = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get::<String>(row, 0)?,
+            crate::sqlite::row_get::<String>(row, 1)?,
+            crate::sqlite::row_get::<i64>(row, 2)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    for (source_path, content, updated_at) in rows {
         for edge in extract_link_edges(&source_path, &content, updated_at) {
             tx.execute(
                 "INSERT OR REPLACE INTO fs_links
@@ -122,12 +120,14 @@ pub(crate) fn load_graph_links(
         values.extend(scope_values);
     }
     sql.push_str(" ORDER BY source_path ASC, target_path ASC, raw_href ASC LIMIT ?");
-    values.push(rusqlite::types::Value::from(limit));
+    values.push(crate::sqlite::types::Value::from(limit));
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(rusqlite::params_from_iter(values.iter()), edge_from_row)
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+    crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        edge_from_row,
+    )
+    .map_err(|error| error.to_string())
 }
 
 pub(crate) fn load_graph_neighborhood(
@@ -186,24 +186,20 @@ fn load_adjacent_links(conn: &Connection, path: &str, limit: i64) -> Result<Vec<
 
 fn load_links<P>(conn: &Connection, sql: &str, params: P) -> Result<Vec<LinkEdge>, String>
 where
-    P: rusqlite::Params,
+    P: crate::sqlite::Params,
 {
-    conn.prepare(sql)
-        .map_err(|error| error.to_string())?
-        .query_map(params, edge_from_row)
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+    let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params, edge_from_row).map_err(|error| error.to_string())
 }
 
-fn edge_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LinkEdge> {
+fn edge_from_row(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<LinkEdge> {
     Ok(LinkEdge {
-        source_path: row.get(0)?,
-        target_path: row.get(1)?,
-        raw_href: row.get(2)?,
-        link_text: row.get(3)?,
-        link_kind: row.get(4)?,
-        updated_at: row.get(5)?,
+        source_path: crate::sqlite::row_get::<String>(row, 0)?,
+        target_path: crate::sqlite::row_get::<String>(row, 1)?,
+        raw_href: crate::sqlite::row_get::<String>(row, 2)?,
+        link_text: crate::sqlite::row_get::<String>(row, 3)?,
+        link_kind: crate::sqlite::row_get::<String>(row, 4)?,
+        updated_at: crate::sqlite::row_get::<i64>(row, 5)?,
     })
 }
 
@@ -239,7 +235,15 @@ fn extract_markdown_links(
         };
         let text = &content[open + 1..close];
         let raw_href = &content[href_start..href_end];
-        push_edge(source_path, text, raw_href, "markdown", updated_at, edges);
+        push_edge(
+            source_path,
+            raw_href,
+            raw_href,
+            text,
+            "markdown",
+            updated_at,
+            edges,
+        );
         offset = href_end + 1;
     }
 }
@@ -255,10 +259,12 @@ fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &
             break;
         };
         let raw_href = &content[href_start..close];
+        let (target_href, link_text) = split_wikilink_alias(raw_href);
         push_edge(
             source_path,
             raw_href,
-            raw_href,
+            target_href,
+            link_text,
             "wikilink",
             updated_at,
             edges,
@@ -269,14 +275,15 @@ fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &
 
 fn push_edge(
     source_path: &str,
-    link_text: &str,
     raw_href: &str,
+    target_href: &str,
+    link_text: &str,
     link_kind: &str,
     updated_at: i64,
     edges: &mut Vec<LinkEdge>,
 ) {
     let strip_title = link_kind == "markdown";
-    let Some(target_path) = resolve_link_target(source_path, raw_href, strip_title) else {
+    let Some(target_path) = resolve_link_target(source_path, target_href, strip_title) else {
         return;
     };
     edges.push(LinkEdge {
@@ -287,6 +294,16 @@ fn push_edge(
         link_kind: link_kind.to_string(),
         updated_at,
     });
+}
+
+fn split_wikilink_alias(raw_href: &str) -> (&str, &str) {
+    let Some((target, alias)) = raw_href.split_once('|') else {
+        return (raw_href, raw_href);
+    };
+    if alias.trim().is_empty() {
+        return (target, target);
+    }
+    (target, alias)
 }
 
 fn resolve_link_target(source_path: &str, raw_href: &str, strip_title: bool) -> Option<String> {
@@ -477,5 +494,26 @@ mod tests {
         assert_eq!(edges[0].raw_href, "Project \"Alpha\".md");
         assert_eq!(edges[1].target_path, "/Wiki/topic/Project (Alpha).md");
         assert_eq!(edges[1].raw_href, "Project (Alpha).md");
+    }
+
+    #[test]
+    fn wikilink_parser_splits_alias_from_target_path() {
+        let edges = edges_for(
+            "[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]] [[relative.md|]] [[note.md|A|B]]",
+        );
+
+        assert_eq!(edges.len(), 3);
+        assert_eq!(edges[0].target_path, "/Sources/raw/a/a.md");
+        assert_eq!(
+            edges[0].raw_href,
+            "/Sources/raw/a/a.md|opencode.ai/DESIGN.md"
+        );
+        assert_eq!(edges[0].link_text, "opencode.ai/DESIGN.md");
+        assert_eq!(edges[1].target_path, "/Wiki/topic/relative.md");
+        assert_eq!(edges[1].raw_href, "relative.md|");
+        assert_eq!(edges[1].link_text, "relative.md");
+        assert_eq!(edges[2].target_path, "/Wiki/topic/note.md");
+        assert_eq!(edges[2].raw_href, "note.md|A|B");
+        assert_eq!(edges[2].link_text, "A|B");
     }
 }

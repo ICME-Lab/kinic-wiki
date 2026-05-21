@@ -1,0 +1,44 @@
+name: Publish npm CLI
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Check release assets
+        working-directory: npm/kinic-vfs-cli
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          for platform in macos-arm64 linux-x86_64; do
+            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/kinic-vfs-cli-v${version}-${platform}.tar.gz" >/dev/null
+            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/kinic-vfs-cli-v${version}-${platform}.sha256" >/dev/null
+          done
+      - name: Test npm package
+        working-directory: npm/kinic-vfs-cli
+        run: npm test
+      - name: Dry-run package
+        working-directory: npm/kinic-vfs-cli
+        run: npm pack --dry-run
+      - name: Smoke install packed package
+        working-directory: npm/kinic-vfs-cli
+        run: |
+          package_tgz="$(npm pack --silent)"
+          prefix="$(mktemp -d)"
+          npm install --global --prefix "$prefix" "./${package_tgz}"
+          "$prefix/bin/kinic-vfs-cli" --version
+          "$prefix/bin/kinic-vfs-cli" codex setup --help
+      - name: Publish
+        working-directory: npm/kinic-vfs-cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish

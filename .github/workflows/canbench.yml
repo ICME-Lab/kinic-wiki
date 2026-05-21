@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -25,7 +25,7 @@ jobs:
       - name: Use stable Rust
         run: rustup default stable
       - name: Add wasm target
-        run: rustup target add wasm32-wasip1
+        run: rustup target add wasm32-unknown-unknown
       - name: Install WASI sysroot
         run: sudo apt-get update && sudo apt-get install -y wasi-libc
       - name: Install wasm tooling
@@ -35,7 +35,7 @@ jobs:
       - name: Run canbench
         run: bash scripts/run_canbench_guard.sh
       - name: Upload canbench results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: canbench-results
           path: |

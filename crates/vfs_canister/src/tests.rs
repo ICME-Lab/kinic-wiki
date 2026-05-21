@@ -1,64 +1,42 @@
 // Where: crates/vfs_canister/src/tests.rs
 // What: Entry-point level tests for the FS-first canister surface.
 // Why: Phase 3 replaces the public canister contract, so tests must assert the wrapper behavior directly.
-use candid::Principal;
-use sha2::{Digest, Sha256};
 use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll, Waker};
+
+use candid::{Encode, Nat, Principal};
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
-    AppendNodeRequest, BillingAccount, DatabaseRole, DatabaseStatus, DeleteNodeRequest,
-    EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest,
-    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
-    RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, WriteNodeRequest,
+    AppendNodeRequest, BillingConfig, CreateDatabaseRequest, DatabaseRestoreChunkRequest,
+    DatabaseRole, DatabaseStatus, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
+    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, PrincipalBillingEntryPage, QueryContextRequest,
+    RecentNodesRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
-    LedgerTransferOutcome, SERVICE, TransferError, append_node, begin_database_archive,
-    begin_database_restore, cancel_database_archive, create_database, delete_node, edit_node,
-    export_snapshot, fail_next_mount_database_file_for_test, fetch_updates,
-    finalize_database_archive, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
-    incoming_links, list_children, list_databases, list_nodes, list_principal_billing_entries,
-    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    principal_billing_summary, query_context, read_database_archive_chunk, read_node,
-    read_node_context, recent_nodes, revoke_database_access, search_node_paths, search_nodes,
-    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test, source_evidence,
-    status, test_caller_principal, transfer_error_outcome, withdraw_principal_balance, write_node,
+    LedgerTransferFromOutcome, LedgerTransferOutcome, SERVICE, TransferError, TransferFromError,
+    append_node, begin_database_archive, begin_database_restore, cancel_database_archive,
+    create_database, delete_node, edit_node, export_snapshot,
+    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
+    finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
+    incoming_links, list_children, list_database_members, list_databases, list_nodes,
+    list_principal_billing_entries, memory_manifest, mkdir_node, move_node, multi_edit_node,
+    outgoing_links, parse_upgrade_billing_config_arg, principal_billing_summary, query_context,
+    read_database_archive_chunk, read_node, read_node_context, recent_nodes, rename_database,
+    revoke_database_access, search_node_paths, search_nodes,
+    set_next_ledger_transfer_from_outcome_for_test, set_next_ledger_transfer_outcome_for_test,
+    set_test_caller_principal_for_test, source_evidence, status, top_up_principal_balance,
+    transfer_error_outcome, transfer_from_error_outcome, write_database_restore_chunk, write_node,
+    write_nodes,
 };
 
-fn test_caller_text() -> String {
-    test_caller_principal().to_text()
-}
-
-fn block_on_ready<F: Future>(future: F) -> F::Output {
-    fn raw_waker() -> RawWaker {
-        fn clone(_: *const ()) -> RawWaker {
-            raw_waker()
-        }
-        fn wake(_: *const ()) {}
-        fn wake_by_ref(_: *const ()) {}
-        fn drop(_: *const ()) {}
-        RawWaker::new(
-            std::ptr::null(),
-            &RawWakerVTable::new(clone, wake, wake_by_ref, drop),
-        )
-    }
-    let waker = unsafe { Waker::from_raw(raw_waker()) };
-    let mut context = Context::from_waker(&waker);
-    let mut future = Box::pin(future);
-    match Pin::as_mut(&mut future).poll(&mut context) {
-        Poll::Ready(value) => value,
-        Poll::Pending => panic!("test future unexpectedly pending"),
-    }
-}
-
 fn install_test_service() {
-    set_test_caller_principal_for_test(Principal::management_canister());
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
@@ -66,13 +44,12 @@ fn install_test_service() {
         .run_index_migrations()
         .expect("index migrations should run");
     service
-        .create_database("default", &test_caller_text(), 1_700_000_000_000)
+        .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
 fn install_empty_test_service() {
-    set_test_caller_principal_for_test(Principal::management_canister());
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
@@ -80,6 +57,195 @@ fn install_empty_test_service() {
         .run_index_migrations()
         .expect("index migrations should run");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+}
+
+fn block_on_ready<T>(future: impl Future<Output = T>) -> T {
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    let mut future = std::pin::pin!(future);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("test future unexpectedly pending"),
+    }
+}
+
+fn explicit_billing_config() -> BillingConfig {
+    BillingConfig {
+        kinic_ledger_canister_id: "aaaaa-aa".to_string(),
+        sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        rate_numerator_e8s: 200,
+        rate_denominator_cycles: 1_000_000,
+        fixed_update_fee_e8s: 100,
+        min_update_balance_e8s: 10_000,
+        min_initial_deposit_e8s: 1_000_000,
+    }
+}
+
+fn principal_entries() -> PrincipalBillingEntryPage {
+    list_principal_billing_entries(None, 10).expect("principal ledger entries should load")
+}
+
+fn fund_authenticated_caller(amount_e8s: u64, ledger_block_index: u64) {
+    let principal = Principal::management_canister().to_text();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .credit_principal_top_up(
+                &principal,
+                amount_e8s,
+                ledger_block_index,
+                1_700_000_000_000,
+            )
+            .expect("principal should be funded");
+    });
+}
+
+struct AuthenticatedCallerGuard;
+
+impl AuthenticatedCallerGuard {
+    fn install() -> Self {
+        set_test_caller_principal_for_test(Principal::management_canister());
+        Self
+    }
+}
+
+impl Drop for AuthenticatedCallerGuard {
+    fn drop(&mut self) {
+        set_test_caller_principal_for_test(Principal::anonymous());
+    }
+}
+
+#[test]
+fn post_upgrade_billing_config_arg_accepts_no_arg() {
+    let bytes = Encode!().expect("empty candid args should encode");
+
+    let parsed =
+        parse_upgrade_billing_config_arg(&bytes).expect("empty post-upgrade arg should parse");
+
+    assert_eq!(parsed, None);
+}
+
+#[test]
+fn post_upgrade_billing_config_arg_accepts_bare_config() {
+    let config = explicit_billing_config();
+    let bytes = Encode!(&config).expect("billing config should encode");
+
+    let parsed =
+        parse_upgrade_billing_config_arg(&bytes).expect("bare post-upgrade config should parse");
+
+    assert_eq!(parsed, Some(config));
+}
+
+#[test]
+fn post_upgrade_billing_config_arg_accepts_optional_config() {
+    let config = explicit_billing_config();
+    let bytes = Encode!(&Some(config.clone())).expect("optional billing config should encode");
+
+    let parsed = parse_upgrade_billing_config_arg(&bytes)
+        .expect("optional post-upgrade config should parse");
+
+    assert_eq!(parsed, Some(config));
+}
+
+#[test]
+fn transfer_from_duplicate_outcome_is_completed() {
+    let outcome = transfer_from_error_outcome(TransferFromError::Duplicate {
+        duplicate_of: Nat::from(77_u64),
+    });
+
+    match outcome {
+        LedgerTransferFromOutcome::Completed(block_index) => assert_eq!(block_index, 77),
+        other => panic!("duplicate should complete, got {other:?}"),
+    }
+}
+
+#[test]
+fn transfer_duplicate_outcome_is_completed() {
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+        "test pending".to_string(),
+    ));
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::LedgerErr(
+        "test reject".to_string(),
+    ));
+    let outcome = transfer_error_outcome(TransferError::Duplicate {
+        duplicate_of: Nat::from(78_u64),
+    });
+
+    match outcome {
+        LedgerTransferOutcome::Completed(block_index) => assert_eq!(block_index, 78),
+        other => panic!("duplicate should complete, got {other:?}"),
+    }
+}
+
+#[test]
+fn top_up_principal_balance_credits_completed_transfer_from() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+
+    let result = block_on_ready(top_up_principal_balance(500))
+        .expect("completed transfer-from should credit principal");
+
+    assert_eq!(result.block_index, 42);
+    assert_eq!(result.balance_e8s, 500);
+    assert_eq!(
+        principal_billing_summary()
+            .expect("summary should load")
+            .balance_e8s,
+        500
+    );
+    let entries = principal_entries().entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "top_up");
+    assert_eq!(entries[0].ledger_block_index, Some(42));
+}
+
+#[test]
+fn top_up_principal_balance_leaves_balance_on_ledger_reject() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::LedgerErr(
+        "icrc2_transfer_from failed: InsufficientAllowance".to_string(),
+    ));
+
+    let error = block_on_ready(top_up_principal_balance(500))
+        .expect_err("ledger reject should not credit principal");
+
+    assert!(error.contains("InsufficientAllowance"));
+    assert_eq!(
+        principal_billing_summary()
+            .expect("summary should load")
+            .balance_e8s,
+        0
+    );
+    assert!(principal_entries().entries.is_empty());
+}
+
+#[test]
+fn top_up_principal_balance_records_ambiguous_transfer_from() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "icrc2_transfer_from decode failed".to_string(),
+    ));
+
+    let error = block_on_ready(top_up_principal_balance(500))
+        .expect_err("ambiguous transfer-from should return pending error");
+
+    assert!(error.contains("top-up pending; manual repair required"));
+    assert_eq!(
+        principal_billing_summary()
+            .expect("summary should load")
+            .balance_e8s,
+        0
+    );
+    let entries = principal_entries().entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "top_up_ambiguous");
+    assert_eq!(entries[0].amount_e8s, 500);
+    assert_eq!(entries[0].balance_after_e8s, 0);
+    assert_eq!(entries[0].ledger_block_index, None);
 }
 
 fn usage_event_count() -> u64 {
@@ -92,18 +258,35 @@ fn usage_event_count() -> u64 {
     })
 }
 
-fn fund_test_caller(amount_e8s: u64) {
+fn usage_event_database_ids() -> Vec<Option<String>> {
     SERVICE.with(|slot| {
         slot.borrow()
             .as_ref()
             .expect("service should be installed")
-            .credit_principal_top_up(&test_caller_text(), amount_e8s, 999, 1_700_000_000_000)
-            .expect("test caller should fund");
-    });
+            .usage_event_database_ids()
+            .expect("usage database ids should load")
+    })
 }
 
 fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
+}
+
+fn ensure_parent_folders(path: &str) {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let mut current = String::new();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        current.push('/');
+        current.push_str(segment);
+        mkdir_node(MkdirNodeRequest {
+            database_id: "default".to_string(),
+            path: current.clone(),
+        })
+        .expect("parent folder should exist or be created");
+    }
 }
 
 #[test]
@@ -156,14 +339,18 @@ fn canister_list_databases_returns_caller_membership_summaries() {
 #[test]
 fn update_entrypoints_record_usage_events() {
     install_empty_test_service();
-    fund_test_caller(1_000_000);
+    let _caller = AuthenticatedCallerGuard::install();
+    fund_authenticated_caller(1_000_000, 90);
 
-    let database_id =
-        create_database("Test".to_string(), 1_000_000).expect("database should create");
+    let database = create_database(CreateDatabaseRequest {
+        name: "Usage events".to_string(),
+        initial_deposit_e8s: Some(1_000_000),
+    })
+    .expect("database should create");
     assert_eq!(usage_event_count(), 1);
 
     let failed = write_node(WriteNodeRequest {
-        database_id,
+        database_id: database.database_id,
         path: "/Sources/not-raw.md".to_string(),
         kind: NodeKind::Source,
         content: "invalid source path".to_string(),
@@ -175,20 +362,115 @@ fn update_entrypoints_record_usage_events() {
 }
 
 #[test]
-fn canister_create_database_returns_generated_id_for_followup_reads() {
+fn write_nodes_records_one_usage_event_and_writes_nodes() {
+    install_test_service();
+
+    let results = write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![
+            WriteNodeItem {
+                path: "/Wiki/batch-a.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            WriteNodeItem {
+                path: "/Wiki/batch-b.md".to_string(),
+                kind: NodeKind::File,
+                content: "beta".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+        ],
+    })
+    .expect("batch write should succeed");
+
+    assert_eq!(results.len(), 2);
+    assert_eq!(usage_event_count(), 1);
+    assert!(
+        read_node("default".to_string(), "/Wiki/batch-a.md".to_string())
+            .expect("read should succeed")
+            .is_some()
+    );
+}
+
+#[test]
+fn write_nodes_rejects_reader_role() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("index migrations should run");
+    service
+        .create_database("public", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("public", "owner", "2vxsx-fae", DatabaseRole::Reader, 2)
+        .expect("anonymous reader should grant");
+    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+
+    let error = write_nodes(WriteNodesRequest {
+        database_id: "public".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Wiki/nope.md".to_string(),
+            kind: NodeKind::File,
+            content: "nope".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect_err("reader should not write");
+
+    assert!(error.contains("principal lacks required database role"));
+}
+
+#[test]
+fn write_nodes_rejects_invalid_source_path() {
+    install_test_service();
+
+    let error = write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Sources/not-raw.md".to_string(),
+            kind: NodeKind::Source,
+            content: "invalid source path".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect_err("invalid source path should fail");
+
+    assert!(error.contains("source path"));
+    assert_eq!(usage_event_count(), 1);
+}
+
+#[test]
+fn create_database_records_usage_and_returns_result() {
     install_empty_test_service();
-    fund_test_caller(1_000_000);
+    let _caller = AuthenticatedCallerGuard::install();
+    fund_authenticated_caller(1_000_000, 91);
 
-    let database_id =
-        create_database("Test".to_string(), 1_000_000).expect("database should create");
-    assert!(database_id.starts_with("db_"));
-    assert_eq!(database_id.len(), 15);
+    let result = create_database(CreateDatabaseRequest {
+        name: " Team skills ".to_string(),
+        initial_deposit_e8s: Some(1_000_000),
+    })
+    .expect("database should create");
+    assert!(result.database_id.starts_with("db_"));
+    assert_eq!(result.database_id.len(), 15);
+    assert_eq!(result.name, "Team skills");
+    assert_eq!(usage_event_count(), 1);
+    assert_eq!(
+        usage_event_database_ids(),
+        vec![Some(result.database_id.clone())]
+    );
 
-    let status = status(database_id.clone());
+    let status = status(result.database_id.clone());
     assert_eq!(status.file_count, 0);
     assert_eq!(status.source_count, 0);
     let children = list_children(ListChildrenRequest {
-        database_id,
+        database_id: result.database_id,
         path: "/Wiki".to_string(),
     })
     .expect("generated database should list");
@@ -196,91 +478,17 @@ fn canister_create_database_returns_generated_id_for_followup_reads() {
 }
 
 #[test]
-fn principal_withdraw_ledger_error_reverses_balance() {
-    install_empty_test_service();
-    fund_test_caller(1_000);
-    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::LedgerErr(
-        "ledger rejected".to_string(),
-    ));
+fn canister_rename_database_requires_owner() {
+    install_test_service();
 
-    let error = block_on_ready(withdraw_principal_balance(
-        100,
-        BillingAccount {
-            owner: Principal::management_canister(),
-            subaccount: None,
-        },
-    ))
-    .expect_err("ledger error should fail");
-    assert!(error.contains("ledger rejected"));
+    rename_database(RenameDatabaseRequest {
+        database_id: "default".to_string(),
+        name: "Renamed default".to_string(),
+    })
+    .expect("owner should rename database");
 
-    let summary = principal_billing_summary().expect("summary should load");
-    assert_eq!(summary.balance_e8s, 1_000);
-    let entries = list_principal_billing_entries(None, 100).expect("entries should load");
-    assert!(
-        entries
-            .entries
-            .iter()
-            .any(|entry| entry.kind == "withdraw_reversal")
-    );
-}
-
-#[test]
-fn principal_withdraw_ambiguous_keeps_pending_debit() {
-    install_empty_test_service();
-    fund_test_caller(1_000);
-    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
-        "call failed".to_string(),
-    ));
-
-    let error = block_on_ready(withdraw_principal_balance(
-        100,
-        BillingAccount {
-            owner: Principal::management_canister(),
-            subaccount: None,
-        },
-    ))
-    .expect_err("ambiguous transfer should fail pending");
-    assert!(error.contains("withdraw pending; manual repair required"));
-
-    let summary = principal_billing_summary().expect("summary should load");
-    assert_eq!(summary.balance_e8s, 890);
-    let entries = list_principal_billing_entries(None, 100).expect("entries should load");
-    assert!(
-        entries
-            .entries
-            .iter()
-            .any(|entry| entry.kind == "withdraw_ambiguous")
-    );
-    assert!(
-        !entries
-            .entries
-            .iter()
-            .any(|entry| entry.kind == "withdraw_reversal")
-    );
-}
-
-#[test]
-fn principal_withdraw_duplicate_error_completes_with_duplicate_block() {
-    match transfer_error_outcome(TransferError::Duplicate {
-        duplicate_of: 42_u64.into(),
-    }) {
-        LedgerTransferOutcome::Completed(block_index) => assert_eq!(block_index, 42),
-        outcome => panic!("duplicate should complete, got {outcome:?}"),
-    }
-}
-
-#[test]
-fn billing_update_entrypoints_reject_anonymous() {
-    install_empty_test_service();
-    set_test_caller_principal_for_test(Principal::anonymous());
-
-    let error =
-        create_database("Test".to_string(), 1_000_000).expect_err("anonymous create should fail");
-    assert!(error.contains("anonymous caller not allowed"));
-
-    let error = principal_billing_summary().expect_err("anonymous summary should fail");
-    assert!(error.contains("anonymous caller not allowed"));
-    set_test_caller_principal_for_test(Principal::management_canister());
+    let summaries = list_databases().expect("database summaries should load");
+    assert_eq!(summaries[0].name, "Renamed default");
 }
 
 #[test]
@@ -326,15 +534,12 @@ fn revoke_database_access_validates_and_canonicalizes_principal() {
 
     grant_database_access(
         "default".to_string(),
-        "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        "aaaaa-aa".to_string(),
         DatabaseRole::Reader,
     )
     .expect("valid principal should grant");
-    revoke_database_access(
-        "default".to_string(),
-        "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-    )
-    .expect("valid principal should revoke");
+    revoke_database_access("default".to_string(), "aaaaa-aa".to_string())
+        .expect("valid principal should revoke");
 }
 
 #[test]
@@ -352,13 +557,18 @@ fn anonymous_reader_grant_allows_public_read() {
         .grant_database_access("public", "owner", "2vxsx-fae", DatabaseRole::Reader, 2)
         .expect("anonymous reader should grant");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
-    set_test_caller_principal_for_test(Principal::anonymous());
 
     let node = read_node("public".to_string(), "/Wiki/missing.md".to_string())
         .expect("anonymous reader query should pass role check");
 
     assert_eq!(node, None);
-    set_test_caller_principal_for_test(Principal::management_canister());
+    let members = list_database_members("public".to_string())
+        .expect("anonymous reader should list public database members");
+    assert!(
+        members
+            .iter()
+            .any(|member| member.principal == "owner" && member.role == DatabaseRole::Owner)
+    );
 }
 
 #[test]
@@ -395,6 +605,7 @@ fn memory_entrypoints_return_agent_memory_contract() {
         ),
         ("/Sources/raw/a/a.md", "raw source"),
     ] {
+        ensure_parent_folders(path);
         write_node(WriteNodeRequest {
             database_id: "default".to_string(),
             path: path.to_string(),
@@ -456,6 +667,8 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     .expect("write should succeed");
     assert!(created.created);
 
+    ensure_parent_folders("/Wiki/nested/bar.md");
+    ensure_parent_folders("/Sources/raw/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Wiki/nested/bar.md".to_string(),
@@ -488,9 +701,9 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     })
     .expect("list should succeed");
     assert!(
-        entries.iter().any(|entry| {
-            entry.path == "/Wiki/nested" && entry.kind == NodeEntryKind::Directory
-        })
+        entries
+            .iter()
+            .any(|entry| { entry.path == "/Wiki/nested" && entry.kind == NodeEntryKind::Folder })
     );
 
     let children = list_children(ListChildrenRequest {
@@ -499,7 +712,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     })
     .expect("children should list");
     assert!(children.iter().any(|child| {
-        child.path == "/Wiki/nested" && child.kind == NodeEntryKind::Directory && child.is_virtual
+        child.path == "/Wiki/nested" && child.kind == NodeEntryKind::Folder && !child.is_virtual
     }));
     assert!(children.iter().any(|child| {
         child.path == "/Wiki/foo.md"
@@ -515,13 +728,8 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         preview_mode: Some(SearchPreviewMode::None),
     })
     .expect("search should succeed");
-    #[cfg(feature = "bench-disable-fts")]
-    assert!(hits.is_empty());
-    #[cfg(not(feature = "bench-disable-fts"))]
-    {
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].path, "/Wiki/foo.md");
-    }
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].path, "/Wiki/foo.md");
 
     let path_hits = search_node_paths(SearchNodePathsRequest {
         database_id: "default".to_string(),
@@ -531,8 +739,11 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         preview_mode: None,
     })
     .expect("path search should succeed");
-    assert_eq!(path_hits.len(), 1);
-    assert_eq!(path_hits[0].path, "/Wiki/nested/bar.md");
+    assert!(
+        path_hits
+            .iter()
+            .any(|hit| hit.path == "/Wiki/nested/bar.md")
+    );
 
     let snapshot = export_snapshot(ExportSnapshotRequest {
         database_id: "default".to_string(),
@@ -543,7 +754,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         snapshot_session_id: None,
     })
     .expect("snapshot should export");
-    assert_eq!(snapshot.nodes.len(), 2);
+    assert_eq!(snapshot.nodes.len(), 4);
 
     let empty_delta = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),
@@ -574,6 +785,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         database_id: "default".to_string(),
         path: "/Wiki/foo.md".to_string(),
         expected_etag: Some(created.node.etag.clone()),
+        expected_folder_index_etag: None,
     })
     .expect("delete should succeed");
     assert_eq!(deleted.path, "/Wiki/foo.md");
@@ -586,6 +798,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         database_id: "default".to_string(),
         path: "/Wiki/nested/bar.md".to_string(),
         expected_etag: Some("stale".to_string()),
+        expected_folder_index_etag: None,
     });
     assert!(stale_delete.is_err());
 }
@@ -593,7 +806,9 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
 #[test]
 fn fs_entrypoints_cover_backlink_queries() {
     install_test_service();
+    ensure_parent_folders("/Wiki/topic/source.md");
 
+    ensure_parent_folders("/Sources/raw/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Wiki/topic/source.md".to_string(),
@@ -723,6 +938,7 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     .expect_err("noncanonical source write should fail");
     assert!(write_error.contains("source path must"));
 
+    ensure_parent_folders("/Sources/raw/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Sources/raw/source/source.md".to_string(),
@@ -745,6 +961,7 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     .expect_err("noncanonical source append should fail");
     assert!(append_error.contains("source path must"));
 
+    ensure_parent_folders("/Sources/raw/keep/keep.md");
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Sources/raw/keep/keep.md".to_string(),
@@ -755,6 +972,7 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     })
     .expect("canonical source write should succeed");
 
+    ensure_parent_folders("/Sources/raw/renamed/wrong.md");
     let move_error = move_node(MoveNodeRequest {
         database_id: "default".to_string(),
         from_path: "/Sources/raw/keep/keep.md".to_string(),
@@ -767,11 +985,11 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
 }
 
 #[test]
-#[cfg(not(feature = "bench-disable-fts"))]
 fn fs_entrypoints_search_large_hits_without_trap() {
     install_test_service();
 
     let payload = format!("shared-bench-search {}", "x".repeat(1024 * 1024 - 20));
+    ensure_parent_folders("/Wiki/large/node-000.md");
     for index in 0..10 {
         write_node(WriteNodeRequest {
             database_id: "default".to_string(),
@@ -805,8 +1023,90 @@ fn fs_entrypoints_search_large_hits_without_trap() {
 }
 
 #[test]
+fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
+    install_test_service();
+    ensure_parent_folders("/Wiki/search/node-0.md");
+
+    for (path, content) in [
+        ("/Wiki/search/node-0.md", "alpha beta gamma"),
+        ("/Wiki/search/node-1.md", "alpha beta"),
+        ("/Wiki/search/検索改善メモ.md", "検索精度改善の作業メモ"),
+    ] {
+        write_node(WriteNodeRequest {
+            database_id: "default".to_string(),
+            path: path.to_string(),
+            kind: NodeKind::File,
+            content: content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("write should succeed");
+    }
+
+    let multi_term_hits = search_nodes(SearchNodesRequest {
+        database_id: "default".to_string(),
+        query_text: "alpha beta missing".to_string(),
+        prefix: Some("/Wiki/search".to_string()),
+        top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
+    })
+    .expect("multi-term search should succeed");
+    assert!(
+        multi_term_hits
+            .iter()
+            .any(|hit| hit.path == "/Wiki/search/node-0.md")
+    );
+    assert!(
+        multi_term_hits
+            .iter()
+            .any(|hit| hit.path == "/Wiki/search/node-1.md")
+    );
+
+    let cjk_hits = search_nodes(SearchNodesRequest {
+        database_id: "default".to_string(),
+        query_text: "検索改善".to_string(),
+        prefix: Some("/Wiki/search".to_string()),
+        top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
+    })
+    .expect("CJK search should succeed");
+    assert!(
+        cjk_hits
+            .iter()
+            .any(|hit| hit.path == "/Wiki/search/検索改善メモ.md")
+    );
+
+    let deleted = read_node("default".to_string(), "/Wiki/search/node-1.md".to_string())
+        .expect("read should succeed")
+        .expect("node should exist");
+    delete_node(DeleteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/search/node-1.md".to_string(),
+        expected_etag: Some(deleted.etag),
+        expected_folder_index_etag: None,
+    })
+    .expect("delete should succeed");
+
+    let after_delete_hits = search_nodes(SearchNodesRequest {
+        database_id: "default".to_string(),
+        query_text: "alpha beta missing".to_string(),
+        prefix: Some("/Wiki/search".to_string()),
+        top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
+    })
+    .expect("search after delete should succeed");
+    assert!(
+        after_delete_hits
+            .iter()
+            .all(|hit| hit.path != "/Wiki/search/node-1.md")
+    );
+}
+
+#[test]
 fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
     install_test_service();
+    ensure_parent_folders("/Wiki/work/item.md");
+    ensure_parent_folders("/Wiki/archive/item.md");
 
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
@@ -839,7 +1139,7 @@ fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
     assert!(
         globbed
             .iter()
-            .any(|hit| hit.path == "/Wiki/archive" && hit.kind == NodeEntryKind::Directory)
+            .any(|hit| hit.path == "/Wiki/archive" && hit.kind == NodeEntryKind::Folder)
     );
 
     let recent = recent_nodes(RecentNodesRequest {
@@ -848,7 +1148,11 @@ fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
         path: Some("/Wiki".to_string()),
     })
     .expect("recent should succeed");
-    assert_eq!(recent[0].path, "/Wiki/archive/item.md");
+    assert!(
+        recent
+            .iter()
+            .any(|node| node.path == "/Wiki/archive/item.md")
+    );
 
     let edited = multi_edit_node(MultiEditNodeRequest {
         database_id: "default".to_string(),
@@ -886,6 +1190,7 @@ fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
         expected_etag: None,
     })
     .expect("wiki write should succeed");
+    ensure_parent_folders("/Sources/raw/smoke/smoke.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Sources/raw/smoke/smoke.md".to_string(),
@@ -933,6 +1238,111 @@ fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
     assert_eq!(info.status, DatabaseStatus::Archived);
+    assert_eq!(info.role, DatabaseRole::Owner);
+}
+
+#[test]
+fn database_archive_restore_entrypoints_restore_search_and_links() {
+    install_test_service();
+    ensure_parent_folders("/Sources/raw/archive/archive.md");
+
+    write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Sources/raw/archive/archive.md".to_string(),
+        kind: NodeKind::Source,
+        content: "raw archive restore evidence".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect("source write should succeed");
+    write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/archive-restore.md".to_string(),
+        kind: NodeKind::File,
+        content: "# Archive Restore\n\nalpha restore search [raw](/Sources/raw/archive/archive.md)"
+            .to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect("wiki write should succeed");
+
+    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
+    let mut offset = 0_u64;
+    let mut bytes = Vec::new();
+    while offset < archive.size_bytes {
+        let chunk = read_database_archive_chunk("default".to_string(), offset, 23)
+            .expect("archive chunk should read")
+            .bytes;
+        assert!(!chunk.is_empty());
+        offset += chunk.len() as u64;
+        bytes.extend(chunk);
+    }
+    assert_eq!(bytes.len() as u64, archive.size_bytes);
+
+    let snapshot_hash = sha256_bytes(&bytes);
+    finalize_database_archive("default".to_string(), snapshot_hash.clone())
+        .expect("archive should finalize");
+    begin_database_restore(
+        "default".to_string(),
+        snapshot_hash.clone(),
+        archive.size_bytes,
+    )
+    .expect("restore should begin");
+
+    let split_at = bytes.len() / 2;
+    write_database_restore_chunk(DatabaseRestoreChunkRequest {
+        database_id: "default".to_string(),
+        offset: split_at as u64,
+        bytes: bytes[split_at..].to_vec(),
+    })
+    .expect("second restore chunk should write");
+    write_database_restore_chunk(DatabaseRestoreChunkRequest {
+        database_id: "default".to_string(),
+        offset: 0,
+        bytes: bytes[..split_at].to_vec(),
+    })
+    .expect("first restore chunk should write");
+    finalize_database_restore("default".to_string()).expect("restore should finalize");
+
+    let node = read_node(
+        "default".to_string(),
+        "/Wiki/archive-restore.md".to_string(),
+    )
+    .expect("read should succeed")
+    .expect("restored node should exist");
+    assert!(node.content.contains("alpha restore search"));
+
+    let hits = search_nodes(SearchNodesRequest {
+        database_id: "default".to_string(),
+        query_text: "alpha restore".to_string(),
+        prefix: Some("/Wiki".to_string()),
+        top_k: 10,
+        preview_mode: Some(SearchPreviewMode::None),
+    })
+    .expect("restored search should succeed");
+    assert!(
+        hits.iter()
+            .any(|hit| hit.path == "/Wiki/archive-restore.md")
+    );
+
+    let links = outgoing_links(OutgoingLinksRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/archive-restore.md".to_string(),
+        limit: 10,
+    })
+    .expect("restored links should load");
+    assert!(
+        links
+            .iter()
+            .any(|edge| edge.target_path == "/Sources/raw/archive/archive.md")
+    );
+
+    let info = list_databases()
+        .expect("database summaries should load")
+        .into_iter()
+        .find(|info| info.database_id == "default")
+        .expect("default info should exist");
+    assert_eq!(info.status, DatabaseStatus::Hot);
     assert_eq!(info.role, DatabaseRole::Owner);
 }
 

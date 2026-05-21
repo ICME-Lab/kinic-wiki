@@ -122,7 +122,7 @@ function OperationsPanel({ skill, authenticated, writable, action, handlers }: {
               <option value="fail">fail</option>
             </select>
             <input className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none" placeholder="Agent" value={action.runAgent} onChange={(event) => handlers.setRunAgent(event.target.value)} />
-            <button className="inline-flex items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-3 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={!authenticated || !writable || action.busy || !action.runTask.trim()} type="button" onClick={handlers.recordRun}>
+            <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:translate-y-0 disabled:opacity-50" disabled={!authenticated || !writable || action.busy || !action.runTask.trim()} type="button" onClick={handlers.recordRun}>
               <PlayCircle aria-hidden size={15} />
               Record
             </button>
@@ -249,7 +249,7 @@ export function EmptyState() {
   return (
     <section className="rounded-lg border border-line bg-paper p-6 text-sm text-muted">
       <h2 className="text-base font-semibold text-ink">No Skill Packages</h2>
-      <p className="mt-2">No packages found under /Wiki/skills or /Wiki/public-skills.</p>
+      <p className="mt-2">No packages found under /Wiki/skills.</p>
       <p className="mt-2">
         Open <span className="font-medium text-ink">Add Or Update Package</span> to import from GitHub or paste a package.
       </p>
@@ -264,7 +264,7 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
 
 function statusClass(status: string): string {
   if (status === "promoted") return "bg-green-100 text-green-800";
-  if (status === "reviewed") return "bg-blue-100 text-blue-800";
+  if (status === "reviewed") return "bg-accentSoft text-accentText";
   if (status === "deprecated") return "bg-red-100 text-red-800";
   return "bg-yellow-100 text-yellow-800";
 }

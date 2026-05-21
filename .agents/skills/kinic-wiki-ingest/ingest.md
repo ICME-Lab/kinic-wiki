@@ -13,12 +13,14 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
    - For wiki-only inspection or edits, pass `--prefix /Wiki` or `path: "/Wiki"` unless raw source material is explicitly needed.
 6. Choose the minimum coherent set of pages to update.
-7. Edit `/Wiki/...` directly through `vfs-cli` remote VFS commands.
+7. Edit `/Wiki/...` directly through `kinic-vfs-cli` remote VFS commands.
+   - Authenticated CLI writes default to Internet Identity via `icp identity default`.
+   - Use `--allow-non-ii-identity` only when the user explicitly chooses a PEM or other non-II operator identity.
 8. When a reorganization needs explicit removal of obsolete `/Wiki/...` page groups, use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
 9. Update `log.md` for every page creation, deletion, or edit done in the workflow.
 10. Read only the recent tail of `log.md` before appending, for example `tail -n 5`, unless a longer window is clearly needed.
 11. Append one new log line per workflow mutation. Do not rewrite or restructure older log entries.
-12. Run `rebuild-scope-index --scope <scope>` by default for new page creation, deletion, or large single-scope restructures. Use `rebuild-index` only for cross-scope restructures or explicit full repair. Skip rebuilds for routine small edits.
+12. Run `rebuild-scope-index --scope <scope>` by default for new page creation, deletion, or large single-scope restructures. It regenerates `<scope>/index.md`; do not run it after writing a hand-authored detailed index unless regenerating that index is intended. Use `rebuild-index` only for cross-scope restructures or explicit full repair. Skip rebuilds for routine small edits.
 13. Stop at review-ready unless the user explicitly asks for push.
 
 ## LLM Wiki Scope Setup
@@ -51,6 +53,19 @@ Use this workflow when turning one raw conversation source into wiki material.
 6. Put a source path reference in `Provenance`, for example `/Sources/raw/<source_id>/<source_id>.md`.
 7. Do not create fixed empty scaffolds such as `facts.md`, `events.md`, `plans.md`, `preferences.md`, `open_questions.md`, `provenance.md`, and `log.md` by default.
 8. Split into multiple pages only when the conversation is large, will receive continuing updates, or clearly needs role-specific retrieval paths. If splitting, state the page map before writing.
+
+## Bulk Source Ingest
+
+Use this workflow when ingesting many local files, for example 10 or more raw sources.
+
+1. Normalize every raw source id before writing. Each source file must use `/Sources/raw/<source_id>/<source_id>.md`; create the parent folder first.
+2. Build the full write set before mutating remote state: raw sources, wiki pages, and one append-only `log.md` entry.
+3. Prefer the client/canister `write_nodes` API for the write set. If the CLI has no batch command, use a small one-off client script instead of looping `write-node` for every file.
+4. Set `expected_etag` for overwrites by reading current nodes first. Use `None` only for new nodes.
+5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
+6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
+
+For bulk repair of existing wiki nodes without new source material, use `kinic-wiki-edit` instead of this ingest workflow.
 
 ## Working Rules
 
@@ -105,7 +120,10 @@ Use this workflow when turning one raw conversation source into wiki material.
 - Default conversation wiki path: `/Wiki/conversations/<llm-generated-title>.md`
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:
-  - CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Bulk writes: client/canister `write_nodes`
+  - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <json> --expected-etag <etag>`
+  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Multi-node edits: no stable single CLI batch command; build a path list, read etags, and run etag-aware per-node edits unless using a deliberate client/canister API script
 - Delete semantics:
   - `delete-node`: delete one node path
   - `delete-tree`: delete real node paths under a prefix, deepest-first

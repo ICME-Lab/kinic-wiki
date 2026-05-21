@@ -8,19 +8,21 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 canbench-rs = ["dep:canbench-rs", "dep:serde_json"]
-bench-disable-fts = ["vfs-runtime/bench-disable-fts"]
 
 [dependencies]
 canbench-rs = { version = "0.4.1", optional = true }
 candid = "0.10.26"
 ic-cdk = "0.20.0"
+ic-http-certification = "3.2.0"
 ic-stable-structures = "0.7.2"
-ic-wasi-polyfill = "0.13.0"
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
 serde_json = { version = "1.0.145", optional = true }
 vfs-runtime = { path = "../vfs_runtime" }
-vfs-types = { path = "../vfs_types" }
-wiki-domain = { path = "../wiki_domain" }
+vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
+wiki_domain = { package = "kinic-wiki-domain", version = "0.1.0", path = "../wiki_domain" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ic-sqlite-vfs = { version = "0.2.1", default-features = false, features = ["sqlite-precompiled"] }
 
 [dev-dependencies]
 sha2 = "0.10.9"

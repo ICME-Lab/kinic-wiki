@@ -5,12 +5,13 @@
 // Search keeps ranking and preview generation separate.
 // That prevents SQLite `snippet()` cost from scaling with all matched rows.
 // Only returned hits pay preview generation cost.
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
-};
+use std::collections::{BTreeMap, BTreeSet};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, Transaction, params};
+use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
+#[cfg(target_arch = "wasm32")]
+use ic_sqlite_vfs::{DbError, DbHandle};
 use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
@@ -21,7 +22,7 @@ use vfs_types::{
     NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SearchPreviewMode, SourceEvidence, SourceEvidenceRef, SourceEvidenceRequest, Status,
-    WriteNodeRequest, WriteNodeResult,
+    WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 use crate::{
@@ -49,13 +50,14 @@ const QUERY_RESULT_LIMIT_MAX: u32 = 100;
 const WIKI_ROOT_PATH: &str = "/Wiki";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
+const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
 const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
 const SNAPSHOT_REVISION_CURSOR_REQUIRED: &str = "snapshot_revision is required when cursor is set";
 const TARGET_SNAPSHOT_CURSOR_REQUIRED: &str =
     "target_snapshot_revision is required when cursor is set";
-const LIST_DIRECT_CHILD_ROWS_SQL: &str = "\
+const LIST_ROOT_CHILD_ROWS_SQL: &str = "\
 SELECT child.path,
        child.kind,
        child.updated_at,
@@ -64,22 +66,29 @@ SELECT child.path,
        EXISTS (
            SELECT 1
            FROM fs_nodes descendant
-           WHERE descendant.path >= child.path || '/'
-             AND descendant.path < child.path || '/' || char(1114111)
+           WHERE descendant.parent_id = child.id
+             AND NOT (descendant.kind = 'file' AND descendant.name = 'index.md')
            LIMIT 1
        )
 FROM fs_nodes child
-WHERE child.path >= ?1
-  AND child.path < ?2
-  AND instr(substr(child.path, ?3), '/') = 0
-ORDER BY child.path ASC";
-const LIST_VIRTUAL_CHILD_NAMES_SQL: &str = "\
-SELECT DISTINCT substr(substr(path, ?3), 1, instr(substr(path, ?3), '/') - 1)
-FROM fs_nodes
-WHERE path >= ?1
-  AND path < ?2
-  AND instr(substr(path, ?3), '/') > 0
-ORDER BY 1 ASC";
+WHERE child.parent_id IS NULL
+ORDER BY child.name ASC";
+const LIST_FOLDER_CHILD_ROWS_SQL: &str = "\
+SELECT child.path,
+       child.kind,
+       child.updated_at,
+       child.etag,
+       length(CAST(child.content AS BLOB)),
+       EXISTS (
+           SELECT 1
+           FROM fs_nodes descendant
+           WHERE descendant.parent_id = child.id
+             AND NOT (descendant.kind = 'file' AND descendant.name = 'index.md')
+           LIMIT 1
+       )
+FROM fs_nodes child
+WHERE child.parent_id = ?1
+ORDER BY child.name ASC";
 
 struct ChildRow {
     path: String,
@@ -109,61 +118,83 @@ impl ChangeKind {
 }
 
 pub struct FsStore {
+    #[cfg(not(target_arch = "wasm32"))]
     database_path: PathBuf,
+    #[cfg(target_arch = "wasm32")]
+    handle: DbHandle,
 }
 
+#[cfg(target_arch = "wasm32")]
+pub type StableFsStore = FsStore;
+
 impl FsStore {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(database_path: PathBuf) -> Self {
         Self { database_path }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn stable(handle: DbHandle) -> Self {
+        Self { handle }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn database_path(&self) -> &Path {
         &self.database_path
     }
 
     pub fn run_fs_migrations(&self) -> Result<(), String> {
-        let mut conn = self.open()?;
-        schema::run_fs_migrations(&mut conn)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut conn = self.open()?;
+            schema::run_fs_migrations(&mut conn)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.write_conn(schema::run_fs_migrations_in_tx)
+        }
     }
 
     pub fn status(&self) -> Result<Status, String> {
-        let conn = self.open()?;
-        Ok(Status {
-            file_count: count_nodes(&conn, "file")?,
-            source_count: count_nodes(&conn, "source")?,
+        self.read_conn(|conn| {
+            Ok(Status {
+                file_count: count_nodes(conn, "file")?,
+                source_count: count_nodes(conn, "source")?,
+            })
         })
     }
 
     pub fn read_node(&self, path: &str) -> Result<Option<Node>, String> {
         let normalized = normalize_node_path(path, false)?;
-        let conn = self.open()?;
-        load_node(&conn, &normalized)
+        self.read_conn(|conn| load_node(conn, &normalized))
     }
 
     pub fn list_nodes(&self, request: ListNodesRequest) -> Result<Vec<NodeEntry>, String> {
         let prefix = normalize_node_path(&request.prefix, true)?;
-        let conn = self.open()?;
-        let rows = load_scoped_entry_rows(&conn, &prefix)?;
-        Ok(build_entries_from_rows(&rows, &prefix, request.recursive))
+        self.read_conn(|conn| {
+            let rows = load_scoped_entry_rows(conn, &prefix)?;
+            Ok(build_entries_from_rows(&rows, &prefix, request.recursive))
+        })
     }
 
     pub fn list_children(&self, request: ListChildrenRequest) -> Result<Vec<ChildNode>, String> {
         let path = normalize_list_children_path(&request.path)?;
-        let conn = self.open()?;
-        let concrete_node_exists = load_stored_node(&conn, &path)?.is_some();
-        let rows = load_child_rows(&conn, &path)?;
-        let virtual_names = load_virtual_child_names(&conn, &path)?;
-        if rows.is_empty() && virtual_names.is_empty() && concrete_node_exists {
-            return Err(format!("not a directory: {path}"));
-        }
-        if rows.is_empty()
-            && virtual_names.is_empty()
-            && !allows_empty_directory_listing(&path)
-            && !concrete_node_exists
-        {
-            return Err(format!("path not found: {path}"));
-        }
-        build_child_nodes(&path, rows, virtual_names)
+        self.read_conn(|conn| {
+            let concrete_node = load_stored_node(conn, &path)?;
+            if concrete_node
+                .as_ref()
+                .is_some_and(|stored| stored.node.kind != NodeKind::Folder)
+            {
+                return Err(format!("not a directory: {path}"));
+            }
+            let rows =
+                load_child_rows(conn, &path, concrete_node.as_ref().map(|node| node.row_id))?;
+            if rows.is_empty() && !allows_empty_directory_listing(&path) && concrete_node.is_none()
+            {
+                return Err(format!("path not found: {path}"));
+            }
+            build_child_nodes(&path, rows)
+        })
     }
 
     pub fn write_node(
@@ -171,25 +202,25 @@ impl FsStore {
         request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
-        let path = normalize_node_path(&request.path, false)?;
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let existing = load_stored_node(&tx, &path)?;
-        let created = existing.is_none();
-        let mut node = match existing.as_ref() {
-            Some(current) => update_existing_node(current.node.clone(), request, now)?,
-            None => create_new_node(path, request, now)?,
-        };
-        let revision = record_change(&tx, &node)?;
-        update_path_state(&tx, &node.path, revision)?;
-        node.etag = compute_node_etag(&node);
-        let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
-        sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
-        sync_node_links(&tx, &node)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(WriteNodeResult {
-            node: node_ack(&node),
-            created,
+        self.write_conn(|tx| write_node_in_tx(tx, request, now))
+    }
+
+    pub fn write_nodes(
+        &self,
+        request: WriteNodesRequest,
+        now: i64,
+    ) -> Result<Vec<WriteNodeResult>, String> {
+        validate_write_nodes_count(request.nodes.len())?;
+        self.write_conn(|tx| {
+            let mut results = Vec::with_capacity(request.nodes.len());
+            for item in request.nodes {
+                results.push(write_node_in_tx(
+                    tx,
+                    write_node_request_from_item(&request.database_id, item),
+                    now,
+                )?);
+            }
+            Ok(results)
         })
     }
 
@@ -199,24 +230,29 @@ impl FsStore {
         now: i64,
     ) -> Result<WriteNodeResult, String> {
         let path = normalize_node_path(&request.path, false)?;
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let existing = load_stored_node(&tx, &path)?;
-        let created = existing.is_none();
-        let mut node = match existing.as_ref() {
-            Some(current) => append_existing_node(current.node.clone(), request, now)?,
-            None => create_appended_node(path, request, now)?,
-        };
-        let revision = record_change(&tx, &node)?;
-        update_path_state(&tx, &node.path, revision)?;
-        node.etag = compute_node_etag(&node);
-        let row_id = save_node(&tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
-        sync_node_fts(&tx, existing.as_ref(), Some((row_id, &node)))?;
-        sync_node_links(&tx, &node)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(WriteNodeResult {
-            node: node_ack(&node),
-            created,
+        self.write_conn(|tx| {
+            let existing = load_stored_node(tx, &path)?;
+            if existing
+                .as_ref()
+                .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
+            {
+                return Err(format!("cannot append to folder: {path}"));
+            }
+            let created = existing.is_none();
+            let mut node = match existing.as_ref() {
+                Some(current) => append_existing_node(current.node.clone(), request, now)?,
+                None => create_appended_node(path, request, now)?,
+            };
+            let revision = record_change(tx, &node)?;
+            update_path_state(tx, &node.path, revision)?;
+            node.etag = compute_node_etag(&node);
+            let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
+            sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
+            sync_node_links(tx, &node)?;
+            Ok(WriteNodeResult {
+                node: node_ack(&node),
+                created,
+            })
         })
     }
 
@@ -225,40 +261,70 @@ impl FsStore {
             return Err("old_text must not be empty".to_string());
         }
         let path = normalize_node_path(&request.path, false)?;
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let current =
-            load_stored_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if current.node.etag != request.expected_etag.unwrap_or_default() {
-            return Err(format!("expected_etag does not match current etag: {path}"));
-        }
-        let (content, replacement_count) = replace_text(
-            &current.node.content,
-            &request.old_text,
-            &request.new_text,
-            request.replace_all,
-        )?;
-        let mut node = current.node.clone();
-        node.content = content;
-        node.updated_at = now;
-        let revision = record_change(&tx, &node)?;
-        update_path_state(&tx, &node.path, revision)?;
-        node.etag = compute_node_etag(&node);
-        save_node(&tx, Some(current.row_id), &node)?;
-        sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
-        sync_node_links(&tx, &node)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(EditNodeResult {
-            node: node_ack(&node),
-            replacement_count,
+        self.write_conn(|tx| {
+            let current = load_stored_node(tx, &path)?
+                .ok_or_else(|| format!("node does not exist: {path}"))?;
+            if current.node.kind == NodeKind::Folder {
+                return Err(format!("cannot edit folder: {path}"));
+            }
+            if current.node.etag != request.expected_etag.unwrap_or_default() {
+                return Err(format!("expected_etag does not match current etag: {path}"));
+            }
+            let (content, replacement_count) = replace_text(
+                &current.node.content,
+                &request.old_text,
+                &request.new_text,
+                request.replace_all,
+            )?;
+            let mut node = current.node.clone();
+            node.content = content;
+            node.updated_at = now;
+            let revision = record_change(tx, &node)?;
+            update_path_state(tx, &node.path, revision)?;
+            node.etag = compute_node_etag(&node);
+            save_node(tx, Some(current.row_id), &node)?;
+            sync_node_fts(tx, Some(&current), Some((current.row_id, &node)))?;
+            sync_node_links(tx, &node)?;
+            Ok(EditNodeResult {
+                node: node_ack(&node),
+                replacement_count,
+            })
         })
     }
 
-    pub fn mkdir_node(&self, request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
+    pub fn mkdir_node(
+        &self,
+        request: MkdirNodeRequest,
+        now: i64,
+    ) -> Result<MkdirNodeResult, String> {
         let path = normalize_node_path(&request.path, false)?;
-        Ok(MkdirNodeResult {
-            path,
-            created: true,
+        self.write_conn(|tx| {
+            if let Some(existing) = load_stored_node(tx, &path)? {
+                if existing.node.kind == NodeKind::Folder {
+                    return Ok(MkdirNodeResult {
+                        path,
+                        created: false,
+                    });
+                }
+                return Err(format!("node already exists and is not a folder: {path}"));
+            }
+            let mut node = Node {
+                path: path.clone(),
+                kind: NodeKind::Folder,
+                content: String::new(),
+                created_at: now,
+                updated_at: now,
+                etag: String::new(),
+                metadata_json: "{}".to_string(),
+            };
+            let revision = record_change(tx, &node)?;
+            update_path_state(tx, &node.path, revision)?;
+            node.etag = compute_node_etag(&node);
+            save_node(tx, None, &node)?;
+            Ok(MkdirNodeResult {
+                path,
+                created: true,
+            })
         })
     }
 
@@ -268,41 +334,89 @@ impl FsStore {
         if from_path == to_path {
             return Err("from_path and to_path must differ".to_string());
         }
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let current = load_stored_node(&tx, &from_path)?
-            .ok_or_else(|| format!("node does not exist: {from_path}"))?;
-        if current.node.etag != request.expected_etag.unwrap_or_default() {
-            return Err(format!(
-                "expected_etag does not match current etag: {from_path}"
-            ));
-        }
-        let target = load_stored_node(&tx, &to_path)?;
-        let overwrote = target.is_some();
-        if overwrote && !request.overwrite {
-            return Err(format!("target node already exists: {to_path}"));
-        }
-        if let Some(target) = target.as_ref() {
-            delete_source_links(&tx, &target.node.path)?;
-            delete_node_row(&tx, target)?;
-        }
-        let mut moved = current.node.clone();
-        moved.path = to_path.clone();
-        moved.updated_at = now;
-        let from_revision = record_path_removal(&tx, &from_path)?;
-        update_path_state(&tx, &from_path, from_revision)?;
-        let to_revision = record_change(&tx, &moved)?;
-        update_path_state(&tx, &to_path, to_revision)?;
-        moved.etag = compute_node_etag(&moved);
-        save_node(&tx, Some(current.row_id), &moved)?;
-        sync_node_fts(&tx, Some(&current), Some((current.row_id, &moved)))?;
-        delete_source_links(&tx, &from_path)?;
-        sync_node_links(&tx, &moved)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(MoveNodeResult {
-            node: node_ack(&moved),
-            from_path,
-            overwrote,
+        self.write_conn(|tx| {
+            let current = load_stored_node(tx, &from_path)?
+                .ok_or_else(|| format!("node does not exist: {from_path}"))?;
+            if current.node.etag != request.expected_etag.unwrap_or_default() {
+                return Err(format!(
+                    "expected_etag does not match current etag: {from_path}"
+                ));
+            }
+            if current.node.kind == NodeKind::Folder {
+                if is_protected_root_folder(&from_path) {
+                    return Err(format!("cannot move protected folder: {from_path}"));
+                }
+                if to_path.starts_with(&format!("{from_path}/")) {
+                    return Err("cannot move folder into itself".to_string());
+                }
+            }
+            let target = load_stored_node(tx, &to_path)?;
+            let overwrote = target.is_some();
+            if current.node.kind == NodeKind::Folder && overwrote {
+                return Err(format!("target node already exists: {to_path}"));
+            }
+            if overwrote && !request.overwrite {
+                return Err(format!("target node already exists: {to_path}"));
+            }
+            if target
+                .as_ref()
+                .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
+            {
+                return Err(format!("cannot overwrite folder: {to_path}"));
+            }
+            if current.node.kind == NodeKind::Folder {
+                let subtree = load_stored_subtree(tx, &from_path)?;
+                for stored in &subtree {
+                    let next_path = rebase_path(&stored.node.path, &from_path, &to_path)?;
+                    if next_path != stored.node.path && load_stored_node(tx, &next_path)?.is_some()
+                    {
+                        return Err(format!("target node already exists: {next_path}"));
+                    }
+                }
+                for stored in subtree {
+                    let mut moved = stored.node.clone();
+                    let old_path = moved.path.clone();
+                    moved.path = rebase_path(&old_path, &from_path, &to_path)?;
+                    moved.updated_at = now;
+                    let from_revision = record_path_removal(tx, &old_path)?;
+                    update_path_state(tx, &old_path, from_revision)?;
+                    let to_revision = record_change(tx, &moved)?;
+                    update_path_state(tx, &moved.path, to_revision)?;
+                    moved.etag = compute_node_etag(&moved);
+                    save_moved_node(tx, stored.row_id, &moved)?;
+                    sync_node_fts(tx, Some(&stored), Some((stored.row_id, &moved)))?;
+                    delete_source_links(tx, &old_path)?;
+                    sync_node_links(tx, &moved)?;
+                }
+                let moved = load_node(tx, &to_path)?
+                    .ok_or_else(|| format!("node does not exist: {to_path}"))?;
+                return Ok(MoveNodeResult {
+                    node: node_ack(&moved),
+                    from_path,
+                    overwrote: false,
+                });
+            }
+            if let Some(target) = target.as_ref() {
+                delete_source_links(tx, &target.node.path)?;
+                delete_node_row(tx, target)?;
+            }
+            let mut moved = current.node.clone();
+            moved.path = to_path.clone();
+            moved.updated_at = now;
+            let from_revision = record_path_removal(tx, &from_path)?;
+            update_path_state(tx, &from_path, from_revision)?;
+            let to_revision = record_change(tx, &moved)?;
+            update_path_state(tx, &to_path, to_revision)?;
+            moved.etag = compute_node_etag(&moved);
+            save_moved_node(tx, current.row_id, &moved)?;
+            sync_node_fts(tx, Some(&current), Some((current.row_id, &moved)))?;
+            delete_source_links(tx, &from_path)?;
+            sync_node_links(tx, &moved)?;
+            Ok(MoveNodeResult {
+                node: node_ack(&moved),
+                from_path,
+                overwrote,
+            })
         })
     }
 
@@ -318,26 +432,27 @@ impl FsStore {
             .transpose()?
             .unwrap_or_else(|| "/".to_string());
         let node_type = request.node_type.unwrap_or(GlobNodeType::Any);
-        let conn = self.open()?;
-        let rows = load_scoped_entry_rows(&conn, &prefix)?;
-        let entries = build_glob_entries_from_rows(&rows, &prefix);
-        let mut hits = Vec::new();
-        for entry in entries {
-            if !glob_type_matches(&node_type, &entry.kind) {
-                continue;
+        self.read_conn(|conn| {
+            let rows = load_scoped_entry_rows(conn, &prefix)?;
+            let entries = build_glob_entries_from_rows(&rows, &prefix);
+            let mut hits = Vec::new();
+            for entry in entries {
+                if !glob_type_matches(&node_type, &entry.kind) {
+                    continue;
+                }
+                let Some(relative) = relative_to_prefix(&prefix, &entry.path) else {
+                    continue;
+                };
+                if matches_path(&request.pattern, &relative)? {
+                    hits.push(GlobNodeHit {
+                        path: entry.path,
+                        kind: entry.kind,
+                        has_children: entry.has_children,
+                    });
+                }
             }
-            let Some(relative) = relative_to_prefix(&prefix, &entry.path) else {
-                continue;
-            };
-            if matches_path(&request.pattern, &relative)? {
-                hits.push(GlobNodeHit {
-                    path: entry.path,
-                    kind: entry.kind,
-                    has_children: entry.has_children,
-                });
-            }
-        }
-        Ok(hits)
+            Ok(hits)
+        })
     }
 
     pub fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>, String> {
@@ -347,33 +462,36 @@ impl FsStore {
             .map(|value| normalize_node_path(value, true))
             .transpose()?
             .unwrap_or_else(|| "/".to_string());
-        let conn = self.open()?;
-        let mut sql = String::from(
-            "SELECT path, kind, updated_at, etag
+        self.read_conn(|conn| {
+            let mut sql = String::from(
+                "SELECT path, kind, updated_at, etag
              FROM fs_nodes WHERE 1 = 1",
-        );
-        let mut values = Vec::new();
-        if prefix != "/" {
-            let (scope_sql, scope_values) = prefix_filter_sql(&prefix, values.len() + 1);
-            sql.push_str(&scope_sql);
-            values.extend(scope_values);
-        }
-        let limit = capped_query_limit(request.limit);
-        sql.push_str(&format!(
-            " ORDER BY updated_at DESC, path ASC LIMIT {limit}"
-        ));
-        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
-            Ok(RecentNodeHit {
-                path: row.get(0)?,
-                kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-                updated_at: row.get(2)?,
-                etag: row.get(3)?,
-            })
+            );
+            let mut values = Vec::new();
+            if prefix != "/" {
+                let (scope_sql, scope_values) = prefix_filter_sql(&prefix, values.len() + 1);
+                sql.push_str(&scope_sql);
+                values.extend(scope_values);
+            }
+            let limit = capped_query_limit(request.limit);
+            sql.push_str(&format!(
+                " ORDER BY updated_at DESC, path ASC LIMIT {limit}"
+            ));
+            let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+            crate::sqlite::query_map(
+                &mut stmt,
+                crate::sqlite::params_from_values(&values),
+                |row| {
+                    Ok(RecentNodeHit {
+                        path: crate::sqlite::row_get::<String>(row, 0)?,
+                        kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
+                        updated_at: crate::sqlite::row_get::<i64>(row, 2)?,
+                        etag: crate::sqlite::row_get::<String>(row, 3)?,
+                    })
+                },
+            )
+            .map_err(|error| error.to_string())
         })
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
     }
 
     pub fn multi_edit_node(
@@ -385,27 +503,30 @@ impl FsStore {
         if request.edits.is_empty() {
             return Err("edits must not be empty".to_string());
         }
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        let current =
-            load_stored_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if current.node.etag != request.expected_etag.unwrap_or_default() {
-            return Err(format!("expected_etag does not match current etag: {path}"));
-        }
-        let (content, replacement_count) = apply_multi_edit(&current.node.content, &request.edits)?;
-        let mut node = current.node.clone();
-        node.content = content;
-        node.updated_at = now;
-        let revision = record_change(&tx, &node)?;
-        update_path_state(&tx, &node.path, revision)?;
-        node.etag = compute_node_etag(&node);
-        save_node(&tx, Some(current.row_id), &node)?;
-        sync_node_fts(&tx, Some(&current), Some((current.row_id, &node)))?;
-        sync_node_links(&tx, &node)?;
-        tx.commit().map_err(|error| error.to_string())?;
-        Ok(MultiEditNodeResult {
-            node: node_ack(&node),
-            replacement_count,
+        self.write_conn(|tx| {
+            let current = load_stored_node(tx, &path)?
+                .ok_or_else(|| format!("node does not exist: {path}"))?;
+            if current.node.kind == NodeKind::Folder {
+                return Err(format!("cannot edit folder: {path}"));
+            }
+            if current.node.etag != request.expected_etag.unwrap_or_default() {
+                return Err(format!("expected_etag does not match current etag: {path}"));
+            }
+            let (content, replacement_count) =
+                apply_multi_edit(&current.node.content, &request.edits)?;
+            let mut node = current.node.clone();
+            node.content = content;
+            node.updated_at = now;
+            let revision = record_change(tx, &node)?;
+            update_path_state(tx, &node.path, revision)?;
+            node.etag = compute_node_etag(&node);
+            save_node(tx, Some(current.row_id), &node)?;
+            sync_node_fts(tx, Some(&current), Some((current.row_id, &node)))?;
+            sync_node_links(tx, &node)?;
+            Ok(MultiEditNodeResult {
+                node: node_ack(&node),
+                replacement_count,
+            })
         })
     }
 
@@ -415,37 +536,64 @@ impl FsStore {
         _now: i64,
     ) -> Result<DeleteNodeResult, String> {
         let path = normalize_node_path(&request.path, false)?;
-        let mut conn = self.open()?;
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        self.write_conn(|tx| {
         let current =
-            load_stored_node(&tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
+            load_stored_node(tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
         if current.node.etag != request.expected_etag.unwrap_or_default() {
             return Err(format!("expected_etag does not match current etag: {path}"));
         }
-        let revision = record_path_removal(&tx, &path)?;
-        update_path_state(&tx, &path, revision)?;
-        delete_source_links(&tx, &path)?;
-        delete_node_row(&tx, &current)?;
-        tx.commit().map_err(|error| error.to_string())?;
+        if current.node.kind == NodeKind::Folder {
+            if is_protected_root_folder(&path) {
+                return Err(format!("cannot delete protected folder: {path}"));
+            }
+            let index_path = folder_index_path(&path);
+            let index_node = load_folder_index_child(tx, current.row_id, &index_path)?;
+            if has_visible_folder_children(tx, current.row_id, &index_path)? {
+                return Err(format!("folder is not empty: {path}"));
+            }
+            match index_node {
+                Some(index_node) => {
+                    let expected_index_etag = request
+                        .expected_folder_index_etag
+                        .as_deref()
+                        .ok_or_else(|| {
+                            format!("expected_folder_index_etag is required: {index_path}")
+                        })?;
+                    if index_node.node.etag != expected_index_etag {
+                        return Err(format!(
+                            "expected_folder_index_etag does not match current etag: {index_path}"
+                        ));
+                    }
+                    delete_node_with_history(tx, &index_node)?;
+                }
+                None if request.expected_folder_index_etag.is_some() => {
+                    return Err(format!("folder index node does not exist: {index_path}"));
+                }
+                None => {}
+            }
+        } else if request.expected_folder_index_etag.is_some() {
+            return Err(format!(
+                "expected_folder_index_etag is only valid for folder deletes: {path}"
+            ));
+        }
+        delete_node_with_history(tx, &current)?;
         Ok(DeleteNodeResult { path })
+        })
     }
 
     pub fn incoming_links(&self, request: IncomingLinksRequest) -> Result<Vec<LinkEdge>, String> {
         let path = normalize_node_path(&request.path, false)?;
-        let conn = self.open()?;
-        load_incoming_links(&conn, &path, capped_query_limit(request.limit))
+        self.read_conn(|conn| load_incoming_links(conn, &path, capped_query_limit(request.limit)))
     }
 
     pub fn outgoing_links(&self, request: OutgoingLinksRequest) -> Result<Vec<LinkEdge>, String> {
         let path = normalize_node_path(&request.path, false)?;
-        let conn = self.open()?;
-        load_outgoing_links(&conn, &path, capped_query_limit(request.limit))
+        self.read_conn(|conn| load_outgoing_links(conn, &path, capped_query_limit(request.limit)))
     }
 
     pub fn graph_links(&self, request: GraphLinksRequest) -> Result<Vec<LinkEdge>, String> {
         let prefix = normalize_node_path(&request.prefix, true)?;
-        let conn = self.open()?;
-        load_graph_links(&conn, &prefix, capped_query_limit(request.limit))
+        self.read_conn(|conn| load_graph_links(conn, &prefix, capped_query_limit(request.limit)))
     }
 
     pub fn graph_neighborhood(
@@ -453,13 +601,14 @@ impl FsStore {
         request: GraphNeighborhoodRequest,
     ) -> Result<Vec<LinkEdge>, String> {
         let center_path = normalize_node_path(&request.center_path, false)?;
-        let conn = self.open()?;
-        load_graph_neighborhood(
-            &conn,
-            &center_path,
-            request.depth,
-            capped_query_limit(request.limit),
-        )
+        self.read_conn(|conn| {
+            load_graph_neighborhood(
+                conn,
+                &center_path,
+                request.depth,
+                capped_query_limit(request.limit),
+            )
+        })
     }
 
     pub fn read_node_context(
@@ -467,16 +616,17 @@ impl FsStore {
         request: NodeContextRequest,
     ) -> Result<Option<NodeContext>, String> {
         let path = normalize_node_path(&request.path, false)?;
-        let conn = self.open()?;
-        let Some(node) = load_node(&conn, &path)? else {
-            return Ok(None);
-        };
-        let limit = capped_query_limit(request.link_limit);
-        Ok(Some(NodeContext {
-            incoming_links: load_incoming_links(&conn, &path, limit)?,
-            outgoing_links: load_outgoing_links(&conn, &path, limit)?,
-            node,
-        }))
+        self.read_conn(|conn| {
+            let Some(node) = load_node(conn, &path)? else {
+                return Ok(None);
+            };
+            let limit = capped_query_limit(request.link_limit);
+            Ok(Some(NodeContext {
+                incoming_links: load_incoming_links(conn, &path, limit)?,
+                outgoing_links: load_outgoing_links(conn, &path, limit)?,
+                node,
+            }))
+        })
     }
 
     pub fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext, String> {
@@ -497,86 +647,87 @@ impl FsStore {
             trim_search_hits_to_budget(search_hits, budget_chars);
         let paths = ordered_context_candidate_paths(&namespace, &search_hits);
 
-        let conn = self.open()?;
-        let mut nodes = Vec::new();
-        for path in paths {
-            let Some(context) = load_node_context_for_memory(&conn, &path, CONTEXT_LINK_LIMIT)?
-            else {
-                continue;
-            };
-            let context_chars = estimate_node_context_chars(&context);
-            if used_chars.saturating_add(context_chars) > budget_chars {
-                truncated = true;
-                break;
-            }
-            used_chars = used_chars.saturating_add(context_chars);
-            nodes.push(context);
-            if used_chars > budget_chars {
-                truncated = true;
-                break;
-            }
-        }
-
-        let mut graph_links = Vec::new();
-        if request.depth > 0 {
-            let mut seen_edges = BTreeSet::new();
-            for context in &nodes {
-                for edge in load_graph_neighborhood(
-                    &conn,
-                    &context.node.path,
-                    request.depth,
-                    capped_query_limit(CONTEXT_LINK_LIMIT),
-                )? {
-                    let key = (
-                        edge.source_path.clone(),
-                        edge.target_path.clone(),
-                        edge.raw_href.clone(),
-                    );
-                    if seen_edges.insert(key) {
-                        let edge_chars = estimate_link_edge_chars(&edge);
-                        if used_chars.saturating_add(edge_chars) > budget_chars {
-                            truncated = true;
-                            break;
-                        }
-                        used_chars = used_chars.saturating_add(edge_chars);
-                        graph_links.push(edge);
-                    }
-                    if graph_links.len() >= QUERY_RESULT_LIMIT_MAX as usize {
-                        truncated = true;
-                        break;
-                    }
-                }
-                if graph_links.len() >= QUERY_RESULT_LIMIT_MAX as usize {
-                    break;
-                }
-            }
-        }
-
-        let evidence = if request.include_evidence {
-            let mut items = Vec::new();
-            for context in &nodes {
-                let evidence = source_evidence_for_path(&conn, &context.node.path)?;
-                let evidence_chars = estimate_source_evidence_chars(&evidence);
-                if used_chars.saturating_add(evidence_chars) > budget_chars {
+        self.read_conn(|conn| {
+            let mut nodes = Vec::new();
+            for path in paths {
+                let Some(context) = load_node_context_for_memory(conn, &path, CONTEXT_LINK_LIMIT)?
+                else {
+                    continue;
+                };
+                let context_chars = estimate_node_context_chars(&context);
+                if used_chars.saturating_add(context_chars) > budget_chars {
                     truncated = true;
                     break;
                 }
-                used_chars = used_chars.saturating_add(evidence_chars);
-                items.push(evidence);
+                used_chars = used_chars.saturating_add(context_chars);
+                nodes.push(context);
+                if used_chars > budget_chars {
+                    truncated = true;
+                    break;
+                }
             }
-            items
-        } else {
-            Vec::new()
-        };
 
-        Ok(QueryContext {
-            namespace,
-            task: request.task,
-            search_hits,
-            nodes,
-            graph_links,
-            evidence,
-            truncated,
+            let mut graph_links = Vec::new();
+            if request.depth > 0 {
+                let mut seen_edges = BTreeSet::new();
+                for context in &nodes {
+                    for edge in load_graph_neighborhood(
+                        conn,
+                        &context.node.path,
+                        request.depth,
+                        capped_query_limit(CONTEXT_LINK_LIMIT),
+                    )? {
+                        let key = (
+                            edge.source_path.clone(),
+                            edge.target_path.clone(),
+                            edge.raw_href.clone(),
+                        );
+                        if seen_edges.insert(key) {
+                            let edge_chars = estimate_link_edge_chars(&edge);
+                            if used_chars.saturating_add(edge_chars) > budget_chars {
+                                truncated = true;
+                                break;
+                            }
+                            used_chars = used_chars.saturating_add(edge_chars);
+                            graph_links.push(edge);
+                        }
+                        if graph_links.len() >= QUERY_RESULT_LIMIT_MAX as usize {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    if graph_links.len() >= QUERY_RESULT_LIMIT_MAX as usize {
+                        break;
+                    }
+                }
+            }
+
+            let evidence = if request.include_evidence {
+                let mut items = Vec::new();
+                for context in &nodes {
+                    let evidence = source_evidence_for_path(conn, &context.node.path)?;
+                    let evidence_chars = estimate_source_evidence_chars(&evidence);
+                    if used_chars.saturating_add(evidence_chars) > budget_chars {
+                        truncated = true;
+                        break;
+                    }
+                    used_chars = used_chars.saturating_add(evidence_chars);
+                    items.push(evidence);
+                }
+                items
+            } else {
+                Vec::new()
+            };
+
+            Ok(QueryContext {
+                namespace,
+                task: request.task,
+                search_hits,
+                nodes,
+                graph_links,
+                evidence,
+                truncated,
+            })
         })
     }
 
@@ -585,11 +736,12 @@ impl FsStore {
         request: SourceEvidenceRequest,
     ) -> Result<SourceEvidence, String> {
         let node_path = normalize_node_path(&request.node_path, false)?;
-        let conn = self.open()?;
-        let Some(_) = load_node(&conn, &node_path)? else {
-            return Err(format!("node does not exist: {node_path}"));
-        };
-        source_evidence_for_path(&conn, &node_path)
+        self.read_conn(|conn| {
+            let Some(_) = load_node(conn, &node_path)? else {
+                return Err(format!("node does not exist: {node_path}"));
+            };
+            source_evidence_for_path(conn, &node_path)
+        })
     }
 
     pub fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>, String> {
@@ -600,37 +752,39 @@ impl FsStore {
             .transpose()?;
         let plan = build_search_query_plan(&request.query_text)
             .ok_or_else(|| "query_text must not be empty".to_string())?;
-        let conn = self.open()?;
-        let top_k = capped_query_limit(request.top_k);
-        let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::Light);
-        let mut candidates = if fs_search_bench::stage_enabled(SearchBenchStage::FtsCandidates) {
-            load_ranked_fts_candidates(&conn, &plan, prefix.as_deref(), top_k)?
-                .into_iter()
-                .map(|candidate| (candidate.row_id, candidate))
-                .collect::<std::collections::BTreeMap<_, _>>()
-        } else {
-            std::collections::BTreeMap::new()
-        };
-        if fs_search_bench::stage_enabled(SearchBenchStage::ContentSubstringCandidates) {
-            for candidate in
-                load_content_substring_candidates(&conn, &plan, prefix.as_deref(), top_k)?
+        self.read_conn(|conn| {
+            let top_k = capped_query_limit(request.top_k);
+            let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::Light);
+            let mut candidates = if fs_search_bench::stage_enabled(SearchBenchStage::FtsCandidates)
             {
-                candidates.entry(candidate.row_id).or_insert(candidate);
+                load_ranked_fts_candidates(conn, &plan, prefix.as_deref(), top_k)?
+                    .into_iter()
+                    .map(|candidate| (candidate.row_id, candidate))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            } else {
+                std::collections::BTreeMap::new()
+            };
+            if fs_search_bench::stage_enabled(SearchBenchStage::ContentSubstringCandidates) {
+                for candidate in
+                    load_content_substring_candidates(conn, &plan, prefix.as_deref(), top_k)?
+                {
+                    candidates.entry(candidate.row_id).or_insert(candidate);
+                }
             }
-        }
-        let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
-            load_path_candidates(&conn, &plan.path_terms, prefix.as_deref(), top_k)?
-        } else {
-            Vec::new()
-        };
-        let mut ranked = if fs_search_bench::stage_enabled(SearchBenchStage::RerankAdjustment) {
-            rerank_candidates(candidates, &plan, path_hits)
-        } else {
-            sort_candidates(candidates.into_values().collect())
-        };
-        ranked.truncate(top_k as usize);
-        build_previews_for_hits(&conn, &mut ranked, &plan, preview_mode)?;
-        Ok(finalize_hits(ranked, top_k))
+            let path_hits = if fs_search_bench::stage_enabled(SearchBenchStage::PathCandidates) {
+                load_path_candidates(conn, &plan.path_terms, prefix.as_deref(), top_k)?
+            } else {
+                Vec::new()
+            };
+            let mut ranked = if fs_search_bench::stage_enabled(SearchBenchStage::RerankAdjustment) {
+                rerank_candidates(candidates, &plan, path_hits)
+            } else {
+                sort_candidates(candidates.into_values().collect())
+            };
+            ranked.truncate(top_k as usize);
+            build_previews_for_hits(conn, &mut ranked, &plan, preview_mode)?;
+            Ok(finalize_hits(ranked, top_k))
+        })
     }
 
     pub fn search_node_paths(
@@ -644,68 +798,71 @@ impl FsStore {
             .transpose()?;
         let terms = split_path_search_terms(&request.query_text)
             .ok_or_else(|| "query_text must not be empty".to_string())?;
-        let conn = self.open()?;
-        let top_k = capped_query_limit(request.top_k);
-        let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::None);
-        let mut sql = String::from(
-            "SELECT id,
+        self.read_conn(|conn| {
+            let top_k = capped_query_limit(request.top_k);
+            let preview_mode = request.preview_mode.unwrap_or(SearchPreviewMode::None);
+            let mut sql = String::from(
+                "SELECT id,
                     path,
                     kind,
                     instr(lower(path), ?1) AS first_match_position,
                     length(path) AS path_length
              FROM fs_nodes
              WHERE 1 = 1",
-        );
-        let mut values = vec![rusqlite::types::Value::from(terms[0].clone())];
-        for term in &terms {
-            let index = values.len() + 1;
-            sql.push_str(&format!(" AND instr(lower(path), ?{index}) > 0"));
-            values.push(rusqlite::types::Value::from(term.clone()));
-        }
-        if let Some(prefix) = prefix.filter(|value| value != "/") {
-            let (scope_sql, scope_values) =
-                prefix_filter_sql_for_column("fs_nodes.path", &prefix, values.len() + 1);
-            sql.push_str(&scope_sql);
-            values.extend(scope_values);
-        }
-        sql.push_str(&format!(
-            " ORDER BY first_match_position ASC, path_length ASC, path ASC LIMIT {top_k}"
-        ));
-        let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        let mut candidates = stmt
-            .query_map(rusqlite::params_from_iter(values.iter()), |row| {
-                let path = row.get::<_, String>(1)?;
-                let first_match_position = row.get::<_, i64>(3)?;
-                let path_length = row.get::<_, i64>(4)?;
-                let title = file_search_title(&path).to_lowercase();
-                let lowered_query = request.query_text.to_lowercase();
-                let mut match_reasons = BTreeSet::from(["path_substring".to_string()]);
-                if title == lowered_query {
-                    match_reasons.insert("basename_exact".to_string());
-                } else if title.starts_with(&lowered_query) {
-                    match_reasons.insert("basename_prefix".to_string());
-                }
-                Ok(SearchCandidate {
-                    row_id: row.get::<_, i64>(0)?,
-                    path: path.clone(),
-                    kind: node_kind_from_db(&row.get::<_, String>(2)?)?,
-                    snippet: Some(path),
-                    preview: None,
-                    score: path_match_score(first_match_position, path_length),
-                    match_reasons,
-                    has_content_match: false,
-                })
-            })
-            .map_err(|error| error.to_string())?
-            .collect::<Result<Vec<_>, _>>()
+            );
+            let mut values = vec![crate::sqlite::types::Value::from(terms[0].clone())];
+            for term in &terms {
+                let index = values.len() + 1;
+                sql.push_str(&format!(" AND instr(lower(path), ?{index}) > 0"));
+                values.push(crate::sqlite::types::Value::from(term.clone()));
+            }
+            if let Some(prefix) = prefix.filter(|value| value != "/") {
+                let (scope_sql, scope_values) =
+                    prefix_filter_sql_for_column("fs_nodes.path", &prefix, values.len() + 1);
+                sql.push_str(&scope_sql);
+                values.extend(scope_values);
+            }
+            sql.push_str(&format!(
+                " ORDER BY first_match_position ASC, path_length ASC, path ASC LIMIT {top_k}"
+            ));
+            let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+            let mut candidates = crate::sqlite::query_map(
+                &mut stmt,
+                crate::sqlite::params_from_values(&values),
+                |row| {
+                    let path = crate::sqlite::row_get::<String>(row, 1)?;
+                    let first_match_position = crate::sqlite::row_get::<i64>(row, 3)?;
+                    let path_length = crate::sqlite::row_get::<i64>(row, 4)?;
+                    let title = file_search_title(&path).to_lowercase();
+                    let lowered_query = request.query_text.to_lowercase();
+                    let mut match_reasons = BTreeSet::from(["path_substring".to_string()]);
+                    if title == lowered_query {
+                        match_reasons.insert("basename_exact".to_string());
+                    } else if title.starts_with(&lowered_query) {
+                        match_reasons.insert("basename_prefix".to_string());
+                    }
+                    Ok(SearchCandidate {
+                        row_id: crate::sqlite::row_get::<i64>(row, 0)?,
+                        path: path.clone(),
+                        kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
+                        snippet: Some(path),
+                        preview: None,
+                        score: path_match_score(first_match_position, path_length),
+                        match_reasons,
+                        has_content_match: false,
+                    })
+                },
+            )
             .map_err(|error| error.to_string())?;
-        build_previews_for_hits(
-            &conn,
-            &mut candidates,
-            &build_search_query_plan(&request.query_text).expect("path terms already validated"),
-            preview_mode,
-        )?;
-        Ok(finalize_hits(candidates, top_k))
+            build_previews_for_hits(
+                conn,
+                &mut candidates,
+                &build_search_query_plan(&request.query_text)
+                    .expect("path terms already validated"),
+                preview_mode,
+            )?;
+            Ok(finalize_hits(candidates, top_k))
+        })
     }
 
     pub fn export_snapshot(
@@ -726,38 +883,39 @@ impl FsStore {
         if cursor.is_some() && request.snapshot_revision.is_none() {
             return Err(SNAPSHOT_REVISION_CURSOR_REQUIRED.to_string());
         }
-        let conn = self.open()?;
-        let current_revision = current_snapshot_revision_number(&conn)?;
-        let snapshot = match request.snapshot_revision.as_deref() {
-            Some(snapshot_revision) => parse_target_snapshot_revision(
-                snapshot_revision,
+        self.read_conn(|conn| {
+            let current_revision = current_snapshot_revision_number(conn)?;
+            let snapshot = match request.snapshot_revision.as_deref() {
+                Some(snapshot_revision) => parse_target_snapshot_revision(
+                    snapshot_revision,
+                    &prefix,
+                    current_revision,
+                    "snapshot_revision",
+                )?,
+                None => KnownSnapshotRevision {
+                    revision: current_revision,
+                    prefix: prefix.clone(),
+                },
+            };
+            if request.snapshot_revision.is_some()
+                && has_prefix_changes_after_revision(conn, &prefix, snapshot.revision)?
+            {
+                return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
+            }
+            let mut nodes = load_snapshot_nodes_page(
+                conn,
                 &prefix,
-                current_revision,
-                "snapshot_revision",
-            )?,
-            None => KnownSnapshotRevision {
-                revision: current_revision,
-                prefix: prefix.clone(),
-            },
-        };
-        if request.snapshot_revision.is_some()
-            && has_prefix_changes_after_revision(&conn, &prefix, snapshot.revision)?
-        {
-            return Err(SNAPSHOT_REVISION_NO_LONGER_CURRENT.to_string());
-        }
-        let mut nodes = load_snapshot_nodes_page(
-            &conn,
-            &prefix,
-            cursor.as_deref(),
-            snapshot.revision,
-            limit + 1,
-        )?;
-        let next_cursor = page_next_cursor(&mut nodes, limit);
-        Ok(ExportSnapshotResponse {
-            snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
-            snapshot_session_id: None,
-            nodes,
-            next_cursor,
+                cursor.as_deref(),
+                snapshot.revision,
+                limit + 1,
+            )?;
+            let next_cursor = page_next_cursor(&mut nodes, limit);
+            Ok(ExportSnapshotResponse {
+                snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
+                snapshot_session_id: None,
+                nodes,
+                next_cursor,
+            })
         })
     }
 
@@ -773,82 +931,122 @@ impl FsStore {
             .transpose()?;
         let prefix = prefix.unwrap_or_else(|| "/".to_string());
         let cursor = normalize_sync_cursor(request.cursor.as_deref(), &prefix)?;
-        let conn = self.open()?;
-        let current_change_revision = current_snapshot_revision_number(&conn)?;
-        let known_snapshot = parse_known_snapshot_revision(&request.known_snapshot_revision);
-        let Some(known_snapshot) = known_snapshot else {
-            return Err("known_snapshot_revision is invalid".to_string());
-        };
-        if known_snapshot.prefix != prefix {
-            return Err("known_snapshot_revision prefix does not match request prefix".to_string());
-        }
-        if known_snapshot.revision > current_change_revision {
-            return Err("known_snapshot_revision is newer than current revision".to_string());
-        }
-        if cursor.is_some() && request.target_snapshot_revision.is_none() {
-            return Err(TARGET_SNAPSHOT_CURSOR_REQUIRED.to_string());
-        }
-        let target_snapshot = match request.target_snapshot_revision.as_deref() {
-            Some(snapshot_revision) => parse_target_snapshot_revision(
-                snapshot_revision,
-                &prefix,
-                current_change_revision,
-                "target_snapshot_revision",
-            )?,
-            None => KnownSnapshotRevision {
-                revision: current_change_revision,
-                prefix: prefix.clone(),
-            },
-        };
-        if target_snapshot.revision < known_snapshot.revision {
-            return Err(
-                "target_snapshot_revision is older than known_snapshot_revision".to_string(),
-            );
-        }
-        let target_snapshot_revision = scoped_snapshot_revision(&prefix, target_snapshot.revision);
-        if known_snapshot.revision == target_snapshot.revision {
-            return Ok(FetchUpdatesResponse {
-                snapshot_revision: target_snapshot_revision,
-                changed_nodes: Vec::new(),
-                removed_paths: Vec::new(),
-                next_cursor: None,
-            });
-        }
-        let oldest_change_revision = oldest_snapshot_revision_number(&conn)?;
-        if known_snapshot.revision < oldest_change_revision.saturating_sub(1) {
-            return Err("known_snapshot_revision is no longer available".to_string());
-        }
-        let mut changed_nodes = Vec::new();
-        let mut removed_paths = Vec::new();
-        let mut paths = load_changed_paths_page(
-            &conn,
-            known_snapshot.revision,
-            target_snapshot.revision,
-            &prefix,
-            cursor.as_deref(),
-            limit + 1,
-        )?;
-        let next_cursor = page_next_cursor(&mut paths, limit);
-        for path in paths {
-            if load_path_last_change_revision(&conn, &path)? > target_snapshot.revision {
+        self.read_conn(|conn| {
+            let current_change_revision = current_snapshot_revision_number(conn)?;
+            let known_snapshot = parse_known_snapshot_revision(&request.known_snapshot_revision);
+            let Some(known_snapshot) = known_snapshot else {
+                return Err("known_snapshot_revision is invalid".to_string());
+            };
+            if known_snapshot.prefix != prefix {
                 return Err(
-                    "target_snapshot_revision is no longer current for changed path".to_string(),
+                    "known_snapshot_revision prefix does not match request prefix".to_string(),
                 );
             }
-            let current_node = load_node(&conn, &path)?;
-            match current_node {
-                Some(node) => changed_nodes.push(node),
-                None => removed_paths.push(path),
+            if known_snapshot.revision > current_change_revision {
+                return Err("known_snapshot_revision is newer than current revision".to_string());
             }
-        }
-        Ok(FetchUpdatesResponse {
-            snapshot_revision: target_snapshot_revision,
-            changed_nodes,
-            removed_paths,
-            next_cursor,
+            if cursor.is_some() && request.target_snapshot_revision.is_none() {
+                return Err(TARGET_SNAPSHOT_CURSOR_REQUIRED.to_string());
+            }
+            let target_snapshot = match request.target_snapshot_revision.as_deref() {
+                Some(snapshot_revision) => parse_target_snapshot_revision(
+                    snapshot_revision,
+                    &prefix,
+                    current_change_revision,
+                    "target_snapshot_revision",
+                )?,
+                None => KnownSnapshotRevision {
+                    revision: current_change_revision,
+                    prefix: prefix.clone(),
+                },
+            };
+            if target_snapshot.revision < known_snapshot.revision {
+                return Err(
+                    "target_snapshot_revision is older than known_snapshot_revision".to_string(),
+                );
+            }
+            let target_snapshot_revision =
+                scoped_snapshot_revision(&prefix, target_snapshot.revision);
+            if known_snapshot.revision == target_snapshot.revision {
+                return Ok(FetchUpdatesResponse {
+                    snapshot_revision: target_snapshot_revision,
+                    changed_nodes: Vec::new(),
+                    removed_paths: Vec::new(),
+                    next_cursor: None,
+                });
+            }
+            let oldest_change_revision = oldest_snapshot_revision_number(conn)?;
+            if known_snapshot.revision < oldest_change_revision.saturating_sub(1) {
+                return Err("known_snapshot_revision is no longer available".to_string());
+            }
+            let mut changed_nodes = Vec::new();
+            let mut removed_paths = Vec::new();
+            let mut paths = load_changed_paths_page(
+                conn,
+                known_snapshot.revision,
+                target_snapshot.revision,
+                &prefix,
+                cursor.as_deref(),
+                limit + 1,
+            )?;
+            let next_cursor = page_next_cursor(&mut paths, limit);
+            for path in paths {
+                if load_path_last_change_revision(conn, &path)? > target_snapshot.revision {
+                    return Err(
+                        "target_snapshot_revision is no longer current for changed path"
+                            .to_string(),
+                    );
+                }
+                let current_node = load_node(conn, &path)?;
+                match current_node {
+                    Some(node) => changed_nodes.push(node),
+                    None => removed_paths.push(path),
+                }
+            }
+            Ok(FetchUpdatesResponse {
+                snapshot_revision: target_snapshot_revision,
+                changed_nodes,
+                removed_paths,
+                next_cursor,
+            })
         })
     }
 
+    fn read_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let conn = self.open()?;
+            f(&conn)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.handle
+                .query(|conn| f(conn).map_err(|error| DbError::Sqlite(1, error)))
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    fn write_conn<T>(
+        &self,
+        f: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut conn = self.open()?;
+            let tx = conn.transaction().map_err(|error| error.to_string())?;
+            let value = f(&tx)?;
+            tx.commit().map_err(|error| error.to_string())?;
+            Ok(value)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.handle
+                .update(|tx| f(tx).map_err(|error| DbError::Sqlite(1, error)))
+                .map_err(|error| error.to_string())
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn open(&self) -> Result<Connection, String> {
         Connection::open(&self.database_path).map_err(|error| error.to_string())
     }
@@ -860,7 +1058,57 @@ fn record_change(tx: &Transaction<'_>, node: &Node) -> Result<i64, String> {
         params![node.path, ChangeKind::Upsert.as_str()],
     )
     .map_err(|error| error.to_string())?;
-    Ok(tx.last_insert_rowid())
+    crate::sqlite::last_insert_rowid(tx).map_err(|error| error.to_string())
+}
+
+fn write_node_in_tx(
+    tx: &Transaction<'_>,
+    request: WriteNodeRequest,
+    now: i64,
+) -> Result<WriteNodeResult, String> {
+    let path = normalize_node_path(&request.path, false)?;
+    let existing = load_stored_node(tx, &path)?;
+    if existing
+        .as_ref()
+        .is_some_and(|stored| stored.node.kind == NodeKind::Folder)
+    {
+        return Err(format!("cannot overwrite folder with file node: {path}"));
+    }
+    let created = existing.is_none();
+    let mut node = match existing.as_ref() {
+        Some(current) => update_existing_node(current.node.clone(), request, now)?,
+        None => create_new_node(path, request, now)?,
+    };
+    let revision = record_change(tx, &node)?;
+    update_path_state(tx, &node.path, revision)?;
+    node.etag = compute_node_etag(&node);
+    let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
+    sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
+    sync_node_links(tx, &node)?;
+    Ok(WriteNodeResult {
+        node: node_ack(&node),
+        created,
+    })
+}
+
+fn write_node_request_from_item(database_id: &str, item: WriteNodeItem) -> WriteNodeRequest {
+    WriteNodeRequest {
+        database_id: database_id.to_string(),
+        path: item.path,
+        kind: item.kind,
+        content: item.content,
+        metadata_json: item.metadata_json,
+        expected_etag: item.expected_etag,
+    }
+}
+
+fn validate_write_nodes_count(count: usize) -> Result<(), String> {
+    if count == 0 || count > WRITE_NODES_BATCH_LIMIT_MAX {
+        return Err(format!(
+            "write_nodes node count must be between 1 and {WRITE_NODES_BATCH_LIMIT_MAX}"
+        ));
+    }
+    Ok(())
 }
 
 fn record_path_removal(tx: &Transaction<'_>, path: &str) -> Result<i64, String> {
@@ -869,7 +1117,7 @@ fn record_path_removal(tx: &Transaction<'_>, path: &str) -> Result<i64, String> 
         params![path, ChangeKind::PathRemoval.as_str()],
     )
     .map_err(|error| error.to_string())?;
-    Ok(tx.last_insert_rowid())
+    crate::sqlite::last_insert_rowid(tx).map_err(|error| error.to_string())
 }
 
 fn update_path_state(tx: &Transaction<'_>, path: &str, revision: i64) -> Result<(), String> {
@@ -883,11 +1131,18 @@ fn update_path_state(tx: &Transaction<'_>, path: &str, revision: i64) -> Result<
     .map_err(|error| error.to_string())
 }
 
+fn delete_node_with_history(tx: &Transaction<'_>, stored: &StoredNode) -> Result<(), String> {
+    let revision = record_path_removal(tx, &stored.node.path)?;
+    update_path_state(tx, &stored.node.path, revision)?;
+    delete_source_links(tx, &stored.node.path)?;
+    delete_node_row(tx, stored)
+}
+
 fn current_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
     conn.query_row(
         "SELECT COALESCE(MAX(revision), 0) FROM fs_change_log",
-        [],
-        |row| row.get::<_, i64>(0),
+        params![],
+        |row| crate::sqlite::row_get::<i64>(row, 0),
     )
     .map_err(|error| error.to_string())
 }
@@ -895,8 +1150,8 @@ fn current_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
 fn oldest_snapshot_revision_number(conn: &Connection) -> Result<i64, String> {
     conn.query_row(
         "SELECT COALESCE(MIN(revision), 0) FROM fs_change_log",
-        [],
-        |row| row.get::<_, i64>(0),
+        params![],
+        |row| crate::sqlite::row_get::<i64>(row, 0),
     )
     .map_err(|error| error.to_string())
 }
@@ -1014,20 +1269,18 @@ fn load_snapshot_nodes_page(
     if let Some(cursor) = cursor {
         let index = values.len() + 1;
         sql.push_str(&format!(" AND path > ?{index}"));
-        values.push(rusqlite::types::Value::from(cursor.to_string()));
+        values.push(crate::sqlite::types::Value::from(cursor.to_string()));
     }
     let index = values.len() + 1;
     sql.push_str(&format!(" ORDER BY path ASC LIMIT ?{index}"));
-    values.push(rusqlite::types::Value::from(limit));
-    let paths = conn
-        .prepare(&sql)
-        .map_err(|error| error.to_string())?
-        .query_map(rusqlite::params_from_iter(values.iter()), |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
+    values.push(crate::sqlite::types::Value::from(limit));
+    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    let paths = crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        |row| crate::sqlite::row_get::<String>(row, 0),
+    )
+    .map_err(|error| error.to_string())?;
     load_snapshot_nodes(conn, &paths, snapshot_revision)
 }
 
@@ -1062,8 +1315,8 @@ fn load_changed_paths_page(
          WHERE revision > ?1 AND revision <= ?2",
     );
     let mut values = vec![
-        rusqlite::types::Value::from(known_revision),
-        rusqlite::types::Value::from(target_revision),
+        crate::sqlite::types::Value::from(known_revision),
+        crate::sqlite::types::Value::from(target_revision),
     ];
     if prefix != "/" {
         let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
@@ -1073,14 +1326,16 @@ fn load_changed_paths_page(
     if let Some(cursor) = cursor {
         let index = values.len() + 1;
         sql.push_str(&format!(" AND path > ?{index}"));
-        values.push(rusqlite::types::Value::from(cursor.to_string()));
+        values.push(crate::sqlite::types::Value::from(cursor.to_string()));
     }
     sql.push_str(&format!(" ORDER BY path ASC LIMIT {limit}"));
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| row.get(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
+    crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        |row| crate::sqlite::row_get::<String>(row, 0),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn has_prefix_changes_after_revision(
@@ -1089,16 +1344,15 @@ fn has_prefix_changes_after_revision(
     snapshot_revision: i64,
 ) -> Result<bool, String> {
     let mut sql = String::from("SELECT 1 FROM fs_change_log WHERE revision > ?1");
-    let mut values = vec![rusqlite::types::Value::from(snapshot_revision)];
+    let mut values = vec![crate::sqlite::types::Value::from(snapshot_revision)];
     if prefix != "/" {
         let (scope_sql, scope_values) = prefix_filter_sql(prefix, values.len() + 1);
         sql.push_str(&scope_sql);
         values.extend(scope_values);
     }
     sql.push_str(" LIMIT 1");
-    conn.prepare(&sql)
-        .map_err(|error| error.to_string())?
-        .exists(rusqlite::params_from_iter(values))
+    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
+    crate::sqlite::statement_exists(&mut stmt, crate::sqlite::params_from_values(&values))
         .map_err(|error| error.to_string())
 }
 
@@ -1106,7 +1360,7 @@ fn load_path_last_change_revision(conn: &Connection, path: &str) -> Result<i64, 
     conn.query_row(
         "SELECT last_change_revision FROM fs_path_state WHERE path = ?1",
         params![path],
-        |row| row.get::<_, i64>(0),
+        |row| crate::sqlite::row_get::<i64>(row, 0),
     )
     .map_err(|error| error.to_string())
 }
@@ -1126,12 +1380,14 @@ fn decode_hex_to_string(value: &str) -> Option<String> {
 }
 
 fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM fs_nodes WHERE kind = ?1",
-        params![kind],
-        |row| row.get::<_, u64>(0),
-    )
-    .map_err(|error| error.to_string())
+    let count = conn
+        .query_row(
+            "SELECT COUNT(*) FROM fs_nodes WHERE kind = ?1",
+            params![kind],
+            |row| crate::sqlite::row_get::<i64>(row, 0),
+        )
+        .map_err(|error| error.to_string())?;
+    u64::try_from(count).map_err(|error| error.to_string())
 }
 
 fn normalize_list_children_path(path: &str) -> Result<String, String> {
@@ -1143,47 +1399,44 @@ fn normalize_list_children_path(path: &str) -> Result<String, String> {
     normalize_node_path(trimmed, true)
 }
 
-fn load_child_rows(conn: &Connection, path: &str) -> Result<Vec<ChildRow>, String> {
-    let (prefix, upper, relative_start) = list_child_query_bounds(path);
-    let mut stmt = conn
-        .prepare(LIST_DIRECT_CHILD_ROWS_SQL)
-        .map_err(|error| error.to_string())?;
-    stmt.query_map(params![prefix, upper, relative_start], |row| {
-        let size_bytes = row.get::<_, i64>(4)?;
+fn load_child_rows(
+    conn: &Connection,
+    path: &str,
+    parent_id: Option<i64>,
+) -> Result<Vec<ChildRow>, String> {
+    if path != "/" && parent_id.is_none() {
+        return Ok(Vec::new());
+    }
+    let sql = if parent_id.is_some() {
+        LIST_FOLDER_CHILD_ROWS_SQL
+    } else {
+        LIST_ROOT_CHILD_ROWS_SQL
+    };
+    let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
+    let map_row = |row: &crate::sqlite::Row<'_>| {
+        let size_bytes = crate::sqlite::row_get::<i64>(row, 4)?;
         Ok(ChildRow {
-            path: row.get(0)?,
-            kind: node_kind_from_db(&row.get::<_, String>(1)?)?,
-            updated_at: row.get(2)?,
-            etag: row.get(3)?,
+            path: crate::sqlite::row_get::<String>(row, 0)?,
+            kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
+            updated_at: crate::sqlite::row_get::<i64>(row, 2)?,
+            etag: crate::sqlite::row_get::<String>(row, 3)?,
             size_bytes: size_bytes.max(0) as u64,
-            has_children: row.get::<_, i64>(5)? != 0,
+            has_children: crate::sqlite::row_get::<i64>(row, 5)? != 0,
         })
-    })
-    .map_err(|error| error.to_string())?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|error| error.to_string())
+    };
+    match parent_id {
+        Some(parent_id) => crate::sqlite::query_map(&mut stmt, params![parent_id], map_row)
+            .map_err(|error| error.to_string()),
+        None => crate::sqlite::query_map(&mut stmt, params![], map_row)
+            .map_err(|error| error.to_string()),
+    }
 }
 
 fn allows_empty_directory_listing(path: &str) -> bool {
     matches!(path, "/" | "/Wiki" | "/Sources")
 }
 
-fn load_virtual_child_names(conn: &Connection, path: &str) -> Result<Vec<String>, String> {
-    let (prefix, upper, relative_start) = list_child_query_bounds(path);
-    let mut stmt = conn
-        .prepare(LIST_VIRTUAL_CHILD_NAMES_SQL)
-        .map_err(|error| error.to_string())?;
-    stmt.query_map(params![prefix, upper, relative_start], |row| row.get(0))
-        .map_err(|error| error.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())
-}
-
-fn build_child_nodes(
-    parent_path: &str,
-    rows: Vec<ChildRow>,
-    virtual_names: Vec<String>,
-) -> Result<Vec<ChildNode>, String> {
+fn build_child_nodes(parent_path: &str, rows: Vec<ChildRow>) -> Result<Vec<ChildNode>, String> {
     let mut children = BTreeMap::<String, ChildNode>::new();
 
     for row in rows {
@@ -1206,54 +1459,18 @@ fn build_child_nodes(
             },
         );
     }
-    for child in build_virtual_child_nodes(parent_path, virtual_names) {
-        children.entry(child.name.clone()).or_insert(child);
-    }
 
     let mut children = children.into_values().collect::<Vec<_>>();
     children.sort_by(|left, right| match (&left.kind, &right.kind) {
-        (NodeEntryKind::Directory, NodeEntryKind::Directory) => left.name.cmp(&right.name),
-        (NodeEntryKind::Directory, _) => std::cmp::Ordering::Less,
-        (_, NodeEntryKind::Directory) => std::cmp::Ordering::Greater,
+        (
+            NodeEntryKind::Folder | NodeEntryKind::Directory,
+            NodeEntryKind::Folder | NodeEntryKind::Directory,
+        ) => left.name.cmp(&right.name),
+        (NodeEntryKind::Folder | NodeEntryKind::Directory, _) => std::cmp::Ordering::Less,
+        (_, NodeEntryKind::Folder | NodeEntryKind::Directory) => std::cmp::Ordering::Greater,
         _ => left.name.cmp(&right.name),
     });
     Ok(children)
-}
-
-fn build_virtual_child_nodes(parent_path: &str, names: Vec<String>) -> Vec<ChildNode> {
-    names
-        .into_iter()
-        .map(|name| {
-            let path = child_path(parent_path, &name);
-            ChildNode {
-                has_children: true,
-                path,
-                name,
-                kind: NodeEntryKind::Directory,
-                updated_at: None,
-                etag: None,
-                size_bytes: None,
-                is_virtual: true,
-            }
-        })
-        .collect()
-}
-
-fn child_prefix(parent_path: &str) -> String {
-    if parent_path == "/" {
-        "/".to_string()
-    } else {
-        format!("{parent_path}/")
-    }
-}
-
-fn list_child_query_bounds(parent_path: &str) -> (String, String, i64) {
-    let prefix = child_prefix(parent_path);
-    let upper = prefix_upper_bound(&prefix);
-    // SQLite `substr` is 1-based. Start after the normalized parent prefix so
-    // `instr(relative, '/')` distinguishes direct rows from descendants.
-    let relative_start = (prefix.len() + 1) as i64;
-    (prefix, upper, relative_start)
 }
 
 fn prefix_upper_bound(prefix: &str) -> String {
@@ -1272,24 +1489,20 @@ fn child_name(parent_path: &str, path: &str) -> Option<(String, bool)> {
     }
 }
 
-fn child_path(parent_path: &str, name: &str) -> String {
-    if parent_path == "/" {
-        format!("/{name}")
-    } else {
-        format!("{parent_path}/{name}")
-    }
-}
-
 fn entry_kind_from_node_kind(kind: &NodeKind) -> NodeEntryKind {
     match kind {
         NodeKind::File => NodeEntryKind::File,
         NodeKind::Source => NodeEntryKind::Source,
+        NodeKind::Folder => NodeEntryKind::Folder,
     }
 }
 
 fn create_new_node(path: String, request: WriteNodeRequest, now: i64) -> Result<Node, String> {
     if request.expected_etag.is_some() {
         return Err(format!("expected_etag must be None for new node: {path}"));
+    }
+    if request.kind == NodeKind::Folder {
+        return Err("write_node cannot create folders; use mkdir_node".to_string());
     }
     Ok(Node {
         path,
@@ -1309,6 +1522,9 @@ fn create_appended_node(
 ) -> Result<Node, String> {
     if request.expected_etag.is_some() {
         return Err(format!("expected_etag must be None for new node: {path}"));
+    }
+    if request.kind == Some(NodeKind::Folder) {
+        return Err("append_node cannot create folders; use mkdir_node".to_string());
     }
     Ok(Node {
         path,
@@ -1331,6 +1547,9 @@ fn append_existing_node(
             "expected_etag does not match current etag: {}",
             current.path
         ));
+    }
+    if current.kind == NodeKind::Folder {
+        return Err(format!("cannot append to folder: {}", current.path));
     }
     let separator = request.separator.unwrap_or_default();
     current.content = format!("{}{}{}", current.content, separator, request.content);
@@ -1392,6 +1611,9 @@ fn update_existing_node(
             current.path
         ));
     }
+    if request.kind == NodeKind::Folder {
+        return Err("write_node cannot create folders; use mkdir_node".to_string());
+    }
     current.kind = request.kind;
     current.content = request.content;
     current.updated_at = now;
@@ -1427,26 +1649,192 @@ fn save_node(tx: &Transaction<'_>, row_id: Option<i64>, node: &Node) -> Result<i
             Ok(row_id)
         }
         None => {
-            tx.execute(
-                "INSERT INTO fs_nodes (path, kind, content, created_at, updated_at, etag, metadata_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    node.path,
-                    node_kind_to_db(&node.kind),
-                    node.content,
-                    node.created_at,
-                    node.updated_at,
-                    node.etag,
-                    node.metadata_json
-                ],
+            let (parent_id, name) = parent_fields_for_path(tx, &node.path)?;
+            let parent_id_value = crate::sqlite::nullable_integer_value(parent_id);
+            let values = vec![
+                crate::sqlite::text_value(node.path.clone()),
+                crate::sqlite::text_value(node_kind_to_db(&node.kind)),
+                crate::sqlite::text_value(node.content.clone()),
+                crate::sqlite::integer_value(node.created_at),
+                crate::sqlite::integer_value(node.updated_at),
+                crate::sqlite::text_value(node.etag.clone()),
+                crate::sqlite::text_value(node.metadata_json.clone()),
+                parent_id_value,
+                crate::sqlite::text_value(name),
+            ];
+            crate::sqlite::execute_values(
+                tx,
+                "INSERT INTO fs_nodes (path, kind, content, created_at, updated_at, etag, metadata_json, parent_id, name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                &values,
             )
             .map_err(|error| error.to_string())?;
-            Ok(tx.last_insert_rowid())
+            crate::sqlite::last_insert_rowid(tx).map_err(|error| error.to_string())
         }
     }
 }
 
-#[cfg(not(feature = "bench-disable-fts"))]
+fn save_moved_node(tx: &Transaction<'_>, row_id: i64, node: &Node) -> Result<i64, String> {
+    let (parent_id, name) = parent_fields_for_path(tx, &node.path)?;
+    let values = vec![
+        crate::sqlite::text_value(node.path.clone()),
+        crate::sqlite::text_value(node_kind_to_db(&node.kind)),
+        crate::sqlite::text_value(node.content.clone()),
+        crate::sqlite::integer_value(node.created_at),
+        crate::sqlite::integer_value(node.updated_at),
+        crate::sqlite::text_value(node.etag.clone()),
+        crate::sqlite::text_value(node.metadata_json.clone()),
+        crate::sqlite::nullable_integer_value(parent_id),
+        crate::sqlite::text_value(name),
+        crate::sqlite::integer_value(row_id),
+    ];
+    crate::sqlite::execute_values(
+        tx,
+        "UPDATE fs_nodes
+         SET path = ?1,
+             kind = ?2,
+             content = ?3,
+             created_at = ?4,
+             updated_at = ?5,
+             etag = ?6,
+             metadata_json = ?7,
+             parent_id = ?8,
+             name = ?9
+         WHERE id = ?10",
+        &values,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(row_id)
+}
+
+fn parent_fields_for_path(
+    tx: &Transaction<'_>,
+    path: &str,
+) -> Result<(Option<i64>, String), String> {
+    let (parent_path, name) = split_parent_path_and_name(path)?;
+    let Some(parent_path) = parent_path else {
+        return Ok((None, name));
+    };
+    let parent = load_parent_folder_candidate(tx, &parent_path)?
+        .ok_or_else(|| format!("parent folder does not exist: {parent_path}"))?;
+    if parent.1 != NodeKind::Folder {
+        return Err(format!("parent path is not a folder: {parent_path}"));
+    }
+    Ok((Some(parent.0), name))
+}
+
+fn load_parent_folder_candidate(
+    tx: &Transaction<'_>,
+    path: &str,
+) -> Result<Option<(i64, NodeKind)>, String> {
+    tx.query_row(
+        "SELECT id, kind FROM fs_nodes WHERE path = ?1",
+        params![path],
+        |row| {
+            Ok((
+                row.get(0)?,
+                node_kind_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn load_stored_subtree(tx: &Transaction<'_>, path: &str) -> Result<Vec<StoredNode>, String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT path FROM fs_nodes
+             WHERE path = ?1 OR (path >= ?2 AND path < ?3)
+             ORDER BY length(path), path",
+        )
+        .map_err(|error| error.to_string())?;
+    let prefix = format!("{path}/");
+    let upper = prefix_upper_bound(&prefix);
+    let paths = crate::sqlite::query_map(&mut stmt, params![path, prefix, upper], |row| {
+        crate::sqlite::row_get::<String>(row, 0)
+    })
+    .map_err(|error| error.to_string())?;
+    paths
+        .into_iter()
+        .map(|node_path| {
+            load_stored_node(tx, &node_path)?
+                .ok_or_else(|| format!("node does not exist: {node_path}"))
+        })
+        .collect()
+}
+
+fn rebase_path(path: &str, from_path: &str, to_path: &str) -> Result<String, String> {
+    if path == from_path {
+        return Ok(to_path.to_string());
+    }
+    let suffix = path
+        .strip_prefix(&format!("{from_path}/"))
+        .ok_or_else(|| format!("path is not in moved subtree: {path}"))?;
+    Ok(format!("{to_path}/{suffix}"))
+}
+
+fn folder_index_path(folder_path: &str) -> String {
+    format!("{folder_path}/index.md")
+}
+
+fn load_folder_index_child(
+    tx: &Transaction<'_>,
+    parent_id: i64,
+    index_path: &str,
+) -> Result<Option<StoredNode>, String> {
+    let index = tx
+        .query_row(
+            "SELECT path FROM fs_nodes
+             WHERE parent_id = ?1 AND path = ?2 AND kind = 'file'
+             LIMIT 1",
+            params![parent_id, index_path],
+            |row| crate::sqlite::row_get::<String>(row, 0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    index
+        .map(|path| {
+            load_stored_node(tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))
+        })
+        .transpose()
+}
+
+fn has_visible_folder_children(
+    tx: &Transaction<'_>,
+    parent_id: i64,
+    index_path: &str,
+) -> Result<bool, String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT 1 FROM fs_nodes
+         WHERE parent_id = ?1
+           AND NOT (path = ?2 AND kind = 'file')
+         LIMIT 1",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::statement_exists(&mut stmt, params![parent_id, index_path])
+        .map_err(|error| error.to_string())
+}
+
+fn is_protected_root_folder(path: &str) -> bool {
+    matches!(path, "/Wiki" | "/Sources")
+}
+
+fn split_parent_path_and_name(path: &str) -> Result<(Option<String>, String), String> {
+    let Some((parent, name)) = path.rsplit_once('/') else {
+        return Err(format!("invalid node path: {path}"));
+    };
+    if name.is_empty() {
+        return Err(format!("invalid node path: {path}"));
+    }
+    if parent.is_empty() {
+        Ok((None, name.to_string()))
+    } else {
+        Ok((Some(parent.to_string()), name.to_string()))
+    }
+}
+
 fn sync_node_fts(
     tx: &Transaction<'_>,
     old: Option<&StoredNode>,
@@ -1481,15 +1869,6 @@ fn sync_node_fts(
         )
         .map_err(|error| error.to_string())?;
     }
-    Ok(())
-}
-
-#[cfg(feature = "bench-disable-fts")]
-fn sync_node_fts(
-    _tx: &Transaction<'_>,
-    _old: Option<&StoredNode>,
-    _new: Option<(i64, &Node)>,
-) -> Result<(), String> {
     Ok(())
 }
 
@@ -1721,6 +2100,8 @@ fn glob_type_matches(node_type: &GlobNodeType, entry_kind: &NodeEntryKind) -> bo
         GlobNodeType::File => {
             matches!(entry_kind, NodeEntryKind::File | NodeEntryKind::Source)
         }
-        GlobNodeType::Directory => *entry_kind == NodeEntryKind::Directory,
+        GlobNodeType::Directory => {
+            matches!(entry_kind, NodeEntryKind::Directory | NodeEntryKind::Folder)
+        }
     }
 }

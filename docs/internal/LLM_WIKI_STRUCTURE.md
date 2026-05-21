@@ -10,7 +10,7 @@
 
 ```mermaid
 flowchart LR
-    A["Agent / Human / Script"] --> B["vfs-cli"]
+    A["Agent / Human / Script"] --> B["kinic-vfs-cli"]
     A --> C["Rust library tool calling"]
     B --> D["vfs_client"]
     C --> D
@@ -98,7 +98,7 @@ flowchart LR
 ### 5.5 `vfs_canister`
 
 - IC query/update entrypoint 群
-- WASI + stable structures 上に SQLite ファイルを mount
+- `ic-sqlite-vfs` + stable memory / `MemoryManager` 上に SQLite を配置
 - 初期化時に migration 実行
 - canister 境界は薄く保ち、実ロジックは `VfsService` に委譲
 
@@ -144,7 +144,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant U as User/Agent
-    participant CLI as vfs-cli
+    participant CLI as kinic-vfs-cli
     participant C as vfs_client
     participant CAN as vfs_canister
     participant SVC as VfsService
@@ -190,7 +190,7 @@ sequenceDiagram
 | build | `build-vfs-canister.sh`, `build-vfs-canister-canbench.sh` | canister build |
 | canbench | `run_canbench_guard.sh`, `run_canbench_scale.sh`, `canbench/*.py` | canbench 集計・比較 |
 | bench | `bench/run_beam_bench.sh`, `bench/run_canister_vfs_*.sh` | beam / canister workload |
-| env | `wasi-env.sh`, `setup_canbench_ci.sh` | 実行環境補助 |
+| env | `setup_canbench_ci.sh` | 実行環境補助 |
 
 ### 8.3 `fixtures/`
 

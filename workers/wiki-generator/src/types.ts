@@ -3,7 +3,7 @@
 // Why: Queue, D1, VFS, and LLM code need one small typed vocabulary.
 export const SCHEMA_VERSION = 1;
 
-export type NodeKind = "file" | "source";
+export type NodeKind = "file" | "source" | "folder";
 
 export type WikiNode = {
   path: string;
@@ -27,6 +27,17 @@ export type WriteNodeRequest = {
   content: string;
   metadataJson: string;
   expectedEtag: string | null;
+};
+
+export type WriteNodeAck = {
+  path: string;
+  kind: NodeKind;
+  etag: string;
+};
+
+export type MkdirNodeRequest = {
+  databaseId: string;
+  path: string;
 };
 
 export type ExportSnapshotPage = {
@@ -57,13 +68,19 @@ export type WikiDraft = {
   follow_ups: WikiDraftItem[];
 };
 
-export type QueueMessage = {
-  kind?: "source";
+export type SourceQueueMessage = {
+  kind: "source";
   databaseId: string;
   sourcePath: string;
   sourceEtag: string;
   requestPath?: string;
 };
+
+export type UrlIngestQueueMessage = UrlIngestTriggerInput & {
+  kind: "url_ingest";
+};
+
+export type QueueMessage = SourceQueueMessage | UrlIngestQueueMessage;
 
 export type ManualRunInput = {
   databaseId: string;
@@ -74,11 +91,9 @@ export type ManualRunInput = {
 export type WorkerConfig = {
   canisterId: string;
   icHost: string;
-  databaseIds: string[];
   model: string;
   targetRoot: string;
   sourcePrefix: string;
-  ingestRequestPrefix: string;
   contextPrefix: string;
   maxRawChars: number;
   maxFetchedBytes: number;
@@ -108,7 +123,16 @@ export type UrlIngestRequest = {
   url: string;
   requestedBy: string;
   requestedAt: string;
+  claimedAt: string | null;
   sourcePath: string | null;
   targetPath: string | null;
+  finishedAt: string | null;
   error: string | null;
+  metadataJson: string;
+};
+
+export type UrlIngestTriggerInput = {
+  canisterId: string;
+  databaseId: string;
+  requestPath: string;
 };

@@ -1,0 +1,9 @@
+[project]
+name = "kinic-hermes-plugin"
+version = "0.1.0"
+description = "Kinic Hermes plugin and skill evolution helper"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+kinic-skill-evolve = "kinic_hermes.evolve:main"

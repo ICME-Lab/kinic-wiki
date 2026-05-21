@@ -5,13 +5,12 @@
 ## 取り込む優先順
 
 1. `obsidian-markdown`
-2. `obsidian-cli`
-3. `defuddle`
+2. `defuddle`
 
 ## 使い方
 
 - まず repo 固有 skill (`ingest`, `query`, `lint`) を使う
-- Obsidian 記法や vault 操作の詳細が必要な時だけ vendor skill を読む
+- Obsidian 記法や source cleanup の詳細が必要な時だけ vendor skill を読む
 - vendor skill 自体は一般知識、正本 workflow は repo 固有 skill に置く
 
 ## 注意

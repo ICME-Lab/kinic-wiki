@@ -41,6 +41,7 @@ pub enum DatabaseStatus {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseInfo {
     pub database_id: String,
+    pub name: String,
     pub status: DatabaseStatus,
     pub mount_id: Option<u16>,
     pub schema_version: String,
@@ -53,11 +54,11 @@ pub struct DatabaseInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseSummary {
     pub database_id: String,
-    pub display_name: String,
+    pub name: String,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
-    pub billing_balance_e8s: u64,
+    pub billing_balance_e8s: Option<u64>,
     pub billing_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
     pub deleted_at_ms: Option<i64>,
@@ -143,6 +144,24 @@ pub struct DatabaseBillingEntryPage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct CreateDatabaseRequest {
+    pub name: String,
+    pub initial_deposit_e8s: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct CreateDatabaseResult {
+    pub database_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct RenameDatabaseRequest {
+    pub database_id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseArchiveInfo {
     pub database_id: String,
     pub size_bytes: u64,
@@ -167,6 +186,8 @@ pub enum NodeKind {
     File,
     #[serde(alias = "Source")]
     Source,
+    #[serde(alias = "Folder")]
+    Folder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -178,6 +199,8 @@ pub enum NodeEntryKind {
     File,
     #[serde(alias = "Source")]
     Source,
+    #[serde(alias = "Folder")]
+    Folder,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -233,6 +256,51 @@ pub struct WriteNodeRequest {
     pub content: String,
     pub metadata_json: String,
     pub expected_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WriteNodeItem {
+    pub path: String,
+    pub kind: NodeKind,
+    pub content: String,
+    pub metadata_json: String,
+    pub expected_etag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WriteNodesRequest {
+    pub database_id: String,
+    pub nodes: Vec<WriteNodeItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct UrlIngestTriggerSessionRequest {
+    pub database_id: String,
+    pub session_nonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct UrlIngestTriggerSessionCheckRequest {
+    pub database_id: String,
+    pub request_path: String,
+    pub session_nonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct OpsAnswerSessionRequest {
+    pub database_id: String,
+    pub session_nonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct OpsAnswerSessionCheckRequest {
+    pub database_id: String,
+    pub session_nonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct OpsAnswerSessionCheckResult {
+    pub principal: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -423,6 +491,7 @@ pub struct DeleteNodeRequest {
     pub database_id: String,
     pub path: String,
     pub expected_etag: Option<String>,
+    pub expected_folder_index_etag: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

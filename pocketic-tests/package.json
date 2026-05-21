@@ -1,0 +1,14 @@
+{
+  "name": "llm-wiki-pocketic-tests",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:probe": "cargo build -p ic-sqlite-vfs-probe --target wasm32-unknown-unknown --release",
+    "test": "npm run build:probe && node scripts/run-tests.mjs"
+  },
+  "devDependencies": {
+    "@dfinity/candid": "3.4.3",
+    "@dfinity/pic": "^0.21.0"
+  }
+}

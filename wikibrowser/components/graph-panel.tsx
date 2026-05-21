@@ -94,11 +94,11 @@ export function GraphPanel({ canisterId, databaseId, centerPath, depth, readIden
                 const source = graph.byPath.get(edge.sourcePath);
                 const target = graph.byPath.get(edge.targetPath);
                 if (!source || !target) return null;
-                return <line key={`${edge.sourcePath}-${edge.targetPath}-${edge.rawHref}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="#9aa6b2" strokeWidth="1.2" />;
+                return <line key={`${edge.sourcePath}-${edge.targetPath}-${edge.rawHref}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="#e6e6e6" strokeWidth="1.2" />;
               })}
               {graph.nodes.map((node) => (
                 <Link key={node.path} href={hrefForPath(canisterId, databaseId, node.path, undefined, undefined, undefined, undefined, readMode)}>
-                  <circle cx={node.x} cy={node.y} r={node.isCenter ? "16" : "12"} fill={node.isCenter ? "#dc6b19" : "#1f6feb"} />
+                  <circle cx={node.x} cy={node.y} r={node.isCenter ? "16" : "12"} fill={node.isCenter ? "#ff2686" : "#000000"} />
                   <text x={node.x + 16} y={node.y + 4} className="fill-ink text-[11px]">
                     {shortName(node.path)}
                   </text>

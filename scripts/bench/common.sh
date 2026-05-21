@@ -16,7 +16,28 @@ bench_repo_root() {
 }
 
 bench_local_ids_file() {
-  printf '%s/.icp/cache/mappings/local.ids.json\n' "${REPO_ROOT}"
+  local environment="${BENCH_ICP_ENVIRONMENT:-local-wiki}"
+  printf '%s/.icp/cache/mappings/%s.ids.json\n' "${REPO_ROOT}" "${environment}"
+}
+
+bench_icp_environment() {
+  printf '%s\n' "${BENCH_ICP_ENVIRONMENT:-local-wiki}"
+}
+
+bench_replica_host() {
+  local environment
+  local status_json
+  environment="$(bench_icp_environment)"
+  status_json="$(icp network status -e "${environment}" --json)"
+  node -e '
+    const fs = require("fs");
+    const payload = JSON.parse(process.argv[1]);
+    const value = payload.api_url || payload.apiUrl || payload.apiUrlUrl;
+    if (typeof value !== "string" || value.trim() === "") {
+      throw new Error("icp network status did not include api_url");
+    }
+    process.stdout.write(value.replace(/\/$/, ""));
+  ' "${status_json}"
 }
 
 resolve_local_canister_id() {
@@ -45,6 +66,10 @@ bench_cargo_target_root() {
 
 bench_vfs_bench_bin() {
   printf '%s/debug/vfs_bench\n' "$(bench_cargo_target_root)"
+}
+
+bench_kinic_vfs_cli_bin() {
+  printf '%s/debug/kinic-vfs-cli\n' "$(bench_cargo_target_root)"
 }
 
 bench_results_dir() {

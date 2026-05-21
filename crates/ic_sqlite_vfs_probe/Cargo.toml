@@ -1,0 +1,21 @@
+[package]
+name = "ic-sqlite-vfs-probe"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+candid = "0.10.26"
+ic-cdk = "0.20.1"
+ic-stable-structures = "0.7.2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ic-sqlite-vfs = { version = "0.2.1", default-features = false, features = ["sqlite-bundled"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ic-sqlite-vfs = { version = "0.2.1", default-features = false, features = ["sqlite-precompiled"] }
+
+[dev-dependencies]
+proptest = "1.11.0"

@@ -3,19 +3,24 @@ import type { ReactNode } from "react";
 export function PanelHeader({
   icon,
   title,
-  subtitle
+  subtitle,
+  actions
 }: {
   icon: ReactNode;
   title: string;
   subtitle?: string;
+  actions?: ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-      <span className="text-accent">{icon}</span>
-      <div>
-        <h2 className="text-sm font-semibold">{title}</h2>
-        {subtitle ? <p className="text-xs text-muted">{subtitle}</p> : null}
+    <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 text-accent">{icon}</span>
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold">{title}</h2>
+          {subtitle ? <p className="truncate text-xs text-muted">{subtitle}</p> : null}
+        </div>
       </div>
+      {actions ? <div className="shrink-0">{actions}</div> : null}
     </div>
   );
 }

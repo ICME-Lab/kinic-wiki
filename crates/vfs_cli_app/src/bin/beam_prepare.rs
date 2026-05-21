@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let connection = resolve_connection(
         cli.connection.local,
+        cli.connection.replica_host.clone(),
         cli.connection.canister_id.clone(),
         cli.connection.database_id.clone(),
     )?;

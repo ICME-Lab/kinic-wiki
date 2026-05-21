@@ -1,5 +1,6 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import { readNode, writeNodeAuthenticated } from "@/lib/vfs-client";
+import { ensureParentFoldersAuthenticated } from "@/lib/vfs-folders";
 
 export type SkillCatalog = "private" | "public";
 
@@ -14,8 +15,8 @@ export type SkillPackageInput = {
   files: SkillPackageFile[];
 };
 
-const PUBLIC_ROOT = "/Wiki/public-skills";
 const PRIVATE_ROOT = "/Wiki/skills";
+const PUBLIC_ROOT = PRIVATE_ROOT;
 
 export async function upsertSkillPackage(canisterId: string, databaseId: string, identity: Identity, input: SkillPackageInput): Promise<string[]> {
   const skillId = cleanSkillId(input.id);
@@ -23,16 +24,18 @@ export async function upsertSkillPackage(canisterId: string, databaseId: string,
   const basePath = `${input.catalog === "public" ? PUBLIC_ROOT : PRIVATE_ROOT}/${skillId}`;
   const written: string[] = [];
   for (const file of files) {
-    const current = await readNode(canisterId, databaseId, `${basePath}/${file.name}`, identity);
+    const path = `${basePath}/${file.name}`;
+    await ensureParentFoldersAuthenticated(canisterId, databaseId, identity, path);
+    const current = await readNode(canisterId, databaseId, path, identity);
     await writeNodeAuthenticated(canisterId, identity, {
       databaseId,
-      path: `${basePath}/${file.name}`,
+      path,
       kind: "file",
       content: file.content,
       metadataJson: current?.metadataJson ?? "{}",
       expectedEtag: current?.etag ?? null
     });
-    written.push(`${basePath}/${file.name}`);
+    written.push(path);
   }
   return written;
 }

@@ -3,7 +3,7 @@
 // Why: Search behavior blends content, path, and title signals, so isolate it here.
 use std::collections::{BTreeMap, BTreeSet};
 
-use rusqlite::Connection;
+use crate::sqlite::Connection;
 use vfs_types::{NodeKind, SearchNodeHit, SearchPreview, SearchPreviewField, SearchPreviewMode};
 
 use crate::fs_helpers::{file_search_title, prefix_filter_sql_for_column};
@@ -101,7 +101,7 @@ pub(crate) fn load_ranked_fts_candidates(
     let limit = candidate_limit(top_k);
     let mut candidates = BTreeMap::new();
     for query in [&plan.exact_fts, &plan.recall_fts].into_iter().flatten() {
-        let mut values = vec![rusqlite::types::Value::from(query.clone())];
+        let mut values = vec![crate::sqlite::types::Value::from(query.clone())];
         let (scope_sql, scope_values) = non_root_prefix(prefix)
             .map(|prefix| prefix_filter_sql_for_column("fs_nodes.path", prefix, values.len() + 1))
             .unwrap_or_else(|| (String::new(), Vec::new()));
@@ -119,18 +119,20 @@ pub(crate) fn load_ranked_fts_candidates(
             scope_sql
         );
         let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(values.iter()), |row| {
+        let rows = crate::sqlite::query_map(
+            &mut stmt,
+            crate::sqlite::params_from_values(&values),
+            |row| {
                 Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, f32>(3)?,
+                    crate::sqlite::row_get::<i64>(row, 0)?,
+                    crate::sqlite::row_get::<String>(row, 1)?,
+                    crate::sqlite::row_get::<String>(row, 2)?,
+                    crate::sqlite::row_get::<f64>(row, 3)? as f32,
                 ))
-            })
-            .map_err(|error| error.to_string())?;
-        for row in rows {
-            let (row_id, path, kind, rank) = row.map_err(|error| error.to_string())?;
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        for (row_id, path, kind, rank) in rows {
             let kind = node_kind_from_db(&kind).map_err(|error| error.to_string())?;
             candidates.entry(row_id).or_insert_with(|| SearchCandidate {
                 row_id,
@@ -158,11 +160,11 @@ pub(crate) fn load_path_candidates(
          FROM fs_nodes
          WHERE 1 = 1",
     );
-    let mut values = vec![rusqlite::types::Value::from(terms[0].clone())];
+    let mut values = vec![crate::sqlite::types::Value::from(terms[0].clone())];
     for term in terms {
         let index = values.len() + 1;
         sql.push_str(&format!(" AND instr(lower(path), ?{index}) > 0"));
-        values.push(rusqlite::types::Value::from(term.clone()));
+        values.push(crate::sqlite::types::Value::from(term.clone()));
     }
     if let Some(prefix) = non_root_prefix(prefix) {
         let (scope_sql, scope_values) =
@@ -175,16 +177,21 @@ pub(crate) fn load_path_candidates(
         candidate_limit(top_k)
     ));
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
-        Ok(SearchPathHit {
-            row_id: row.get(0)?,
-            path: row.get(1)?,
-            kind: node_kind_from_db(&row.get::<_, String>(2)?)?,
-            score: path_match_score(row.get::<_, i64>(3)?, row.get::<_, i64>(4)?),
-        })
-    })
-    .map_err(|error| error.to_string())?
-    .collect::<Result<Vec<_>, _>>()
+    crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        |row| {
+            Ok(SearchPathHit {
+                row_id: crate::sqlite::row_get::<i64>(row, 0)?,
+                path: crate::sqlite::row_get::<String>(row, 1)?,
+                kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
+                score: path_match_score(
+                    crate::sqlite::row_get::<i64>(row, 3)?,
+                    crate::sqlite::row_get::<i64>(row, 4)?,
+                ),
+            })
+        },
+    )
     .map_err(|error| error.to_string())
 }
 
@@ -197,7 +204,7 @@ pub(crate) fn load_content_substring_candidates(
     if !plan.has_cjk {
         return Ok(Vec::new());
     }
-    let mut values = vec![rusqlite::types::Value::from(plan.raw_query.clone())];
+    let mut values = vec![crate::sqlite::types::Value::from(plan.raw_query.clone())];
     let (scope_sql, scope_values) = non_root_prefix(prefix)
         .map(|prefix| prefix_filter_sql_for_column("path", prefix, values.len() + 1))
         .unwrap_or_else(|| (String::new(), Vec::new()));
@@ -213,17 +220,19 @@ pub(crate) fn load_content_substring_candidates(
     );
     let mut candidates = Vec::new();
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    let rows = stmt
-        .query_map(rusqlite::params_from_iter(values.iter()), |row| {
+    let rows = crate::sqlite::query_map(
+        &mut stmt,
+        crate::sqlite::params_from_values(&values),
+        |row| {
             Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                crate::sqlite::row_get::<i64>(row, 0)?,
+                crate::sqlite::row_get::<String>(row, 1)?,
+                crate::sqlite::row_get::<String>(row, 2)?,
             ))
-        })
-        .map_err(|error| error.to_string())?;
-    for row in rows {
-        let (row_id, path, kind) = row.map_err(|error| error.to_string())?;
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    for (row_id, path, kind) in rows {
         candidates.push(SearchCandidate {
             row_id,
             path,
@@ -413,7 +422,8 @@ fn build_content_preview(
 ) -> Option<SearchPreview> {
     let reason = best_content_reason(&candidate.match_reasons)?;
     let (offset, matched_len) = match reason {
-        "content_substring" => find_query_anchor(content, &plan.raw_query),
+        "content_substring" => find_query_anchor(content, &plan.raw_query)
+            .or_else(|| find_terms_anchor(content, &plan.path_terms)),
         "content_fts" => find_fts_anchor(content, plan),
         _ => None,
     }?;
@@ -472,12 +482,14 @@ fn load_contents_by_id(conn: &Connection, ids: &[i64]) -> Result<BTreeMap<i64, S
         .join(", ");
     let sql = format!("SELECT id, content FROM fs_nodes WHERE id IN ({placeholders})");
     let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    stmt.query_map(rusqlite::params_from_iter(ids.iter().copied()), |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    let rows = crate::sqlite::query_map(&mut stmt, crate::sqlite::params_from_i64s(ids), |row| {
+        Ok((
+            crate::sqlite::row_get::<i64>(row, 0)?,
+            crate::sqlite::row_get::<String>(row, 1)?,
+        ))
     })
-    .map_err(|error| error.to_string())?
-    .collect::<Result<BTreeMap<_, _>, _>>()
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string())?;
+    Ok(rows.into_iter().collect())
 }
 
 fn find_fts_anchor(content: &str, plan: &SearchQueryPlan) -> Option<(usize, usize)> {
@@ -591,14 +603,15 @@ pub(crate) fn path_match_score(first_match_position: i64, path_length: i64) -> f
     ((first_match_position - 1) * 10_000 + path_length) as f32
 }
 
-fn node_kind_from_db(value: &str) -> Result<NodeKind, rusqlite::Error> {
+fn node_kind_from_db(value: &str) -> Result<NodeKind, crate::sqlite::Error> {
     match value {
         "file" => Ok(NodeKind::File),
         "source" => Ok(NodeKind::Source),
-        _ => Err(rusqlite::Error::InvalidColumnType(
+        "folder" => Ok(NodeKind::Folder),
+        _ => Err(crate::sqlite::invalid_column_type(
             1,
             "kind".to_string(),
-            rusqlite::types::Type::Text,
+            crate::sqlite::types::Type::Text,
         )),
     }
 }
