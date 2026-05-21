@@ -171,6 +171,15 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: extensions/wiki-clipper/package-lock.json
+      - name: Enable corepack
+        run: corepack enable
+        working-directory: .
       - run: npm ci
+      - name: Install wikibrowser dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: wikibrowser
       - run: npm run build
       - run: npm test
+      - run: npm run store-assets:generate
+      - run: npm run release:package
+      - run: npm run release:check

@@ -37,6 +37,8 @@ jobs:
           npm install --global --prefix "$prefix" "./${package_tgz}"
           "$prefix/bin/kinic-vfs-cli" --version
           "$prefix/bin/kinic-vfs-cli" codex setup --help
+          setup_json="$(HOME="$(mktemp -d)" "$prefix/bin/kinic-vfs-cli" codex setup --json)"
+          node -e 'const setup = JSON.parse(process.argv[1]); if (setup.status !== "ready") process.exit(1);' "$setup_json"
       - name: Publish
         working-directory: npm/kinic-vfs-cli
         env:

@@ -216,6 +216,7 @@ kinic-vfs-cli hermes pull
 ```
 
 `hermes setup` installs a self-contained plugin under `$HERMES_HOME/plugins/kinic`, enables `kinic` in `$HERMES_HOME/config.yaml`, and keeps skill projection under `$KINIC_HOME/hermes-current/skills`.
+This Hermes projection path is Hermes-specific.
 The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
 `hermes pull` prunes stale managed skill directories and deleted exported files while leaving unmanaged files directly under the projection root alone.
 Then run this inside Hermes:
@@ -257,6 +258,7 @@ It calls the same Python runner used by Hermes:
 
 Codex reads the prepared messages, generates the candidate `SKILL.md`, and the runner writes the proposal, evaluates gates, applies accepted candidates, and completes the job.
 It passes `generator: codex-plugin` and `llm_route: codex-skill` into proposal metrics.
+Codex writes accepted skill projection to `$KINIC_SKILL_PROJECTION_DIR`, defaulting to `$HOME/.kinic/skill-projection/skills`; it does not read `KINIC_HERMES_PROJECTION_DIR`.
 
 Claude Code uses a separate skill-only plugin with the same run/evolve surface:
 
@@ -267,6 +269,7 @@ kinic-vfs-cli claude setup
 The command installs a local Claude Code marketplace under `~/.claude/plugins/kinic`, copies a self-contained plugin into that marketplace, and enables `kinic-skill-recorder@kinic` in `~/.claude/settings.json`.
 The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
 It passes `generator: claude-code-plugin` and `llm_route: claude-code-skill` into proposal metrics.
+Claude Code writes accepted skill projection to `$KINIC_SKILL_PROJECTION_DIR`, defaulting to `$HOME/.kinic/skill-projection/skills`; it does not read `KINIC_HERMES_PROJECTION_DIR`.
 
 Set `KINIC_VFS_CLI_ALLOW_NON_II=1` only for explicit non-II operator workflows.
 

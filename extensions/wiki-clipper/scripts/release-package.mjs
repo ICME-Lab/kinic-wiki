@@ -50,7 +50,10 @@ async function writeStoreManifest() {
 async function copyPackageRoots() {
   for (const packageRoot of packageRoots) {
     if (packageRoot === "manifest.json") continue;
-    await cp(resolve(root, packageRoot), resolve(stagingDir, packageRoot), {
+    const source = resolve(root, packageRoot);
+    const target = resolve(stagingDir, packageRoot);
+    await mkdir(dirname(target), { recursive: true });
+    await cp(source, target, {
       recursive: true
     });
   }
