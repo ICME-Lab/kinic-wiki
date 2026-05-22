@@ -17,6 +17,7 @@ async function main() {
   const searchUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/search`;
   const graphUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/graph?center=${encodeURIComponent(target.nodePath)}&depth=1`;
   const emptyGraphUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/graph`;
+  const helpUrl = `${target.origin}/${encodeURIComponent(target.databaseId)}/help`;
   const targetContext = await readTargetContext(target.databaseId, target.nodePath);
   const targetNode = targetContext.node;
   const contentProbe = contentProbeFor(targetNode.content);
@@ -34,15 +35,17 @@ async function main() {
   run("open", [`${searchUrl}?q=${encodeURIComponent(fullQuery)}&kind=full`]);
   assertSnapshotIncludes(target.nodePath);
   assertSnapshotIncludes("Full text");
-  run("open", [`${url}?tab=recent`]);
-  assertSnapshotIncludes("Recent");
-  run("open", [`${url}?tab=sources`]);
-  assertSnapshotIncludes("Save source URL");
+  run("open", [`${url}?tab=query`]);
+  assertSnapshotIncludes("Query");
   run("open", [graphUrl]);
   assertSnapshotIncludes("Local link graph");
   assertSnapshotIncludes(target.nodePath);
   run("open", [emptyGraphUrl]);
   assertSnapshotIncludes("Open Graph from a wiki page to inspect its local neighborhood.");
+  run("open", [helpUrl]);
+  assertSnapshotIncludes("Wiki browser help");
+  assertSnapshotIncludes("Path search matches node paths.");
+  assertSnapshotIncludes("Internet Identity is required");
   assertNoSnapshotText("Cannot reach IC host");
 
   console.log(`Wiki browser smoke OK: ${target.databaseId} ${target.nodePath}`);

@@ -53,7 +53,7 @@ export function IngestPanel({
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 text-sm">
       <form className="grid gap-3" onSubmit={submit}>
         <div>
-          <label className="text-xs uppercase tracking-[0.12em] text-muted" htmlFor="ingest-url">
+          <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted" htmlFor="ingest-url">
             URL
           </label>
           <input

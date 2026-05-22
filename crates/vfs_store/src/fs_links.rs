@@ -205,8 +205,21 @@ fn edge_from_row(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<LinkEdge
 
 fn extract_link_edges(source_path: &str, content: &str, updated_at: i64) -> Vec<LinkEdge> {
     let mut edges = Vec::new();
-    extract_markdown_links(source_path, content, updated_at, &mut edges);
-    extract_wikilinks(source_path, content, updated_at, &mut edges);
+    let excluded_ranges = link_excluded_ranges(content);
+    extract_markdown_links(
+        source_path,
+        content,
+        updated_at,
+        &excluded_ranges,
+        &mut edges,
+    );
+    extract_wikilinks(
+        source_path,
+        content,
+        updated_at,
+        &excluded_ranges,
+        &mut edges,
+    );
     edges
 }
 
@@ -214,10 +227,15 @@ fn extract_markdown_links(
     source_path: &str,
     content: &str,
     updated_at: i64,
+    excluded_ranges: &[TextRange],
     edges: &mut Vec<LinkEdge>,
 ) {
     let mut offset = 0;
     while let Some(open) = content[offset..].find('[').map(|index| offset + index) {
+        if is_excluded_position(excluded_ranges, open) {
+            offset = open + 1;
+            continue;
+        }
         if open > 0 && content.as_bytes()[open - 1] == b'!' {
             offset = open + 1;
             continue;
@@ -235,14 +253,32 @@ fn extract_markdown_links(
         };
         let text = &content[open + 1..close];
         let raw_href = &content[href_start..href_end];
-        push_edge(source_path, text, raw_href, "markdown", updated_at, edges);
+        push_edge(
+            source_path,
+            raw_href,
+            raw_href,
+            text,
+            "markdown",
+            updated_at,
+            edges,
+        );
         offset = href_end + 1;
     }
 }
 
-fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &mut Vec<LinkEdge>) {
+fn extract_wikilinks(
+    source_path: &str,
+    content: &str,
+    updated_at: i64,
+    excluded_ranges: &[TextRange],
+    edges: &mut Vec<LinkEdge>,
+) {
     let mut offset = 0;
     while let Some(open) = content[offset..].find("[[").map(|index| offset + index) {
+        if is_excluded_position(excluded_ranges, open) {
+            offset = open + 2;
+            continue;
+        }
         let href_start = open + 2;
         let Some(close) = content[href_start..]
             .find("]]")
@@ -251,10 +287,12 @@ fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &
             break;
         };
         let raw_href = &content[href_start..close];
+        let (target_href, link_text) = split_wikilink_alias(raw_href);
         push_edge(
             source_path,
             raw_href,
-            raw_href,
+            target_href,
+            link_text,
             "wikilink",
             updated_at,
             edges,
@@ -263,16 +301,155 @@ fn extract_wikilinks(source_path: &str, content: &str, updated_at: i64, edges: &
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TextRange {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MarkdownFence {
+    marker: u8,
+    length: usize,
+}
+
+fn link_excluded_ranges(content: &str) -> Vec<TextRange> {
+    let mut ranges = Vec::new();
+    let mut offset = 0;
+    let mut fence = None;
+    for line in content.split_inclusive('\n') {
+        let line_start = offset;
+        let line_end = offset + line.len();
+        let line_body = trim_line_ending(line);
+        if let Some(open_fence) = fence {
+            ranges.push(TextRange {
+                start: line_start,
+                end: line_end,
+            });
+            if is_closing_fence_line(line_body, open_fence) {
+                fence = None;
+            }
+        } else if let Some(open_fence) = parse_opening_fence_line(line_body) {
+            ranges.push(TextRange {
+                start: line_start,
+                end: line_end,
+            });
+            fence = Some(open_fence);
+        } else if is_indented_code_line(line_body) {
+            ranges.push(TextRange {
+                start: line_start,
+                end: line_end,
+            });
+        } else {
+            collect_inline_code_ranges(line_body, line_start, &mut ranges);
+        }
+        offset = line_end;
+    }
+    ranges
+}
+
+fn trim_line_ending(line: &str) -> &str {
+    line.trim_end_matches(['\r', '\n'])
+}
+
+fn is_excluded_position(ranges: &[TextRange], position: usize) -> bool {
+    ranges
+        .iter()
+        .any(|range| range.start <= position && position < range.end)
+}
+
+fn collect_inline_code_ranges(line: &str, line_start: usize, ranges: &mut Vec<TextRange>) {
+    let mut index = 0;
+    let bytes = line.as_bytes();
+    while index < bytes.len() {
+        if bytes[index] == b'`'
+            && let Some(end) = find_inline_code_end(line, index)
+        {
+            ranges.push(TextRange {
+                start: line_start + index,
+                end: line_start + end,
+            });
+            index = end;
+            continue;
+        }
+        index += 1;
+    }
+}
+
+fn find_inline_code_end(line: &str, start: usize) -> Option<usize> {
+    let run_length = count_backtick_run(line.as_bytes(), start);
+    let needle = "`".repeat(run_length);
+    line[start + run_length..]
+        .find(&needle)
+        .map(|index| start + run_length + index + run_length)
+}
+
+fn count_backtick_run(bytes: &[u8], start: usize) -> usize {
+    let mut index = start;
+    while index < bytes.len() && bytes[index] == b'`' {
+        index += 1;
+    }
+    index - start
+}
+
+fn parse_opening_fence_line(line: &str) -> Option<MarkdownFence> {
+    let bytes = line.as_bytes();
+    let spaces = count_leading_spaces(bytes);
+    if spaces > 3 {
+        return None;
+    }
+    let marker = *bytes.get(spaces)?;
+    if marker != b'`' && marker != b'~' {
+        return None;
+    }
+    let length = count_marker_run(bytes, spaces, marker);
+    if length < 3 {
+        return None;
+    }
+    Some(MarkdownFence { marker, length })
+}
+
+fn is_closing_fence_line(line: &str, fence: MarkdownFence) -> bool {
+    let bytes = line.as_bytes();
+    let spaces = count_leading_spaces(bytes);
+    if spaces > 3 || bytes.get(spaces) != Some(&fence.marker) {
+        return false;
+    }
+    let length = count_marker_run(bytes, spaces, fence.marker);
+    if length < fence.length {
+        return false;
+    }
+    bytes[spaces + length..]
+        .iter()
+        .all(|byte| *byte == b' ' || *byte == b'\t')
+}
+
+fn count_leading_spaces(bytes: &[u8]) -> usize {
+    bytes.iter().take_while(|byte| **byte == b' ').count()
+}
+
+fn count_marker_run(bytes: &[u8], start: usize, marker: u8) -> usize {
+    bytes[start..]
+        .iter()
+        .take_while(|byte| **byte == marker)
+        .count()
+}
+
+fn is_indented_code_line(line: &str) -> bool {
+    line.starts_with('\t') || line.starts_with("    ")
+}
+
 fn push_edge(
     source_path: &str,
-    link_text: &str,
     raw_href: &str,
+    target_href: &str,
+    link_text: &str,
     link_kind: &str,
     updated_at: i64,
     edges: &mut Vec<LinkEdge>,
 ) {
     let strip_title = link_kind == "markdown";
-    let Some(target_path) = resolve_link_target(source_path, raw_href, strip_title) else {
+    let Some(target_path) = resolve_link_target(source_path, target_href, strip_title) else {
         return;
     };
     edges.push(LinkEdge {
@@ -283,6 +460,16 @@ fn push_edge(
         link_kind: link_kind.to_string(),
         updated_at,
     });
+}
+
+fn split_wikilink_alias(raw_href: &str) -> (&str, &str) {
+    let Some((target, alias)) = raw_href.split_once('|') else {
+        return (raw_href, raw_href);
+    };
+    if alias.trim().is_empty() {
+        return (target, target);
+    }
+    (target, alias)
 }
 
 fn resolve_link_target(source_path: &str, raw_href: &str, strip_title: bool) -> Option<String> {
@@ -299,7 +486,7 @@ fn resolve_link_target(source_path: &str, raw_href: &str, strip_title: bool) -> 
     if path_part.is_empty() {
         return None;
     }
-    let resolved = if path_part.starts_with("/Wiki") || path_part.starts_with("/Sources") {
+    let resolved = if is_internal_wiki_path(path_part) {
         path_part.to_string()
     } else if path_part.starts_with('/') {
         return None;
@@ -307,6 +494,13 @@ fn resolve_link_target(source_path: &str, raw_href: &str, strip_title: bool) -> 
         resolve_relative_path(source_path, path_part)
     };
     normalize_node_path(&resolved, false).ok()
+}
+
+fn is_internal_wiki_path(path: &str) -> bool {
+    path == "/Wiki"
+        || path.starts_with("/Wiki/")
+        || path == "/Sources"
+        || path.starts_with("/Sources/")
 }
 
 fn find_markdown_href_end(content: &str, href_start: usize) -> Option<usize> {
@@ -473,5 +667,69 @@ mod tests {
         assert_eq!(edges[0].raw_href, "Project \"Alpha\".md");
         assert_eq!(edges[1].target_path, "/Wiki/topic/Project (Alpha).md");
         assert_eq!(edges[1].raw_href, "Project (Alpha).md");
+    }
+
+    #[test]
+    fn wikilink_parser_splits_alias_from_target_path() {
+        let edges = edges_for(
+            "[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]] [[relative.md|]] [[note.md|A|B]]",
+        );
+
+        assert_eq!(edges.len(), 3);
+        assert_eq!(edges[0].target_path, "/Sources/raw/a/a.md");
+        assert_eq!(
+            edges[0].raw_href,
+            "/Sources/raw/a/a.md|opencode.ai/DESIGN.md"
+        );
+        assert_eq!(edges[0].link_text, "opencode.ai/DESIGN.md");
+        assert_eq!(edges[1].target_path, "/Wiki/topic/relative.md");
+        assert_eq!(edges[1].raw_href, "relative.md|");
+        assert_eq!(edges[1].link_text, "relative.md");
+        assert_eq!(edges[2].target_path, "/Wiki/topic/note.md");
+        assert_eq!(edges[2].raw_href, "note.md|A|B");
+        assert_eq!(edges[2].link_text, "A|B");
+    }
+
+    #[test]
+    fn link_parser_ignores_links_inside_fenced_code_blocks() {
+        let edges = edges_for(
+            "```md\n[[alpha.md|Alpha]]\n[Alpha](alpha.md)\n``` not close\n[[still-code.md|Still]]\n```\n[[beta.md|Beta]]",
+        );
+
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target_path, "/Wiki/topic/beta.md");
+        assert_eq!(edges[0].link_text, "Beta");
+    }
+
+    #[test]
+    fn link_parser_ignores_links_inside_inline_code() {
+        let edges = edges_for(
+            "`[[alpha.md|Alpha]]` `[Alpha](alpha.md)` [[beta.md|Beta]] [Gamma](gamma.md)",
+        );
+
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].target_path, "/Wiki/topic/gamma.md");
+        assert_eq!(edges[1].target_path, "/Wiki/topic/beta.md");
+    }
+
+    #[test]
+    fn link_parser_ignores_links_inside_indented_code_lines() {
+        let edges = edges_for("    [[alpha.md|Alpha]]\n\t[Alpha](alpha.md)\n[[beta.md|Beta]]");
+
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target_path, "/Wiki/topic/beta.md");
+    }
+
+    #[test]
+    fn absolute_internal_link_targets_require_segment_boundary() {
+        let edges = edges_for(
+            "[Wiki](/Wiki) [Wiki page](/Wiki/a.md) [Sources](/Sources) [Source](/Sources/a.md) [Bad wiki](/Wikipedia/a.md) [Bad source](/SourcesBackup/a.md)",
+        );
+
+        assert_eq!(edges.len(), 4);
+        assert_eq!(edges[0].target_path, "/Wiki");
+        assert_eq!(edges[1].target_path, "/Wiki/a.md");
+        assert_eq!(edges[2].target_path, "/Sources");
+        assert_eq!(edges[3].target_path, "/Sources/a.md");
     }
 }

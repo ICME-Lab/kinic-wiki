@@ -9,11 +9,12 @@ const { sortChildNodes } = await importTs("../lib/child-sort.ts");
 const { folderIndexPath, isFolderIndexNode, isReservedFolderIndexName, visibleChildren } = await importTs("../lib/folder-index.ts");
 const { cycleTone, formatCycles, formatRawCycles } = await importTs("../lib/cycles.ts");
 const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-sections.ts");
+const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
+const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
 const { publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
-const { buildSourceClipDocument, normalizeClipUrl, parseTags, sourceClipPath, renderSourceClipMarkdown } = await importTs("../lib/source-clips.ts");
 const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx", import.meta.url), "utf8");
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
@@ -82,7 +83,7 @@ assert.doesNotMatch(wikiBrowserSource, /path: indexNode\.path/);
 assert.match(wikiBrowserSource, /expectedFolderIndexEtag: indexNode\?\.etag \?\? null/);
 assert.doesNotMatch(wikiBrowserSource, /currentFolderIndexNode\.data\?\.path === folderIndexPath\(target\.path\)/);
 assert.match(wikiBrowserSource, /memberDatabases\.find/);
-assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest", "sources"\]/);
+assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest"\]/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
 assert.match(wikiBrowserSource, /databaseName=\{currentDatabase\?\.name \?\? databaseId\}/);
 assert.match(inspectorSource, /databaseName: string/);
@@ -124,7 +125,7 @@ assert.match(queryPanelSource, /sessionNonce/);
 assert.match(queryPanelSource, /2_000/);
 assert.match(queryPanelSource, /htmlFor="query-command">Query/);
 assert.match(queryPanelSource, /LLM answer/);
-assert.match(queryPanelSource, /Search by default/);
+assert.doesNotMatch(queryPanelSource, /Search by default/);
 assert.match(queryPanelSource, /non-LLM/);
 assert.match(queryPanelSource, /read-only/);
 assert.match(queryContextSource, /isAnswerContextNode\(input\.currentNode\)/);
@@ -243,6 +244,7 @@ assert.equal(canExpandChildNode(child("/Wiki/file-parent", "file-parent", "file"
 assert.equal(canExpandChildNode(child("/Wiki/file-leaf.md", "file-leaf.md", "file", false)), false);
 assert.equal(canExpandChildNode(child("/Wiki/folder", "folder", "folder", false)), true);
 assert.equal(parseModeTab("query"), "query");
+assert.equal(parseModeTab("sources"), "explorer");
 assert.deepEqual(queryAnswerSearchTerms("vetkeyについて教えて"), ["vetkey"]);
 assert.deepEqual(queryAnswerSearchTerms("What does the wiki say about vetKey?"), ["vetKey"]);
 assert.equal(parseModeTab("recent"), "explorer");
@@ -350,6 +352,53 @@ assert.equal(
   xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
   "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Falpha%2520db%2FWiki%3Fread%3Danonymous"
 );
+assert.equal(
+  renderWikilinksAsMarkdown("[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]"),
+  "[opencode.ai/DESIGN.md](</Sources/raw/a/a.md>)"
+);
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md]]"), "[notes/alpha.md](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|]]"), "[notes/alpha.md](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|A|B]]"), "[A\\|B](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("| [[notes/alpha.md|A|B]] |"), "| [A\\|B](<notes/alpha.md>) |");
+assert.equal(renderWikilinksAsMarkdown("`[[notes/alpha.md|Alpha]]`"), "`[[notes/alpha.md|Alpha]]`");
+assert.equal(renderWikilinksAsMarkdown(" [[notes/alpha.md|Alpha]]"), " [Alpha](<notes/alpha.md>)");
+assert.equal(renderWikilinksAsMarkdown("    [[notes/alpha.md|Alpha]]"), "    [[notes/alpha.md|Alpha]]");
+assert.equal(renderWikilinksAsMarkdown("\t[[notes/alpha.md|Alpha]]"), "\t[[notes/alpha.md|Alpha]]");
+assert.equal(
+  renderWikilinksAsMarkdown("before [[notes/a.md|A]] `[[notes/b.md|B]]` after [[notes/c.md|C]]"),
+  "before [A](<notes/a.md>) `[[notes/b.md|B]]` after [C](<notes/c.md>)"
+);
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md"), "[[notes/alpha.md");
+assert.equal(
+  renderWikilinksAsMarkdown("```md\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
+  "```md\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("~~~md\n[[notes/alpha.md|Alpha]]\n~~~\n[[notes/beta.md|Beta]]"),
+  "~~~md\n[[notes/alpha.md|Alpha]]\n~~~\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("```md\n~~~\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
+  "```md\n~~~\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("~~~md\n```\n[[notes/alpha.md|Alpha]]\n~~~\n[[notes/beta.md|Beta]]"),
+  "~~~md\n```\n[[notes/alpha.md|Alpha]]\n~~~\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("```md\n``` not close\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
+  "```md\n``` not close\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("```md\r\n[[notes/alpha.md|Alpha]]\r\n```\r\n[[notes/beta.md|Beta]]"),
+  "```md\r\n[[notes/alpha.md|Alpha]]\r\n```\r\n[Beta](<notes/beta.md>)"
+);
+assert.equal(renderWikilinksAsMarkdown("![[notes/alpha.md|Alpha]]"), "![[notes/alpha.md|Alpha]]");
+assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|Alpha]]"), "[Alpha](<notes/alpha.md>)");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/foo.md"), "/db-1/Wiki/foo.md");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db-1/Sources/foo.md#top");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wikipedia/foo.md"), null);
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/SourcesBackup/foo.md"), null);
 
 const cachedNodeContext = {
   node: {
@@ -384,38 +433,6 @@ assert.equal(cycleTone(5_000_000_000_000n), "blue");
 assert.equal(cycleTone(1_000_000_000_000n), "amber");
 assert.equal(cycleTone(999_999_999_999n), "red");
 assert.equal(cycleTone(null), "gray");
-assert.equal(normalizeClipUrl("HTTPS://Example.COM:443/a?b=1#section"), "https://example.com/a?b=1");
-assert.throws(() => normalizeClipUrl("ftp://example.com/a"), /http or https/);
-assert.deepEqual(parseTags("#easy, dinner easy\nquick"), ["easy", "dinner", "quick"]);
-const clipPath = await sourceClipPath("https://example.com/a?b=1");
-assert.match(clipPath, /^\/Sources\/raw\/clip-example\.com-[a-f0-9]{12}\/clip-example\.com-[a-f0-9]{12}\.md$/);
-assert.equal(clipPath, await sourceClipPath("https://example.com/a?b=1"));
-const clipSegments = clipPath.split("/");
-assert.equal(clipSegments.at(-1), `${clipSegments.at(-2)}.md`);
-const clipMarkdown = renderSourceClipMarkdown({
-  url: "https://example.com/a",
-  title: "Weeknight Pasta",
-  site: "example.com",
-  capturedAt: "2026-05-12T00:00:00.000Z",
-  tags: ["easy", "pasta"],
-  userNote: "halve salt",
-  extractedText: "Ingredients\n- tomato"
-});
-assert.match(clipMarkdown, /source_url: "https:\/\/example\.com\/a"/);
-assert.match(clipMarkdown, /# Weeknight Pasta/);
-assert.match(clipMarkdown, /halve salt/);
-const clipDocument = await buildSourceClipDocument({
-  url: "https://example.com/a#ignored",
-  title: "Weeknight Pasta",
-  site: "example.com",
-  capturedAt: "2026-05-12T00:00:00.000Z",
-  tags: ["easy"],
-  userNote: "",
-  extractedText: "body"
-});
-assert.equal(clipDocument.normalizedUrl, "https://example.com/a");
-assert.match(clipDocument.path, /^\/Sources\/raw\/clip-example\.com-[a-f0-9]{12}\/clip-example\.com-[a-f0-9]{12}\.md$/);
-assert.equal(JSON.parse(clipDocument.metadataJson).app, "source_clip");
 assert.match(searchPanelSource, /prefix = "\/Wiki"/);
 assert.match(searchPanelSource, /prefix, readIdentity/);
 

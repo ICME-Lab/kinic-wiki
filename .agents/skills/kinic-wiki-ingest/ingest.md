@@ -65,6 +65,8 @@ Use this workflow when ingesting many local files, for example 10 or more raw so
 5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
 6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
 
+For bulk repair of existing wiki nodes without new source material, use `kinic-wiki-edit` instead of this ingest workflow.
+
 ## Working Rules
 
 - Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
@@ -119,7 +121,9 @@ Use this workflow when ingesting many local files, for example 10 or more raw so
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:
   - Bulk writes: client/canister `write_nodes`
+  - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
   - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Multi-node edits: no stable single CLI batch command; build a path list, read etags, and run etag-aware per-node edits unless using a deliberate client/canister API script
 - Delete semantics:
   - `delete-node`: delete one node path
   - `delete-tree`: delete real node paths under a prefix, deepest-first

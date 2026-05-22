@@ -3,7 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
-import { AlertTriangle, Clock3, Link2, MessageSquareText, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Clock3, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
 import { RecentPanel } from "@/components/recent-panel";
 import { createUrlIngestRequest } from "@/lib/url-ingest";
 import { collectLintHints, type LintHint } from "@/lib/lint-hints";
@@ -167,7 +167,6 @@ export function QueryPanel({
       <form className="border-b border-line p-3" onSubmit={submit}>
         <div className="flex items-center justify-between gap-2">
           <label className="text-xs font-semibold uppercase tracking-[0.12em] text-muted" htmlFor="query-command">Query</label>
-          <span className="rounded border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">Search by default</span>
         </div>
         <div className="mt-2 grid gap-2">
           <textarea
@@ -208,6 +207,12 @@ function ActionPreview({ action, busy, onConfirm }: { action: QueryAction; busy:
             <MetaBadge>{action.sideEffect === "none" ? "read-only" : action.sideEffect}</MetaBadge>
           </div>
           <p className="mt-1 truncate font-mono text-[11px] text-muted">{target}</p>
+          {busy && action.kind === "ask" ? (
+            <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] font-semibold text-accent">
+              <LoaderCircle className="animate-spin" size={12} />
+              <span>Thinking...</span>
+            </p>
+          ) : null}
         </div>
       </div>
       {onConfirm ? (

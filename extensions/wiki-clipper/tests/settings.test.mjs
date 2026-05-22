@@ -34,10 +34,13 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(popupCss, /--kinic-ink: #000000/);
   assert.match(contentUi, /--kinic-hot-pink:#ff2686/);
   assert.match(contentUi, /chrome\.runtime\.getURL\("icons\/icon-32\.png"\)/);
+  assert.match(contentUi, /type: "open-settings"/);
   assert.match(storeAssets, /#ff2686/);
   assert.match(storeAssets, /icons\/icon-128\.png/);
   assert.match(contentUi, /Kinic Wiki Clipper/);
   assert.match(contentUi, /ChatGPT export/);
+  assert.doesNotMatch(contentUi, /Database ID/);
+  assert.doesNotMatch(contentUi, /type: "save-config"/);
   assert.doesNotMatch(contentUi, /Kinic Memory/);
 });
 
