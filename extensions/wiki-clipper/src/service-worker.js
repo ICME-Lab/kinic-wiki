@@ -79,6 +79,10 @@ export async function handleMessage(message, sender) {
   if (message?.type === "auth-status") {
     return { ok: true, result: await authStatus() };
   }
+  if (message?.type === "open-settings") {
+    await openSettingsOnce();
+    return { ok: true };
+  }
   if (message?.type === "latest-url-ingest-status") {
     return { ok: true, value: await readLatestUrlIngestStatus() };
   }
@@ -184,7 +188,6 @@ async function saveSource(capture, overrideConfig, sender) {
     }
     throw new Error(message);
   }
-  await saveConfig(config);
   return {
     path: result.result.path,
     sourceId: result.result.sourceId,

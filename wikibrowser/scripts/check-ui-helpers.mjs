@@ -126,7 +126,7 @@ assert.match(queryPanelSource, /sessionNonce/);
 assert.match(queryPanelSource, /2_000/);
 assert.match(queryPanelSource, /htmlFor="query-command">Query/);
 assert.match(queryPanelSource, /LLM answer/);
-assert.match(queryPanelSource, /Search by default/);
+assert.doesNotMatch(queryPanelSource, /Search by default/);
 assert.match(queryPanelSource, /non-LLM/);
 assert.match(queryPanelSource, /read-only/);
 assert.match(queryContextSource, /isAnswerContextNode\(input\.currentNode\)/);
@@ -388,6 +388,10 @@ assert.equal(
 assert.equal(
   renderWikilinksAsMarkdown("```md\n``` not close\n[[notes/alpha.md|Alpha]]\n```\n[[notes/beta.md|Beta]]"),
   "```md\n``` not close\n[[notes/alpha.md|Alpha]]\n```\n[Beta](<notes/beta.md>)"
+);
+assert.equal(
+  renderWikilinksAsMarkdown("```md\r\n[[notes/alpha.md|Alpha]]\r\n```\r\n[[notes/beta.md|Beta]]"),
+  "```md\r\n[[notes/alpha.md|Alpha]]\r\n```\r\n[Beta](<notes/beta.md>)"
 );
 assert.equal(renderWikilinksAsMarkdown("![[notes/alpha.md|Alpha]]"), "![[notes/alpha.md|Alpha]]");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|Alpha]]"), "[Alpha](<notes/alpha.md>)");

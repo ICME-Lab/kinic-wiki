@@ -14,7 +14,8 @@ import {
 } from "../src/service-worker.js";
 
 test("save-source delegates raw source writes to offscreen", async () => {
-  const restore = installChromeStorage(memoryStorage());
+  const syncStorage = memoryStorage();
+  const restore = installChromeStorage(syncStorage);
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
@@ -38,6 +39,7 @@ test("save-source delegates raw source writes to offscreen", async () => {
     assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt-abc/chatgpt-abc.md");
     assert.equal(response.result.created, false);
     assert.equal(response.result.etag, "etag-2");
+    assert.equal(syncStorage.getItem("databaseId"), null);
   } finally {
     setOffscreenBridgeForTest(null);
     restore();
@@ -92,6 +94,23 @@ test("auth-status opens settings when unauthenticated", async () => {
     assert.deepEqual(settingsTabs, ["options"]);
   } finally {
     setOffscreenBridgeForTest(null);
+    resetSettingsOpenThrottleForTest();
+    restore();
+  }
+});
+
+test("open-settings message opens settings once", async () => {
+  const settingsTabs = [];
+  resetSettingsOpenThrottleForTest();
+  const restore = installChromeForSettings(memoryStorage(), settingsTabs);
+  try {
+    const first = await handleMessage({ type: "open-settings" }, null);
+    const second = await handleMessage({ type: "open-settings" }, null);
+
+    assert.deepEqual(first, { ok: true });
+    assert.deepEqual(second, { ok: true });
+    assert.deepEqual(settingsTabs, ["options"]);
+  } finally {
     resetSettingsOpenThrottleForTest();
     restore();
   }

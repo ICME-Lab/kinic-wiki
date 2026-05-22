@@ -105,7 +105,8 @@ function parseOpeningFenceLine(line: string): MarkdownFence | null {
 }
 
 function isClosingFenceLine(line: string, fence: MarkdownFence): boolean {
-  const match = /^( {0,3})(`{3,}|~{3,})[ \t]*$/.exec(line);
+  const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
+  const match = /^( {0,3})(`{3,}|~{3,})[ \t]*$/.exec(normalized);
   if (!match) {
     return false;
   }
