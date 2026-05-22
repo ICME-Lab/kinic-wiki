@@ -36,9 +36,7 @@ async function main() {
   assertSnapshotIncludes(target.nodePath);
   assertSnapshotIncludes("Full text");
   run("open", [`${url}?tab=query`]);
-  assertSnapshotIncludes("Search by default");
-  run("open", [`${url}?tab=sources`]);
-  assertSnapshotIncludes("Save source URL");
+  assertSnapshotIncludes("Query");
   run("open", [graphUrl]);
   assertSnapshotIncludes("Local link graph");
   assertSnapshotIncludes(target.nodePath);

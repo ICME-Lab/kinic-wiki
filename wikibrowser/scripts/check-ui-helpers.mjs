@@ -15,7 +15,6 @@ const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
 const { publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
-const { buildSourceClipDocument, normalizeClipUrl, parseTags, sourceClipPath, renderSourceClipMarkdown } = await importTs("../lib/source-clips.ts");
 const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx", import.meta.url), "utf8");
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
@@ -84,7 +83,7 @@ assert.doesNotMatch(wikiBrowserSource, /path: indexNode\.path/);
 assert.match(wikiBrowserSource, /expectedFolderIndexEtag: indexNode\?\.etag \?\? null/);
 assert.doesNotMatch(wikiBrowserSource, /currentFolderIndexNode\.data\?\.path === folderIndexPath\(target\.path\)/);
 assert.match(wikiBrowserSource, /memberDatabases\.find/);
-assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest", "sources"\]/);
+assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest"\]/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
 assert.match(wikiBrowserSource, /databaseName=\{currentDatabase\?\.name \?\? databaseId\}/);
 assert.match(inspectorSource, /databaseName: string/);
@@ -245,6 +244,7 @@ assert.equal(canExpandChildNode(child("/Wiki/file-parent", "file-parent", "file"
 assert.equal(canExpandChildNode(child("/Wiki/file-leaf.md", "file-leaf.md", "file", false)), false);
 assert.equal(canExpandChildNode(child("/Wiki/folder", "folder", "folder", false)), true);
 assert.equal(parseModeTab("query"), "query");
+assert.equal(parseModeTab("sources"), "explorer");
 assert.deepEqual(queryAnswerSearchTerms("vetkeyについて教えて"), ["vetkey"]);
 assert.deepEqual(queryAnswerSearchTerms("What does the wiki say about vetKey?"), ["vetKey"]);
 assert.equal(parseModeTab("recent"), "explorer");
@@ -433,38 +433,6 @@ assert.equal(cycleTone(5_000_000_000_000n), "blue");
 assert.equal(cycleTone(1_000_000_000_000n), "amber");
 assert.equal(cycleTone(999_999_999_999n), "red");
 assert.equal(cycleTone(null), "gray");
-assert.equal(normalizeClipUrl("HTTPS://Example.COM:443/a?b=1#section"), "https://example.com/a?b=1");
-assert.throws(() => normalizeClipUrl("ftp://example.com/a"), /http or https/);
-assert.deepEqual(parseTags("#easy, dinner easy\nquick"), ["easy", "dinner", "quick"]);
-const clipPath = await sourceClipPath("https://example.com/a?b=1");
-assert.match(clipPath, /^\/Sources\/raw\/clip-example\.com-[a-f0-9]{12}\/clip-example\.com-[a-f0-9]{12}\.md$/);
-assert.equal(clipPath, await sourceClipPath("https://example.com/a?b=1"));
-const clipSegments = clipPath.split("/");
-assert.equal(clipSegments.at(-1), `${clipSegments.at(-2)}.md`);
-const clipMarkdown = renderSourceClipMarkdown({
-  url: "https://example.com/a",
-  title: "Weeknight Pasta",
-  site: "example.com",
-  capturedAt: "2026-05-12T00:00:00.000Z",
-  tags: ["easy", "pasta"],
-  userNote: "halve salt",
-  extractedText: "Ingredients\n- tomato"
-});
-assert.match(clipMarkdown, /source_url: "https:\/\/example\.com\/a"/);
-assert.match(clipMarkdown, /# Weeknight Pasta/);
-assert.match(clipMarkdown, /halve salt/);
-const clipDocument = await buildSourceClipDocument({
-  url: "https://example.com/a#ignored",
-  title: "Weeknight Pasta",
-  site: "example.com",
-  capturedAt: "2026-05-12T00:00:00.000Z",
-  tags: ["easy"],
-  userNote: "",
-  extractedText: "body"
-});
-assert.equal(clipDocument.normalizedUrl, "https://example.com/a");
-assert.match(clipDocument.path, /^\/Sources\/raw\/clip-example\.com-[a-f0-9]{12}\/clip-example\.com-[a-f0-9]{12}\.md$/);
-assert.equal(JSON.parse(clipDocument.metadataJson).app, "source_clip");
 assert.match(searchPanelSource, /prefix = "\/Wiki"/);
 assert.match(searchPanelSource, /prefix, readIdentity/);
 
