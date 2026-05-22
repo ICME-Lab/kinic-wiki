@@ -1,0 +1,375 @@
+// Where: crates/vfs_runtime/tests/database_service_pbt.rs
+// What: Property tests for database billing and lifecycle operation sequences.
+// Why: Randomized state-machine checks catch partial updates across balances, status, and mounts.
+use std::path::{Path, PathBuf};
+
+use proptest::prelude::*;
+use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
+use sha2::{Digest, Sha256};
+use tempfile::{TempDir, tempdir};
+use vfs_runtime::{DEFAULT_FIXED_UPDATE_FEE_E8S, VfsService};
+use vfs_types::DatabaseStatus;
+
+const OWNER: &str = "owner";
+const INITIAL_PRINCIPAL_E8S: u64 = 5_000_000;
+const INITIAL_DATABASE_E8S: u64 = 1_000_000;
+
+#[derive(Clone, Debug)]
+enum RuntimeOp {
+    PrincipalTopUp { amount: u64 },
+    TopUpDatabase { amount: u64 },
+    WithdrawDatabase { amount: u64 },
+    Charge { cycles_delta: u128 },
+    ArchiveFinalize,
+    RestoreArchived,
+    Delete,
+    BadOwnerWithdraw { amount: u64 },
+}
+
+#[derive(Debug)]
+struct Model {
+    principal_e8s: u64,
+    database_e8s: u64,
+    status: DatabaseStatus,
+    archive_bytes: Option<Vec<u8>>,
+    archive_hash: Option<Vec<u8>>,
+    archive_size: Option<u64>,
+}
+
+struct TestService {
+    service: VfsService,
+    root: PathBuf,
+    _dir: TempDir,
+}
+
+fn property_config() -> ProptestConfig {
+    ProptestConfig {
+        cases: std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(128),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Off)),
+        ..ProptestConfig::default()
+    }
+}
+
+fn operation_strategy() -> impl Strategy<Value = RuntimeOp> {
+    prop_oneof![
+        4 => (1_u64..=400_000).prop_map(|amount| RuntimeOp::PrincipalTopUp { amount }),
+        4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::TopUpDatabase { amount }),
+        3 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::WithdrawDatabase { amount }),
+        4 => (0_u128..=20_000_u128).prop_map(|cycles_delta| RuntimeOp::Charge { cycles_delta }),
+        2 => Just(RuntimeOp::ArchiveFinalize),
+        2 => Just(RuntimeOp::RestoreArchived),
+        1 => Just(RuntimeOp::Delete),
+        2 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::BadOwnerWithdraw { amount }),
+    ]
+}
+
+fn service_with_root() -> TestService {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.path().to_path_buf();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("index migrations should run");
+    TestService {
+        service,
+        root,
+        _dir: dir,
+    }
+}
+
+fn create_seeded_database(service: &VfsService) -> String {
+    service
+        .credit_principal_top_up(OWNER, INITIAL_PRINCIPAL_E8S, 1, 1)
+        .expect("principal seed should credit");
+    let meta = service
+        .create_generated_database_with_initial_deposit(
+            "PBT database",
+            OWNER,
+            INITIAL_DATABASE_E8S,
+            2,
+        )
+        .expect("database should create");
+    meta.database_id
+}
+
+fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
+    let info = service
+        .list_database_infos()
+        .expect("database infos should load")
+        .into_iter()
+        .find(|info| info.database_id == database_id)
+        .expect("database info should exist");
+    (info.status, info.mount_id)
+}
+
+fn database_bytes(root: &Path, service: &VfsService, database_id: &str) -> (Vec<u8>, Vec<u8>, u64) {
+    let archive = service
+        .begin_database_archive(database_id, OWNER, 10_000)
+        .expect("archive should begin");
+    let bytes = service
+        .read_database_archive_chunk(database_id, OWNER, 0, archive.size_bytes as u32)
+        .expect("archive bytes should read");
+    assert_eq!(bytes.len() as u64, archive.size_bytes);
+    let hash = Sha256::digest(&bytes).to_vec();
+
+    let wrong_hash = vec![1_u8; 32];
+    if wrong_hash != hash {
+        assert!(
+            service
+                .finalize_database_archive(database_id, OWNER, wrong_hash, 10_001)
+                .is_err(),
+            "wrong archive hash must fail"
+        );
+        assert_eq!(
+            status_and_mount(service, database_id).0,
+            DatabaseStatus::Archiving
+        );
+    }
+
+    service
+        .finalize_database_archive(database_id, OWNER, hash.clone(), 10_002)
+        .expect("archive should finalize");
+    assert!(
+        root.join("databases").exists(),
+        "database root should survive archive"
+    );
+    (bytes, hash, archive.size_bytes)
+}
+
+fn charge_amount(cycles_delta: u128) -> u64 {
+    let variable: u64 = cycles_delta
+        .saturating_mul(200)
+        .div_ceil(1_000_000)
+        .try_into()
+        .expect("generated charge fits u64");
+    variable + DEFAULT_FIXED_UPDATE_FEE_E8S
+}
+
+fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
+    let principal = service
+        .principal_billing_summary(OWNER)
+        .expect("principal summary should load");
+    assert_eq!(principal.balance_e8s, model.principal_e8s);
+
+    let principal_entries = service
+        .list_principal_billing_entries(OWNER, None, 100)
+        .expect("principal ledger should load")
+        .entries;
+    let principal_after = principal_entries
+        .last()
+        .expect("principal ledger should not be empty")
+        .balance_after_e8s;
+    assert_eq!(principal_after, model.principal_e8s);
+    for entry in &principal_entries {
+        if entry.ledger_block_index.is_some() {
+            assert_eq!(entry.kind, "top_up");
+        }
+    }
+
+    let database_entries = service
+        .list_database_billing_entries(database_id, OWNER, None, 100)
+        .expect("database ledger should load")
+        .entries;
+    let database_after = database_entries
+        .last()
+        .expect("database ledger should not be empty")
+        .balance_after_e8s;
+    assert_eq!(database_after, model.database_e8s);
+
+    let (status, mount_id) = status_and_mount(service, database_id);
+    assert_eq!(status, model.status);
+    if matches!(status, DatabaseStatus::Archived | DatabaseStatus::Deleted) {
+        assert_eq!(mount_id, None);
+    } else {
+        assert!(mount_id.is_some());
+    }
+
+    let infos = service.list_database_infos().expect("infos should load");
+    let mut mount_ids = infos
+        .iter()
+        .filter_map(|info| info.mount_id)
+        .collect::<Vec<_>>();
+    mount_ids.sort_unstable();
+    mount_ids.dedup();
+    assert_eq!(
+        mount_ids.len(),
+        infos.iter().filter(|info| info.mount_id.is_some()).count()
+    );
+}
+
+fn apply_operation(
+    service: &VfsService,
+    root: &Path,
+    database_id: &str,
+    model: &mut Model,
+    operation: RuntimeOp,
+    step: i64,
+) {
+    match operation {
+        RuntimeOp::PrincipalTopUp { amount } => {
+            service
+                .credit_principal_top_up(OWNER, amount, step as u64 + 10, step)
+                .expect("generated top-up should credit");
+            model.principal_e8s += amount;
+        }
+        RuntimeOp::TopUpDatabase { amount } => {
+            let before = (model.principal_e8s, model.database_e8s);
+            let result = service.top_up_database(database_id, OWNER, amount, step);
+            if model.status != DatabaseStatus::Deleted && model.principal_e8s >= amount {
+                result.expect("database top-up should succeed");
+                model.principal_e8s -= amount;
+                model.database_e8s += amount;
+            } else {
+                assert!(result.is_err());
+                assert_eq!((model.principal_e8s, model.database_e8s), before);
+            }
+        }
+        RuntimeOp::WithdrawDatabase { amount } => {
+            let before = (model.principal_e8s, model.database_e8s);
+            let result = service.withdraw_database_balance(database_id, OWNER, amount, step);
+            if model.database_e8s >= amount {
+                result.expect("database withdraw should succeed");
+                model.database_e8s -= amount;
+                model.principal_e8s += amount;
+            } else {
+                assert!(result.is_err());
+                assert_eq!((model.principal_e8s, model.database_e8s), before);
+            }
+        }
+        RuntimeOp::Charge { cycles_delta } => {
+            let result = service.charge_database_update(
+                database_id,
+                OWNER,
+                "pbt_write",
+                cycles_delta,
+                None,
+                step,
+            );
+            result.expect("database charge should record against billing account");
+            let charge = model.database_e8s.min(charge_amount(cycles_delta));
+            model.database_e8s -= charge;
+        }
+        RuntimeOp::ArchiveFinalize => {
+            if model.status == DatabaseStatus::Hot {
+                let (bytes, hash, size) = database_bytes(root, service, database_id);
+                model.status = DatabaseStatus::Archived;
+                model.archive_bytes = Some(bytes);
+                model.archive_hash = Some(hash);
+                model.archive_size = Some(size);
+            } else {
+                assert!(
+                    service
+                        .begin_database_archive(database_id, OWNER, step)
+                        .is_err()
+                );
+            }
+        }
+        RuntimeOp::RestoreArchived => {
+            if matches!(
+                model.status,
+                DatabaseStatus::Archived | DatabaseStatus::Deleted
+            ) {
+                let (Some(bytes), Some(hash), Some(size)) = (
+                    model.archive_bytes.as_ref(),
+                    model.archive_hash.as_ref(),
+                    model.archive_size,
+                ) else {
+                    return;
+                };
+                let bytes = bytes.clone();
+                let hash = hash.clone();
+                service
+                    .begin_database_restore(database_id, OWNER, hash, size, step)
+                    .expect("restore should begin");
+                assert_eq!(
+                    status_and_mount(service, database_id).0,
+                    DatabaseStatus::Restoring
+                );
+                assert!(
+                    service
+                        .finalize_database_restore(database_id, OWNER, step + 1)
+                        .is_err(),
+                    "incomplete restore must fail"
+                );
+                let split_at = bytes.len() / 2;
+                service
+                    .write_database_restore_chunk(
+                        database_id,
+                        OWNER,
+                        split_at as u64,
+                        &bytes[split_at..],
+                    )
+                    .expect("tail restore chunk should write");
+                service
+                    .write_database_restore_chunk(database_id, OWNER, 0, &bytes[..split_at])
+                    .expect("head restore chunk should write");
+                service
+                    .finalize_database_restore(database_id, OWNER, step + 2)
+                    .expect("restore should finalize");
+                model.status = DatabaseStatus::Hot;
+            } else if !matches!(
+                model.status,
+                DatabaseStatus::Archived | DatabaseStatus::Deleted
+            ) {
+                assert!(
+                    service
+                        .begin_database_restore(database_id, OWNER, vec![1_u8; 32], 1, step)
+                        .is_err()
+                );
+            }
+        }
+        RuntimeOp::Delete => {
+            let result = service.delete_database(database_id, OWNER, step);
+            if model.status == DatabaseStatus::Hot {
+                result.expect("hot database should delete");
+                model.status = DatabaseStatus::Deleted;
+            } else {
+                assert!(result.is_err());
+            }
+        }
+        RuntimeOp::BadOwnerWithdraw { amount } => {
+            let before = (model.principal_e8s, model.database_e8s);
+            assert!(
+                service
+                    .withdraw_database_balance(database_id, "writer", amount, step)
+                    .is_err()
+            );
+            assert_eq!((model.principal_e8s, model.database_e8s), before);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(property_config())]
+
+    #[test]
+    fn database_service_pbt(operations in prop::collection::vec(operation_strategy(), 1..40)) {
+        let env = service_with_root();
+        let service = &env.service;
+        let database_id = create_seeded_database(service);
+        let mut model = Model {
+            principal_e8s: INITIAL_PRINCIPAL_E8S - INITIAL_DATABASE_E8S,
+            database_e8s: INITIAL_DATABASE_E8S,
+            status: DatabaseStatus::Hot,
+            archive_bytes: None,
+            archive_hash: None,
+            archive_size: None,
+        };
+
+        assert_invariants(service, &database_id, &model);
+        for (index, operation) in operations.into_iter().enumerate() {
+            apply_operation(
+                service,
+                &env.root,
+                &database_id,
+                &mut model,
+                operation,
+                index as i64 + 100,
+            );
+            assert_invariants(service, &database_id, &model);
+        }
+    }
+}

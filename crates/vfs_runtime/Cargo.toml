@@ -17,4 +17,5 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 ic-sqlite-vfs = { version = "0.2.1", default-features = false, features = ["sqlite-precompiled"] }
 
 [dev-dependencies]
+proptest = "1.11.0"
 tempfile = "3.23.0"

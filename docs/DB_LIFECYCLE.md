@@ -87,7 +87,9 @@ The default rate is `200 / 1_000_000` cycles and the default fixed update fee is
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_billing_config` with a Candid-encoded `BillingConfigUpdate` blob. `validate_update_billing_config` performs the same validation without changing state.
 
-`scripts/local/deploy_wiki.sh` carries local development init args with anonymous placeholder principals. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
+`scripts/local/deploy_wiki.sh` carries local development init args. By default it injects fixed local ledger canister ID `73mez-iiaaa-aaaaq-aaasq-cai` and anonymous SNS governance placeholder `2vxsx-fae`; both can be overridden with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`. The script does not create the ledger canister. Local top-up tests that hit the external ledger require an ICRC ledger already installed at that ID.
+
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
 
 Normal operator flow:
 

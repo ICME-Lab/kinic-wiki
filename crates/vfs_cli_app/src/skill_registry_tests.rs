@@ -11,7 +11,9 @@ use crate::skill_registry::{
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::DateTime;
-use std::collections::BTreeMap;
+use proptest::prelude::*;
+use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2145,4 +2147,379 @@ fn manifest(status: &str) -> String {
         ),
         status = status
     )
+}
+
+fn skill_registry_property_config() -> ProptestConfig {
+    ProptestConfig {
+        cases: std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(128),
+        failure_persistence: Some(Box::new(FileFailurePersistence::Off)),
+        ..ProptestConfig::default()
+    }
+}
+
+fn pbt_skill_status(value: u8) -> SkillStatusArg {
+    match value % 4 {
+        0 => SkillStatusArg::Draft,
+        1 => SkillStatusArg::Reviewed,
+        2 => SkillStatusArg::Promoted,
+        _ => SkillStatusArg::Deprecated,
+    }
+}
+
+fn pbt_skill_status_text(status: SkillStatusArg) -> &'static str {
+    match status {
+        SkillStatusArg::Draft => "draft",
+        SkillStatusArg::Reviewed => "reviewed",
+        SkillStatusArg::Promoted => "promoted",
+        SkillStatusArg::Deprecated => "deprecated",
+    }
+}
+
+fn pbt_manifest(id: &str, status: &str) -> String {
+    format!(
+        concat!(
+            "---\n",
+            "kind: kinic.skill\n",
+            "schema_version: 1\n",
+            "id: {id}\n",
+            "version: 0.1.0\n",
+            "entry: SKILL.md\n",
+            "summary: PBT generated skill\n",
+            "status: {status}\n",
+            "---\n",
+            "# Skill Manifest\n"
+        ),
+        id = id,
+        status = status
+    )
+}
+
+fn write_pbt_skill_package(dir: &Path, id: &str, body: &str) {
+    std::fs::create_dir_all(dir.join("docs")).expect("docs dir");
+    write(
+        dir,
+        "SKILL.md",
+        &format!(
+            concat!(
+                "---\n",
+                "description: PBT generated skill\n",
+                "license: MIT\n",
+                "metadata:\n",
+                "  title: PBT {id}\n",
+                "  category: fuzz\n",
+                "---\n",
+                "# {id}\n\n",
+                "{body}\n\n",
+                "[Details](docs/details.md)\n",
+                "[More](docs/more.md)\n",
+                "[External](https://example.com/ignored.md)\n"
+            ),
+            id = id,
+            body = body
+        ),
+    );
+    write(dir, "manifest.md", &pbt_manifest(id, "draft"));
+    write(dir, "provenance.md", "source: pbt\n");
+    write(dir, "evals.md", "eval: pbt\n");
+    write(dir, "docs/details.md", "package detail\n");
+    write(dir, "docs/more.md", "more package detail\n");
+}
+
+async fn seed_stale_skill_files(client: &SkillMockClient, id: &str) {
+    for path in [
+        format!("/Wiki/skills/{id}/stale.md"),
+        format!("/Wiki/skills/{id}/docs/old.md"),
+        format!("/Wiki/skills/{id}/nested/stale.md"),
+    ] {
+        client
+            .write_node(WriteNodeRequest {
+                database_id: "team-db".to_string(),
+                path,
+                kind: NodeKind::File,
+                content: "stale\n".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            })
+            .await
+            .expect("stale file should seed");
+    }
+}
+
+async fn pbt_remote_package_paths(client: &SkillMockClient, id: &str) -> BTreeSet<String> {
+    client
+        .list_nodes(ListNodesRequest {
+            database_id: "team-db".to_string(),
+            prefix: format!("/Wiki/skills/{id}"),
+            recursive: true,
+        })
+        .await
+        .expect("package nodes should list")
+        .into_iter()
+        .filter(|entry| entry.kind == NodeEntryKind::File)
+        .map(|entry| entry.path)
+        .collect()
+}
+
+async fn assert_pbt_package_contents(client: &SkillMockClient, id: &str) {
+    let base = format!("/Wiki/skills/{id}");
+    let expected = BTreeSet::from([
+        format!("{base}/SKILL.md"),
+        format!("{base}/manifest.md"),
+        format!("{base}/provenance.md"),
+        format!("{base}/evals.md"),
+        format!("{base}/docs/details.md"),
+        format!("{base}/docs/more.md"),
+    ]);
+    assert_eq!(pbt_remote_package_paths(client, id).await, expected);
+    for (path, expected_content) in [
+        (format!("{base}/provenance.md"), "source: pbt\n"),
+        (format!("{base}/evals.md"), "eval: pbt\n"),
+        (format!("{base}/docs/details.md"), "package detail\n"),
+        (format!("{base}/docs/more.md"), "more package detail\n"),
+    ] {
+        assert_eq!(
+            client
+                .read_node("team-db", &path)
+                .await
+                .expect("package file read")
+                .expect("package file exists")
+                .content,
+            expected_content
+        );
+    }
+}
+
+async fn write_pbt_proposal(
+    client: &SkillMockClient,
+    id: &str,
+    proposal_id: &str,
+    candidate: &str,
+    base_etag: &str,
+    gates_pass: bool,
+) {
+    let base_path = format!("/Wiki/skills/{id}/proposals/{proposal_id}");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: format!("{base_path}/candidate/SKILL.md"),
+            kind: NodeKind::File,
+            content: candidate.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("candidate should write");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: format!("{base_path}/metrics.json"),
+            kind: NodeKind::File,
+            content: serde_json::json!({
+                "base_etag": base_etag,
+                "candidate_score_gate": if gates_pass { "pass" } else { "fail" },
+                "semantic_drift_gate": "pass",
+                "permission_gate": "pass"
+            })
+            .to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("metrics should write");
+}
+
+async fn assert_single_run_plus_corrections(client: &SkillMockClient, id: &str, run_id: &str) {
+    let run_prefix = format!("/Sources/skill-runs/{id}");
+    let entries = client
+        .list_nodes(ListNodesRequest {
+            database_id: "team-db".to_string(),
+            prefix: run_prefix,
+            recursive: true,
+        })
+        .await
+        .expect("run entries should list");
+    let run_count = entries
+        .iter()
+        .filter(|entry| entry.path.ends_with(&format!("{run_id}.md")))
+        .count();
+    let correction_count = entries
+        .iter()
+        .filter(|entry| entry.path.contains(&format!("{run_id}.correction.")))
+        .count();
+    assert_eq!(run_count, 1);
+    assert_eq!(correction_count, 1);
+}
+
+proptest! {
+    #![proptest_config(skill_registry_property_config())]
+
+    #[test]
+    fn skill_registry_pbt(
+        id in "[a-z][a-z0-9]{0,8}",
+        run_id in "[a-z][a-z0-9]{0,8}",
+        status_value in 0_u8..4,
+        gates_pass in any::<bool>(),
+        base_matches in any::<bool>(),
+    ) {
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        runtime.block_on(async move {
+            let client = SkillMockClient::default();
+            let temp = TempDir::new().expect("temp dir");
+            write_pbt_skill_package(temp.path(), &id, "initial body");
+            seed_stale_skill_files(&client, &id).await;
+
+            let upsert = upsert_skill(&client, "team-db", temp.path(), &id, true)
+                .await
+                .expect("upsert should succeed");
+            let written = upsert["written_paths"].as_array().expect("written paths");
+            assert!(written.iter().any(|path| path == &serde_json::json!(format!("/Wiki/skills/{id}/SKILL.md"))));
+            assert!(written.iter().any(|path| path == &serde_json::json!(format!("/Wiki/skills/{id}/manifest.md"))));
+            assert!(written.iter().any(|path| path == &serde_json::json!(format!("/Wiki/skills/{id}/docs/details.md"))));
+            let pruned = upsert["pruned_paths"].as_array().expect("pruned paths");
+            assert!(pruned.iter().any(|path| path == &serde_json::json!(format!("/Wiki/skills/{id}/stale.md"))));
+            assert_pbt_package_contents(&client, &id).await;
+
+            let status = pbt_skill_status(status_value);
+            set_skill_status(
+                &client,
+                "team-db",
+                &id,
+                status,
+                Some("pbt deprecation reason"),
+            )
+            .await
+            .expect("status should update");
+            let manifest = client
+                .read_node("team-db", &format!("/Wiki/skills/{id}/manifest.md"))
+                .await
+                .expect("manifest read")
+                .expect("manifest node");
+            assert!(manifest.content.contains(&format!("status: {}", pbt_skill_status_text(status))));
+            assert!(manifest.content.contains("# Skill Manifest"));
+
+            let evidence = temp.path().join("evidence.json");
+            std::fs::write(
+                &evidence,
+                serde_json::json!({
+                    "run_id": run_id,
+                    "task": "pbt task",
+                    "task_outcome": "success",
+                    "agent_outcome": "success",
+                    "agent": "pbt",
+                    "summary": "ok"
+                })
+                .to_string(),
+            )
+            .expect("evidence write");
+            record_skill_run_evidence_with_override(
+                &client,
+                SkillRunEvidenceInput {
+                    database_id: "team-db",
+                    id: &id,
+                    evidence_json: &evidence,
+                },
+                Some(&run_id),
+            )
+            .await
+            .expect("run evidence should record");
+            assert!(
+                record_skill_run_evidence_with_override(
+                    &client,
+                    SkillRunEvidenceInput {
+                        database_id: "team-db",
+                        id: &id,
+                        evidence_json: &evidence,
+                    },
+                    Some(&run_id),
+                )
+                .await
+                .is_err()
+            );
+            let notes = temp.path().join("correction.md");
+            std::fs::write(&notes, "correction\n").expect("correction write");
+            record_correction(&client, "team-db", &id, &run_id, &notes)
+                .await
+                .expect("correction should record");
+            assert_single_run_plus_corrections(&client, &id, &run_id).await;
+
+            let current_path = format!("/Wiki/skills/{id}/SKILL.md");
+            let current = client
+                .read_node("team-db", &current_path)
+                .await
+                .expect("current read")
+                .expect("current node");
+            let candidate = format!("# {id}\n\ncandidate body\n");
+            let proposal_id = "pbt";
+            let base_etag = if base_matches {
+                current.etag.clone()
+            } else {
+                "stale-etag".to_string()
+            };
+            write_pbt_proposal(
+                &client,
+                &id,
+                proposal_id,
+                &candidate,
+                &base_etag,
+                gates_pass,
+            )
+            .await;
+            let projection = temp.path().join("projection");
+            let applied = apply_evolution_proposal(
+                &client,
+                "team-db",
+                &id,
+                proposal_id,
+                None,
+                Some(&projection),
+            )
+            .await
+            .expect("proposal apply should return status");
+            let next_current = client
+                .read_node("team-db", &current_path)
+                .await
+                .expect("next current read")
+                .expect("next current node");
+            if gates_pass && base_matches {
+                assert_eq!(applied["status"], "auto_applied");
+                assert_eq!(next_current.content, candidate);
+                assert_eq!(
+                    std::fs::read_to_string(projection.join(&id).join("SKILL.md"))
+                        .expect("projection skill"),
+                    candidate
+                );
+            } else if !gates_pass {
+                assert_eq!(applied["status"], "gate_failed");
+                assert_eq!(next_current.content, current.content);
+                assert!(!projection.join(&id).join("SKILL.md").exists());
+            } else {
+                assert_eq!(applied["status"], "conflict");
+                assert_eq!(next_current.content, current.content);
+                assert!(!projection.join(&id).join("SKILL.md").exists());
+            }
+
+            write_skill_file(
+                &client,
+                "team-db",
+                &format!("/Wiki/skills/{id}/manifest.md"),
+                &pbt_manifest(&id, "reviewed"),
+            )
+            .await;
+            std::fs::create_dir_all(projection.join("stale-managed")).expect("managed dir");
+            std::fs::write(projection.join("stale-managed/SKILL.md"), "stale\n")
+                .expect("managed skill");
+            std::fs::create_dir_all(projection.join("manual")).expect("manual dir");
+            std::fs::write(projection.join("README.md"), "unmanaged\n").expect("unmanaged file");
+            sync_projection(&client, "team-db", &projection)
+                .await
+                .expect("projection should sync");
+            assert!(projection.join(&id).join("SKILL.md").is_file());
+            assert!(!projection.join("stale-managed").exists());
+            assert!(projection.join("manual").is_dir());
+            assert!(projection.join("README.md").is_file());
+        });
+    }
 }

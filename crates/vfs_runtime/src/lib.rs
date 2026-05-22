@@ -2455,6 +2455,11 @@ fn run_index_migrations_in_tx(
         }
     }
     validate_billing_config(config)?;
+    conn.execute(
+        "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
     create_fresh_index_schema(conn)?;
     insert_billing_config(conn, config)?;
     for &version in INDEX_SCHEMA_VERSIONS {
