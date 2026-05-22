@@ -362,7 +362,9 @@ fn collect_inline_code_ranges(line: &str, line_start: usize, ranges: &mut Vec<Te
     let mut index = 0;
     let bytes = line.as_bytes();
     while index < bytes.len() {
-        if bytes[index] == b'`' && let Some(end) = find_inline_code_end(line, index) {
+        if bytes[index] == b'`'
+            && let Some(end) = find_inline_code_end(line, index)
+        {
             ranges.push(TextRange {
                 start: line_start + index,
                 end: line_start + end,
