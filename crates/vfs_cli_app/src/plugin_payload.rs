@@ -1,9 +1,13 @@
 // Where: crates/vfs_cli_app/src/plugin_payload.rs
 // What: Embedded plugin/runtime payload files for local agent setup.
 // Why: Installed kinic-vfs-cli binaries must not depend on a repo checkout.
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+const MANAGED_MARKER_FILE: &str = ".kinic-managed-plugin";
 
 pub struct PayloadFile {
     pub path: &'static str,
@@ -133,15 +137,87 @@ pub const RUNTIME_FILES: &[PayloadFile] = &[
 ];
 
 pub fn replace_dir_with_payload(target: &Path, groups: &[&[PayloadFile]]) -> Result<()> {
-    if target.exists() {
-        fs::remove_dir_all(target)
-            .with_context(|| format!("failed to replace {}", target.display()))?;
+    match fs::symlink_metadata(target) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() {
+                return Err(anyhow!(
+                    "refusing to replace symlinked plugin directory: {}",
+                    target.display()
+                ));
+            }
+            if !metadata.is_dir() {
+                return Err(anyhow!(
+                    "refusing to replace non-directory plugin path: {}",
+                    target.display()
+                ));
+            }
+            if target.join(MANAGED_MARKER_FILE).is_file() {
+                eprintln!(
+                    "warning: replacing managed plugin directory: {}",
+                    target.display()
+                );
+                fs::remove_dir_all(target)
+                    .with_context(|| format!("failed to replace {}", target.display()))?;
+            } else if directory_has_entries(target)? {
+                let backup = unique_backup_path(target);
+                eprintln!(
+                    "warning: replacing unmanaged plugin directory: {} backup={}",
+                    target.display(),
+                    backup.display()
+                );
+                fs::rename(target, &backup).with_context(|| {
+                    format!(
+                        "failed to backup {} to {}",
+                        target.display(),
+                        backup.display()
+                    )
+                })?;
+            } else {
+                fs::remove_dir_all(target)
+                    .with_context(|| format!("failed to replace {}", target.display()))?;
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to inspect {}", target.display()));
+        }
     }
     fs::create_dir_all(target).with_context(|| format!("failed to create {}", target.display()))?;
     for group in groups {
         write_payload_files(target, group)?;
     }
+    fs::write(
+        target.join(MANAGED_MARKER_FILE),
+        "managed by kinic-vfs-cli setup\n",
+    )
+    .with_context(|| format!("failed to write managed marker in {}", target.display()))?;
     Ok(())
+}
+
+fn directory_has_entries(path: &Path) -> Result<bool> {
+    Ok(fs::read_dir(path)
+        .with_context(|| format!("failed to read {}", path.display()))?
+        .next()
+        .is_some())
+}
+
+fn unique_backup_path(target: &Path) -> std::path::PathBuf {
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("plugin");
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let mut candidate = parent.join(format!("{name}.backup.{millis}"));
+    let mut suffix = 1;
+    while candidate.exists() {
+        candidate = parent.join(format!("{name}.backup.{millis}.{suffix}"));
+        suffix += 1;
+    }
+    candidate
 }
 
 fn write_payload_files(target: &Path, files: &[PayloadFile]) -> Result<()> {

@@ -141,11 +141,7 @@ pub async fn find_skills(
     Ok(json!({ "query": query_text, "hits": hits }))
 }
 
-pub async fn inspect_skill(
-    client: &impl VfsApi,
-    database_id: &str,
-    id: &str,
-) -> Result<Value> {
+pub async fn inspect_skill(client: &impl VfsApi, database_id: &str, id: &str) -> Result<Value> {
     validate_skill_id(id)?;
     let base_path = skill_base_path(id);
     let manifest = read_skill_manifest(client, database_id, id).await?;
@@ -272,10 +268,7 @@ async fn read_skill_manifest(
 ) -> Result<SkillManifestView> {
     validate_skill_id(id)?;
     let Some(node) = client
-        .read_node(
-            database_id,
-            &format!("{}/manifest.md", skill_base_path(id)),
-        )
+        .read_node(database_id, &format!("{}/manifest.md", skill_base_path(id)))
         .await?
     else {
         return Ok(SkillManifestView::default());

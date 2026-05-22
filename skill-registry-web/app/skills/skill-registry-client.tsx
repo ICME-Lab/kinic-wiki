@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-management-ui";
 import { EvolutionJobsPanel, PermissionsPanel, SkillDetailPanel, SkillRegistryHeader, SkillRegistrySearchFilter, SkillRegistryTabs, type DashboardTab } from "@/app/skills/skill-registry-panels";
 import { usePackageManager } from "@/app/skills/skill-registry-package-state";
-import { EmptyState, SkillCard, StatusPanel, SummaryStrip } from "@/app/skills/skill-registry-ui";
+import { EmptyState, SkillCard, StatusPanel, SummaryStrip, type SkillActionHandlers } from "@/app/skills/skill-registry-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type EvolutionJob, type StatusFilter } from "@/lib/skill-registry-catalog";
 import { loadEvolutionJobs, loadSkillCatalogDetails } from "@/lib/skill-registry-details";
@@ -197,6 +197,41 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     }
   }
 
+  function handlersFor(skill: CatalogSkill): SkillActionHandlers {
+    return {
+      setStatusReason: (value) => patchAction(skill, { statusReason: value }),
+      setRunTask: (value) => patchAction(skill, { runTask: value }),
+      setRunOutcome: (value) => patchAction(skill, { runOutcome: value }),
+      setRunAgent: (value) => patchAction(skill, { runAgent: value }),
+      setRunNotes: (value) => patchAction(skill, { runNotes: value }),
+      updateStatus: (status: SkillStatus) => void runSkillAction(skill, (activeIdentity, draft) => updateSkillStatus(canisterId, databaseId, activeIdentity, skill, status, draft.statusReason)),
+      recordRun: () =>
+        void runSkillAction(
+          skill,
+          (activeIdentity, draft) =>
+            recordSkillRun(canisterId, databaseId, activeIdentity, skill, {
+              task: draft.runTask,
+              outcome: draft.runOutcome,
+              agent: draft.runAgent,
+              notes: draft.runNotes
+            }),
+          true
+        ),
+      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.proposalRoot)),
+      previewProposal: (proposal) =>
+        void runSkillAction(skill, async (activeIdentity) => {
+          const preview = await previewApplyProposalDiff(canisterId, databaseId, activeIdentity, skill, proposal);
+          patchAction(skill, { preview, message: `Preview ready: ${preview.targetPath}` });
+        }),
+      applyProposal: (proposal) =>
+        void runSkillAction(skill, async (activeIdentity, draft) => {
+          if (!draft.preview || draft.preview.proposalPath !== proposal.proposalRoot) throw new Error("Preview this proposal before applying.");
+          await applyProposalDiff(canisterId, databaseId, activeIdentity, proposal, draft.preview);
+          await recordSkillEvent(canisterId, databaseId, activeIdentity, skill.manifest.id, { action: "proposal.apply", targetPath: draft.preview.targetPath, result: "applied" });
+        })
+    };
+  }
+
   return (
     <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       <section className="mx-auto flex max-w-7xl flex-col gap-5">
@@ -231,38 +266,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                     authenticated={Boolean(principal)}
                     writable={writable}
                     action={actionFor(skill)}
-                    handlers={{
-                      setStatusReason: (value) => patchAction(skill, { statusReason: value }),
-                      setRunTask: (value) => patchAction(skill, { runTask: value }),
-                      setRunOutcome: (value) => patchAction(skill, { runOutcome: value }),
-                      setRunAgent: (value) => patchAction(skill, { runAgent: value }),
-                      setRunNotes: (value) => patchAction(skill, { runNotes: value }),
-                      updateStatus: (status: SkillStatus) => void runSkillAction(skill, (activeIdentity, draft) => updateSkillStatus(canisterId, databaseId, activeIdentity, skill, status, draft.statusReason)),
-                      recordRun: () =>
-                        void runSkillAction(
-                          skill,
-                          (activeIdentity, draft) =>
-                            recordSkillRun(canisterId, databaseId, activeIdentity, skill, {
-                              task: draft.runTask,
-                              outcome: draft.runOutcome,
-                              agent: draft.runAgent,
-                              notes: draft.runNotes
-                            }),
-                          true
-                        ),
-                      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.proposalRoot)),
-                      previewProposal: (proposal) =>
-                        void runSkillAction(skill, async (activeIdentity) => {
-                          const preview = await previewApplyProposalDiff(canisterId, databaseId, activeIdentity, skill, proposal);
-                          patchAction(skill, { preview, message: `Preview ready: ${preview.targetPath}` });
-                        }),
-                      applyProposal: (proposal) =>
-                        void runSkillAction(skill, async (activeIdentity, draft) => {
-                          if (!draft.preview || draft.preview.proposalPath !== proposal.proposalRoot) throw new Error("Preview this proposal before applying.");
-                          await applyProposalDiff(canisterId, databaseId, activeIdentity, proposal, draft.preview);
-                          await recordSkillEvent(canisterId, databaseId, activeIdentity, skill.manifest.id, { action: "proposal.apply", targetPath: draft.preview.targetPath, result: "applied" });
-                        })
-                    }}
+                    handlers={handlersFor(skill)}
                   />
                 ))}
               </section>
@@ -271,7 +275,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
             ) : null}
             {activeTab === "detail" && selectedSkill ? <SkillDetailPanel skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} /> : null}
             {activeTab === "runs" && selectedSkill ? <SkillDetailPanel focus="runs" skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} /> : null}
-            {activeTab === "proposals" && selectedSkill ? <SkillDetailPanel focus="proposals" skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} /> : null}
+            {activeTab === "proposals" && selectedSkill ? <SkillDetailPanel focus="proposals" skill={selectedSkill} onSelect={setSelectedSkillId} skills={skills} authenticated={Boolean(principal)} writable={writable} busy={actionFor(selectedSkill).busy} preview={actionFor(selectedSkill).preview} handlers={handlersFor(selectedSkill)} /> : null}
             {activeTab === "jobs" ? <EvolutionJobsPanel jobs={jobs} pendingJobs={pendingJobs} conflictJobs={conflictJobs} /> : null}
             {activeTab === "permissions" ? <PermissionsPanel databaseId={databaseId} members={members} principal={principal} writable={writable} /> : null}
           </div>

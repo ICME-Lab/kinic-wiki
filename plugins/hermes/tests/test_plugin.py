@@ -31,6 +31,15 @@ class HermesKinicPluginTests(unittest.TestCase):
         )
         self.assertEqual(delta, {"legal": {"use_count": 2}, "debug": {"patch_count": 1}})
 
+    def test_usage_diff_ignores_corrupt_counts(self) -> None:
+        from kinic_hermes import usage
+
+        delta = usage.usage_diff(
+            {"legal": {"use_count": "not-a-number", "view_count": None}},
+            {"legal": {"use_count": "2", "view_count": -1, "patch_count": None}},
+        )
+        self.assertEqual(delta, {"legal": {"use_count": 2}})
+
     def test_invalid_usage_json_reports_not_ok(self) -> None:
         from kinic_hermes import usage
 
@@ -38,6 +47,38 @@ class HermesKinicPluginTests(unittest.TestCase):
             path = Path(tmp) / ".usage.json"
             path.write_text("{")
             self.assertEqual(usage.read_usage_checked(path), ({}, False))
+
+    def test_run_buffer_redacts_and_truncates_raw_capture(self) -> None:
+        from kinic_hermes.schemas import RunBuffer, ToolTrace
+
+        buffer = RunBuffer(
+            tool_trace=[ToolTrace("http", {"api_key": "secret", "query": "x" * 40}, "Bearer abcdefghijklmnopqrstuvwxyz")],
+            final_response=f"ok sk-{'a' * 32}",
+        )
+        with mock.patch.dict(os.environ, {"KINIC_HERMES_MAX_TOOL_ARGS_CHARS": "24", "KINIC_HERMES_MAX_FINAL_RESPONSE_CHARS": "16"}, clear=False):
+            evidence = buffer.to_json("legal-review", {})
+
+        self.assertTrue(evidence["redacted"])
+        self.assertTrue(evidence["truncated"])
+        self.assertEqual(evidence["tool_trace"][0]["args"], '{"api_key": "[REDACTED]"')
+        self.assertNotIn("sk-", evidence["final_response"])
+        self.assertEqual(evidence["max_chars"]["tool_args"], 24)
+
+    def test_run_buffer_raw_capture_can_be_disabled(self) -> None:
+        from kinic_hermes.schemas import RunBuffer, ToolTrace
+
+        buffer = RunBuffer(
+            tool_trace=[ToolTrace("http", {"token": "secret"}, "secret result")],
+            final_response="secret final",
+        )
+        with mock.patch.dict(os.environ, {"KINIC_HERMES_CAPTURE_RAW": "0"}, clear=False):
+            evidence = buffer.to_json("legal-review", {})
+
+        self.assertEqual(evidence["tool_trace"], [])
+        self.assertEqual(evidence["raw_evidence_excerpt"], "")
+        self.assertEqual(evidence["final_response"], "")
+        self.assertFalse(evidence["redacted"])
+        self.assertFalse(evidence["truncated"])
 
     def test_missing_cli_saves_pending_with_metadata(self) -> None:
         from kinic_hermes import client as client_module

@@ -2,11 +2,12 @@ use crate::cli::{SkillRunOutcomeArg, SkillStatusArg};
 use crate::hermes::sync_projection;
 use crate::skill_registry::{
     SkillRunEvidenceInput, SkillRunInput, apply_evolution_proposal, approve_proposal,
-    claim_evolution_job, complete_evolution_job, create_ready_evolution_jobs, export_skill,
-    find_skills, inspect_skill, install_skill_lockfile, list_evolution_jobs,
-    markdown_target_package_key, propose_improvement, record_correction, record_skill_run,
-    record_skill_run_evidence, record_skill_run_evidence_with_override, rollback_skill_version,
-    set_skill_status, skill_history, upsert_skill, with_ready_evolution_jobs,
+    claim_evolution_job, complete_evolution_job, create_ready_evolution_jobs,
+    evolution_job_id_for_attempt, export_skill, find_skills, inspect_skill, install_skill_lockfile,
+    list_evolution_jobs, markdown_target_package_key, propose_improvement, record_correction,
+    record_skill_run, record_skill_run_evidence, record_skill_run_evidence_with_override,
+    rollback_skill_version, set_skill_status, skill_history, unique_evolution_job_id, upsert_skill,
+    with_ready_evolution_jobs,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -327,15 +328,9 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
     .expect("outside");
     write(temp.path(), "manifest.md", &manifest("reviewed"));
 
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
     assert_mkdirs_include(
         &client,
         &["/Wiki", "/Wiki/skills", "/Wiki/skills/legal-review"],
@@ -387,15 +382,9 @@ async fn skill_upsert_find_inspect_status_and_run_use_vfs_nodes() {
         "SKILL.md",
         "# Legal Review\n\nReview redlines and contract risks.",
     );
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("second upsert updates existing skill");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("second upsert updates existing skill");
     let updated_skill = client
         .read_node("default", "/Wiki/skills/legal-review/SKILL.md")
         .await
@@ -590,15 +579,9 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
     );
     write(temp.path(), "manifest.md", &manifest("reviewed"));
     write(temp.path(), "helper.md", "# Helper\n");
-    upsert_skill(
-        &client,
-        "team-db",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "team-db", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
 
     let evidence = temp.path().join("evidence.json");
     std::fs::write(
@@ -692,7 +675,7 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
             content: serde_json::json!({
                 "base_etag": current.etag,
                 "candidate_score_gate": "pass",
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "pass"
             })
             .to_string(),
@@ -1087,7 +1070,7 @@ async fn skill_apply_proposal_rejects_failed_gates() {
             content: serde_json::json!({
                 "base_etag": current.etag,
                 "candidate_score_gate": "pass",
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "fail"
             })
             .to_string(),
@@ -1279,6 +1262,8 @@ async fn skill_evolution_jobs_create_claim_complete_and_list() {
         .await
         .unwrap();
     let job_id = created["created"][0]["job_id"].as_str().unwrap();
+    assert!(job_id.starts_with("legal-review-"));
+    assert!(job_id.rsplit('-').next().unwrap().len() == 6);
     let queued = list_evolution_jobs(&client, "team-db", Some("queued"))
         .await
         .unwrap();
@@ -1293,6 +1278,33 @@ async fn skill_evolution_jobs_create_claim_complete_and_list() {
     assert_eq!(claimed["status"], "running");
     assert_eq!(claimed["claimed_by"], "principal-1");
     assert_eq!(completed["status"], "done");
+}
+
+#[tokio::test]
+async fn skill_evolution_job_id_skips_existing_collision() {
+    let client = SkillMockClient::default();
+    let first_id = evolution_job_id_for_attempt("legal-review", 123, 456, 0);
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: format!("/Wiki/skill-evolution-jobs/{first_id}.md"),
+            kind: NodeKind::File,
+            content: "---\nkind: kinic.skill_evolution_job\nskill_id: legal-review\n---\n# Job\n"
+                .to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+
+    let next_id = unique_evolution_job_id(&client, "team-db", "legal-review", 123, 456)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        next_id,
+        evolution_job_id_for_attempt("legal-review", 123, 456, 1)
+    );
 }
 
 #[tokio::test]
@@ -1492,15 +1504,9 @@ async fn skill_upsert_uses_write_nodes_for_package_files() {
     write(temp.path(), "manifest.md", &manifest("draft"));
     write(temp.path(), "evals.md", "# Evals");
 
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
 
     assert_eq!(client.write_batches.load(Ordering::SeqCst), 1);
     assert_eq!(client.writes.load(Ordering::SeqCst), 3);
@@ -1526,15 +1532,9 @@ async fn skill_upsert_rejects_package_over_batch_limit_before_writing() {
     write(temp.path(), "SKILL.md", &skill);
     write(temp.path(), "manifest.md", &manifest("draft"));
 
-    let error = upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect_err("over-limit package should fail before write_nodes");
+    let error = upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect_err("over-limit package should fail before write_nodes");
 
     assert!(
         error
@@ -1551,15 +1551,9 @@ async fn skill_upsert_batch_failure_does_not_partially_write_package_files() {
     let temp = tempfile::tempdir().expect("tempdir");
     write(temp.path(), "SKILL.md", "# Legal Review\n\nReview.");
     write(temp.path(), "manifest.md", &manifest("draft"));
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("initial upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("initial upsert");
     write(temp.path(), "SKILL.md", "# Legal Review\n\nUpdated.");
     write(temp.path(), "evals.md", "# Evals");
     *client
@@ -1567,15 +1561,9 @@ async fn skill_upsert_batch_failure_does_not_partially_write_package_files() {
         .lock()
         .expect("stale path lock") = Some("/Wiki/skills/legal-review/SKILL.md".to_string());
 
-    let error = upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect_err("stale etag should fail batch");
+    let error = upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect_err("stale etag should fail batch");
 
     assert!(error.to_string().contains("expected_etag"));
     let skill = client
@@ -1613,15 +1601,9 @@ async fn skill_upsert_uses_skill_frontmatter_to_fill_missing_manifest_fields() {
         ),
     );
 
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "canister-security",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "canister-security", false)
+        .await
+        .expect("upsert");
 
     let manifest = client
         .read_node("default", "/Wiki/skills/canister-security/manifest.md")
@@ -1687,15 +1669,9 @@ async fn skill_upsert_preserves_existing_manifest_fields_over_skill_frontmatter(
         ),
     );
 
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
 
     let manifest = client
         .read_node("default", "/Wiki/skills/legal-review/manifest.md")
@@ -1733,15 +1709,9 @@ async fn skill_upsert_allows_upstream_frontmatter_name_to_differ_from_db_id() {
         ),
     );
 
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "react-components",
-        false,
-    )
-    .await
-    .expect("upstream name does not need to match DB id");
+    upsert_skill(&client, "default", temp.path(), "react-components", false)
+        .await
+        .expect("upstream name does not need to match DB id");
     let manifest = client
         .read_node("default", "/Wiki/skills/react-components/manifest.md")
         .await
@@ -1809,15 +1779,9 @@ async fn skill_set_status_records_deprecated_reason() {
     let temp = tempfile::tempdir().expect("tempdir");
     write(temp.path(), "SKILL.md", "# Legal Review\n\nredlines");
     write(temp.path(), "manifest.md", &manifest("reviewed"));
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
 
     set_skill_status(
         &client,
@@ -1851,15 +1815,9 @@ async fn skill_set_status_records_promoted_at_as_rfc3339() {
     let temp = tempfile::tempdir().expect("tempdir");
     write(temp.path(), "SKILL.md", "# Legal Review\n\nredlines");
     write(temp.path(), "manifest.md", &manifest("reviewed"));
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
 
     set_skill_status(
         &client,
@@ -1905,15 +1863,9 @@ async fn skill_improvement_proposal_is_recorded_and_approved_without_editing_ski
     let temp = tempfile::tempdir().expect("tempdir");
     write(temp.path(), "SKILL.md", "# Legal Review\n\nredlines");
     write(temp.path(), "manifest.md", &manifest("reviewed"));
-    upsert_skill(
-        &client,
-        "default",
-        temp.path(),
-        "legal-review",
-        false,
-    )
-    .await
-    .expect("upsert");
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
 
     let diff = temp.path().join("change.diff");
     std::fs::write(&diff, "- old\n+ new\n").expect("diff");
@@ -2128,7 +2080,7 @@ async fn write_apply_proposal_fixture(
             content: serde_json::json!({
                 "base_etag": current.etag,
                 "candidate_score_gate": "pass",
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "pass"
             })
             .to_string(),

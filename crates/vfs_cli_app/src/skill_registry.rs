@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 pub(crate) use vfs_cli::skill_kb::{find_skills, inspect_skill};
 use vfs_client::VfsApi;
 use vfs_types::{
@@ -130,8 +131,7 @@ pub async fn run_skill_command(
             diff_file,
             json,
         } => print(
-            propose_improvement(client, database_id, &id, &runs, &summary, &diff_file)
-            .await?,
+            propose_improvement(client, database_id, &id, &runs, &summary, &diff_file).await?,
             json,
         )?,
         SkillCommand::ApproveProposal {
@@ -185,14 +185,9 @@ pub async fn run_skill_command(
             .await?,
             json,
         )?,
-        SkillCommand::Export {
-            id,
-            out,
-            json,
-        } => print(
-            export_skill(client, database_id, &id, &out).await?,
-            json,
-        )?,
+        SkillCommand::Export { id, out, json } => {
+            print(export_skill(client, database_id, &id, &out).await?, json)?
+        }
         SkillCommand::ExportGithub {
             id,
             target,
@@ -240,11 +235,7 @@ pub async fn run_skill_command(
                 json,
             )?,
         },
-        SkillCommand::Install {
-            id,
-            lockfile,
-            json,
-        } => print(
+        SkillCommand::Install { id, lockfile, json } => print(
             install_skill_lockfile(client, database_id, &id, &lockfile).await?,
             json,
         )?,
@@ -307,7 +298,9 @@ async fn write_skill_package(
     } else {
         Vec::new()
     };
-    Ok(json!({ "id": skill_id.to_string(), "base_path": base_path, "written_paths": written_paths, "pruned_paths": pruned_paths }))
+    Ok(
+        json!({ "id": skill_id.to_string(), "base_path": base_path, "written_paths": written_paths, "pruned_paths": pruned_paths }),
+    )
 }
 
 pub(crate) async fn record_skill_run(
@@ -1149,14 +1142,33 @@ pub(crate) async fn create_ready_evolution_jobs(
     let mut created = Vec::new();
     for spec in ready_evolution_job_specs(client, database_id, min_new_runs, cooldown_hours).await?
     {
-        let job_id = format!("{}-{}", spec.skill_id, now_millis());
-        let job_path = format!("/Wiki/skill-evolution-jobs/{job_id}.md");
         let source_runs = spec
             .source_runs
             .iter()
             .map(|run| format!("  - {run}"))
             .collect::<Vec<_>>()
             .join("\n");
+        let (job_id, job_path) =
+            write_unique_evolution_job(client, database_id, &spec, &source_runs).await?;
+        created.push(json!({ "job_id": job_id, "skill_id": spec.skill_id, "job_path": job_path }));
+    }
+    Ok(json!({ "created": created }))
+}
+
+async fn write_unique_evolution_job(
+    client: &impl VfsApi,
+    database_id: &str,
+    spec: &ReadyEvolutionJobSpec,
+    source_runs: &str,
+) -> Result<(String, String)> {
+    let unix_ms = now_millis();
+    let nanos = current_time_nanos();
+    for attempt in 0..10 {
+        let job_id = evolution_job_id_for_attempt(&spec.skill_id, unix_ms, nanos, attempt);
+        let job_path = format!("/Wiki/skill-evolution-jobs/{job_id}.md");
+        if client.read_node(database_id, &job_path).await?.is_some() {
+            continue;
+        }
         let content = format!(
             "---\nkind: kinic.skill_evolution_job\nschema_version: 1\njob_id: {job_id}\nskill_id: {}\nstatus: queued\nmin_new_runs: {}\ncooldown_hours: {}\nsource_runs:\n{source_runs}\ncreated_at: {}\n---\n# Skill Evolution Job\n",
             spec.skill_id,
@@ -1165,7 +1177,7 @@ pub(crate) async fn create_ready_evolution_jobs(
             now_rfc3339()
         );
         ensure_parent_folders(client, database_id, &job_path).await?;
-        client
+        let written = client
             .write_node(WriteNodeRequest {
                 database_id: database_id.to_string(),
                 path: job_path.clone(),
@@ -1175,9 +1187,55 @@ pub(crate) async fn create_ready_evolution_jobs(
                 expected_etag: None,
             })
             .await?;
-        created.push(json!({ "job_id": job_id, "skill_id": spec.skill_id, "job_path": job_path }));
+        if written.created {
+            return Ok((job_id, job_path));
+        }
     }
-    Ok(json!({ "created": created }))
+    Err(anyhow!(
+        "failed to create unique evolution job id for {}",
+        spec.skill_id
+    ))
+}
+
+fn current_time_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+pub(crate) async fn unique_evolution_job_id(
+    client: &impl VfsApi,
+    database_id: &str,
+    skill_id: &str,
+    unix_ms: i64,
+    nanos: u128,
+) -> Result<String> {
+    for attempt in 0..10 {
+        let job_id = evolution_job_id_for_attempt(skill_id, unix_ms, nanos, attempt);
+        let job_path = format!("/Wiki/skill-evolution-jobs/{job_id}.md");
+        if client.read_node(database_id, &job_path).await?.is_none() {
+            return Ok(job_id);
+        }
+    }
+    Err(anyhow!(
+        "failed to create unique evolution job id for {skill_id}"
+    ))
+}
+
+pub(crate) fn evolution_job_id_for_attempt(
+    skill_id: &str,
+    unix_ms: i64,
+    nanos: u128,
+    attempt: u32,
+) -> String {
+    let suffix_source = format!(
+        "{skill_id}:{unix_ms}:{nanos}:{}:{attempt}",
+        std::process::id()
+    );
+    let suffix = &sha256_hex(&suffix_source)[..6];
+    format!("{skill_id}-{unix_ms}-{suffix}")
 }
 
 #[derive(Clone)]
@@ -2059,7 +2117,7 @@ fn proposal_status_content(
 fn proposal_gate_failure(metrics: &serde_json::Value) -> Option<&'static str> {
     [
         "candidate_score_gate",
-        "semantic_drift_gate",
+        "heading_consistency_gate",
         "permission_gate",
     ]
     .into_iter()

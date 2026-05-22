@@ -15,13 +15,19 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - name: Check release assets
+      - name: Check version and release assets
         working-directory: npm/kinic-vfs-cli
         run: |
           version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "${GITHUB_REF_NAME:-}" != "v${version}" ]; then
+            echo "package version ${version} does not match tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
           for platform in macos-arm64 linux-x86_64; do
-            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/kinic-vfs-cli-v${version}-${platform}.tar.gz" >/dev/null
-            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/kinic-vfs-cli-v${version}-${platform}.sha256" >/dev/null
+            asset="kinic-vfs-cli-v${version}-${platform}.tar.gz"
+            checksum="${asset%.tar.gz}.sha256"
+            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/${asset}" >/dev/null
+            curl -fsSI "https://github.com/ICME-Lab/kinic-wiki/releases/download/v${version}/${checksum}" >/dev/null
           done
       - name: Test npm package
         working-directory: npm/kinic-vfs-cli

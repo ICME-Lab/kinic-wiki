@@ -8,7 +8,7 @@ import type { CatalogSkill, CatalogSummary, SkillProposal } from "@/lib/skill-re
 import type { RunOutcome, SkillStatus } from "@/lib/skill-registry-operations";
 import type { ProposalDiffPreview } from "@/lib/skill-registry-diff";
 
-type SkillActionState = {
+export type SkillActionState = {
   busy: boolean;
   error: string | null;
   message: string | null;

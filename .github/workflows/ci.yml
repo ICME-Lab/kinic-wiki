@@ -58,6 +58,30 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+  skill-registry-web-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: skill-registry-web
+    steps:
+      - uses: actions/checkout@v5
+      - name: Enable corepack
+        run: corepack enable
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: skill-registry-web/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run tests
+        run: pnpm test
+      - name: Run typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+
   rust-check:
     runs-on: ubuntu-latest
     steps:
@@ -175,9 +199,8 @@ jobs:
         run: corepack enable
         working-directory: .
       - run: npm ci
-      - name: Install wikibrowser dependencies
-        run: pnpm install --frozen-lockfile
-        working-directory: wikibrowser
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm test
       - run: npm run store-assets:generate

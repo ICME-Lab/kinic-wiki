@@ -161,7 +161,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill set-status legal-review 
 
 Command responsibilities:
 
-- `hermes setup`: install the Kinic Hermes plugin, update local Hermes config, export reviewed/promoted skills, and print local status.
+- `hermes setup`: install the Kinic Hermes plugin, update local Hermes config, export reviewed/promoted skills, and print local status. Invalid Hermes config shapes fail instead of being repaired.
 - `hermes pull`: refresh the local Hermes skill projection from the linked database.
 - `hermes status`: inspect local plugin/projection/pending state and job counts when a database is linked.
 - `hermes flush-pending`: replay locally saved Hermes run evidence.
@@ -208,6 +208,11 @@ Old or invalid run evidence is ignored by `run_summary` but still appears in `re
 Evidence JSON can set `recorded_by` to the caller recorder name, such as `hermes-plugin`, `codex-plugin`, or `claude-code-plugin`; direct CLI evidence defaults to `cli`.
 Path timestamps are millis IDs; frontmatter `*_at` timestamps are RFC3339.
 
+Hermes automatic capture stores sanitized evidence in `/Sources/skill-runs/<skill-id>/...`.
+By default it records tool names, redacted/truncated tool args and result excerpts, redacted/truncated final response text, usage deltas, and capture metadata (`redacted`, `truncated`, and `max_chars`).
+Set `KINIC_HERMES_CAPTURE_RAW=0` to record only usage-derived metadata without raw tool or response text.
+If recording fails, pending evidence is written to `$KINIC_HOME/pending-runs`; delete those files before replay if they should not be retained.
+
 Hermes keeps the Hermes-specific hook route:
 
 ```bash
@@ -218,6 +223,7 @@ kinic-vfs-cli hermes pull
 `hermes setup` installs a self-contained plugin under `$HERMES_HOME/plugins/kinic`, enables `kinic` in `$HERMES_HOME/config.yaml`, and keeps skill projection under `$KINIC_HOME/hermes-current/skills`.
 This Hermes projection path is Hermes-specific.
 The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
+Valid Hermes config files are backed up before rewrite. If the config root, `plugins`, or `plugins.enabled` has an unexpected shape, setup fails and leaves the file unchanged.
 `hermes pull` prunes stale managed skill directories and deleted exported files while leaving unmanaged files directly under the projection root alone.
 Then run this inside Hermes:
 
@@ -240,6 +246,8 @@ kinic-vfs-cli codex setup
 
 The command installs a self-contained plugin under `~/.codex/plugins/kinic-skill-recorder` and updates `~/.agents/plugins/marketplace.json` while preserving unrelated entries.
 The plugin directory is managed and is deleted before each setup rewrite; do not keep manual files or symlinks inside it.
+If an existing plugin directory lacks Kinic's managed marker, setup backs it up before replacing it.
+Codex setup fails instead of repairing marketplace JSON whose root is not an object or whose `plugins` field is not an array; valid marketplace files are backed up before rewrite.
 The Codex marketplace entry uses `./.codex/plugins/kinic-skill-recorder`, resolved from the personal marketplace root (`$HOME`), not from `~/.agents/plugins`.
 For repo development only, `scripts/install-codex-skill-recorder.sh` runs `codex setup` from the local build or source tree.
 After a Codex skill materially affects a task, use `kinic-record-skill-run`; it writes an evidence JSON file and calls:
@@ -304,7 +312,8 @@ kinic-vfs-cli skill evolve-jobs complete <job-id> --status done --summary "propo
 `create-ready` counts only run evidence newer than the latest job for a skill. Correction files are excluded before the new-run threshold is checked, and queued jobs keep the newest source run paths up to `min_new_runs`.
 
 `apply-proposal` refuses candidates unless `metrics.json` contains passing
-`candidate_score_gate`, `semantic_drift_gate`, and `permission_gate` values. It
+`candidate_score_gate`, `heading_consistency_gate`, and `permission_gate` values. The
+heading gate is a coarse declared-heading consistency check, not semantic verification. It
 also refuses stale proposals whose `base_etag` no longer matches current
 `SKILL.md`.
 In v1, `apply-proposal --projection-dir` syncs only the applied `SKILL.md`.

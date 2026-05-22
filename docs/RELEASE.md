@@ -26,7 +26,9 @@ cd npm/kinic-vfs-cli
 npm pack --dry-run
 ```
 
-Then run the `Publish npm CLI` workflow. It checks release assets, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
+Then run the `Publish npm CLI` workflow. It checks tag/package version alignment when invoked from a tag, checks release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
+Configure GitHub Environment approval for the publish workflow when release approval must be explicit.
+Use an npm automation token scoped to this package; keep 2FA/provenance policy in the npm organization settings.
 
 ## Local Build
 

@@ -42,10 +42,18 @@ def usage_diff(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, d
             old = {}
         counts: dict[str, int] = {}
         for key in ("view_count", "use_count", "patch_count"):
-            before = int(old.get(key, 0) or 0)
-            after = int(value.get(key, 0) or 0)
+            before = _safe_int(old.get(key, 0))
+            after = _safe_int(value.get(key, 0))
             if after > before:
                 counts[key] = after - before
         if counts:
             delta[skill_id] = counts
     return delta
+
+
+def _safe_int(value: object) -> int:
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(parsed, 0)

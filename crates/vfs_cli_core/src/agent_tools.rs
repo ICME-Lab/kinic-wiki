@@ -273,12 +273,7 @@ async fn dispatch_tool_call_impl(
         "skill_inspect" => {
             let args: SkillInspectArgs = serde_json::from_value(input)?;
             tool_ok(
-                skill_kb::inspect_skill(
-                    client,
-                    &database_id(args.database_id)?,
-                    &args.id,
-                )
-                .await?,
+                skill_kb::inspect_skill(client, &database_id(args.database_id)?, &args.id).await?,
             )
         }
         "skill_read" => {

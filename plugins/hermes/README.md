@@ -16,7 +16,7 @@ Hermes内:
 /kinic_evolve_job
 ```
 
-`hermes setup` が `$HERMES_HOME/plugins/kinic` へ自己完結pluginを配置し、`plugins.enabled` に `kinic` を追加し、reviewed/promoted skill のprojection syncを行う。
+`hermes setup` が `$HERMES_HOME/plugins/kinic` へ自己完結pluginを配置し、`plugins.enabled` に `kinic` を追加し、reviewed/promoted skill のprojection syncを行う。既存configは書換前にbackupされ、root / `plugins` / `plugins.enabled` のshapeが不正なら修復せず失敗する。
 DashboardなどでDB上のskillを更新した後は `kinic-vfs-cli hermes pull` でprojectionだけ再同期する。
 Hermesから `kinic_hermes.register(ctx)` を読み込ませる。
 
@@ -52,6 +52,9 @@ pnpm --dir skill-registry-web build
 run evidenceは `kinic-vfs-cli skill record-run --create-ready-jobs` 経由で記録する。
 記録に失敗したrun evidenceは `KINIC_HOME/pending-runs` に保存する。
 plugin logは `KINIC_HOME/hermes-plugin.log` に追記する。
+通常の自動captureはtool名、redact/truncate済みargs/result excerpt、final response、usage delta、`redacted` / `truncated` / `max_chars` metadataを保存する。
+`KINIC_HERMES_CAPTURE_RAW=0` ならraw tool/result/final responseを保存しない。
+不要なpending evidenceは `KINIC_HOME/pending-runs` から削除する。
 
 `KINIC_VFS_CLI_ALLOW_NON_II=1` を設定した場合だけ、pluginは `kinic-vfs-cli` 呼び出しに `--allow-non-ii-identity` を付ける。
 未指定時はInternet Identity identity前提のまま。

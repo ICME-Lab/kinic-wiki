@@ -1158,16 +1158,18 @@ mod tests {
         assert!(private_install.command.requires_identity());
         assert!(!private_install.command.probes_anonymous_database_read());
 
-        assert!(Cli::try_parse_from([
-            "kinic-vfs-cli",
-            "skill",
-            "install",
-            "legal-review",
-            "--lockfile",
-            "skill.lock.json",
-            "--public",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "kinic-vfs-cli",
+                "skill",
+                "install",
+                "legal-review",
+                "--lockfile",
+                "skill.lock.json",
+                "--public",
+            ])
+            .is_err()
+        );
 
         let write = Cli::parse_from([
             "kinic-vfs-cli",

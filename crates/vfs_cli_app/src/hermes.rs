@@ -86,7 +86,7 @@ pub async fn run_hermes_command(
 async fn hermes_setup(client: &impl VfsApi, database_id: &str) -> Result<serde_json::Value> {
     let paths = HermesPaths::resolve()?;
     install_plugin(&paths)?;
-    let config_repairs = enable_hermes_plugin(&paths.hermes_config)?;
+    enable_hermes_plugin(&paths.hermes_config)?;
     let projected = sync_projection(client, database_id, &paths.projection_dir).await?;
     write_setup_config(&paths, database_id)?;
     let status = local_status(&paths)?;
@@ -96,7 +96,6 @@ async fn hermes_setup(client: &impl VfsApi, database_id: &str) -> Result<serde_j
         "projection_dir": paths.projection_dir,
         "projected_skills": projected.exported,
         "pruned_skills": projected.pruned_skills,
-        "config_repairs": config_repairs,
         "local": status,
     }))
 }
@@ -374,8 +373,7 @@ fn install_plugin(paths: &HermesPaths) -> Result<()> {
     replace_dir_with_payload(&paths.plugin_dir, &[HERMES_PLUGIN_FILES, RUNTIME_FILES])
 }
 
-fn enable_hermes_plugin(config_path: &Path) -> Result<Vec<String>> {
-    let mut config_repairs = Vec::new();
+fn enable_hermes_plugin(config_path: &Path) -> Result<()> {
     let mut config = if config_path.is_file() {
         serde_yaml::from_str::<serde_yaml::Value>(
             &fs::read_to_string(config_path)
@@ -386,26 +384,40 @@ fn enable_hermes_plugin(config_path: &Path) -> Result<Vec<String>> {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     };
     if !config.is_mapping() {
-        config_repairs.push("replaced Hermes config root with mapping".to_string());
-        config = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        return Err(anyhow!(
+            "Hermes config root must be a mapping: {}",
+            config_path.display()
+        ));
     }
     let root = config.as_mapping_mut().expect("mapping checked");
     let plugins_key = serde_yaml::Value::String("plugins".to_string());
-    let plugins = root
-        .entry(plugins_key)
-        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let mut changed = false;
+    if !root.contains_key(&plugins_key) {
+        root.insert(
+            plugins_key.clone(),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+        changed = true;
+    }
+    let plugins = root.get_mut(&plugins_key).expect("plugins inserted");
     if !plugins.is_mapping() {
-        config_repairs.push("replaced Hermes config plugins with mapping".to_string());
-        *plugins = serde_yaml::Value::Mapping(serde_yaml::Mapping::new());
+        return Err(anyhow!(
+            "Hermes config plugins must be a mapping: {}",
+            config_path.display()
+        ));
     }
     let plugins_map = plugins.as_mapping_mut().expect("mapping checked");
     let enabled_key = serde_yaml::Value::String("enabled".to_string());
-    let enabled = plugins_map
-        .entry(enabled_key)
-        .or_insert_with(|| serde_yaml::Value::Sequence(Vec::new()));
+    if !plugins_map.contains_key(&enabled_key) {
+        plugins_map.insert(enabled_key.clone(), serde_yaml::Value::Sequence(Vec::new()));
+        changed = true;
+    }
+    let enabled = plugins_map.get_mut(&enabled_key).expect("enabled inserted");
     if !enabled.is_sequence() {
-        config_repairs.push("replaced Hermes config plugins.enabled with sequence".to_string());
-        *enabled = serde_yaml::Value::Sequence(Vec::new());
+        return Err(anyhow!(
+            "Hermes config plugins.enabled must be a sequence: {}",
+            config_path.display()
+        ));
     }
     let enabled_list = enabled.as_sequence_mut().expect("sequence checked");
     if !enabled_list
@@ -413,14 +425,57 @@ fn enable_hermes_plugin(config_path: &Path) -> Result<Vec<String>> {
         .any(|value| value.as_str() == Some("kinic"))
     {
         enabled_list.push(serde_yaml::Value::String("kinic".to_string()));
+        changed = true;
+    }
+    if !changed {
+        return Ok(());
     }
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
+    backup_existing_file(config_path)?;
     fs::write(config_path, serde_yaml::to_string(&config)?)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
-    Ok(config_repairs)
+    Ok(())
+}
+
+fn backup_existing_file(path: &Path) -> Result<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    let backup = unique_config_backup_path(path);
+    fs::copy(path, &backup).with_context(|| {
+        format!(
+            "failed to backup {} to {}",
+            path.display(),
+            backup.display()
+        )
+    })?;
+    eprintln!(
+        "warning: backed up Hermes config before rewrite: {}",
+        backup.display()
+    );
+    Ok(())
+}
+
+fn unique_config_backup_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("config.yaml");
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or(0);
+    let mut candidate = parent.join(format!("{name}.backup.{millis}"));
+    let mut suffix = 1;
+    while candidate.exists() {
+        candidate = parent.join(format!("{name}.backup.{millis}.{suffix}"));
+        suffix += 1;
+    }
+    candidate
 }
 
 fn write_setup_config(paths: &HermesPaths, database_id: &str) -> Result<()> {
@@ -644,7 +699,6 @@ fn print_result(value: serde_json::Value, json_output: bool) -> Result<()> {
     if json_output {
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else if value.get("status").and_then(|status| status.as_str()) == Some("ready") {
-        print_config_repair_warnings(&value);
         println!(
             "Hermes setup ready: plugin={} projection={} projected_skills={}",
             value["plugin_dir"].as_str().unwrap_or(""),
@@ -661,19 +715,6 @@ fn print_result(value: serde_json::Value, json_output: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&value)?);
     }
     Ok(())
-}
-
-fn print_config_repair_warnings(value: &serde_json::Value) {
-    if let Some(repairs) = value
-        .get("config_repairs")
-        .and_then(serde_json::Value::as_array)
-    {
-        for repair in repairs {
-            if let Some(repair) = repair.as_str() {
-                eprintln!("warning: {repair}");
-            }
-        }
-    }
 }
 
 fn require_database_id(database_id: Option<&str>) -> Result<&str> {
@@ -778,11 +819,10 @@ mod tests {
         )
         .unwrap();
 
-        let repairs = enable_hermes_plugin(&config).unwrap();
+        enable_hermes_plugin(&config).unwrap();
 
         let value: serde_yaml::Value =
             serde_yaml::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
-        assert!(repairs.is_empty());
         assert_eq!(value["model"]["provider"].as_str(), Some("openrouter"));
         let enabled = value["plugins"]["enabled"].as_sequence().unwrap();
         assert_eq!(
@@ -796,41 +836,70 @@ mod tests {
     }
 
     #[test]
-    fn enable_hermes_plugin_reports_repaired_config_fields() {
+    fn enable_hermes_plugin_backs_up_valid_config_before_rewrite() {
         let temp = TempDir::new().unwrap();
         let config = temp.path().join("config.yaml");
-        std::fs::write(&config, "plugins:\n  enabled: old\n").unwrap();
+        std::fs::write(&config, "model:\n  provider: openrouter\n").unwrap();
 
-        let repairs = enable_hermes_plugin(&config).unwrap();
+        enable_hermes_plugin(&config).unwrap();
 
-        assert_eq!(
-            repairs,
-            vec!["replaced Hermes config plugins.enabled with sequence".to_string()]
-        );
         let value: serde_yaml::Value =
             serde_yaml::from_str(&std::fs::read_to_string(config).unwrap()).unwrap();
         let enabled = value["plugins"]["enabled"].as_sequence().unwrap();
         assert!(enabled.iter().any(|entry| entry.as_str() == Some("kinic")));
+        let backups: Vec<_> = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("config.yaml.backup.")
+            })
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(backups[0].path()).unwrap(),
+            "model:\n  provider: openrouter\n"
+        );
     }
 
     #[test]
-    fn enable_hermes_plugin_reports_repaired_config_root_and_plugins() {
+    fn enable_hermes_plugin_rejects_invalid_shapes_without_rewrite() {
         let temp = TempDir::new().unwrap();
         let root_config = temp.path().join("root.yaml");
         std::fs::write(&root_config, "[]").unwrap();
         let plugin_config = temp.path().join("plugins.yaml");
         std::fs::write(&plugin_config, "plugins: old\n").unwrap();
+        let enabled_config = temp.path().join("enabled.yaml");
+        std::fs::write(&enabled_config, "plugins:\n  enabled: old\n").unwrap();
 
-        let root_repairs = enable_hermes_plugin(&root_config).unwrap();
-        let plugin_repairs = enable_hermes_plugin(&plugin_config).unwrap();
+        let root_error = enable_hermes_plugin(&root_config).unwrap_err();
+        let plugin_error = enable_hermes_plugin(&plugin_config).unwrap_err();
+        let enabled_error = enable_hermes_plugin(&enabled_config).unwrap_err();
 
+        assert!(root_error.to_string().contains("root must be a mapping"));
+        assert!(root_error.to_string().contains("root.yaml"));
+        assert!(
+            plugin_error
+                .to_string()
+                .contains("plugins must be a mapping")
+        );
+        assert!(plugin_error.to_string().contains("plugins.yaml"));
+        assert!(
+            enabled_error
+                .to_string()
+                .contains("plugins.enabled must be a sequence")
+        );
+        assert!(enabled_error.to_string().contains("enabled.yaml"));
+        assert_eq!(std::fs::read_to_string(root_config).unwrap(), "[]");
         assert_eq!(
-            root_repairs,
-            vec!["replaced Hermes config root with mapping".to_string()]
+            std::fs::read_to_string(plugin_config).unwrap(),
+            "plugins: old\n"
         );
         assert_eq!(
-            plugin_repairs,
-            vec!["replaced Hermes config plugins with mapping".to_string()]
+            std::fs::read_to_string(enabled_config).unwrap(),
+            "plugins:\n  enabled: old\n"
         );
     }
 }
