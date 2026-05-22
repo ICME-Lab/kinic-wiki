@@ -98,7 +98,7 @@ flowchart LR
 ### 5.5 `vfs_canister`
 
 - IC query/update entrypoint 群
-- WASI + stable structures 上に SQLite ファイルを mount
+- `ic-sqlite-vfs` + stable memory / `MemoryManager` 上に SQLite を配置
 - 初期化時に migration 実行
 - canister 境界は薄く保ち、実ロジックは `VfsService` に委譲
 

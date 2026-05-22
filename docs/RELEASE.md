@@ -2,7 +2,33 @@
 
 `kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, archive/restore, and Skill Registry maintenance. The Browser remains the primary public UI.
 
-Primary distribution is GitHub Release assets with SHA-256 checksums. Homebrew is the macOS install path. Cargo install is a Rust-user fallback; crates.io publication is deferred.
+Primary distribution is npm. The npm package downloads GitHub Release assets and verifies SHA-256 checksums. Homebrew is optional follow-up packaging. Cargo install is a Rust-user fallback; crates.io publication is deferred.
+
+## npm
+
+Install:
+
+```bash
+npm install -g kinic-vfs-cli
+kinic-vfs-cli --help
+```
+
+The npm package supports:
+
+- macOS arm64
+- Linux x64
+
+Publish after the matching GitHub Release assets exist:
+
+```bash
+npm --prefix npm/kinic-vfs-cli test
+cd npm/kinic-vfs-cli
+npm pack --dry-run
+```
+
+Then run the `Publish npm CLI` workflow from the exact release tag `v${package.version}`. It refuses branch runs, checks Cargo/npm version alignment, checks release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
+Configure GitHub Environment approval for the publish workflow when release approval must be explicit.
+Use an npm automation token scoped to this package; keep 2FA/provenance policy in the npm organization settings.
 
 ## Local Build
 
@@ -22,16 +48,16 @@ target/release/kinic-vfs-cli --canister-id <canister-id> database current
 Tag a release with a `v*` version:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 The `Release CLI` workflow builds and uploads:
 
-- `kinic-vfs-cli-v0.1.1-linux-x86_64.tar.gz`
-- `kinic-vfs-cli-v0.1.1-linux-x86_64.sha256`
-- `kinic-vfs-cli-v0.1.1-macos-arm64.tar.gz`
-- `kinic-vfs-cli-v0.1.1-macos-arm64.sha256`
+- `kinic-vfs-cli-v0.1.2-linux-x86_64.tar.gz`
+- `kinic-vfs-cli-v0.1.2-linux-x86_64.sha256`
+- `kinic-vfs-cli-v0.1.2-macos-arm64.tar.gz`
+- `kinic-vfs-cli-v0.1.2-macos-arm64.sha256`
 
 Each tarball contains only:
 
@@ -42,22 +68,22 @@ Each tarball contains only:
 Verify after download:
 
 ```bash
-shasum -a 256 -c kinic-vfs-cli-v0.1.1-macos-arm64.sha256
-tar -xzf kinic-vfs-cli-v0.1.1-macos-arm64.tar.gz
+shasum -a 256 -c kinic-vfs-cli-v0.1.2-macos-arm64.sha256
+tar -xzf kinic-vfs-cli-v0.1.2-macos-arm64.tar.gz
 ./kinic-vfs-cli --help
 ./kinic-vfs-cli --version
 ```
 
 ## Homebrew
 
-The standard tap is `ICME-Lab/homebrew-tap`. If the tap does not exist yet, create it first.
+Homebrew packaging is optional. The standard tap is `ICME-Lab/homebrew-tap`. If the tap does not exist yet, create it first.
 
 After a GitHub Release is available:
 
 1. Read the release checksum:
 
    ```bash
-   shasum -a 256 kinic-vfs-cli-v0.1.1-macos-arm64.tar.gz
+   shasum -a 256 kinic-vfs-cli-v0.1.2-macos-arm64.tar.gz
    ```
 
 2. Copy [`../packaging/homebrew/Formula/kinic-vfs-cli.rb`](../packaging/homebrew/Formula/kinic-vfs-cli.rb) into `ICME-Lab/homebrew-tap`.
@@ -82,6 +108,7 @@ brew style packaging/homebrew/Formula/kinic-vfs-cli.rb
 ## CI Artifacts
 
 The normal `cli-artifacts` CI job uses the same tarball layout as the release workflow, but uploads workflow artifacts instead of creating a GitHub Release.
+Keep distribution-only changes separate from Skill Registry lifecycle changes when possible; mixed release and job lifecycle diffs are harder to review and bisect.
 
 No `wiki-cli` or `skill-cli` artifact is produced in v1.
 
@@ -109,5 +136,6 @@ kinic-vfs-cli
 - Artifacts include SHA-256 checksums.
 - Artifacts are not signed in v1.
 - macOS artifacts are not notarized in v1.
-- npm and crates.io publication are deferred.
+- npm supports macOS arm64 and Linux x64 in v1.
+- crates.io publication is deferred.
 - Browser deployments are built separately from `wikibrowser/`.

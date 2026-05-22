@@ -24,29 +24,56 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
     },
+    #[command(about = "Show the current authenticated canister identity")]
+    Identity {
+        #[command(subcommand)]
+        command: IdentityCommand,
+    },
+    #[command(about = "Manage Skill Registry packages, discovery, status, and run evidence")]
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
     },
+    #[command(about = "Install and sync the Kinic Hermes skill plugin")]
+    Hermes {
+        #[command(subcommand)]
+        command: HermesCommand,
+    },
+    #[command(about = "Install the Kinic Codex skill recorder plugin")]
+    Codex {
+        #[command(subcommand)]
+        command: CodexCommand,
+    },
+    #[command(about = "Install the Kinic Claude Code skill recorder plugin")]
+    Claude {
+        #[command(subcommand)]
+        command: ClaudeCommand,
+    },
+    #[command(about = "Ingest GitHub issue or pull request context into the wiki")]
     Github {
         #[command(subcommand)]
         command: GitHubCommand,
     },
+    #[command(about = "Rebuild the full wiki search index")]
     RebuildIndex,
+    #[command(about = "Rebuild the search index for one path scope")]
     RebuildScopeIndex {
         #[arg(long)]
         scope: String,
     },
+    #[command(about = "Generate wiki nodes from a local conversation source")]
     GenerateConversationWiki {
         #[arg(long)]
         source_path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Read one node by path; agents should prefer --json")]
     ReadNode {
         #[arg(long)]
         path: String,
@@ -57,6 +84,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List nodes under a prefix")]
     ListNodes {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         prefix: String,
@@ -65,12 +93,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List direct children under one wiki path; agents should prefer --json")]
     ListChildren {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Write or replace one node; use --expected-etag after read-node for safe edits"
+    )]
     WriteNode {
         #[arg(long)]
         path: String,
@@ -80,11 +112,14 @@ pub enum Command {
         input: PathBuf,
         #[arg(long, default_value = "{}")]
         metadata_json: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the write if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Append content to one node; use --expected-etag after read-node for safe edits"
+    )]
     AppendNode {
         #[arg(long)]
         path: String,
@@ -94,13 +129,16 @@ pub enum Command {
         kind: Option<NodeKindArg>,
         #[arg(long)]
         metadata_json: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Reject the append if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         separator: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Replace text inside one node; use --expected-etag after read-node for safe edits"
+    )]
     EditNode {
         #[arg(long)]
         path: String,
@@ -108,29 +146,35 @@ pub enum Command {
         old_text: String,
         #[arg(long)]
         new_text: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the edit if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         replace_all: bool,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Delete one node; use etag guards for safe destructive edits")]
     DeleteNode {
         #[arg(long)]
         path: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the delete if the current node etag differs")]
         expected_etag: Option<String>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Reject the delete if the parent folder index etag differs"
+        )]
         expected_folder_index_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Delete a node tree")]
     DeleteTree {
         #[arg(long)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Remove URL ingest source and generated target nodes")]
     PurgeUrlIngest {
         #[arg(
             long,
@@ -147,24 +191,27 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Create a directory node")]
     MkdirNode {
         #[arg(long)]
         path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Move or rename one node; use --expected-etag for safe edits")]
     MoveNode {
         #[arg(long)]
         from_path: String,
         #[arg(long)]
         to_path: String,
-        #[arg(long)]
+        #[arg(long, help = "Reject the move if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         overwrite: bool,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Find nodes by glob pattern under a path")]
     GlobNodes {
         pattern: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -174,6 +221,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List recently changed nodes under a path")]
     RecentNodes {
         #[arg(long, help = "Maximum 100; 0 is treated as 1 by the canister")]
         limit: u32,
@@ -182,6 +230,9 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Read one node with incoming and outgoing link context; agents should prefer --json"
+    )]
     ReadNodeContext {
         #[arg(long)]
         path: String,
@@ -190,6 +241,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Inspect nearby wiki links around one node")]
     GraphNeighborhood {
         #[arg(long)]
         center_path: String,
@@ -200,6 +252,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List graph links under a path prefix")]
     GraphLinks {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         prefix: String,
@@ -208,6 +261,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List nodes that link to one path")]
     IncomingLinks {
         #[arg(long)]
         path: String,
@@ -216,6 +270,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List links written by one node")]
     OutgoingLinks {
         #[arg(long)]
         path: String,
@@ -224,17 +279,19 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Apply multiple text edits to one node with an optional etag guard")]
     MultiEditNode {
         #[arg(long)]
         path: String,
         #[arg(long)]
         edits_file: PathBuf,
-        #[arg(long)]
+        #[arg(long, help = "Reject the edits if the current node etag differs")]
         expected_etag: Option<String>,
         #[arg(long)]
         json: bool,
     },
     #[command(alias = "search-nodes")]
+    #[command(about = "Search node content; agents should prefer --json before read-node")]
     SearchRemote {
         query_text: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -250,6 +307,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Search node paths; agents should prefer --json")]
     SearchPathRemote {
         query_text: String,
         #[arg(long, default_value = WIKI_ROOT_PATH)]
@@ -265,6 +323,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Show target canister and database access status")]
     Status {
         #[arg(long)]
         json: bool,
@@ -273,18 +332,18 @@ pub enum Command {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum SkillCommand {
+    #[command(about = "Store or update a Skill Registry package from a local directory")]
     Upsert {
         #[arg(long)]
         source_dir: PathBuf,
         #[arg(long)]
         id: String,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         prune: bool,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Find Skill Registry packages for a task query")]
     Find {
         query: String,
         #[arg(long)]
@@ -294,28 +353,31 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Inspect one Skill Registry package, files, and recent run evidence")]
     Inspect {
         id: String,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Record run evidence after a skill was used")]
     RecordRun {
         id: String,
+        #[arg(long, conflicts_with_all = ["task", "outcome", "notes_file", "agent"])]
+        evidence_json: Option<PathBuf>,
         #[arg(long)]
-        task: String,
+        create_ready_jobs: bool,
+        #[arg(long)]
+        task: Option<String>,
         #[arg(long, value_enum)]
-        outcome: SkillRunOutcomeArg,
+        outcome: Option<SkillRunOutcomeArg>,
         #[arg(long)]
-        notes_file: PathBuf,
+        notes_file: Option<PathBuf>,
         #[arg(long, default_value = "cli")]
         agent: String,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Move a skill through draft, reviewed, promoted, or deprecated")]
     SetStatus {
         id: String,
         #[arg(long, value_enum)]
@@ -323,14 +385,14 @@ pub enum SkillCommand {
         #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Import a Skill Registry package from an external source")]
     Import {
         #[command(subcommand)]
         source: SkillImportCommand,
     },
+    #[command(about = "Write an evidence-backed skill improvement proposal")]
     ProposeImprovement {
         id: String,
         #[arg(long = "runs", required = true)]
@@ -340,37 +402,196 @@ pub enum SkillCommand {
         #[arg(long)]
         diff_file: PathBuf,
         #[arg(long)]
-        public: bool,
-        #[arg(long)]
         json: bool,
     },
+    #[command(about = "Mark a skill improvement proposal as approved")]
     ApproveProposal {
         id: String,
         proposal_path: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Record a correction for an existing skill run")]
+    RecordCorrection {
+        id: String,
+        run_id: String,
+        #[arg(long)]
+        notes_file: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Apply an approved skill proposal when the base etag still matches")]
+    ApplyProposal {
+        id: String,
+        proposal_id: String,
+        #[arg(long)]
+        job_id: Option<String>,
+        #[arg(long)]
+        projection_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Restore a previous skill version")]
+    Rollback {
+        id: String,
+        version_id: String,
+        #[arg(long)]
+        projection_dir: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one skill package to a local agent skill directory")]
+    Export {
+        id: String,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Export one skill package to GitHub through gh")]
+    ExportGithub {
+        id: String,
+        target: String,
+        #[arg(long)]
+        branch: String,
+        #[arg(long)]
+        message: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List skill versions, proposals, jobs, runs, and corrections")]
+    History {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Manage queued Skill Registry evolution jobs")]
+    EvolveJobs {
+        #[command(subcommand)]
+        command: SkillEvolveJobsCommand,
+    },
+    #[command(about = "Write a lockfile for a selected skill package")]
     Install {
         id: String,
         #[arg(long)]
         lockfile: PathBuf,
-        #[arg(long)]
-        public: bool,
         #[arg(long)]
         json: bool,
     },
 }
 
 #[derive(Subcommand, Debug, Clone)]
+pub enum IdentityCommand {
+    #[command(about = "Show the selected icp-cli identity principal")]
+    Show {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum HermesCommand {
+    #[command(about = "Install the Hermes plugin and export reviewed or promoted skills")]
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Refresh the local Hermes skill projection")]
+    Pull {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Show Hermes plugin and projection status")]
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Submit pending Hermes skill run evidence")]
+    FlushPending {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List Hermes shadow correction files")]
+    Shadows {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CodexCommand {
+    #[command(about = "Install the Codex skill recorder plugin")]
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ClaudeCommand {
+    #[command(about = "Install the Claude Code skill recorder plugin")]
+    Setup {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillEvolveJobsCommand {
+    #[command(about = "Create queued evolution jobs for skills with enough new evidence")]
+    CreateReady {
+        #[arg(long, default_value_t = 5)]
+        min_new_runs: u32,
+        #[arg(long, default_value_t = 24)]
+        cooldown_hours: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List skill evolution jobs")]
+    List {
+        #[arg(long, value_enum)]
+        status: Option<SkillEvolutionJobStatusArg>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Claim one queued evolution job")]
+    Claim {
+        job_id: String,
+        #[arg(long, default_value_t = 3600)]
+        lease_seconds: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Complete one evolution job with a terminal status")]
+    Complete {
+        job_id: String,
+        #[arg(long, value_enum)]
+        status: SkillEvolutionJobStatusArg,
+        #[arg(long)]
+        summary: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillEvolutionJobStatusArg {
+    Queued,
+    Running,
+    Done,
+    Conflict,
+    Failed,
+}
+
+#[derive(Subcommand, Debug, Clone)]
 pub enum SkillImportCommand {
+    #[command(about = "Import a skill package from GitHub")]
     Github {
         source: String,
         #[arg(long)]
         id: String,
         #[arg(long = "ref", default_value = "HEAD")]
         reference: String,
-        #[arg(long)]
-        public: bool,
         #[arg(long)]
         prune: bool,
         #[arg(long)]
@@ -395,6 +616,7 @@ pub enum SkillRunOutcomeArg {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum GitHubCommand {
+    #[command(about = "Ingest GitHub issue or pull request content")]
     Ingest {
         #[command(subcommand)]
         command: GitHubIngestCommand,
@@ -403,11 +625,13 @@ pub enum GitHubCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum GitHubIngestCommand {
+    #[command(about = "Ingest one GitHub issue into source nodes")]
     Issue {
         target: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Ingest one GitHub pull request into source nodes")]
     Pr {
         target: String,
         #[arg(long)]
@@ -423,6 +647,7 @@ impl Command {
                 DatabaseCommand::Create { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
+                    | DatabaseCommand::GrantCurrentIdentity { .. }
                     | DatabaseCommand::Revoke { .. }
                     | DatabaseCommand::Members { .. }
                     | DatabaseCommand::ArchiveExport { .. }
@@ -432,10 +657,16 @@ impl Command {
             ),
             Self::Skill { command } => !matches!(
                 command,
-                SkillCommand::Find { .. }
-                    | SkillCommand::Inspect { .. }
-                    | SkillCommand::Install { public: true, .. }
+                SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
+            Self::Hermes { command } => matches!(
+                command,
+                HermesCommand::Setup { .. }
+                    | HermesCommand::Pull { .. }
+                    | HermesCommand::FlushPending { .. }
+            ),
+            Self::Codex { .. } | Self::Claude { .. } => false,
+            Self::Identity { .. } => true,
             Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -469,9 +700,7 @@ impl Command {
         match self {
             Self::Skill { command } => matches!(
                 command,
-                SkillCommand::Find { .. }
-                    | SkillCommand::Inspect { .. }
-                    | SkillCommand::Install { public: true, .. }
+                SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
             Self::ReadNode { .. }
             | Self::ListNodes { .. }
@@ -487,6 +716,10 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
+            | Self::Identity { .. }
+            | Self::Hermes { .. }
+            | Self::Codex { .. }
+            | Self::Claude { .. }
             | Self::Github { .. }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
@@ -508,7 +741,10 @@ impl Command {
             self,
             Self::Database {
                 command: DatabaseCommand::List { .. }
-            }
+            } | Self::Identity { .. }
+                | Self::Hermes {
+                    command: HermesCommand::Status { .. },
+                }
         )
     }
 
@@ -721,8 +957,8 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Command, DatabaseCommand, IdentityModeArg, NodeKindArg, SkillCommand,
-        SkillImportCommand, SkillStatusArg,
+        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand, IdentityModeArg,
+        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
 
@@ -732,6 +968,45 @@ mod tests {
         let help = command.render_long_help().to_string();
 
         assert!(!help.contains("beam-bench"));
+    }
+
+    #[test]
+    fn main_cli_help_describes_agent_entrypoints() {
+        let mut command = Cli::command();
+        let help = command.render_long_help().to_string();
+
+        assert!(help.contains("Manage database creation"));
+        assert!(help.contains("Manage Skill Registry packages"));
+        assert!(help.contains("Read one node by path"));
+        assert!(help.contains("Search node content"));
+    }
+
+    #[test]
+    fn skill_help_describes_standard_registry_loop() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("skill")
+            .expect("skill subcommand")
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("Find Skill Registry packages"));
+        assert!(help.contains("Inspect one Skill Registry package"));
+        assert!(help.contains("Record run evidence"));
+    }
+
+    #[test]
+    fn database_help_describes_connection_commands() {
+        let mut command = Cli::command();
+        let help = command
+            .find_subcommand_mut("database")
+            .expect("database subcommand")
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("workspace database link"));
+        assert!(help.contains("List databases attached"));
+        assert!(help.contains("Grant owner, writer, or reader access"));
     }
 
     #[test]
@@ -883,17 +1158,18 @@ mod tests {
         assert!(private_install.command.requires_identity());
         assert!(!private_install.command.probes_anonymous_database_read());
 
-        let public_install = Cli::parse_from([
-            "kinic-vfs-cli",
-            "skill",
-            "install",
-            "legal-review",
-            "--lockfile",
-            "skill.lock.json",
-            "--public",
-        ]);
-        assert!(!public_install.command.requires_identity());
-        assert!(public_install.command.probes_anonymous_database_read());
+        assert!(
+            Cli::try_parse_from([
+                "kinic-vfs-cli",
+                "skill",
+                "install",
+                "legal-review",
+                "--lockfile",
+                "skill.lock.json",
+                "--public",
+            ])
+            .is_err()
+        );
 
         let write = Cli::parse_from([
             "kinic-vfs-cli",
@@ -909,6 +1185,80 @@ mod tests {
         let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
+    }
+
+    #[test]
+    fn main_cli_parses_record_run_create_ready_jobs() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "record-run",
+            "legal-review",
+            "--task",
+            "review redlines",
+            "--outcome",
+            "success",
+            "--notes-file",
+            "notes.md",
+            "--create-ready-jobs",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::RecordRun {
+                    id,
+                    create_ready_jobs,
+                    task,
+                    outcome,
+                    notes_file,
+                    json,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected skill record-run command");
+        };
+        assert_eq!(id, "legal-review");
+        assert!(create_ready_jobs);
+        assert_eq!(task.as_deref(), Some("review redlines"));
+        assert_eq!(outcome, Some(SkillRunOutcomeArg::Success));
+        assert_eq!(notes_file.unwrap().to_string_lossy(), "notes.md");
+        assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_apply_proposal_job_id() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "apply-proposal",
+            "legal-review",
+            "p1",
+            "--job-id",
+            "job-1",
+            "--projection-dir",
+            "skills",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::ApplyProposal {
+                    id,
+                    proposal_id,
+                    job_id,
+                    projection_dir,
+                    json,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected skill apply-proposal command");
+        };
+        assert_eq!(id, "legal-review");
+        assert_eq!(proposal_id, "p1");
+        assert_eq!(job_id.as_deref(), Some("job-1"));
+        assert_eq!(projection_dir.unwrap().to_string_lossy(), "skills");
+        assert!(json);
     }
 
     #[test]
@@ -1183,5 +1533,91 @@ mod tests {
         assert_eq!(id, "legal-review");
         assert_eq!(lockfile.to_string_lossy(), "skill.lock.json");
         assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_hermes_surfaces() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "hermes", "setup", "--json"]);
+        let Command::Hermes {
+            command: HermesCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected hermes setup command");
+        };
+        assert!(*json);
+        assert!(setup.command.requires_identity());
+
+        let pull = Cli::parse_from(["kinic-vfs-cli", "hermes", "pull", "--json"]);
+        let Command::Hermes {
+            command: HermesCommand::Pull { json },
+        } = &pull.command
+        else {
+            panic!("expected hermes pull command");
+        };
+        assert!(*json);
+        assert!(pull.command.requires_identity());
+
+        let status = Cli::parse_from(["kinic-vfs-cli", "hermes", "status"]);
+        let Command::Hermes {
+            command: HermesCommand::Status { json },
+        } = &status.command
+        else {
+            panic!("expected hermes status command");
+        };
+        assert!(!*json);
+        assert!(!status.command.requires_identity());
+        assert!(status.command.prefers_identity_in_auto());
+
+        let flush = Cli::parse_from(["kinic-vfs-cli", "hermes", "flush-pending"]);
+        let Command::Hermes {
+            command: HermesCommand::FlushPending { .. },
+        } = &flush.command
+        else {
+            panic!("expected hermes flush-pending command");
+        };
+        assert!(flush.command.requires_identity());
+
+        let shadows = Cli::parse_from(["kinic-vfs-cli", "hermes", "shadows"]);
+        let Command::Hermes {
+            command: HermesCommand::Shadows { .. },
+        } = &shadows.command
+        else {
+            panic!("expected hermes shadows command");
+        };
+        assert!(!shadows.command.requires_identity());
+
+        let removed_command = ["run", "ready"].join("-");
+        assert!(
+            Cli::try_parse_from(["kinic-vfs-cli", "skill", "evolve-jobs", &removed_command])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn main_cli_parses_codex_setup_as_local_command() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "codex", "setup", "--json"]);
+        let Command::Codex {
+            command: CodexCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected codex setup command");
+        };
+        assert!(*json);
+        assert!(!setup.command.requires_identity());
+        assert!(!setup.command.probes_anonymous_database_read());
+    }
+
+    #[test]
+    fn main_cli_parses_claude_setup_as_local_command() {
+        let setup = Cli::parse_from(["kinic-vfs-cli", "claude", "setup", "--json"]);
+        let Command::Claude {
+            command: ClaudeCommand::Setup { json },
+        } = &setup.command
+        else {
+            panic!("expected claude setup command");
+        };
+        assert!(*json);
+        assert!(!setup.command.requires_identity());
+        assert!(!setup.command.probes_anonymous_database_read());
     }
 }

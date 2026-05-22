@@ -7,7 +7,9 @@ use vfs_cli::commands::{print_database_current, run_database_unlink};
 use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
 };
+use vfs_cli_app::claude::run_claude_command;
 use vfs_cli_app::cli::{Cli, Command, DatabaseCommand, IdentityModeArg};
+use vfs_cli_app::codex::run_codex_command;
 use vfs_cli_app::commands::run_command;
 use vfs_cli_app::identity::load_default_identity;
 use vfs_cli_app::identity_mode::{
@@ -36,6 +38,29 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             _ => {}
+        }
+    }
+    if let Command::Codex { command } = cli.command.clone() {
+        run_codex_command(command)?;
+        return Ok(());
+    }
+    if let Command::Claude { command } = cli.command.clone() {
+        run_claude_command(command)?;
+        return Ok(());
+    }
+    if let Command::Hermes {
+        command: vfs_cli_app::cli::HermesCommand::Status { json },
+    } = &cli.command
+    {
+        let preview = resolve_connection_optional_canister(
+            cli.connection.local,
+            cli.connection.replica_host.clone(),
+            cli.connection.canister_id.clone(),
+            cli.connection.database_id.clone(),
+        )?;
+        if preview.database_id.is_none() {
+            vfs_cli_app::hermes::run_hermes_local_status(*json)?;
+            return Ok(());
         }
     }
     let connection = resolve_connection(

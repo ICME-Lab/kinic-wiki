@@ -27,6 +27,10 @@ use vfs_types::{
 
 #[async_trait]
 pub trait VfsApi: Sync {
+    fn caller_principal(&self) -> Option<String> {
+        None
+    }
+
     async fn status(&self, database_id: &str) -> Result<Status>;
     async fn canister_health(&self) -> Result<CanisterHealth> {
         Err(anyhow!("canister_health is not implemented by this client"))
@@ -182,6 +186,7 @@ pub trait VfsApi: Sync {
 pub struct CanisterVfsClient {
     agent: Agent,
     canister_id: Principal,
+    caller_principal: String,
 }
 
 impl CanisterVfsClient {
@@ -190,7 +195,7 @@ impl CanisterVfsClient {
             .with_url(replica_host)
             .build()
             .context("failed to build IC agent")?;
-        Self::from_agent(replica_host, canister_id, agent).await
+        Self::from_agent(replica_host, canister_id, agent, Principal::anonymous()).await
     }
 
     pub async fn new_with_identity_pem(
@@ -207,15 +212,23 @@ impl CanisterVfsClient {
         canister_id: &str,
         identity: Box<dyn ic_agent::Identity>,
     ) -> Result<Self> {
+        let caller = identity
+            .sender()
+            .map_err(|error| anyhow!("failed to read identity principal: {error}"))?;
         let agent = Agent::builder()
             .with_url(replica_host)
             .with_boxed_identity(identity)
             .build()
             .context("failed to build IC agent")?;
-        Self::from_agent(replica_host, canister_id, agent).await
+        Self::from_agent(replica_host, canister_id, agent, caller).await
     }
 
-    async fn from_agent(replica_host: &str, canister_id: &str, agent: Agent) -> Result<Self> {
+    async fn from_agent(
+        replica_host: &str,
+        canister_id: &str,
+        agent: Agent,
+        caller: Principal,
+    ) -> Result<Self> {
         if is_local_replica(replica_host) {
             agent
                 .fetch_root_key()
@@ -226,6 +239,7 @@ impl CanisterVfsClient {
             agent,
             canister_id: Principal::from_text(canister_id)
                 .context("failed to parse canister principal")?,
+            caller_principal: caller.to_text(),
         })
     }
 
@@ -350,6 +364,10 @@ pub fn identity_from_pem(identity_pem: &[u8]) -> Result<Box<dyn ic_agent::Identi
 
 #[async_trait]
 impl VfsApi for CanisterVfsClient {
+    fn caller_principal(&self) -> Option<String> {
+        Some(self.caller_principal.clone())
+    }
+
     async fn status(&self, database_id: &str) -> Result<Status> {
         self.query("status", &database_id.to_string()).await
     }

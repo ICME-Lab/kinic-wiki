@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #ffffff;
+  color: #000000;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #ffffff 58%, #f8f8f8 100%);
+  color: #000000;
+}
+
+a {
+  color: #ff2686;
+}
+
+button {
+  transition-duration: 300ms;
+  transition-property: background-color, border-color, box-shadow, color, opacity, transform;
+  transition-timing-function: ease-out;
+}
+
+button:not(:disabled):active {
+  transform: translateY(-1px);
+}
+
+button[aria-busy="true"] {
+  cursor: progress;
+  box-shadow: 0 0 0 3px rgb(255 129 190 / 18%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition-duration: 1ms;
+  }
+
+  button:not(:disabled):active {
+    transform: none;
+  }
+}
+
+pre,
+code {
+  font-family: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.markdown-body {
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  color: #000000;
+  font-weight: 600;
+  line-height: 1.18;
+}
+
+.markdown-body h1 {
+  font-size: 2.1rem;
+  letter-spacing: 0;
+}
+
+.markdown-body h2 {
+  margin-top: 2rem;
+  font-size: 1.35rem;
+}
+
+.markdown-body h3 {
+  margin-top: 1.5rem;
+  font-size: 1.05rem;
+}
+
+.markdown-body p,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body blockquote,
+.markdown-body pre {
+  margin-top: 1rem;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.4rem;
+}
+
+.markdown-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid #e6e6e6;
+  border-radius: 1rem;
+  background: #f8f8f8;
+  padding: 1rem;
+}
+
+.markdown-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown-body code {
+  border-radius: 0.3rem;
+  background: #ff81be26;
+  padding: 0.1rem 0.28rem;
+  font-size: 0.88em;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.cm-editor {
+  height: 100%;
+  font-family: "Berkeley Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
+.cm-scroller {
+  line-height: 1.6;
+}

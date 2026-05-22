@@ -26,7 +26,7 @@ Internet Identity-backed identities are the default authenticated path. Non-II `
 
 ## Connection
 
-Use `--canister-id` to select a canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
+Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to select a different canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
 ```bash
@@ -51,6 +51,7 @@ Without `--canister-id`, the CLI reads configuration from:
 - `.kinic/config.toml`
 - `~/.config/kinic-vfs-cli/config.toml`
 - `~/.kinic-vfs-cli.toml`
+- mainnet default `xis3j-paaaa-aaaai-axumq-cai` when the replica host is `https://icp0.io`
 
 Link a workspace once to avoid repeating `--database-id`:
 

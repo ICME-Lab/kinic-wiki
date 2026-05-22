@@ -610,6 +610,15 @@ async fn run_database_command(
                 .await?;
             println!("{database_id}\t{principal}\t{:?}", role.to_database_role());
         }
+        DatabaseCommand::GrantCurrentIdentity { database_id, role } => {
+            let principal = client
+                .caller_principal()
+                .ok_or_else(|| anyhow!("current identity principal is not available"))?;
+            client
+                .grant_database_access(&database_id, &principal, role.to_database_role())
+                .await?;
+            println!("{database_id}\t{principal}\t{:?}", role.to_database_role());
+        }
         DatabaseCommand::Revoke {
             database_id,
             principal,

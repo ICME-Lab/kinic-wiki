@@ -273,13 +273,7 @@ async fn dispatch_tool_call_impl(
         "skill_inspect" => {
             let args: SkillInspectArgs = serde_json::from_value(input)?;
             tool_ok(
-                skill_kb::inspect_skill(
-                    client,
-                    &database_id(args.database_id)?,
-                    &args.id,
-                    args.public.unwrap_or(false),
-                )
-                .await?,
+                skill_kb::inspect_skill(client, &database_id(args.database_id)?, &args.id).await?,
             )
         }
         "skill_read" => {
@@ -290,7 +284,6 @@ async fn dispatch_tool_call_impl(
                     &database_id(args.database_id)?,
                     &args.id,
                     &args.file,
-                    args.public.unwrap_or(false),
                 )
                 .await?,
             )
@@ -308,7 +301,6 @@ async fn dispatch_tool_call_impl(
                         outcome: skill_run_outcome(&args.outcome)?,
                         notes: &args.notes,
                         agent: &args.agent,
-                        public: args.public.unwrap_or(false),
                     },
                 )
                 .await?,
@@ -494,13 +486,13 @@ fn skill_find_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"query_text":{"type":"string"},"top_k":{"type":"integer","minimum":1,"maximum":20},"include_deprecated":{"type":"boolean"}},"required":["database_id","query_text"],"additionalProperties":false})
 }
 fn skill_id_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"public":{"type":"boolean"}},"required":["database_id","id"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"}},"required":["database_id","id"],"additionalProperties":false})
 }
 fn skill_read_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"file":{"type":"string"},"public":{"type":"boolean"}},"required":["database_id","id","file"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"file":{"type":"string"}},"required":["database_id","id","file"],"additionalProperties":false})
 }
 fn skill_record_run_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"task":{"type":"string"},"outcome":{"type":"string","enum":["success","partial","fail"]},"notes":{"type":"string"},"agent":{"type":"string"},"public":{"type":"boolean"}},"required":["database_id","id","task","outcome","notes","agent"],"additionalProperties":false})
+    json!({"type":"object","properties":{"database_id":{"type":"string"},"id":{"type":"string"},"task":{"type":"string"},"outcome":{"type":"string","enum":["success","partial","fail"]},"notes":{"type":"string"},"agent":{"type":"string"}},"required":["database_id","id","task","outcome","notes","agent"],"additionalProperties":false})
 }
 
 fn database_id(value: Option<String>) -> Result<String> {
@@ -632,14 +624,12 @@ struct SkillFindArgs {
 struct SkillInspectArgs {
     database_id: Option<String>,
     id: String,
-    public: Option<bool>,
 }
 #[derive(Deserialize)]
 struct SkillReadArgs {
     database_id: Option<String>,
     id: String,
     file: String,
-    public: Option<bool>,
 }
 #[derive(Deserialize)]
 struct SkillRecordRunArgs {
@@ -649,7 +639,6 @@ struct SkillRecordRunArgs {
     outcome: String,
     notes: String,
     agent: String,
-    public: Option<bool>,
 }
 
 fn skill_run_outcome(value: &str) -> Result<skill_kb::SkillRunOutcome> {

@@ -65,12 +65,34 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill set-status legal-review 
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill inspect legal-review
 ```
 
+Automated evidence can also be recorded without manual schema prompts:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill record-run legal-review \
+  --evidence-json ./run-evidence.json
+```
+
+Set up Hermes once, then run evolution from inside Hermes:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- hermes setup
+```
+
+```text
+/kinic_evolve_job
+```
+
 ## Troubleshooting
 
 - Missing database link: run `database current`; if `database_id` is empty, run `database link <database-id>`.
 - Permission denied: ask a database owner to grant `reader` for find/inspect or `writer` for upsert/record-run/set-status.
 - Invalid manifest: check the required fields in [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 - Missing skill in search: rerun `skill find <query> --include-deprecated` if auditing old skills.
+- Stale Hermes projection after browser apply: run `kinic-vfs-cli hermes pull`.
+- Hermes projection check: run `kinic-vfs-cli hermes status`.
+- Pending Hermes evidence: run `kinic-vfs-cli hermes flush-pending`.
+- Shadow correction files: run `kinic-vfs-cli hermes shadows`.
+- Evolution job debugging: run `kinic-vfs-cli skill evolve-jobs create-ready` and `kinic-vfs-cli skill evolve-jobs list --status queued --json`.
 
 ## Demo Script
 

@@ -25,11 +25,30 @@ node_modules/
 **/.next/
 *.tmp
 *.tsbuildinfo
+npm/kinic-vfs-cli/vendor/kinic-vfs-cli
 .playwright-cli/
 .pnpm-store/
 .worktrees/
 __pycache__/
 *.pyc
+
+# Frontend build and test artifacts
+**/.next/
+**/.open-next/
+**/.wrangler/
+**/.turbo/
+**/out/
+**/test-results/
+**/playwright-report/
+**/coverage/
+**/next-env.d.ts
+**/cloudflare-env.d.ts
+**/.env.local
+**/.env.e2e.local
+**/.dev.vars
+
+# Generated copies and store assets
+/extensions/wiki-clipper/store-listing/assets/*.png
 
 # Obsidian plugin artifacts
 /plugins/kinic-wiki/node_modules/

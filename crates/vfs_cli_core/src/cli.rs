@@ -33,7 +33,10 @@ pub struct ConnectionArgs {
     #[arg(long, help = "Override VFS_CANISTER_ID or user config")]
     pub canister_id: Option<String>,
 
-    #[arg(long, help = "Target database id for DB-backed VFS operations")]
+    #[arg(
+        long,
+        help = "Target DB-backed operations; alternatively set VFS_DATABASE_ID or run database link <database-id>"
+    )]
     pub database_id: Option<String>,
 
     #[arg(
@@ -255,40 +258,49 @@ pub enum VfsCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum DatabaseCommand {
-    Create {
-        name: String,
-    },
-    Rename {
-        database_id: String,
-        name: String,
-    },
+    #[command(about = "Create a database and print its generated database id")]
+    Create { name: String },
+    #[command(about = "Rename one database")]
+    Rename { database_id: String, name: String },
+    #[command(about = "List databases attached to the current identity")]
     List {
         #[arg(long)]
         json: bool,
     },
-    Link {
-        database_id: String,
-    },
+    #[command(about = "Save a workspace database link so commands can omit --database-id")]
+    Link { database_id: String },
+    #[command(about = "Show the currently linked workspace database")]
     Current {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Remove the workspace database link")]
     Unlink,
+    #[command(about = "Grant owner, writer, or reader access to a principal")]
     Grant {
         database_id: String,
         principal: String,
         #[arg(value_enum)]
         role: DatabaseRoleArg,
     },
+    #[command(about = "Grant the current identity owner, writer, or reader access")]
+    GrantCurrentIdentity {
+        database_id: String,
+        #[arg(value_enum)]
+        role: DatabaseRoleArg,
+    },
+    #[command(about = "Revoke database access from a principal")]
     Revoke {
         database_id: String,
         principal: String,
     },
+    #[command(about = "List database members and roles")]
     Members {
         database_id: String,
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Export one database archive snapshot")]
     ArchiveExport {
         database_id: String,
         #[arg(long)]
@@ -298,6 +310,7 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Restore one archived or deleted database from a snapshot")]
     ArchiveRestore {
         database_id: String,
         #[arg(long)]
@@ -307,12 +320,10 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    ArchiveCancel {
-        database_id: String,
-    },
-    RestoreCancel {
-        database_id: String,
-    },
+    #[command(about = "Cancel an interrupted archive export")]
+    ArchiveCancel { database_id: String },
+    #[command(about = "Cancel an interrupted archive restore")]
+    RestoreCancel { database_id: String },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

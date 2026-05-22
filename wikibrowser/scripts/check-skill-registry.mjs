@@ -29,7 +29,6 @@ assert.match(ui, /Proposals/);
 assert.match(ui, /Trust:/);
 assert.match(catalog, /const REGISTRY_ROOTS = \[/);
 assert.match(catalog, /\/Wiki\/skills/);
-assert.match(catalog, /\/Wiki\/public-skills/);
 assert.match(catalog, /parseSkillManifest/);
 assert.match(catalog, /listChildren/);
 assert.match(catalog, /readNode/);

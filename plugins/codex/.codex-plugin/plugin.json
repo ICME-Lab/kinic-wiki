@@ -1,0 +1,30 @@
+{
+  "name": "kinic-skill-recorder",
+  "version": "0.1.2",
+  "description": "Record Codex skill run evidence and run Codex-driven Kinic skill evolution jobs through kinic-vfs-cli.",
+  "author": {
+    "name": "Kinic"
+  },
+  "license": "MIT",
+  "keywords": [
+    "kinic",
+    "skills",
+    "evidence"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Kinic Skill Recorder",
+    "shortDescription": "Record and evolve Kinic skills from Codex.",
+    "longDescription": "Provides skill-only Codex workflows for recording skill run evidence and using Codex to process Kinic skill evolution jobs through kinic-vfs-cli and the shared Python runner, without MCP or a Codex App Server runner.",
+    "developerName": "Kinic",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use kinic-record-skill-run to record evidence for a skill that affected this task.",
+      "Use kinic-evolve-skill-job to process a queued Kinic skill evolution job with Codex."
+    ],
+    "brandColor": "#10A37F"
+  }
+}

@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub(super) const PRIVATE_ROOT: &str = "/Wiki/skills";
-pub(super) const PUBLIC_ROOT: &str = "/Wiki/public-skills";
 pub(super) const RUN_ROOT: &str = "/Sources/skill-runs";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -261,20 +260,12 @@ fn yaml_scalar(value: &str) -> String {
     }
 }
 
-pub(super) fn skill_base_path(id: &SkillId, public: bool) -> String {
-    format!(
-        "{}/{}",
-        if public { PUBLIC_ROOT } else { PRIVATE_ROOT },
-        id.name
-    )
+pub(super) fn skill_base_path(id: &SkillId) -> String {
+    format!("{}/{}", PRIVATE_ROOT, id.name)
 }
 
 pub(super) fn run_base_path(id: &SkillId) -> String {
     format!("{}/{}", RUN_ROOT, id.name)
-}
-
-pub(super) fn catalog(public: bool) -> &'static str {
-    if public { "public" } else { "private" }
 }
 
 pub(super) fn now_millis() -> i64 {

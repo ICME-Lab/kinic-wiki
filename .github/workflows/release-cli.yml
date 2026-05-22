@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, for example v0.1.0"
+        description: "Release version, for example v0.1.2"
         required: true
 
 permissions:
@@ -44,7 +44,13 @@ jobs:
       - name: Package CLI
         env:
           RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
-        run: bash scripts/package_kinic_vfs_cli.sh "$RELEASE_VERSION" "${{ matrix.platform }}" target/release/kinic-vfs-cli dist
+        run: |
+          package_version="$(bash scripts/kinic_vfs_cli_release_version.sh)"
+          if [ "$RELEASE_VERSION" != "$package_version" ]; then
+            echo "release version $RELEASE_VERSION does not match package version $package_version" >&2
+            exit 1
+          fi
+          bash scripts/package_kinic_vfs_cli.sh "$package_version" "${{ matrix.platform }}" target/release/kinic-vfs-cli dist
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
@@ -66,8 +72,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
         run: |
-          if gh release view "$RELEASE_VERSION" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_VERSION" release-assets/* --clobber
+          package_version="$(bash scripts/kinic_vfs_cli_release_version.sh)"
+          if [ "$RELEASE_VERSION" != "$package_version" ]; then
+            echo "release version $RELEASE_VERSION does not match package version $package_version" >&2
+            exit 1
+          fi
+          if gh release view "$package_version" >/dev/null 2>&1; then
+            gh release upload "$package_version" release-assets/* --clobber
           else
-            gh release create "$RELEASE_VERSION" release-assets/* --title "$RELEASE_VERSION" --generate-notes
+            gh release create "$package_version" release-assets/* --title "$package_version" --generate-notes
           fi

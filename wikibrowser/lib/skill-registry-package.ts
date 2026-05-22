@@ -15,8 +15,8 @@ export type SkillPackageInput = {
   files: SkillPackageFile[];
 };
 
-const PUBLIC_ROOT = "/Wiki/public-skills";
 const PRIVATE_ROOT = "/Wiki/skills";
+const PUBLIC_ROOT = PRIVATE_ROOT;
 
 export async function upsertSkillPackage(canisterId: string, databaseId: string, identity: Identity, input: SkillPackageInput): Promise<string[]> {
   const skillId = cleanSkillId(input.id);
