@@ -8,18 +8,18 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, X } from "lucide-react";
+import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, X } from "lucide-react";
 import { CycleBattery } from "@/components/cycle-battery";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
+import { HelpPanel } from "@/components/help-panel";
 import { Inspector } from "@/components/inspector";
 import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
-import { SourcesPanel } from "@/components/sources-panel";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
-import { hrefForDatabaseSwitch, hrefForGraph, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
+import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import { xShareDatabaseHref } from "@/lib/share-links";
 import type { ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
@@ -39,7 +39,7 @@ import {
   type ViewMode
 } from "@/lib/wiki-helpers";
 
-const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest", "sources"];
+const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest"];
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
@@ -65,12 +65,13 @@ export function WikiBrowser() {
   const databaseId = routeState.databaseId ?? "";
   const isSearchPage = useMemo(() => isBrowserSearchPathname(canisterId, databaseId, pathname), [canisterId, databaseId, pathname]);
   const isGraphPage = useMemo(() => isBrowserGraphPathname(canisterId, databaseId, pathname), [canisterId, databaseId, pathname]);
+  const isHelpPage = useMemo(() => isBrowserHelpPathname(canisterId, databaseId, pathname), [canisterId, databaseId, pathname]);
   const graphCenter = isGraphPage ? searchParams.get("center") : null;
   const graphDepth = parseGraphDepth(searchParams.get("depth"));
   const readMode = parseReadMode(searchParams.get("read"));
   const selectedPath = useMemo(
-    () => isSearchPage ? "/Wiki" : isGraphPage ? graphCenter ?? "/Wiki" : routeState.nodePath,
-    [graphCenter, isGraphPage, isSearchPage, routeState.nodePath]
+    () => isSearchPage || isHelpPage ? "/Wiki" : isGraphPage ? graphCenter ?? "/Wiki" : routeState.nodePath,
+    [graphCenter, isGraphPage, isHelpPage, isSearchPage, routeState.nodePath]
   );
   const view = parseView(searchParams.get("view"));
   const tab = parseTab(searchParams.get("tab"));
@@ -569,6 +570,7 @@ export function WikiBrowser() {
     const anonymousHref = hrefForCurrentReadRoute(canisterId, databaseId, {
       graphCenter,
       graphDepth,
+      isHelpPage,
       isGraphPage,
       isSearchPage,
       query,
@@ -580,7 +582,7 @@ export function WikiBrowser() {
     if (anonymousHref) {
       router.replace(anonymousHref);
     }
-  }, [canisterId, currentChildren.error, currentNode.error, databaseId, graphCenter, graphDepth, isGraphPage, isSearchPage, query, readMode, router, searchKind, selectedPath, tab, view]);
+  }, [canisterId, currentChildren.error, currentNode.error, databaseId, graphCenter, graphDepth, isGraphPage, isHelpPage, isSearchPage, query, readMode, router, searchKind, selectedPath, tab, view]);
 
   return (
     <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
@@ -592,6 +594,7 @@ export function WikiBrowser() {
         query={query}
         searchKind={searchKind}
         graphDepth={graphDepth}
+        isHelpPage={isHelpPage}
         isGraphPage={isGraphPage}
         isSearchPage={isSearchPage}
         graphCenter={graphCenter}
@@ -608,7 +611,7 @@ export function WikiBrowser() {
         onMobileSidebarToggle={() => setMobileSidebarOpen((open) => !open)}
         canLeaveDirtyEdit={canLeaveDirtyEdit}
       />
-      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage ? "lg:grid-cols-[320px_minmax(0,1fr)]" : "lg:grid-cols-[320px_minmax(0,1fr)_320px]"}`}>
+      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[320px_minmax(0,1fr)]" : "lg:grid-cols-[320px_minmax(0,1fr)_320px]"}`}>
         <aside
           id="wiki-mobile-sidebar"
           data-tid="wiki-explorer-panel"
@@ -709,7 +712,9 @@ export function WikiBrowser() {
           />
         </aside>
         <section data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
-          {isGraphPage ? (
+          {isHelpPage ? (
+            <HelpPanel />
+          ) : isGraphPage ? (
             <GraphPanel canisterId={canisterId} databaseId={databaseId} centerPath={graphCenter} depth={graphDepth} readIdentity={effectiveReadIdentity} readMode={readMode} />
           ) : isSearchPage ? (
             <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} readIdentity={effectiveReadIdentity} readMode={readMode} />
@@ -754,7 +759,7 @@ export function WikiBrowser() {
             </>
           )}
         </section>
-        {!isSearchPage && !isGraphPage ? (
+        {!isSearchPage && !isGraphPage && !isHelpPage ? (
           <aside data-tid="wiki-inspector-panel" className="order-3 hidden min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:flex lg:overflow-hidden">
             <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
             <Inspector
@@ -822,7 +827,6 @@ function LeftPane({
     );
   }
   if (tab === "ingest") return <IngestPanel canisterId={canisterId} databaseId={databaseId} readIdentity={readIdentity} />;
-  if (tab === "sources") return <SourcesPanel canisterId={canisterId} databaseId={databaseId} readIdentity={effectiveReadIdentity} writeIdentity={readIdentity} readMode={readMode} />;
   return (
     <ExplorerTree
       key={explorerRevision}
@@ -1199,6 +1203,7 @@ function TopBar({
   query,
   searchKind,
   graphDepth,
+  isHelpPage,
   isGraphPage,
   isSearchPage,
   graphCenter,
@@ -1222,6 +1227,7 @@ function TopBar({
   query: string;
   searchKind: "path" | "full";
   graphDepth: 1 | 2;
+  isHelpPage: boolean;
   isGraphPage: boolean;
   isSearchPage: boolean;
   graphCenter: string | null;
@@ -1253,6 +1259,7 @@ function TopBar({
       hrefForDatabaseSwitch(canisterId, nextDatabaseId, {
         isSearchPage,
         isGraphPage,
+        isHelpPage,
         query,
         searchKind,
         graphDepth,
@@ -1320,6 +1327,15 @@ function TopBar({
             <span className="hidden sm:inline">Share</span>
           </a>
         ) : null}
+        <Link
+          className={`${HEADER_ICON_LINK_CLASS} ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
+          href={isHelpPage ? hrefForPath(canisterId, databaseId, "/Wiki", undefined, undefined, undefined, undefined, readMode) : hrefForHelp(canisterId, databaseId, readMode)}
+          aria-label="Help"
+          title={isHelpPage ? "Close help" : "Help"}
+        >
+          <HelpCircle size={18} aria-hidden />
+          <span className="sr-only sm:not-sr-only">Help</span>
+        </Link>
         <Link
           className={`${HEADER_ICON_LINK_CLASS} ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
           href={graphHref}
@@ -1467,7 +1483,7 @@ function ModeTabs({
 }) {
   return (
     <nav className="border-b border-line px-3 py-2" aria-label="Left sidebar mode">
-      <div className="grid grid-cols-4 gap-1 rounded-xl border border-line bg-white p-1 text-center text-xs">
+      <div className="grid grid-cols-3 gap-1 rounded-xl border border-line bg-white p-1 text-center text-xs">
         {SIDEBAR_TABS.map((value) => (
           <Link
             key={value}
@@ -1525,7 +1541,6 @@ function DocumentBreadcrumbs({
 function tabTitle(tab: ModeTab): string {
   if (tab === "query") return "Query";
   if (tab === "ingest") return "Ingest";
-  if (tab === "sources") return "Sources";
   return "Explorer";
 }
 
@@ -1566,6 +1581,7 @@ function hrefForCurrentReadRoute(
   state: {
     graphCenter: string | null;
     graphDepth: 1 | 2;
+    isHelpPage: boolean;
     isGraphPage: boolean;
     isSearchPage: boolean;
     query: string;
@@ -1575,6 +1591,9 @@ function hrefForCurrentReadRoute(
     view: ViewMode;
   }
 ): string | null {
+  if (state.isHelpPage) {
+    return hrefForHelp(canisterId, databaseId, "anonymous");
+  }
   if (state.isSearchPage) {
     return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, "anonymous");
   }
@@ -1669,6 +1688,11 @@ function isBrowserSearchPathname(canisterId: string, databaseId: string, pathnam
 function isBrowserGraphPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
   return pathname === `/${encodeURIComponent(databaseId)}/graph`;
+}
+
+function isBrowserHelpPathname(canisterId: string, databaseId: string, pathname: string): boolean {
+  void canisterId;
+  return pathname === `/${encodeURIComponent(databaseId)}/help`;
 }
 
 function decodePathSegment(segment: string): string {

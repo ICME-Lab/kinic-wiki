@@ -74,10 +74,21 @@ export function hrefForGraph(canisterId: string, databaseId: string, centerPath?
   return `/${encodeURIComponent(databaseId)}/graph${queryString}`;
 }
 
+export function hrefForHelp(canisterId: string, databaseId: string, readMode?: string | null): string {
+  void canisterId;
+  const params = new URLSearchParams();
+  if (readMode === "anonymous") {
+    params.set("read", "anonymous");
+  }
+  const queryString = params.size > 0 ? `?${params.toString()}` : "";
+  return `/${encodeURIComponent(databaseId)}/help${queryString}`;
+}
+
 export function hrefForDatabaseSwitch(
   canisterId: string,
   databaseId: string,
   state: {
+    isHelpPage?: boolean;
     isSearchPage: boolean;
     isGraphPage: boolean;
     query: string;
@@ -86,6 +97,9 @@ export function hrefForDatabaseSwitch(
     readMode?: string | null;
   }
 ): string {
+  if (state.isHelpPage) {
+    return hrefForHelp(canisterId, databaseId, state.readMode);
+  }
   if (state.isSearchPage) {
     return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, state.readMode);
   }
@@ -104,7 +118,7 @@ export function hrefForMarkdownLink(canisterId: string, databaseId: string, curr
     return null;
   }
   const target = splitMarkdownHref(trimmed);
-  if (trimmed.startsWith("/Wiki") || trimmed.startsWith("/Sources")) {
+  if (isInternalWikiPath(target.path)) {
     return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, target.path, undefined, undefined, undefined, undefined, readMode), target, readMode);
   }
   if (trimmed.startsWith("/")) {
@@ -143,6 +157,10 @@ function resolveRelativeWikiPath(currentPath: string, href: string): string {
 
 function isExternalHref(href: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
+}
+
+function isInternalWikiPath(path: string): boolean {
+  return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
 }
 
 function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget, readMode?: string | null): string {

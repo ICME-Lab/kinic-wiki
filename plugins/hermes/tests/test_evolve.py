@@ -132,7 +132,13 @@ class KinicSkillEvolveTests(unittest.TestCase):
         self.assertEqual(metrics["generator"], "hermes-plugin")
         self.assertNotIn("provider", metrics)
         self.assertNotIn("model", metrics)
+        self.assertEqual(metrics["heading_consistency_gate"], "pass")
+        self.assertNotIn("semantic_drift_gate", metrics)
         self.assertTrue(result["gate_passed"])
+
+    def test_new_proposal_id_includes_job_timestamp_and_random_suffix(self) -> None:
+        with mock.patch.object(self.runner.time, "time", return_value=123.456), mock.patch.object(self.runner.secrets, "token_hex", return_value="abcdef"):
+            self.assertEqual(self.runner.new_proposal_id("job/one"), "job-one-123456-abcdef")
 
     def test_write_proposal_records_codex_plugin_route(self) -> None:
         writes: dict[str, str] = {}
@@ -185,7 +191,7 @@ class KinicSkillEvolveTests(unittest.TestCase):
 
         run_cli.assert_called_once_with("kinic-vfs-cli", "skill", "apply-proposal", "legal-review", mock.ANY, "--job-id", "job-1", "--json", "--projection-dir", "/projection")
 
-    def test_finish_job_treats_sync_failed_apply_as_failed(self) -> None:
+    def test_finish_job_treats_sync_failed_apply_as_done_with_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             candidate = Path(tmp) / "candidate.md"
             candidate.write_text("# Legal Review\nBetter guidance.\n")
@@ -196,8 +202,13 @@ class KinicSkillEvolveTests(unittest.TestCase):
                     {"content": "---\nstatus: running\nskill_id: legal-review\nsource_runs:\n  - run.md\n---\n# Job\n", "etag": "j1"},
                     {"content": "# Legal Review\nOld guidance.\n", "etag": "s1"},
                 ]
-                self.assertEqual(self.runner.finish_job_command(args), 3)
-                complete_job.assert_called_once_with("kinic-vfs-cli", "job-1", "failed", "apply status: auto_applied_sync_failed; sync_error: projection unavailable")
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(self.runner.finish_job_command(args), 0)
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(payload["apply"]["status"], "auto_applied_sync_failed")
+                self.assertEqual(payload["job_status"], "done")
+                complete_job.assert_called_once_with("kinic-vfs-cli", "job-1", "done", "remote apply succeeded; local_projection_sync_failed: projection unavailable")
 
     def test_finish_job_treats_gate_failed_apply_as_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -241,6 +252,23 @@ class KinicSkillEvolveTests(unittest.TestCase):
                     self.assertEqual(self.runner.finish_job_command(args), 3)
                 self.assertIn("Expecting value", stderr.getvalue())
                 self.assertIn("failed to complete job job-1 as failed: complete failed", stderr.getvalue())
+
+    def test_finish_job_returns_nonzero_when_apply_succeeds_but_complete_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "candidate.md"
+            candidate.write_text("# Legal Review\nBetter guidance.\n")
+            args = self.finish_args(candidate)
+            with mock.patch.object(self.runner, "read_node") as read_node, mock.patch.object(self.runner, "read_run_paths", return_value=[{"path": "run.md", "content": "worked"}]), mock.patch.object(self.runner, "read_corrections", return_value=[]), mock.patch.object(self.runner, "write_proposal", return_value={"gate_passed": True, "output": {"proposal_id": "p1"}}), mock.patch.object(self.runner, "run_cli", return_value=json.dumps({"status": "auto_applied"})), mock.patch.object(self.runner, "complete_job", side_effect=RuntimeError("complete failed")):
+                read_node.side_effect = [
+                    {"content": "---\nstatus: running\nskill_id: legal-review\nsource_runs:\n  - run.md\n---\n# Job\n", "etag": "j1"},
+                    {"content": "# Legal Review\nOld guidance.\n", "etag": "s1"},
+                ]
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(self.runner.finish_job_command(args), 3)
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(payload["job_status"], "done")
+                self.assertIn("completion_error", payload)
 
     def test_finish_job_gate_fail_completes_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

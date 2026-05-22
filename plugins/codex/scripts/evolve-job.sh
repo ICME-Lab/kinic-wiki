@@ -12,7 +12,7 @@ usage:
 USAGE
 }
 
-projection_dir="${KINIC_HERMES_PROJECTION_DIR:-$HOME/.kinic/hermes-current/skills}"
+projection_dir="${KINIC_SKILL_PROJECTION_DIR:-$HOME/.kinic/skill-projection/skills}"
 
 resolve_runtime_path() {
   local script_dir plugin_root candidate

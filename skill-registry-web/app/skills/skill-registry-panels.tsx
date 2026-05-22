@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { MemberTable } from "@/app/dashboard/member-table";
-import { ProposalList, RunSummary } from "@/app/skills/skill-registry-ui";
+import { ProposalList, RunSummary, type SkillActionHandlers, type SkillActionState } from "@/app/skills/skill-registry-ui";
 import type { CatalogSkill, EvolutionJob, StatusFilter } from "@/lib/skill-registry-catalog";
 import type { DatabaseMember } from "@/lib/types";
 
@@ -103,7 +103,27 @@ export function PermissionsPanel({ databaseId, members, principal, writable }: {
   );
 }
 
-export function SkillDetailPanel({ skills, skill, onSelect, focus = "detail" }: { skills: CatalogSkill[]; skill: CatalogSkill; onSelect: (id: string) => void; focus?: "detail" | "runs" | "proposals" }) {
+export function SkillDetailPanel({
+  skills,
+  skill,
+  onSelect,
+  focus = "detail",
+  authenticated = false,
+  writable = false,
+  busy = false,
+  preview = null,
+  handlers
+}: {
+  skills: CatalogSkill[];
+  skill: CatalogSkill;
+  onSelect: (id: string) => void;
+  focus?: "detail" | "runs" | "proposals";
+  authenticated?: boolean;
+  writable?: boolean;
+  busy?: boolean;
+  preview?: SkillActionState["preview"];
+  handlers?: SkillActionHandlers;
+}) {
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -126,7 +146,7 @@ export function SkillDetailPanel({ skills, skill, onSelect, focus = "detail" }: 
         </div>
       ) : null}
       {focus === "runs" ? <RunSummary skill={skill} /> : null}
-      {focus === "proposals" ? <ProposalList skill={skill} authenticated={false} writable={false} busy={false} preview={null} onApprove={() => undefined} onPreview={() => undefined} onApply={() => undefined} /> : null}
+      {focus === "proposals" && handlers ? <ProposalList skill={skill} authenticated={authenticated} writable={writable} busy={busy} preview={preview} onApprove={handlers.approveProposal} onPreview={handlers.previewProposal} onApply={handlers.applyProposal} /> : null}
     </section>
   );
 }

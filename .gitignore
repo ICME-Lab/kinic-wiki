@@ -22,6 +22,7 @@
 # Temp files
 /tmp/
 node_modules/
+**/.next/
 *.tmp
 *.tsbuildinfo
 npm/kinic-vfs-cli/vendor/kinic-vfs-cli
@@ -67,6 +68,8 @@ __pycache__/
 /.benchmarks/
 /artifacts/
 extensions/wiki-clipper/release/
+/skill-registry-web/next-env.d.ts
+/npm/kinic-vfs-cli/vendor/kinic-vfs-cli
 
 # Keep ic-hybrid-sqlite as its own repo for now
 /ic-hybrid-sqlite/

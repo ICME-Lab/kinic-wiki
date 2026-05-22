@@ -1,6 +1,6 @@
 {
   "name": "kinic-skill-recorder",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "displayName": "Kinic Skill Recorder",
   "description": "Record Claude Code skill run evidence and run Claude Code-driven Kinic skill evolution jobs through kinic-vfs-cli.",
   "author": {

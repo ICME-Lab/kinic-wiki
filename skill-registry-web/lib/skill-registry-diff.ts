@@ -104,7 +104,7 @@ function lineDelta(before: string, after: string): { additions: number; removals
 
 function assertProposalGates(metricsContent: string): void {
   const metrics = parseJsonObject(metricsContent);
-  for (const gate of ["candidate_score_gate", "semantic_drift_gate", "permission_gate"]) {
+  for (const gate of ["candidate_score_gate", "heading_consistency_gate", "permission_gate"]) {
     if (gateStatus(metrics, gate) !== "pass") {
       throw new Error(`Proposal gate failed: ${gate}`);
     }

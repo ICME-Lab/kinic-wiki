@@ -2,11 +2,12 @@ use crate::cli::{SkillRunOutcomeArg, SkillStatusArg};
 use crate::hermes::sync_projection;
 use crate::skill_registry::{
     SkillRunEvidenceInput, SkillRunInput, apply_evolution_proposal, approve_proposal,
-    claim_evolution_job, complete_evolution_job, create_ready_evolution_jobs, export_skill,
-    find_skills, inspect_skill, install_skill_lockfile, list_evolution_jobs,
-    markdown_target_package_key, propose_improvement, record_correction, record_skill_run,
-    record_skill_run_evidence, record_skill_run_evidence_with_override, rollback_skill_version,
-    set_skill_status, skill_history, upsert_skill, with_ready_evolution_jobs,
+    claim_evolution_job, complete_evolution_job, create_ready_evolution_jobs,
+    evolution_job_id_for_attempt, export_skill, find_skills, inspect_skill, install_skill_lockfile,
+    list_evolution_jobs, markdown_target_package_key, propose_improvement, record_correction,
+    record_skill_run, record_skill_run_evidence, record_skill_run_evidence_with_override,
+    rollback_skill_version, set_skill_status, skill_history, unique_evolution_job_id, upsert_skill,
+    with_ready_evolution_jobs,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -676,7 +677,7 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
             content: serde_json::json!({
                 "base_etag": current.etag,
                 "candidate_score_gate": "pass",
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "pass"
             })
             .to_string(),
@@ -1071,7 +1072,7 @@ async fn skill_apply_proposal_rejects_failed_gates() {
             content: serde_json::json!({
                 "base_etag": current.etag,
                 "candidate_score_gate": "pass",
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "fail"
             })
             .to_string(),
@@ -1263,6 +1264,8 @@ async fn skill_evolution_jobs_create_claim_complete_and_list() {
         .await
         .unwrap();
     let job_id = created["created"][0]["job_id"].as_str().unwrap();
+    assert!(job_id.starts_with("legal-review-"));
+    assert!(job_id.rsplit('-').next().unwrap().len() == 6);
     let queued = list_evolution_jobs(&client, "team-db", Some("queued"))
         .await
         .unwrap();
@@ -1277,6 +1280,33 @@ async fn skill_evolution_jobs_create_claim_complete_and_list() {
     assert_eq!(claimed["status"], "running");
     assert_eq!(claimed["claimed_by"], "principal-1");
     assert_eq!(completed["status"], "done");
+}
+
+#[tokio::test]
+async fn skill_evolution_job_id_skips_existing_collision() {
+    let client = SkillMockClient::default();
+    let first_id = evolution_job_id_for_attempt("legal-review", 123, 456, 0);
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: format!("/Wiki/skill-evolution-jobs/{first_id}.md"),
+            kind: NodeKind::File,
+            content: "---\nkind: kinic.skill_evolution_job\nskill_id: legal-review\n---\n# Job\n"
+                .to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+
+    let next_id = unique_evolution_job_id(&client, "team-db", "legal-review", 123, 456)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        next_id,
+        evolution_job_id_for_attempt("legal-review", 123, 456, 1)
+    );
 }
 
 #[tokio::test]
@@ -1375,6 +1405,120 @@ async fn skill_evolution_job_complete_rejects_different_principal() {
         .expect_err("other principal should not complete");
 
     assert!(error.to_string().contains("claim is held"));
+}
+
+#[tokio::test]
+async fn skill_evolution_job_complete_rejects_principal_that_did_not_claim() {
+    let client = SkillMockClient::with_caller_principal("principal-a");
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: queued\n---\n# Job\n",
+    )
+    .await;
+
+    claim_evolution_job(&client, "team-db", "job-1", 60)
+        .await
+        .expect("principal-a claim");
+    client.set_caller_principal(Some("principal-b"));
+    let error = complete_evolution_job(&client, "team-db", "job-1", "done", "ok")
+        .await
+        .expect_err("principal-b should not complete principal-a claim");
+
+    assert!(error.to_string().contains("claim is held"));
+}
+
+#[tokio::test]
+async fn skill_apply_proposal_with_job_rejects_principal_that_did_not_claim() {
+    let client = SkillMockClient::with_caller_principal("principal-a");
+    write_apply_proposal_fixture(&client, "# Current\n", "# Improved\n").await;
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: queued\n---\n# Job\n",
+    )
+    .await;
+
+    claim_evolution_job(&client, "team-db", "job-1", 60)
+        .await
+        .expect("principal-a claim");
+    client.set_caller_principal(Some("principal-b"));
+    let error = apply_evolution_proposal(
+        &client,
+        "team-db",
+        "legal-review",
+        "p1",
+        Some("job-1"),
+        None,
+    )
+    .await
+    .expect_err("principal-b should not apply principal-a claim");
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+
+    assert!(error.to_string().contains("claim is held"));
+    assert_eq!(current, "# Current\n");
+}
+
+#[tokio::test]
+async fn skill_evolution_job_complete_rejects_old_principal_after_expired_reclaim() {
+    let client = SkillMockClient::with_caller_principal("principal-b");
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: running\nclaimed_by: principal-a\nclaim_expires_at: 2000-01-01T00:00:00Z\n---\n# Job\n",
+    )
+    .await;
+
+    claim_evolution_job(&client, "team-db", "job-1", 60)
+        .await
+        .expect("principal-b reclaim");
+    client.set_caller_principal(Some("principal-a"));
+    let error = complete_evolution_job(&client, "team-db", "job-1", "done", "ok")
+        .await
+        .expect_err("old principal should not complete reclaimed job");
+
+    assert!(error.to_string().contains("claim is held"));
+}
+
+#[tokio::test]
+async fn skill_apply_proposal_with_job_rejects_old_principal_after_expired_reclaim() {
+    let client = SkillMockClient::with_caller_principal("principal-b");
+    write_apply_proposal_fixture(&client, "# Current\n", "# Improved\n").await;
+    write_evolution_job(
+        &client,
+        "job-1",
+        "---\nkind: kinic.skill_evolution_job\njob_id: job-1\nskill_id: legal-review\nstatus: running\nclaimed_by: principal-a\nclaim_expires_at: 2000-01-01T00:00:00Z\n---\n# Job\n",
+    )
+    .await;
+
+    claim_evolution_job(&client, "team-db", "job-1", 60)
+        .await
+        .expect("principal-b reclaim");
+    client.set_caller_principal(Some("principal-a"));
+    let error = apply_evolution_proposal(
+        &client,
+        "team-db",
+        "legal-review",
+        "p1",
+        Some("job-1"),
+        None,
+    )
+    .await
+    .expect_err("old principal should not apply reclaimed job");
+    let current = client
+        .read_node("team-db", "/Wiki/skills/legal-review/SKILL.md")
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
+
+    assert!(error.to_string().contains("claim is held"));
+    assert_eq!(current, "# Current\n");
 }
 
 #[tokio::test]
@@ -2052,7 +2196,7 @@ async fn write_apply_proposal_fixture(
             content: serde_json::json!({
                 "base_etag": current.etag,
                 "candidate_score_gate": "pass",
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "pass"
             })
             .to_string(),

@@ -17,7 +17,8 @@ const panelOpen = signal(false);
 const logs = signal([]);
 const phase = signal("idle");
 const progress = signal({ total: 0, done: 0, ok: 0, failed: 0 });
-const canExport = computed(() => status.value !== "exporting");
+const hasDatabaseConfig = computed(() => config.value.databaseId.trim().length > 0);
+const canExport = computed(() => status.value !== "exporting" && hasDatabaseConfig.value);
 const logoUrl = chrome.runtime.getURL("icons/icon-32.png");
 let resumeStarted = false;
 
@@ -64,14 +65,18 @@ function Modal() {
         </button>
       </header>
       <section class="settings">
-        <label class="row">
-          <span>Database ID</span>
-          <input value={config.value.databaseId} onInput={(event) => updateConfig({ databaseId: event.currentTarget.value })} />
-        </label>
         <div class="export-block">
           <strong>Export the recent chats</strong>
           {status.value === "exporting" ? (
             <p class="export-warning">Export is running. You can keep using this tab, but do not close it until it finishes.</p>
+          ) : null}
+          {!hasDatabaseConfig.value ? (
+            <div class="setup-row">
+              <p>Database is not selected.</p>
+              <button type="button" onClick={openSettings}>
+                Open settings
+              </button>
+            </div>
           ) : null}
           <div class="export-box">
             <p>Processing takes ~10 seconds per chat. If you have over 50 chats, export manually to save time.</p>
@@ -122,18 +127,23 @@ function LogItem({ log }) {
 async function startExport() {
   error.value = "";
   logs.value = [];
-  const limit = normalizeExportLimit(countText.value);
-  countText.value = String(limit);
-  status.value = "exporting";
-  phase.value = "fetching";
-  progress.value = { total: limit, done: 0, ok: 0, failed: 0 };
   try {
     const nextConfig = normalizedConfig();
+    if (!nextConfig.databaseId) {
+      error.value = "Select a writable database in settings.";
+      status.value = "idle";
+      await openSettings();
+      return;
+    }
+    const limit = normalizeExportLimit(countText.value);
+    countText.value = String(limit);
+    status.value = "exporting";
+    phase.value = "fetching";
+    progress.value = { total: limit, done: 0, ok: 0, failed: 0 };
     if (isMainnetHost(nextConfig.host) && !confirmMainnetExport()) {
       status.value = "idle";
       return;
     }
-    await send({ type: "save-config", config: nextConfig });
     await startCurrentTabExport({
       limit,
       config: nextConfig,
@@ -150,6 +160,10 @@ async function cancelExport() {
   await cancelCurrentTabExport(exportCallbacks());
 }
 
+async function openSettings() {
+  await send({ type: "open-settings" });
+}
+
 async function loadConfig() {
   try {
     const response = await send({ type: "load-config" });
@@ -157,10 +171,6 @@ async function loadConfig() {
   } catch (nextError) {
     error.value = messageForError(nextError);
   }
-}
-
-function updateConfig(patch) {
-  config.value = { ...config.value, ...patch };
 }
 
 function configWithDefaults(value) {
@@ -174,7 +184,7 @@ function configWithDefaults(value) {
 function normalizedConfig() {
   return {
     canisterId: DEFAULT_CANISTER_ID,
-    databaseId: config.value.databaseId.trim() || DEFAULT_DATABASE_ID,
+    databaseId: config.value.databaseId.trim(),
     host: DEFAULT_IC_HOST
   };
 }
@@ -252,11 +262,11 @@ const styles = `
 .brand{display:flex;align-items:center;gap:10px;min-width:0}.brand strong{display:block;font-size:15px;font-weight:700}.brand p{margin:2px 0 0;color:var(--kinic-body);font-size:12px;font-weight:550}.pill{border:1px solid var(--kinic-pale-pink);border-radius:999px;padding:5px 8px;background:var(--kinic-soft-pink);color:var(--kinic-hot-pink);font-size:12px;font-weight:800}.close{display:grid;place-items:center;width:30px;height:30px;border:1px solid var(--kinic-line);border-radius:12px;background:var(--kinic-white);color:var(--kinic-body);font-size:17px;font-weight:800;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
 .close:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);color:var(--kinic-white);transform:translateY(-3px)}
 .close:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
-.settings{margin:12px;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-paper);padding:16px}.row{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px;color:var(--kinic-ink);font-weight:750}.row input{max-width:280px}
+.settings{margin:12px;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-paper);padding:16px}
 input{border:1px solid var(--kinic-mid-line);border-radius:12px;background:var(--kinic-white);color:var(--kinic-ink);padding:9px 12px;font:inherit}
 input:focus{border-color:var(--kinic-hot-pink);outline:2px solid var(--kinic-soft-pink);outline-offset:1px}
-.export-block{display:grid;gap:10px}.export-block strong{font-size:15px}.export-warning{margin:0;color:#d5691b;font-weight:750}.export-box{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--kinic-line);border-radius:16px;padding:16px;background:var(--kinic-white)}.export-box p{max-width:430px;margin:0;color:var(--kinic-body);font-weight:600}.export-control{display:flex;align-items:center;gap:8px;border:1px solid var(--kinic-mid-line);border-radius:16px;padding:5px;background:var(--kinic-white)}.export-control input{width:58px;border:0;background:transparent;text-align:center;font-weight:800}.export-control button,.logs button{border:1px solid var(--kinic-ink);border-radius:16px;padding:9px 14px;background:var(--kinic-ink);color:var(--kinic-white);font-weight:800;box-shadow:none;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
-.export-control button:hover,.logs button:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);transform:translateY(-3px)}
-.export-control button:focus-visible,.logs button:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
+.export-block{display:grid;gap:10px}.export-block strong{font-size:15px}.export-warning{margin:0;color:#d5691b;font-weight:750}.setup-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--kinic-pale-pink);border-radius:16px;padding:12px 14px;background:var(--kinic-soft-pink)}.setup-row p{margin:0;color:var(--kinic-hot-pink);font-weight:800}.export-box{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--kinic-line);border-radius:16px;padding:16px;background:var(--kinic-white)}.export-box p{max-width:430px;margin:0;color:var(--kinic-body);font-weight:600}.export-control{display:flex;align-items:center;gap:8px;border:1px solid var(--kinic-mid-line);border-radius:16px;padding:5px;background:var(--kinic-white)}.export-control input{width:58px;border:0;background:transparent;text-align:center;font-weight:800}.export-control button,.setup-row button,.logs button{border:1px solid var(--kinic-ink);border-radius:16px;padding:9px 14px;background:var(--kinic-ink);color:var(--kinic-white);font-weight:800;box-shadow:none;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
+.export-control button:hover,.setup-row button:hover,.logs button:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);transform:translateY(-3px)}
+.export-control button:focus-visible,.setup-row button:focus-visible,.logs button:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
 button:disabled{opacity:.55;cursor:not-allowed}.logs{margin:12px;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);padding:14px 18px}.logs h2{margin:0 0 12px;font-size:16px}.filter{border:1px solid var(--kinic-pale-pink);border-radius:999px;background:var(--kinic-soft-pink);color:var(--kinic-hot-pink);padding:8px;text-align:center;font-weight:800}.status{min-height:20px;margin:10px 0;color:var(--kinic-body)}.status.error{color:var(--kinic-error)}.cancel{margin:0 0 10px;border:1px solid var(--kinic-line);border-radius:16px;padding:8px 12px;background:var(--kinic-white);color:var(--kinic-ink);font-weight:800;box-shadow:0 4px 10px #14142b0a}.log-list{display:grid;gap:12px;max-height:240px;overflow:auto}.log{display:grid;grid-template-columns:42px 1fr;gap:12px;border:1px solid var(--kinic-line);border-radius:16px;padding:14px;background:var(--kinic-paper)}.log-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--kinic-success-soft);color:var(--kinic-success);font-weight:900}.log.error .log-icon{background:var(--kinic-error-soft);color:var(--kinic-error)}.log-meta{display:flex;justify-content:space-between;color:var(--kinic-body);font-size:12px}.log p{margin:6px 0 0;color:var(--kinic-ink);font-weight:650}
 `;

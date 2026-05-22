@@ -4,11 +4,9 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { chromium } from "@playwright/test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const playwrightPath = new URL("../../../wikibrowser/node_modules/@playwright/test/index.js", import.meta.url);
-const playwright = await import(playwrightPath.href);
-const chromium = playwright.chromium ?? playwright.default?.chromium;
 const logoDataUri = `data:image/png;base64,${await readFile(resolve(root, "icons/icon-128.png"), "base64")}`;
 
 await mkdir(resolve(root, "store-listing/assets"), { recursive: true });

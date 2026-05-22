@@ -13,8 +13,8 @@ const browserRoutes = [
   "/Wiki?read=anonymous&view=edit",
   "/Wiki?read=anonymous&tab=query",
   "/Wiki?read=anonymous&tab=ingest",
-  "/Wiki?read=anonymous&tab=sources",
   "/search?q=Wiki&kind=path&read=anonymous",
+  "/help?read=anonymous",
   "/graph?center=%2FWiki&depth=1&read=anonymous",
   "/graph?read=anonymous"
 ];
@@ -109,9 +109,9 @@ function wikiLayoutProbe(route) {
     if (!isVisible(brandLink)) failures.push("brand link disappears after mobile menu opens");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button is not expanded after click");
     const visibleTabs = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).filter((link) => isVisible(link)).map((link) => link.textContent?.trim()).join(",");
-    if (visibleTabs !== "explorer,query,ingest,sources") failures.push("mobile sidebar tabs are not visible");
-    const sourcesLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "sources");
-    sourcesLink?.click();
+    if (visibleTabs !== "explorer,query,ingest") failures.push("mobile sidebar tabs are not visible");
+    const ingestLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "ingest");
+    ingestLink?.click();
     await new Promise((resolve) => requestAnimationFrame(resolve));
     if (!isVisible(explorerPanel)) failures.push("explorer panel closes after mobile sidebar navigation");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button collapses after sidebar navigation");

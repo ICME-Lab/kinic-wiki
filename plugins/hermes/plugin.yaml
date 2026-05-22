@@ -1,5 +1,5 @@
 name: kinic
-version: 0.1.0
+version: 0.1.2
 description: Evidence-backed skill run recorder for Hermes Agent.
 provides_hooks:
   - post_tool_call

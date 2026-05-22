@@ -75,16 +75,20 @@ function sha256File(filePath) {
   return hash.digest("hex");
 }
 
-function expectedSha256(shaText) {
-  const match = shaText.match(/\b[a-fA-F0-9]{64}\b/);
+function expectedSha256(shaText, expectedFile) {
+  const match = shaText.match(/\b([a-fA-F0-9]{64})\b(?:\s+\*?([^\s]+))?/);
   if (!match) throw new Error("release checksum file does not contain a SHA-256 digest");
-  return match[0].toLowerCase();
+  if (expectedFile && match[2] && match[2] !== expectedFile) {
+    throw new Error(`release checksum file names ${match[2]}, expected ${expectedFile}`);
+  }
+  return match[1].toLowerCase();
 }
 
 function extractBinary(tarballPath, workDir) {
   const extractDir = path.join(workDir, "extract");
   fs.mkdirSync(extractDir, { recursive: true });
-  const result = childProcess.spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], {
+  validateTarEntries(tarballPath);
+  const result = childProcess.spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir, "kinic-vfs-cli"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -96,11 +100,57 @@ function extractBinary(tarballPath, workDir) {
   if (!fs.existsSync(extractedBinary)) {
     throw new Error("release tarball did not contain kinic-vfs-cli");
   }
+  const binaryStat = fs.lstatSync(extractedBinary);
+  if (!binaryStat.isFile()) {
+    throw new Error("release tarball kinic-vfs-cli is not a regular file");
+  }
 
   fs.rmSync(VENDOR_DIR, { force: true, recursive: true });
   fs.mkdirSync(VENDOR_DIR, { recursive: true });
   fs.copyFileSync(extractedBinary, BINARY_PATH);
   fs.chmodSync(BINARY_PATH, 0o755);
+}
+
+function validateTarEntries(tarballPath) {
+  const names = childProcess.spawnSync("tar", ["-tzf", tarballPath], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (names.status !== 0) {
+    throw new Error(`failed to inspect release tarball: ${names.stderr || names.stdout}`);
+  }
+  const details = childProcess.spawnSync("tar", ["-tzvf", tarballPath], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (details.status !== 0) {
+    throw new Error(`failed to inspect release tarball: ${details.stderr || details.stdout}`);
+  }
+  const allowed = new Set(["kinic-vfs-cli", "README.md", "LICENSE"]);
+  const binaryEntries = [];
+  const nameLines = names.stdout.split(/\r?\n/).filter((line) => line.trim());
+  const detailLines = details.stdout.split(/\r?\n/).filter((line) => line.trim());
+  for (const [index, name] of nameLines.entries()) {
+    const type = detailLines[index]?.[0] || "?";
+    if (path.isAbsolute(name) || name.split("/").includes("..")) {
+      throw new Error(`release tarball contains unsafe path: ${name}`);
+    }
+    if (!allowed.has(name)) {
+      throw new Error(`release tarball contains unexpected entry: ${name}`);
+    }
+    if (type === "l") {
+      throw new Error(`release tarball contains symlink: ${name}`);
+    }
+    if (name === "kinic-vfs-cli") {
+      if (type !== "-") {
+        throw new Error("release tarball kinic-vfs-cli must be a regular file");
+      }
+      binaryEntries.push(name);
+    }
+  }
+  if (binaryEntries.length !== 1) {
+    throw new Error(`release tarball must contain exactly one kinic-vfs-cli, got ${binaryEntries.length}`);
+  }
 }
 
 async function install() {
@@ -115,7 +165,7 @@ async function install() {
     await download(asset.tarUrl, tarballPath);
     await download(asset.shaUrl, shaPath);
 
-    const expected = expectedSha256(fs.readFileSync(shaPath, "utf8"));
+    const expected = expectedSha256(fs.readFileSync(shaPath, "utf8"), asset.file);
     const actual = sha256File(tarballPath);
     if (actual !== expected) {
       throw new Error(`checksum mismatch for ${asset.file}: expected ${expected}, got ${actual}`);
@@ -137,6 +187,8 @@ if (require.main === module) {
 
 module.exports = {
   expectedSha256,
+  extractBinary,
   releaseAsset,
   resolveReleasePlatform,
+  validateTarEntries,
 };

@@ -31,6 +31,15 @@ class HermesKinicPluginTests(unittest.TestCase):
         )
         self.assertEqual(delta, {"legal": {"use_count": 2}, "debug": {"patch_count": 1}})
 
+    def test_usage_diff_ignores_corrupt_counts(self) -> None:
+        from kinic_hermes import usage
+
+        delta = usage.usage_diff(
+            {"legal": {"use_count": "not-a-number", "view_count": None}},
+            {"legal": {"use_count": "2", "view_count": -1, "patch_count": None}},
+        )
+        self.assertEqual(delta, {"legal": {"use_count": 2}})
+
     def test_invalid_usage_json_reports_not_ok(self) -> None:
         from kinic_hermes import usage
 
@@ -38,6 +47,38 @@ class HermesKinicPluginTests(unittest.TestCase):
             path = Path(tmp) / ".usage.json"
             path.write_text("{")
             self.assertEqual(usage.read_usage_checked(path), ({}, False))
+
+    def test_run_buffer_redacts_and_truncates_raw_capture(self) -> None:
+        from kinic_hermes.schemas import RunBuffer, ToolTrace
+
+        buffer = RunBuffer(
+            tool_trace=[ToolTrace("http", {"api_key": "secret", "query": "x" * 40}, "Bearer abcdefghijklmnopqrstuvwxyz")],
+            final_response=f"ok sk-{'a' * 32}",
+        )
+        with mock.patch.dict(os.environ, {"KINIC_HERMES_MAX_TOOL_ARGS_CHARS": "24", "KINIC_HERMES_MAX_FINAL_RESPONSE_CHARS": "16"}, clear=False):
+            evidence = buffer.to_json("legal-review", {})
+
+        self.assertTrue(evidence["redacted"])
+        self.assertTrue(evidence["truncated"])
+        self.assertEqual(evidence["tool_trace"][0]["args"], '{"api_key": "[REDACTED]"')
+        self.assertNotIn("sk-", evidence["final_response"])
+        self.assertEqual(evidence["max_chars"]["tool_args"], 24)
+
+    def test_run_buffer_raw_capture_can_be_disabled(self) -> None:
+        from kinic_hermes.schemas import RunBuffer, ToolTrace
+
+        buffer = RunBuffer(
+            tool_trace=[ToolTrace("http", {"token": "secret"}, "secret result")],
+            final_response="secret final",
+        )
+        with mock.patch.dict(os.environ, {"KINIC_HERMES_CAPTURE_RAW": "0"}, clear=False):
+            evidence = buffer.to_json("legal-review", {})
+
+        self.assertEqual(evidence["tool_trace"], [])
+        self.assertEqual(evidence["raw_evidence_excerpt"], "")
+        self.assertEqual(evidence["final_response"], "")
+        self.assertFalse(evidence["redacted"])
+        self.assertFalse(evidence["truncated"])
 
     def test_missing_cli_saves_pending_with_metadata(self) -> None:
         from kinic_hermes import client as client_module
@@ -53,7 +94,7 @@ class HermesKinicPluginTests(unittest.TestCase):
                 self.assertEqual(payload["skill_id"], "legal-review")
                 self.assertIn("recording_error", payload)
                 self.assertIn("recorded_locally_at", payload)
-                self.assertIn("plugin_version", payload)
+                self.assertEqual(payload["plugin_version"], "0.1.2")
 
     def test_runner_falls_back_to_packaged_evolve_script(self) -> None:
         from kinic_hermes import client as client_module
@@ -119,6 +160,52 @@ class HermesKinicPluginTests(unittest.TestCase):
             self.assertEqual(json.loads(source.read_text()), {"summary": "x", "recorded_by": "wrong-plugin"})
 
         self.assertEqual([payload["recorded_by"] for payload in payloads], ["codex-plugin", "claude-code-plugin"])
+
+    def test_agent_record_run_scripts_pass_resolved_cli(self) -> None:
+        script_cases = [
+            (PLUGIN_ROOT.parent / "codex/scripts/record-run.sh", "codex-plugin"),
+            (PLUGIN_ROOT.parent / "claude-code/scripts/record-run.sh", "claude-code-plugin"),
+        ]
+        for script, recorded_by in script_cases:
+            with self.subTest(script=script):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    runtime = root / "runtime"
+                    package = runtime / "kinic_agent_runtime"
+                    package.mkdir(parents=True)
+                    (package / "__init__.py").write_text("")
+                    (package / "evidence.py").write_text(
+                        "import json, os, sys\n"
+                        "with open(os.environ['KINIC_CAPTURE_ARGS'], 'w') as handle:\n"
+                        "    json.dump(sys.argv, handle)\n"
+                    )
+                    fake_cli = root / "kinic-vfs-cli"
+                    fake_cli.write_text("#!/usr/bin/env bash\nexit 0\n")
+                    fake_cli.chmod(0o755)
+                    evidence = root / "evidence.json"
+                    evidence.write_text(json.dumps({"summary": "x"}))
+                    capture = root / "argv.json"
+                    env = {
+                        **os.environ,
+                        "KINIC_AGENT_RUNTIME_ROOT": str(runtime),
+                        "KINIC_VFS_CLI": str(fake_cli),
+                        "KINIC_CAPTURE_ARGS": str(capture),
+                        "PATH": "/usr/bin:/bin",
+                    }
+
+                    result = subprocess.run(
+                        ["/bin/bash", str(script), "legal-review", str(evidence)],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        env=env,
+                    )
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    argv = json.loads(capture.read_text())
+                    self.assertIn("--cli", argv)
+                    self.assertEqual(argv[argv.index("--cli") + 1], str(fake_cli))
+                    self.assertEqual(argv[argv.index("--recorded-by") + 1], recorded_by)
 
     def test_allow_non_ii_env_adds_cli_flag(self) -> None:
         from kinic_hermes import client as client_module

@@ -10,6 +10,7 @@ import difflib
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -167,7 +168,7 @@ def finish_job_command(args: argparse.Namespace) -> int:
             raise RuntimeError("job has no readable source runs")
         corrections = read_corrections(args.cli, skill_id)
         candidate = Path(args.candidate_file).read_text()
-        proposal_id = str(int(time.time() * 1000))
+        proposal_id = new_proposal_id(args.job_id)
         result = write_proposal(
             args.cli,
             "/Wiki/skills",
@@ -181,8 +182,11 @@ def finish_job_command(args: argparse.Namespace) -> int:
             llm_route=args.llm_route,
         )
         if not result["gate_passed"]:
-            safe_complete_job(args.cli, args.job_id, "failed", "proposal gate failed")
-            print(json.dumps(result["output"], indent=2))
+            completion_error = complete_job_error(args.cli, args.job_id, "failed", "proposal gate failed")
+            output = dict(result["output"])
+            if completion_error:
+                output["completion_error"] = completion_error
+            print(json.dumps(output, indent=2))
             return 3
         apply_args = ["skill", "apply-proposal", skill_id, proposal_id, "--job-id", args.job_id, "--json"]
         if args.projection_dir:
@@ -190,11 +194,16 @@ def finish_job_command(args: argparse.Namespace) -> int:
         applied = json.loads(run_cli(args.cli, *apply_args))
         apply_status = applied.get("status")
         job_status = job_status_from_apply_status(apply_status)
-        safe_complete_job(args.cli, args.job_id, job_status, apply_summary(applied))
-        print(json.dumps({"proposal": result["output"], "apply": applied, "job_status": job_status}, indent=2))
-        return 0 if job_status == "done" else 3
+        completion_error = complete_job_error(args.cli, args.job_id, job_status, apply_summary(applied))
+        output = {"proposal": result["output"], "apply": applied, "job_status": job_status}
+        if completion_error:
+            output["completion_error"] = completion_error
+        print(json.dumps(output, indent=2))
+        return 0 if job_status == "done" and not completion_error else 3
     except Exception as error:
-        safe_complete_job(args.cli, args.job_id, "failed", str(error))
+        completion_error = complete_job_error(args.cli, args.job_id, "failed", str(error))
+        if completion_error:
+            print(json.dumps({"job_id": args.job_id, "status": "failed", "error": str(error), "completion_error": completion_error}, indent=2))
         print(str(error), file=sys.stderr)
         return 3
 
@@ -246,7 +255,7 @@ def write_proposal(
         "baseline_score": 1.0,
         "candidate_score": 1.0 if gates["candidate_score_gate"] == "pass" else 0.0,
         "candidate_score_gate": gates["candidate_score_gate"],
-        "semantic_drift_gate": gates["semantic_drift_gate"],
+        "heading_consistency_gate": gates["heading_consistency_gate"],
         "permission_gate": gates["permission_gate"],
         "gates": gates,
         "scores": {"gate": gates},
@@ -313,15 +322,18 @@ def complete_job(cli: str, job_id: str, status: str, summary: str) -> None:
     run_cli(cli, "skill", "evolve-jobs", "complete", job_id, "--status", status, "--summary", summary[:500], "--json")
 
 
-def safe_complete_job(cli: str, job_id: str, status: str, summary: str) -> None:
+def complete_job_error(cli: str, job_id: str, status: str, summary: str) -> str | None:
     try:
         complete_job(cli, job_id, status, summary)
+        return None
     except Exception as error:
-        print(f"failed to complete job {job_id} as {status}: {error}", file=sys.stderr)
+        message = f"failed to complete job {job_id} as {status}: {error}"
+        print(message, file=sys.stderr)
+        return message
 
 
 def job_status_from_apply_status(apply_status: object) -> str:
-    if apply_status == "auto_applied":
+    if apply_status in {"auto_applied", "auto_applied_sync_failed"}:
         return "done"
     if apply_status == "conflict":
         return "conflict"
@@ -332,6 +344,8 @@ def apply_summary(applied: dict[str, Any]) -> str:
     status = applied.get("status")
     sync_error = applied.get("sync_error")
     if sync_error:
+        if status == "auto_applied_sync_failed":
+            return f"remote apply succeeded; local_projection_sync_failed: {sync_error}"
         return f"apply status: {status}; sync_error: {sync_error}"
     error = applied.get("error")
     if error:
@@ -412,9 +426,14 @@ def evaluate_gates(current_skill: str, candidate: str) -> dict[str, str]:
     basic = validate_candidate(current_skill, candidate)
     return {
         "candidate_score_gate": "pass" if basic["passed"] else "fail",
-        "semantic_drift_gate": "pass" if same_declared_identity(current_skill, candidate) else "fail",
+        "heading_consistency_gate": "pass" if same_declared_identity(current_skill, candidate) else "fail",
         "permission_gate": "pass" if not permissions_expanded(current_skill, candidate) else "fail",
     }
+
+
+def new_proposal_id(job_id: str) -> str:
+    safe_job_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", job_id).strip("-") or "job"
+    return f"{safe_job_id}-{int(time.time() * 1000)}-{secrets.token_hex(3)}"
 
 
 def validate_candidate(current_skill: str, candidate: str) -> dict[str, Any]:

@@ -58,6 +58,30 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+  skill-registry-web-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: skill-registry-web
+    steps:
+      - uses: actions/checkout@v5
+      - name: Enable corepack
+        run: corepack enable
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: skill-registry-web/pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run tests
+        run: pnpm test
+      - name: Run typecheck
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+
   rust-check:
     runs-on: ubuntu-latest
     steps:
@@ -113,7 +137,9 @@ jobs:
       - name: Build CLI
         run: cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release --locked
       - name: Package CLI artifact
-        run: bash scripts/package_kinic_vfs_cli.sh "v0.1.0" "${{ matrix.name }}" target/release/kinic-vfs-cli dist
+        run: |
+          release_version="$(bash scripts/kinic_vfs_cli_release_version.sh)"
+          bash scripts/package_kinic_vfs_cli.sh "$release_version" "${{ matrix.name }}" target/release/kinic-vfs-cli dist
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v7
         with:
@@ -171,6 +197,14 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: extensions/wiki-clipper/package-lock.json
+      - name: Enable corepack
+        run: corepack enable
+        working-directory: .
       - run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
       - run: npm run build
       - run: npm test
+      - run: npm run store-assets:generate
+      - run: npm run release:package
+      - run: npm run release:check
