@@ -333,7 +333,7 @@ def complete_job_error(cli: str, job_id: str, status: str, summary: str) -> str 
 
 
 def job_status_from_apply_status(apply_status: object) -> str:
-    if apply_status == "auto_applied":
+    if apply_status in {"auto_applied", "auto_applied_sync_failed"}:
         return "done"
     if apply_status == "conflict":
         return "conflict"
@@ -344,6 +344,8 @@ def apply_summary(applied: dict[str, Any]) -> str:
     status = applied.get("status")
     sync_error = applied.get("sync_error")
     if sync_error:
+        if status == "auto_applied_sync_failed":
+            return f"remote apply succeeded; local_projection_sync_failed: {sync_error}"
         return f"apply status: {status}; sync_error: {sync_error}"
     error = applied.get("error")
     if error:

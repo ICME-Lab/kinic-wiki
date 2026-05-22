@@ -26,7 +26,7 @@ cd npm/kinic-vfs-cli
 npm pack --dry-run
 ```
 
-Then run the `Publish npm CLI` workflow. It checks tag/package version alignment when invoked from a tag, checks release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
+Then run the `Publish npm CLI` workflow from the exact release tag `v${package.version}`. It refuses branch runs, checks Cargo/npm version alignment, checks release asset and checksum names, runs package tests, dry-runs packing, installs the packed package into a temporary prefix, verifies `kinic-vfs-cli --version`, then publishes with `NPM_TOKEN`.
 Configure GitHub Environment approval for the publish workflow when release approval must be explicit.
 Use an npm automation token scoped to this package; keep 2FA/provenance policy in the npm organization settings.
 
@@ -108,6 +108,7 @@ brew style packaging/homebrew/Formula/kinic-vfs-cli.rb
 ## CI Artifacts
 
 The normal `cli-artifacts` CI job uses the same tarball layout as the release workflow, but uploads workflow artifacts instead of creating a GitHub Release.
+Keep distribution-only changes separate from Skill Registry lifecycle changes when possible; mixed release and job lifecycle diffs are harder to review and bisect.
 
 No `wiki-cli` or `skill-cli` artifact is produced in v1.
 

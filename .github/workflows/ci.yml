@@ -137,7 +137,9 @@ jobs:
       - name: Build CLI
         run: cargo build -p kinic-vfs-cli --bin kinic-vfs-cli --release --locked
       - name: Package CLI artifact
-        run: bash scripts/package_kinic_vfs_cli.sh "v0.1.0" "${{ matrix.name }}" target/release/kinic-vfs-cli dist
+        run: |
+          release_version="$(bash scripts/kinic_vfs_cli_release_version.sh)"
+          bash scripts/package_kinic_vfs_cli.sh "$release_version" "${{ matrix.name }}" target/release/kinic-vfs-cli dist
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v7
         with:

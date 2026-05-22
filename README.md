@@ -133,6 +133,8 @@ npm install -g kinic-vfs-cli
 kinic-vfs-cli --help
 ```
 
+The npm package currently supports macOS arm64 and Linux x64. Other platforms should use the Cargo fallback in the release guide.
+
 Canonical npm and agent workflow guide: [`wiki.kinic.xyz/cli`](https://wiki.kinic.xyz/cli).
 
 See [`docs/RELEASE.md`](docs/RELEASE.md) for npm publishing, GitHub Release artifacts, optional Homebrew packaging, and fallback Cargo install. See [`docs/PUBLIC_SMOKE.md`](docs/PUBLIC_SMOKE.md) for the local public-read smoke flow.

@@ -5,9 +5,12 @@
 
 const assert = require("node:assert/strict");
 const childProcess = require("node:child_process");
+const path = require("node:path");
 const test = require("node:test");
 
 const { expectedSha256, releaseAsset, resolveReleasePlatform, validateTarEntries } = require("../scripts/install");
+
+const repoRoot = path.resolve(__dirname, "../../..");
 
 test("maps supported platforms to release asset names", () => {
   assert.equal(resolveReleasePlatform("darwin", "arm64"), "macos-arm64");
@@ -30,6 +33,21 @@ test("builds release asset URLs from package version and platform", () => {
     asset.shaUrl,
     "https://github.com/ICME-Lab/kinic-wiki/releases/download/v0.1.2/kinic-vfs-cli-v0.1.2-macos-arm64.sha256",
   );
+});
+
+test("release version script checks Cargo and npm parity", () => {
+  const result = childProcess.spawnSync("bash", ["scripts/kinic_vfs_cli_release_version.sh"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), "v0.1.2");
+});
+
+test("npm publish guard only allows the matching tag", () => {
+  assert.notEqual(runPublishGuard({ GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "feature" }).status, 0);
+  assert.notEqual(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.1.1" }).status, 0);
+  assert.equal(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.1.2" }).status, 0);
 });
 
 test("parses sha256 checksum text", () => {
@@ -87,4 +105,12 @@ function withSpawnSync(results, callback) {
   } finally {
     childProcess.spawnSync = original;
   }
+}
+
+function runPublishGuard(env) {
+  return childProcess.spawnSync("bash", ["scripts/guard_kinic_vfs_cli_npm_publish.sh"], {
+    cwd: repoRoot,
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+  });
 }

@@ -94,7 +94,7 @@ class HermesKinicPluginTests(unittest.TestCase):
                 self.assertEqual(payload["skill_id"], "legal-review")
                 self.assertIn("recording_error", payload)
                 self.assertIn("recorded_locally_at", payload)
-                self.assertIn("plugin_version", payload)
+                self.assertEqual(payload["plugin_version"], "0.1.2")
 
     def test_runner_falls_back_to_packaged_evolve_script(self) -> None:
         from kinic_hermes import client as client_module
@@ -160,6 +160,52 @@ class HermesKinicPluginTests(unittest.TestCase):
             self.assertEqual(json.loads(source.read_text()), {"summary": "x", "recorded_by": "wrong-plugin"})
 
         self.assertEqual([payload["recorded_by"] for payload in payloads], ["codex-plugin", "claude-code-plugin"])
+
+    def test_agent_record_run_scripts_pass_resolved_cli(self) -> None:
+        script_cases = [
+            (PLUGIN_ROOT.parent / "codex/scripts/record-run.sh", "codex-plugin"),
+            (PLUGIN_ROOT.parent / "claude-code/scripts/record-run.sh", "claude-code-plugin"),
+        ]
+        for script, recorded_by in script_cases:
+            with self.subTest(script=script):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    runtime = root / "runtime"
+                    package = runtime / "kinic_agent_runtime"
+                    package.mkdir(parents=True)
+                    (package / "__init__.py").write_text("")
+                    (package / "evidence.py").write_text(
+                        "import json, os, sys\n"
+                        "with open(os.environ['KINIC_CAPTURE_ARGS'], 'w') as handle:\n"
+                        "    json.dump(sys.argv, handle)\n"
+                    )
+                    fake_cli = root / "kinic-vfs-cli"
+                    fake_cli.write_text("#!/usr/bin/env bash\nexit 0\n")
+                    fake_cli.chmod(0o755)
+                    evidence = root / "evidence.json"
+                    evidence.write_text(json.dumps({"summary": "x"}))
+                    capture = root / "argv.json"
+                    env = {
+                        **os.environ,
+                        "KINIC_AGENT_RUNTIME_ROOT": str(runtime),
+                        "KINIC_VFS_CLI": str(fake_cli),
+                        "KINIC_CAPTURE_ARGS": str(capture),
+                        "PATH": "/usr/bin:/bin",
+                    }
+
+                    result = subprocess.run(
+                        ["/bin/bash", str(script), "legal-review", str(evidence)],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        env=env,
+                    )
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    argv = json.loads(capture.read_text())
+                    self.assertIn("--cli", argv)
+                    self.assertEqual(argv[argv.index("--cli") + 1], str(fake_cli))
+                    self.assertEqual(argv[argv.index("--recorded-by") + 1], recorded_by)
 
     def test_allow_non_ii_env_adds_cli_flag(self) -> None:
         from kinic_hermes import client as client_module

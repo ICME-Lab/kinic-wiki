@@ -1,6 +1,6 @@
 {
   "name": "kinic-skill-recorder",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Record Codex skill run evidence and run Codex-driven Kinic skill evolution jobs through kinic-vfs-cli.",
   "author": {
     "name": "Kinic"

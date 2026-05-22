@@ -17,7 +17,7 @@ from typing import Any
 from .cli import resolve_cli, run_cli
 
 
-PLUGIN_VERSION = "0.1.0"
+PLUGIN_VERSION = "0.1.2"
 
 
 def with_recorded_by(evidence: dict[str, Any], recorded_by: str | None) -> dict[str, Any]:

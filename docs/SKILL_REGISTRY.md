@@ -310,6 +310,7 @@ kinic-vfs-cli skill evolve-jobs complete <job-id> --status done --summary "propo
 ```
 
 `create-ready` counts only run evidence newer than the latest job for a skill. Correction files are excluded before the new-run threshold is checked, and queued jobs keep the newest source run paths up to `min_new_runs`.
+Claim ownership is checked with the caller principal and claim expiry. Workers that share the same principal are treated as the same owner; no separate lease token is used.
 
 `apply-proposal` refuses candidates unless `metrics.json` contains passing
 `candidate_score_gate`, `heading_consistency_gate`, and `permission_gate` values. The

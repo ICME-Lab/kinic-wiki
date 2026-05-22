@@ -191,7 +191,7 @@ class KinicSkillEvolveTests(unittest.TestCase):
 
         run_cli.assert_called_once_with("kinic-vfs-cli", "skill", "apply-proposal", "legal-review", mock.ANY, "--job-id", "job-1", "--json", "--projection-dir", "/projection")
 
-    def test_finish_job_treats_sync_failed_apply_as_failed(self) -> None:
+    def test_finish_job_treats_sync_failed_apply_as_done_with_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             candidate = Path(tmp) / "candidate.md"
             candidate.write_text("# Legal Review\nBetter guidance.\n")
@@ -202,8 +202,13 @@ class KinicSkillEvolveTests(unittest.TestCase):
                     {"content": "---\nstatus: running\nskill_id: legal-review\nsource_runs:\n  - run.md\n---\n# Job\n", "etag": "j1"},
                     {"content": "# Legal Review\nOld guidance.\n", "etag": "s1"},
                 ]
-                self.assertEqual(self.runner.finish_job_command(args), 3)
-                complete_job.assert_called_once_with("kinic-vfs-cli", "job-1", "failed", "apply status: auto_applied_sync_failed; sync_error: projection unavailable")
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    self.assertEqual(self.runner.finish_job_command(args), 0)
+                payload = json.loads(stdout.getvalue())
+                self.assertEqual(payload["apply"]["status"], "auto_applied_sync_failed")
+                self.assertEqual(payload["job_status"], "done")
+                complete_job.assert_called_once_with("kinic-vfs-cli", "job-1", "done", "remote apply succeeded; local_projection_sync_failed: projection unavailable")
 
     def test_finish_job_treats_gate_failed_apply_as_failed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

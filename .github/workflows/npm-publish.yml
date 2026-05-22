@@ -19,10 +19,7 @@ jobs:
         working-directory: npm/kinic-vfs-cli
         run: |
           version="$(node -p "require('./package.json').version")"
-          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "${GITHUB_REF_NAME:-}" != "v${version}" ]; then
-            echo "package version ${version} does not match tag ${GITHUB_REF_NAME}" >&2
-            exit 1
-          fi
+          bash ../../scripts/guard_kinic_vfs_cli_npm_publish.sh
           for platform in macos-arm64 linux-x86_64; do
             asset="kinic-vfs-cli-v${version}-${platform}.tar.gz"
             checksum="${asset%.tar.gz}.sha256"
