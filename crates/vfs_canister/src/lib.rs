@@ -607,7 +607,7 @@ fn finalize_database_restore(database_id: String) -> Result<(), String> {
 
 #[update]
 fn cancel_database_restore(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_metered_update(
         "cancel_database_restore",
         Some(database_id.clone()),
         |service, caller, now| {
@@ -629,7 +629,7 @@ fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
 #[update]
 fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
     let database_id = request.database_id.clone();
-    with_usage("write_nodes", Some(database_id), |service, caller, now| {
+    with_metered_update("write_nodes", Some(database_id), |service, caller, now| {
         service.write_nodes(caller, request, now)
     })
 }
@@ -639,7 +639,7 @@ fn authorize_url_ingest_trigger_session(
     request: UrlIngestTriggerSessionRequest,
 ) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_metered_update(
         "authorize_url_ingest_trigger_session",
         Some(database_id),
         |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
@@ -656,7 +656,7 @@ fn check_url_ingest_trigger_session(
 #[update]
 fn authorize_ops_answer_session(request: OpsAnswerSessionRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_metered_update(
         "authorize_ops_answer_session",
         Some(database_id),
         |service, caller, now| service.authorize_ops_answer_session(caller, request, now),
@@ -705,7 +705,7 @@ fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
 #[update]
 fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("mkdir_node", Some(database_id), |service, caller, now| {
+    with_metered_update("mkdir_node", Some(database_id), |service, caller, now| {
         service.mkdir_node(caller, request, now)
     })
 }
@@ -1187,13 +1187,6 @@ where
     with_usage_derived_database_id(method, database_id, f, |_| None)
 }
 
-fn with_usage<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
-where
-    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
-{
-    with_metered_update(method, database_id, f)
-}
-
 fn with_usage_derived_database_id<T, F, D>(
     method: &str,
     database_id: Option<String>,
@@ -1263,17 +1256,16 @@ where
             .ok();
         if result.is_ok()
             && let Some(database_id) = database_id.as_deref()
-        {
-            if let Err(error) = service.charge_database_update(
+            && let Err(error) = service.charge_database_update(
                 database_id,
                 &caller,
                 method,
                 cycles_delta,
                 usage_event_id,
                 now,
-            ) {
-                ic_cdk::trap(&format!("billing charge failed after update: {error}"));
-            }
+            )
+        {
+            ic_cdk::trap(format!("billing charge failed after update: {error}"));
         }
         result
     })
@@ -1536,7 +1528,15 @@ fn normalize_candid_interface(interface: String) -> String {
         "CreateDatabaseResult",
         "RenameDatabaseRequest",
     );
-    ensure_rename_database_request(ensure_outgoing_links_request(normalized))
+    let normalized = normalize_candid_method_input(
+        &normalized,
+        "authorize_url_ingest_trigger_session",
+        "OpsAnswerSessionRequest",
+        "UrlIngestTriggerSessionRequest",
+    );
+    ensure_url_ingest_trigger_session_request(ensure_rename_database_request(
+        ensure_outgoing_links_request(normalized),
+    ))
 }
 
 fn normalize_candid_method_input(
@@ -1584,6 +1584,16 @@ fn ensure_rename_database_request(interface: String) -> String {
     interface.replace(
         "type DatabaseArchiveChunk = record {",
         "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DatabaseArchiveChunk = record {",
+    )
+}
+
+fn ensure_url_ingest_trigger_session_request(interface: String) -> String {
+    if interface.contains("type UrlIngestTriggerSessionRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type WriteNodeItem = record {",
+        "type UrlIngestTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
     )
 }
 

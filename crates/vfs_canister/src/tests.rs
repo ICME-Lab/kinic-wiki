@@ -25,15 +25,15 @@ use super::{
     create_database, delete_node, edit_node, export_snapshot,
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
-    incoming_links, list_children, list_database_members, list_databases, list_nodes,
-    list_principal_billing_entries, memory_manifest, mkdir_node, move_node, multi_edit_node,
-    outgoing_links, parse_upgrade_billing_config_arg, principal_billing_summary, query_context,
-    read_database_archive_chunk, read_node, read_node_context, recent_nodes, rename_database,
-    revoke_database_access, search_node_paths, search_nodes,
-    set_next_ledger_transfer_from_outcome_for_test, set_next_ledger_transfer_outcome_for_test,
-    set_test_caller_principal_for_test, source_evidence, status, top_up_principal_balance,
-    transfer_error_outcome, transfer_from_error_outcome, write_database_restore_chunk, write_node,
-    write_nodes,
+    incoming_links, list_children, list_database_billing_entries, list_database_members,
+    list_databases, list_nodes, list_principal_billing_entries, memory_manifest, mkdir_node,
+    move_node, multi_edit_node, outgoing_links, parse_upgrade_billing_config_arg,
+    principal_billing_summary, query_context, read_database_archive_chunk, read_node,
+    read_node_context, recent_nodes, rename_database, revoke_database_access, search_node_paths,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test, source_evidence,
+    status, top_up_principal_balance, transfer_error_outcome, transfer_from_error_outcome,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -46,6 +46,12 @@ fn install_test_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
+    service
+        .credit_principal_top_up("2vxsx-fae", 1_000_000, 1, 1_700_000_000_000)
+        .expect("default owner should fund principal balance");
+    service
+        .top_up_database("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .expect("default database should be billable");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -268,6 +274,48 @@ fn usage_event_database_ids() -> Vec<Option<String>> {
     })
 }
 
+fn database_charge_methods(database_id: &str) -> Vec<String> {
+    list_database_billing_entries(database_id.to_string(), None, 20)
+        .expect("database billing ledger should load")
+        .entries
+        .into_iter()
+        .filter(|entry| entry.kind == "charge")
+        .map(|entry| entry.method.expect("charge should record method"))
+        .collect()
+}
+
+fn install_unfunded_default_service() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("index migrations should run");
+    service
+        .create_database("default", "2vxsx-fae", 1_700_000_000_000)
+        .expect("default database should create");
+    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+}
+
+fn install_suspended_default_service() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("index migrations should run");
+    service
+        .create_database("default", "2vxsx-fae", 1_700_000_000_000)
+        .expect("default database should create");
+    service
+        .credit_principal_top_up("2vxsx-fae", 1, 1, 1_700_000_000_000)
+        .expect("default owner should fund principal balance");
+    service
+        .top_up_database("default", "2vxsx-fae", 1, 1_700_000_000_001)
+        .expect("default database should become suspended");
+    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+}
+
 fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
     Sha256::digest(bytes).to_vec()
 }
@@ -388,11 +436,94 @@ fn write_nodes_records_one_usage_event_and_writes_nodes() {
 
     assert_eq!(results.len(), 2);
     assert_eq!(usage_event_count(), 1);
+    assert_eq!(
+        database_charge_methods("default"),
+        vec!["write_nodes".to_string()]
+    );
     assert!(
         read_node("default".to_string(), "/Wiki/batch-a.md".to_string())
             .expect("read should succeed")
             .is_some()
     );
+}
+
+#[test]
+fn write_node_and_write_nodes_use_same_billing_path() {
+    install_test_service();
+
+    write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/single.md".to_string(),
+        kind: NodeKind::File,
+        content: "single".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect("single write should succeed");
+    write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Wiki/batch.md".to_string(),
+            kind: NodeKind::File,
+            content: "batch".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect("batch write should succeed");
+
+    assert_eq!(
+        database_charge_methods("default"),
+        vec!["write_node".to_string(), "write_nodes".to_string()]
+    );
+}
+
+#[test]
+fn write_nodes_rejects_low_database_billing_balance() {
+    install_unfunded_default_service();
+
+    let error = write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Wiki/no-balance.md".to_string(),
+            kind: NodeKind::File,
+            content: "no balance".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect_err("low balance database should reject batch write");
+
+    assert!(error.contains("database billing balance is too low"));
+    assert_eq!(usage_event_count(), 0);
+}
+
+#[test]
+fn suspended_database_rejects_metered_mutations() {
+    install_suspended_default_service();
+
+    let batch = write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Wiki/suspended.md".to_string(),
+            kind: NodeKind::File,
+            content: "suspended".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect_err("suspended database should reject batch write");
+    let mkdir = mkdir_node(MkdirNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/suspended-folder".to_string(),
+    })
+    .expect_err("suspended database should reject mkdir");
+    let cancel = super::cancel_database_restore("default".to_string())
+        .expect_err("suspended database should reject restore cancel before runtime mutation");
+
+    assert!(batch.contains("database billing is suspended"));
+    assert!(mkdir.contains("database billing is suspended"));
+    assert!(cancel.contains("database billing is suspended"));
 }
 
 #[test]
@@ -407,7 +538,13 @@ fn write_nodes_rejects_reader_role() {
         .create_database("public", "owner", 1)
         .expect("database should create");
     service
-        .grant_database_access("public", "owner", "2vxsx-fae", DatabaseRole::Reader, 2)
+        .credit_principal_top_up("owner", 1_000_000, 1, 1)
+        .expect("owner should fund principal balance");
+    service
+        .top_up_database("public", "owner", 1_000_000, 2)
+        .expect("database should be billable");
+    service
+        .grant_database_access("public", "owner", "2vxsx-fae", DatabaseRole::Reader, 3)
         .expect("anonymous reader should grant");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 
@@ -1452,7 +1589,13 @@ fn cancel_database_archive_entrypoint_rejects_non_owner() {
         .create_database("default", "owner", 1_700_000_000_000)
         .expect("default database should create");
     service
-        .begin_database_archive("default", "owner", 1_700_000_000_001)
+        .credit_principal_top_up("owner", 1_000_000, 1, 1_700_000_000_000)
+        .expect("owner should fund principal balance");
+    service
+        .top_up_database("default", "owner", 1_000_000, 1_700_000_000_001)
+        .expect("database should be billable");
+    service
+        .begin_database_archive("default", "owner", 1_700_000_000_002)
         .expect("archive should begin");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 

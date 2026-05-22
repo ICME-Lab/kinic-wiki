@@ -126,6 +126,36 @@ fn index_migration_adds_billing_to_existing_database_index() {
     assert_eq!(marker, "database_index:011_billing_initial");
 }
 
+#[test]
+fn principal_billing_summary_does_not_create_missing_account() {
+    let (service, root) = service_with_root();
+
+    let summary = service
+        .principal_billing_summary("new-principal")
+        .expect("summary should load");
+
+    assert_eq!(summary.balance_e8s, 0);
+    assert_eq!(principal_account_count(&root, "new-principal"), 0);
+}
+
+#[test]
+fn principal_top_up_creates_billing_account() {
+    let (service, root) = service_with_root();
+
+    service
+        .credit_principal_top_up("owner", 500, 1, 1)
+        .expect("top-up should create account");
+
+    assert_eq!(principal_account_count(&root, "owner"), 1);
+    assert_eq!(
+        service
+            .principal_billing_summary("owner")
+            .expect("summary should load")
+            .balance_e8s,
+        500
+    );
+}
+
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     let actual: Option<i64> = conn
@@ -206,6 +236,66 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
         |row| row.get(0),
     )
     .expect("member count should load")
+}
+
+fn principal_account_count(root: &std::path::Path, principal: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM principal_billing_accounts WHERE principal = ?1",
+        params![principal],
+        |row| row.get(0),
+    )
+    .expect("principal account count should load")
+}
+
+fn principal_ledger_count(root: &std::path::Path, principal: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM principal_billing_ledger WHERE principal = ?1",
+        params![principal],
+        |row| row.get(0),
+    )
+    .expect("principal ledger count should load")
+}
+
+fn principal_ledger_kinds(root: &std::path::Path, principal: &str) -> Vec<String> {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let mut stmt = conn
+        .prepare(
+            "SELECT kind FROM principal_billing_ledger
+             WHERE principal = ?1
+             ORDER BY entry_id ASC",
+        )
+        .expect("principal ledger query should prepare");
+    stmt.query_map(params![principal], |row| row.get(0))
+        .expect("principal ledger query should run")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("principal ledger rows should load")
+}
+
+fn database_billing_balance(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT balance_e8s FROM database_billing_accounts WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("database billing balance should load")
+}
+
+fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<String> {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let mut stmt = conn
+        .prepare(
+            "SELECT kind FROM database_billing_ledger
+             WHERE database_id = ?1
+             ORDER BY entry_id ASC",
+        )
+        .expect("database ledger query should prepare");
+    stmt.query_map(params![database_id], |row| row.get(0))
+        .expect("database ledger query should run")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("database ledger rows should load")
 }
 
 fn schema_migration_count(root: &std::path::Path, version: &str) -> i64 {
@@ -880,6 +970,18 @@ fn database_create_returns_generated_id_and_name() {
     assert_eq!(result.database_id.len(), 15);
     assert_eq!(result.name, "Team skills");
     assert_eq!(database_member_count(&root, &result.database_id), 2);
+    assert_eq!(
+        database_billing_balance(&root, &result.database_id),
+        1_000_000
+    );
+    assert_eq!(
+        principal_ledger_kinds(&root, "owner"),
+        vec!["top_up".to_string(), "initial_deposit".to_string()]
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, &result.database_id),
+        vec!["initial_deposit".to_string()]
+    );
     let row = database_index_row(&root, &result.database_id);
     assert_eq!(row.0, "hot");
     assert_eq!(row.1, Some(11));
@@ -1073,6 +1175,34 @@ fn database_create_rejects_duplicate_requested_id_for_internal_setup() {
         .expect_err("duplicate database id should fail");
 
     assert!(error.contains("database already exists"));
+}
+
+#[test]
+fn requested_database_create_starts_with_zero_billing_balance() {
+    let (service, root) = service_with_root();
+
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    assert_eq!(database_billing_balance(&root, "alpha"), 0);
+    assert_eq!(principal_account_count(&root, "owner"), 0);
+    assert_eq!(principal_ledger_count(&root, "owner"), 0);
+    assert!(database_ledger_kinds(&root, "alpha").is_empty());
+}
+
+#[test]
+fn reservation_starts_with_zero_billing_balance() {
+    let (service, root) = service_with_root();
+
+    service
+        .reserve_database("reserved", "Reserved", "owner", 1)
+        .expect("reservation should create");
+
+    assert_eq!(database_billing_balance(&root, "reserved"), 0);
+    assert_eq!(principal_account_count(&root, "owner"), 0);
+    assert_eq!(principal_ledger_count(&root, "owner"), 0);
+    assert!(database_ledger_kinds(&root, "reserved").is_empty());
 }
 
 #[test]

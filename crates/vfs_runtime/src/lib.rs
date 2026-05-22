@@ -301,7 +301,7 @@ impl VfsService {
         &self,
         principal: &str,
     ) -> Result<PrincipalBillingSummary, String> {
-        let balance = self.write_index(|tx| principal_balance_for_update(tx, principal, 0))?;
+        let balance = self.read_index(|conn| principal_balance_or_zero(conn, principal))?;
         Ok(PrincipalBillingSummary {
             principal: principal.to_string(),
             balance_e8s: balance as u64,
@@ -659,20 +659,11 @@ impl VfsService {
                 return Err(format!("database already exists: {database_id}"));
             }
             let mount_id = allocate_mount_id(tx)?;
-            let initial_balance =
-                i64::try_from(DEFAULT_MIN_INITIAL_DEPOSIT_E8S).unwrap_or(i64::MAX);
-            self.insert_database_reservation(
-                tx,
-                database_id,
-                &name,
-                caller,
-                now,
-                mount_id,
-                initial_balance,
-            )
+            self.insert_database_reservation(tx, database_id, &name, caller, now, mount_id, 0)
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_database_reservation(
         &self,
         tx: &Transaction<'_>,
@@ -3082,6 +3073,17 @@ fn principal_balance_for_update(
     .map_err(|error| error.to_string())
 }
 
+fn principal_balance_or_zero(conn: &Connection, principal: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT balance_e8s FROM principal_billing_accounts WHERE principal = ?1",
+        params![principal],
+        |row| crate::sqlite::row_get(row, 0),
+    )
+    .optional()
+    .map(|balance| balance.unwrap_or(0))
+    .map_err(|error| error.to_string())
+}
+
 fn database_balance_for_update(
     conn: &Transaction<'_>,
     database_id: &str,
@@ -3128,6 +3130,7 @@ fn update_database_billing_balance(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_principal_ledger(
     conn: &Transaction<'_>,
     principal: &str,

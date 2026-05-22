@@ -58,6 +58,10 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     session_nonce: idl.Text
   });
+  const UrlIngestTriggerSessionRequest = idl.Record({
+    database_id: idl.Text,
+    session_nonce: idl.Text
+  });
   const RecentNodeHit = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
@@ -66,7 +70,7 @@ function idlFactory({ IDL: idl }) {
   });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
   return idl.Service({
-    authorize_url_ingest_trigger_session: idl.Func([OpsAnswerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
+    authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),

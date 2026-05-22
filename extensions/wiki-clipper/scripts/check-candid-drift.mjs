@@ -51,12 +51,13 @@ const expectedTypes = {
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
   OpsAnswerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
+  UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
   RecentNodeHit: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
   WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } }
 };
 
 const expectedMethods = {
-  authorize_url_ingest_trigger_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
+  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
@@ -101,10 +102,10 @@ function parseDidFields(body) {
 }
 
 function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\(\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.trim();
+    const line = raw.trim().replace(/\s+/g, " ");
     if (!line) continue;
     const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
     if (!match || !(match[1] in expectedMethods)) continue;
@@ -163,9 +164,9 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_13") return "ResultDatabases";
-  if (normalized === "Result_15") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultNode";
+  if (normalized === "Result_15") return "ResultDatabases";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_23") return "ResultNode";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

@@ -386,6 +386,10 @@ type UrlIngestTriggerSessionCheckRequest = record {
   session_nonce : text;
   database_id : text;
 };
+type UrlIngestTriggerSessionRequest = record {
+  session_nonce : text;
+  database_id : text;
+};
 type WriteNodeItem = record {
   content : text;
   kind : NodeKind;
@@ -409,7 +413,7 @@ type WriteNodesRequest = record {
 service : (BillingConfig) -> {
   append_node : (AppendNodeRequest) -> (Result);
   authorize_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_1);
-  authorize_url_ingest_trigger_session : (OpsAnswerSessionRequest) -> (
+  authorize_url_ingest_trigger_session : (UrlIngestTriggerSessionRequest) -> (
       Result_1,
     );
   begin_database_archive : (text) -> (Result_2);
