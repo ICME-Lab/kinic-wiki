@@ -56,6 +56,10 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum VfsCommand {
+    Billing {
+        #[command(subcommand)]
+        command: BillingCommand,
+    },
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
@@ -267,6 +271,27 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Pull KINIC directly into one database balance")]
+    TopUp {
+        database_id: String,
+        amount_e8s: u64,
+    },
+    #[command(about = "Withdraw KINIC from one database balance")]
+    Withdraw {
+        database_id: String,
+        amount_e8s: u64,
+        #[arg(long)]
+        to_principal: String,
+        #[arg(long)]
+        to_subaccount_hex: Option<String>,
+    },
+    #[command(about = "Open the browser deposit page for one database")]
+    Deposit {
+        database_id: String,
+        amount_e8s: u64,
+        #[arg(long)]
+        browser_origin: Option<String>,
+    },
     #[command(about = "Save a workspace database link so commands can omit --database-id")]
     Link { database_id: String },
     #[command(about = "Show the currently linked workspace database")]
@@ -324,6 +349,15 @@ pub enum DatabaseCommand {
     ArchiveCancel { database_id: String },
     #[command(about = "Cancel an interrupted archive restore")]
     RestoreCancel { database_id: String },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum BillingCommand {
+    #[command(about = "Show canister billing configuration")]
+    Config {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

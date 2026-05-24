@@ -16,7 +16,22 @@ export const expectedTypes = {
       deleted_at_ms: "opt int64"
     }
   },
-  CreateDatabaseRequest: { kind: "record", fields: { name: "text", initial_deposit_e8s: "opt nat64" } },
+  BillingConfig: {
+    kind: "record",
+    fields: {
+      min_update_balance_e8s: "nat64",
+      fixed_update_fee_e8s: "nat64",
+      rate_denominator_cycles: "nat64",
+      kinic_ledger_canister_id: "text",
+      rate_numerator_e8s: "nat64",
+      sns_governance_id: "text"
+    }
+  },
+  BillingTransferResult: {
+    kind: "record",
+    fields: { block_index: "nat64", balance_e8s: "nat64" }
+  },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
   DatabaseMember: {
@@ -195,6 +210,8 @@ export const expectedTypes = {
     fields: { incoming_links: "vec LinkEdge", node: "Node", outgoing_links: "vec LinkEdge" }
   },
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
+  ResultBillingConfig: { kind: "variant", cases: { Ok: "BillingConfig", Err: "text" } },
+  ResultBillingTransfer: { kind: "variant", cases: { Ok: "BillingTransferResult", Err: "text" } },
   ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
@@ -273,21 +290,23 @@ export const didTypeAliases = {
   RenameDatabaseRequest: "CreateDatabaseResult",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultChildren: "Result_12",
+  ResultBillingConfig: "Result_9",
+  ResultBillingTransfer: "Result_26",
   ResultCreateDatabase: "Result_4",
   ResultDatabases: "Result_15",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_18",
-  ResultMoveNode: "Result_19",
+  ResultMkdirNode: "Result_17",
+  ResultMoveNode: "Result_18",
   ResultMembers: "Result_14",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_23",
-  ResultNodeContext: "Result_24",
-  ResultQueryContext: "Result_21",
-  ResultRecent: "Result_25",
-  ResultSearch: "Result_26",
-  ResultSourceEvidence: "Result_27",
+  ResultNode: "Result_21",
+  ResultNodeContext: "Result_22",
+  ResultQueryContext: "Result_19",
+  ResultRecent: "Result_23",
+  ResultSearch: "Result_24",
+  ResultSourceEvidence: "Result_25",
   ResultOpsAnswerSessionCheck: "Result_3"
 };
 
@@ -299,6 +318,7 @@ export const expectedMethods = {
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
+  get_billing_config: { input: [], output: "ResultBillingConfig", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
   rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
@@ -319,5 +339,6 @@ export const expectedMethods = {
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
+  top_up_database: { input: ["text", "nat64"], output: "ResultBillingTransfer", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" }
 };

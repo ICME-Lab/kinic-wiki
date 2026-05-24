@@ -24,7 +24,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text, initial_deposit_e8s: idl.Opt(idl.Nat64) });
+  const BillingConfig = idl.Record({
+    kinic_ledger_canister_id: idl.Text,
+    sns_governance_id: idl.Text,
+    rate_numerator_e8s: idl.Nat64,
+    rate_denominator_cycles: idl.Nat64,
+    fixed_update_fee_e8s: idl.Nat64,
+    min_update_balance_e8s: idl.Nat64
+  });
+  const BillingTransferResult = idl.Record({
+    block_index: idl.Nat64,
+    balance_e8s: idl.Nat64
+  });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
   const DatabaseMember = idl.Record({
@@ -218,6 +230,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
+  const ResultBillingConfig = idl.Variant({ Ok: BillingConfig, Err: idl.Text });
+  const ResultBillingTransfer = idl.Variant({ Ok: BillingTransferResult, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
@@ -240,6 +254,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
+    get_billing_config: idl.Func([], [ResultBillingConfig], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
@@ -260,6 +275,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
+    top_up_database: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], [])
   });
 };

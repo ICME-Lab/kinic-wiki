@@ -26,10 +26,17 @@ fn install_test_service() {
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
     service
-        .credit_principal_top_up("2vxsx-fae", 1_000_000, 1, 1_700_000_000_000)
-        .expect("default owner should fund principal balance");
-    service
-        .top_up_database("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .begin_database_top_up("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .and_then(|operation_id| {
+            service.credit_database_top_up(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+                1,
+                1_700_000_000_001,
+            )
+        })
         .expect("default database should be billable");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }

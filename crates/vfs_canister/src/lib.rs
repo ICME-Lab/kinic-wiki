@@ -39,11 +39,10 @@ use vfs_types::{
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, PrincipalBillingEntryPage, PrincipalBillingSummary, QueryContext,
-    QueryContextRequest, RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -256,28 +255,17 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
         "create_database",
         None,
         |service, caller, now| {
-            let initial_deposit_e8s = match request.initial_deposit_e8s {
-                Some(value) => value,
-                None => service.billing_config()?.min_initial_deposit_e8s,
-            };
-            let meta = service.create_generated_database_with_initial_deposit(
-                &request.name,
-                caller,
-                initial_deposit_e8s,
-                now,
-            )?;
+            let meta = service.reserve_generated_database_for_mount(&request.name, caller, now)?;
             if let Err(error) = mount_database_file(&meta) {
-                let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
                 let cleanup_error = service
-                    .reverse_failed_database_create(&meta.database_id, caller, amount, now)
+                    .discard_database_reservation(&meta.database_id)
                     .err();
                 return Err(database_create_error(error, cleanup_error));
             }
             if let Err(error) = service.run_database_migrations(&meta.database_id) {
                 unmount_database_file(&meta.db_file_name);
-                let amount = i64::try_from(initial_deposit_e8s).unwrap_or(i64::MAX);
                 let cleanup_error = service
-                    .reverse_failed_database_create(&meta.database_id, caller, amount, now)
+                    .discard_database_reservation(&meta.database_id)
                     .err();
                 return Err(database_create_error(error, cleanup_error));
             }
@@ -345,27 +333,51 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[update]
-async fn top_up_principal_balance(amount_e8s: u64) -> Result<BillingTransferResult, String> {
+async fn top_up_database(
+    database_id: String,
+    amount_e8s: u64,
+) -> Result<BillingTransferResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
     let now = now_millis();
     let config = with_service(|service| service.billing_config())?;
+    let operation_id = with_service(|service| {
+        service.begin_database_top_up(&database_id, &caller, amount_e8s, now)
+    })?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     match ledger_transfer_from(ledger, caller_principal(), amount_e8s).await {
         LedgerTransferFromOutcome::Completed(block_index) => {
             let balance = with_service(|service| {
-                service.credit_principal_top_up(&caller, amount_e8s, block_index, now)
+                service.credit_database_top_up(
+                    operation_id,
+                    &database_id,
+                    &caller,
+                    amount_e8s,
+                    block_index,
+                    now,
+                )
             })?;
             Ok(BillingTransferResult {
                 block_index,
                 balance_e8s: balance,
             })
         }
-        LedgerTransferFromOutcome::LedgerErr(error) => Err(error),
+        LedgerTransferFromOutcome::LedgerErr(error) => {
+            let _ = with_service(|service| {
+                service.cancel_database_top_up(operation_id, &database_id, &caller, amount_e8s)
+            });
+            Err(error)
+        }
         LedgerTransferFromOutcome::Ambiguous(error) => {
             let _ = with_service(|service| {
-                service.mark_principal_top_up_ambiguous(&caller, amount_e8s, now)
+                service.mark_database_top_up_ambiguous(
+                    operation_id,
+                    &database_id,
+                    &caller,
+                    amount_e8s,
+                    now,
+                )
             });
             Err(format!("top-up pending; manual repair required: {error}"))
         }
@@ -373,7 +385,8 @@ async fn top_up_principal_balance(amount_e8s: u64) -> Result<BillingTransferResu
 }
 
 #[update]
-async fn withdraw_principal_balance(
+async fn withdraw_database_balance(
+    database_id: String,
     amount_e8s: u64,
     to: BillingAccount,
 ) -> Result<BillingTransferResult, String> {
@@ -384,11 +397,19 @@ async fn withdraw_principal_balance(
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let fee_e8s = ledger_fee(ledger).await?;
-    with_service(|service| service.begin_principal_withdraw(&caller, amount_e8s, fee_e8s, now))?;
+    let operation_id = with_service(|service| {
+        service.begin_database_withdraw(&database_id, &caller, amount_e8s, fee_e8s, now)
+    })?;
     match ledger_transfer(ledger, to, amount_e8s, fee_e8s).await {
         LedgerTransferOutcome::Completed(block_index) => {
             let balance = with_service(|service| {
-                service.complete_principal_withdraw(&caller, block_index, now)
+                service.complete_database_withdraw(
+                    operation_id,
+                    &database_id,
+                    &caller,
+                    block_index,
+                    now,
+                )
             })?;
             Ok(BillingTransferResult {
                 block_index,
@@ -397,52 +418,24 @@ async fn withdraw_principal_balance(
         }
         LedgerTransferOutcome::LedgerErr(error) => {
             let _ = with_service(|service| {
-                service.reverse_principal_withdraw(&caller, amount_e8s, fee_e8s, now)
+                service.reverse_database_withdraw(
+                    operation_id,
+                    &database_id,
+                    &caller,
+                    amount_e8s,
+                    fee_e8s,
+                    now,
+                )
             });
             Err(error)
         }
         LedgerTransferOutcome::Ambiguous(error) => {
-            let _ = with_service(|service| service.mark_principal_withdraw_ambiguous(&caller, now));
+            let _ = with_service(|service| {
+                service.mark_database_withdraw_ambiguous(operation_id, &database_id, &caller, now)
+            });
             Err(format!("withdraw pending; manual repair required: {error}"))
         }
     }
-}
-
-#[query]
-fn principal_billing_summary() -> Result<PrincipalBillingSummary, String> {
-    require_authenticated_caller()?;
-    with_service(|service| service.principal_billing_summary(&caller_text()))
-}
-
-#[query]
-fn list_principal_billing_entries(
-    cursor: Option<u64>,
-    limit: u32,
-) -> Result<PrincipalBillingEntryPage, String> {
-    require_authenticated_caller()?;
-    with_service(|service| service.list_principal_billing_entries(&caller_text(), cursor, limit))
-}
-
-#[update]
-fn top_up_database(database_id: String, amount_e8s: u64) -> Result<(), String> {
-    require_authenticated_caller()?;
-    with_unmetered_update(
-        "top_up_database",
-        Some(database_id.clone()),
-        |service, caller, now| service.top_up_database(&database_id, caller, amount_e8s, now),
-    )
-}
-
-#[update]
-fn withdraw_database_balance(database_id: String, amount_e8s: u64) -> Result<(), String> {
-    require_authenticated_caller()?;
-    with_unmetered_update(
-        "withdraw_database_balance",
-        Some(database_id.clone()),
-        |service, caller, now| {
-            service.withdraw_database_balance(&database_id, caller, amount_e8s, now)
-        },
-    )
 }
 
 #[query]

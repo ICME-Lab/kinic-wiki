@@ -20,11 +20,10 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OutgoingLinksRequest, PrincipalBillingEntryPage,
-    PrincipalBillingSummary, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
-    WriteNodesRequest,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -40,48 +39,25 @@ pub trait VfsApi: Sync {
     async fn memory_manifest(&self) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
     }
-    async fn create_database(
-        &self,
-        _name: &str,
-        _initial_deposit_e8s: u64,
-    ) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
     async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
         Err(anyhow!("rename_database is not implemented by this client"))
     }
-    async fn top_up_principal_balance(&self, _amount_e8s: u64) -> Result<BillingTransferResult> {
-        Err(anyhow!(
-            "top_up_principal_balance is not implemented by this client"
-        ))
-    }
-    async fn withdraw_principal_balance(
+    async fn top_up_database(
         &self,
+        _database_id: &str,
+        _amount_e8s: u64,
+    ) -> Result<BillingTransferResult> {
+        Err(anyhow!("top_up_database is not implemented by this client"))
+    }
+    async fn withdraw_database_balance(
+        &self,
+        _database_id: &str,
         _amount_e8s: u64,
         _to: BillingAccount,
     ) -> Result<BillingTransferResult> {
-        Err(anyhow!(
-            "withdraw_principal_balance is not implemented by this client"
-        ))
-    }
-    async fn principal_billing_summary(&self) -> Result<PrincipalBillingSummary> {
-        Err(anyhow!(
-            "principal_billing_summary is not implemented by this client"
-        ))
-    }
-    async fn list_principal_billing_entries(
-        &self,
-        _cursor: Option<u64>,
-        _limit: u32,
-    ) -> Result<PrincipalBillingEntryPage> {
-        Err(anyhow!(
-            "list_principal_billing_entries is not implemented by this client"
-        ))
-    }
-    async fn top_up_database(&self, _database_id: &str, _amount_e8s: u64) -> Result<()> {
-        Err(anyhow!("top_up_database is not implemented by this client"))
-    }
-    async fn withdraw_database_balance(&self, _database_id: &str, _amount_e8s: u64) -> Result<()> {
         Err(anyhow!(
             "withdraw_database_balance is not implemented by this client"
         ))
@@ -437,17 +413,12 @@ impl VfsApi for CanisterVfsClient {
         self.query("memory_manifest", &()).await
     }
 
-    async fn create_database(
-        &self,
-        name: &str,
-        initial_deposit_e8s: u64,
-    ) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
                     name: name.to_string(),
-                    initial_deposit_e8s: Some(initial_deposit_e8s),
                 },
             )
             .await?;
@@ -467,53 +438,29 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn top_up_principal_balance(&self, amount_e8s: u64) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> =
-            self.update("top_up_principal_balance", &amount_e8s).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn withdraw_principal_balance(
+    async fn top_up_database(
         &self,
+        database_id: &str,
         amount_e8s: u64,
-        to: BillingAccount,
     ) -> Result<BillingTransferResult> {
         let result: Result<BillingTransferResult, String> = self
-            .update2("withdraw_principal_balance", &amount_e8s, &to)
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn principal_billing_summary(&self) -> Result<PrincipalBillingSummary> {
-        let result: Result<PrincipalBillingSummary, String> =
-            self.query("principal_billing_summary", &()).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn list_principal_billing_entries(
-        &self,
-        cursor: Option<u64>,
-        limit: u32,
-    ) -> Result<PrincipalBillingEntryPage> {
-        let result: Result<PrincipalBillingEntryPage, String> = self
-            .query2("list_principal_billing_entries", &cursor, &limit)
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn top_up_database(&self, database_id: &str, amount_e8s: u64) -> Result<()> {
-        let result: Result<(), String> = self
             .update2("top_up_database", &database_id.to_string(), &amount_e8s)
             .await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn withdraw_database_balance(&self, database_id: &str, amount_e8s: u64) -> Result<()> {
-        let result: Result<(), String> = self
-            .update2(
+    async fn withdraw_database_balance(
+        &self,
+        database_id: &str,
+        amount_e8s: u64,
+        to: BillingAccount,
+    ) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> = self
+            .update3(
                 "withdraw_database_balance",
                 &database_id.to_string(),
                 &amount_e8s,
+                &to,
             )
             .await?;
         result.map_err(|error| anyhow!(error))

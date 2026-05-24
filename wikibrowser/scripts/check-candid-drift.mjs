@@ -191,15 +191,17 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_14") return "ResultMembers";
   if (normalized === "Result_15") return "ResultDatabases";
-  if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_21") return "ResultQueryContext";
-  if (normalized === "Result_23") return "ResultNode";
-  if (normalized === "Result_24") return "ResultNodeContext";
-  if (normalized === "Result_25") return "ResultRecent";
-  if (normalized === "Result_26") return "ResultSearch";
-  if (normalized === "Result_27") return "ResultSourceEvidence";
+  if (normalized === "Result_17") return "ResultMkdirNode";
+  if (normalized === "Result_18") return "ResultMoveNode";
+  if (normalized === "Result_19") return "ResultQueryContext";
+  if (normalized === "Result_21") return "ResultNode";
+  if (normalized === "Result_22") return "ResultNodeContext";
+  if (normalized === "Result_23") return "ResultRecent";
+  if (normalized === "Result_24") return "ResultSearch";
+  if (normalized === "Result_25") return "ResultSourceEvidence";
+  if (normalized === "Result_26") return "ResultBillingTransfer";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
+  if (normalized === "Result_9") return "ResultBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

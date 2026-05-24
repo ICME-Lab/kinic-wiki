@@ -61,19 +61,18 @@ Only the latest 100,000 events are retained. The ledger is internal operational 
 
 ## Billing
 
-KINIC billing uses two internal balances:
+KINIC billing uses one internal DB-scoped balance:
 
-- principal balance: KINIC pulled from the external ledger by `top_up_principal_balance`
-- database balance: KINIC allocated from a principal balance to a DB
+- database balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation requires `create_database(display_name, initial_deposit_e8s)`. The initial deposit is debited from the caller principal balance and credited to the new DB balance. The default minimum initial deposit is `1_000_000` e8s.
+DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB balance. A zero-balance DB remains billing-suspended until funded.
 
-External ledger calls are limited to principal top-up and principal withdraw:
+External ledger calls are limited to DB top-up and DB withdraw:
 
-- `top_up_principal_balance(amount_e8s)` pulls from the caller through ICRC-2 `approve` + `icrc2_transfer_from`
-- `withdraw_principal_balance(amount_e8s, to)` sends through ICRC-1 `icrc1_transfer`
+- `top_up_database(database_id, amount_e8s)` pulls from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and credits that DB balance; the approved allowance must cover `amount_e8s + icrc1_fee`
+- `withdraw_database_balance(database_id, amount_e8s, to)` debits that DB balance and sends through ICRC-1 `icrc1_transfer`
 
-Principal-to-DB allocation and DB-to-owner withdraw are internal ledger movements. DB withdraw credits the owner principal balance; it does not call the external ledger.
+Any authenticated caller can top up an existing non-deleted DB that still has an owner. The payer is recorded in the DB ledger entry. Only the DB owner can withdraw. Once the ledger call starts, completion, reversal, or ambiguous recording resolves the started operation even if membership changes during the await.
 
 Successful DB update calls are charged after execution. The charge is:
 
@@ -83,7 +82,7 @@ ceil(cycles_delta * rate_numerator_e8s / rate_denominator_cycles) + fixed_update
 
 The default rate is `200 / 1_000_000` cycles and the default fixed update fee is `100` e8s. Before a metered update, the DB balance must be at least `min_update_balance_e8s` and the DB must not be suspended. If the post-update charge exceeds the DB balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
 
-`database_billing_ledger` and `principal_billing_ledger` are the billing source of truth. `usage_events` remains an operational log only.
+`database_billing_ledger` is the billing source of truth. `usage_events` remains an operational log only.
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_billing_config` with a Candid-encoded `BillingConfigUpdate` blob. `validate_update_billing_config` performs the same validation without changing state.
 
@@ -93,14 +92,13 @@ Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the
 
 Normal operator flow:
 
-1. User approves the VFS canister on the KINIC ICRC-2 ledger.
-2. User calls `top_up_principal_balance(amount_e8s)`.
-3. User creates a DB with `create_database(display_name, initial_deposit_e8s)` or allocates existing principal balance with `top_up_database`.
+1. Owner creates a DB with `create_database(display_name)`.
+2. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. The approve transaction fee is paid separately by the wallet.
+3. Payer calls `top_up_database(database_id, amount_e8s)`.
 4. Successful DB updates consume DB balance.
-5. Owner can move DB balance back to principal balance with `withdraw_database_balance`.
-6. User can withdraw principal balance to an external KINIC account with `withdraw_principal_balance`.
+5. Owner can withdraw DB balance to an external KINIC account with `withdraw_database_balance(database_id, amount_e8s, to)`.
 
-If principal withdraw receives an explicit ledger error, the debit is reversed. If the inter-canister call or response decoding is ambiguous, the debit remains pending and the principal ledger records `withdraw_ambiguous`; initial repair is manual.
+If DB withdraw receives an explicit ledger error, the debit is reversed. If the inter-canister call or response decoding is ambiguous, the debit remains pending and the DB ledger records `withdraw_ambiguous`; initial repair is manual.
 
 ## Delete
 

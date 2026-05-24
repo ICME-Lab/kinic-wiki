@@ -27,8 +27,7 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, PrincipalBillingEntry, PrincipalBillingEntryPage,
-    PrincipalBillingSummary, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
     SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
     SourceEvidenceRequest, Status, UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
@@ -49,6 +48,7 @@ const INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES: &str = "database_index:009_resto
 const INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING: &str =
     "database_index:010_database_name_breaking";
 const INDEX_SCHEMA_VERSION_BILLING_INITIAL: &str = "database_index:011_billing_initial";
+const INDEX_SCHEMA_VERSION_BILLING_PENDING: &str = "database_index:012_billing_pending";
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
@@ -66,7 +66,6 @@ pub const DEFAULT_RATE_NUMERATOR_E8S: u64 = 200;
 pub const DEFAULT_RATE_DENOMINATOR_CYCLES: u64 = 1_000_000;
 pub const DEFAULT_FIXED_UPDATE_FEE_E8S: u64 = 100;
 pub const DEFAULT_MIN_UPDATE_BALANCE_E8S: u64 = 10_000;
-pub const DEFAULT_MIN_INITIAL_DEPOSIT_E8S: u64 = 1_000_000;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -264,7 +263,6 @@ impl VfsService {
             rate_denominator_cycles: update.rate_denominator_cycles,
             fixed_update_fee_e8s: update.fixed_update_fee_e8s,
             min_update_balance_e8s: update.min_update_balance_e8s,
-            min_initial_deposit_e8s: update.min_initial_deposit_e8s,
         })
     }
 
@@ -284,258 +282,15 @@ impl VfsService {
             rate_denominator_cycles: update.rate_denominator_cycles,
             fixed_update_fee_e8s: update.fixed_update_fee_e8s,
             min_update_balance_e8s: update.min_update_balance_e8s,
-            min_initial_deposit_e8s: update.min_initial_deposit_e8s,
         };
         validate_billing_config(&next)?;
         self.write_index(|tx| {
             set_billing_config_value(tx, "rate_numerator_e8s", next.rate_numerator_e8s)?;
             set_billing_config_value(tx, "rate_denominator_cycles", next.rate_denominator_cycles)?;
             set_billing_config_value(tx, "fixed_update_fee_e8s", next.fixed_update_fee_e8s)?;
-            set_billing_config_value(tx, "min_update_balance_e8s", next.min_update_balance_e8s)?;
-            set_billing_config_value(tx, "min_initial_deposit_e8s", next.min_initial_deposit_e8s)
+            set_billing_config_value(tx, "min_update_balance_e8s", next.min_update_balance_e8s)
         })?;
         Ok(next)
-    }
-
-    pub fn principal_billing_summary(
-        &self,
-        principal: &str,
-    ) -> Result<PrincipalBillingSummary, String> {
-        let balance = self.read_index(|conn| principal_balance_or_zero(conn, principal))?;
-        Ok(PrincipalBillingSummary {
-            principal: principal.to_string(),
-            balance_e8s: balance as u64,
-        })
-    }
-
-    pub fn credit_principal_top_up(
-        &self,
-        principal: &str,
-        amount_e8s: u64,
-        ledger_block_index: u64,
-        now: i64,
-    ) -> Result<u64, String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        if amount <= 0 {
-            return Err("top-up amount must be positive".to_string());
-        }
-        self.write_index(|tx| {
-            let balance = principal_balance_for_update(tx, principal, now)?;
-            let next = checked_balance_add(balance, amount)?;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![principal, next, now],
-            )
-            .map_err(|error| error.to_string())?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "top_up",
-                amount,
-                next,
-                None,
-                Some(ledger_block_index),
-                now,
-            )?;
-            Ok(next as u64)
-        })
-    }
-
-    pub fn mark_principal_top_up_ambiguous(
-        &self,
-        principal: &str,
-        amount_e8s: u64,
-        now: i64,
-    ) -> Result<u64, String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        if amount <= 0 {
-            return Err("top-up amount must be positive".to_string());
-        }
-        self.write_index(|tx| {
-            let balance = principal_balance_for_update(tx, principal, now)?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "top_up_ambiguous",
-                amount,
-                balance,
-                None,
-                None,
-                now,
-            )?;
-            Ok(balance as u64)
-        })
-    }
-
-    pub fn begin_principal_withdraw(
-        &self,
-        principal: &str,
-        amount_e8s: u64,
-        fee_e8s: u64,
-        now: i64,
-    ) -> Result<u64, String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        let fee = amount_to_i64(fee_e8s)?;
-        if amount <= 0 {
-            return Err("withdraw amount must be positive".to_string());
-        }
-        let total = amount
-            .checked_add(fee)
-            .ok_or_else(|| "withdraw amount overflows".to_string())?;
-        self.write_index(|tx| {
-            let balance = principal_balance_for_update(tx, principal, now)?;
-            if balance < total {
-                return Err("principal billing balance is insufficient".to_string());
-            }
-            let after_amount = balance - amount;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![principal, after_amount - fee, now],
-            )
-            .map_err(|error| error.to_string())?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "withdraw_pending",
-                -amount,
-                after_amount,
-                None,
-                None,
-                now,
-            )?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "withdraw_fee_pending",
-                -fee,
-                after_amount - fee,
-                None,
-                None,
-                now,
-            )?;
-            Ok((after_amount - fee) as u64)
-        })
-    }
-
-    pub fn complete_principal_withdraw(
-        &self,
-        principal: &str,
-        ledger_block_index: u64,
-        now: i64,
-    ) -> Result<u64, String> {
-        self.write_index(|tx| {
-            let balance = principal_balance_for_update(tx, principal, now)?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "withdraw_complete",
-                0,
-                balance,
-                None,
-                Some(ledger_block_index),
-                now,
-            )?;
-            Ok(balance as u64)
-        })
-    }
-
-    pub fn mark_principal_withdraw_ambiguous(
-        &self,
-        principal: &str,
-        now: i64,
-    ) -> Result<u64, String> {
-        self.write_index(|tx| {
-            let balance = principal_balance_for_update(tx, principal, now)?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "withdraw_ambiguous",
-                0,
-                balance,
-                None,
-                None,
-                now,
-            )?;
-            Ok(balance as u64)
-        })
-    }
-
-    pub fn reverse_principal_withdraw(
-        &self,
-        principal: &str,
-        amount_e8s: u64,
-        fee_e8s: u64,
-        now: i64,
-    ) -> Result<u64, String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        let fee = amount_to_i64(fee_e8s)?;
-        let total = amount
-            .checked_add(fee)
-            .ok_or_else(|| "withdraw reversal amount overflows".to_string())?;
-        self.write_index(|tx| {
-            let balance = principal_balance_for_update(tx, principal, now)?;
-            let next = checked_balance_add(balance, total)?;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![principal, next, now],
-            )
-            .map_err(|error| error.to_string())?;
-            insert_principal_ledger(
-                tx,
-                principal,
-                "withdraw_reversal",
-                total,
-                next,
-                None,
-                None,
-                now,
-            )?;
-            Ok(next as u64)
-        })
-    }
-
-    pub fn list_principal_billing_entries(
-        &self,
-        principal: &str,
-        cursor: Option<u64>,
-        limit: u32,
-    ) -> Result<PrincipalBillingEntryPage, String> {
-        let limit = page_limit(limit);
-        let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
-        self.read_index(|conn| {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT entry_id, principal, kind, amount_e8s, balance_after_e8s,
-                            database_id, ledger_block_index, created_at_ms
-                     FROM principal_billing_ledger
-                     WHERE principal = ?1 AND entry_id > ?2
-                     ORDER BY entry_id ASC
-                     LIMIT ?3",
-                )
-                .map_err(|error| error.to_string())?;
-            let mut entries = crate::sqlite::query_map(
-                &mut stmt,
-                params![principal, after, i64::from(limit) + 1],
-                map_principal_billing_entry,
-            )
-            .map_err(|error| error.to_string())?;
-            let next_cursor = if entries.len() > limit as usize {
-                entries.pop();
-                entries.last().map(|entry| entry.entry_id)
-            } else {
-                None
-            };
-            Ok(PrincipalBillingEntryPage {
-                entries,
-                next_cursor,
-            })
-        })
     }
 
     pub fn create_database(
@@ -549,22 +304,13 @@ impl VfsService {
         Ok(meta)
     }
 
-    pub fn create_generated_database_with_initial_deposit(
+    pub fn create_generated_database(
         &self,
         name: &str,
         caller: &str,
-        initial_deposit_e8s: u64,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        let config = self.billing_config()?;
-        if initial_deposit_e8s < config.min_initial_deposit_e8s {
-            return Err(format!(
-                "initial deposit below minimum: {initial_deposit_e8s} < {}",
-                config.min_initial_deposit_e8s
-            ));
-        }
-        let amount = amount_to_i64(initial_deposit_e8s)?;
-        let meta = self.reserve_generated_database_with_billing(name, caller, amount, now)?;
+        let meta = self.reserve_generated_database(name, caller, now)?;
         if let Err(error) = self.run_database_migrations(&meta.database_id) {
             let cleanup_error = self.discard_database_reservation(&meta.database_id).err();
             return Err(match cleanup_error {
@@ -575,19 +321,23 @@ impl VfsService {
         Ok(meta)
     }
 
-    fn reserve_generated_database_with_billing(
+    pub fn reserve_generated_database_for_mount(
         &self,
         name: &str,
         caller: &str,
-        initial_deposit_e8s: i64,
+        now: i64,
+    ) -> Result<DatabaseMeta, String> {
+        self.reserve_generated_database(name, caller, now)
+    }
+
+    fn reserve_generated_database(
+        &self,
+        name: &str,
+        caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
         let name = normalize_database_name(name)?;
         self.write_index(|tx| {
-            let principal_balance = principal_balance_for_update(tx, caller, now)?;
-            if principal_balance < initial_deposit_e8s {
-                return Err("principal billing balance is insufficient".to_string());
-            }
             let mount_id = allocate_mount_id(tx)?;
             let mut selected_database_id = None;
             for attempt in 0_u32..100 {
@@ -599,49 +349,7 @@ impl VfsService {
             }
             let database_id = selected_database_id
                 .ok_or_else(|| "failed to generate unique database id".to_string())?;
-            let next_principal_balance = principal_balance - initial_deposit_e8s;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![caller, next_principal_balance, now],
-            )
-            .map_err(|error| error.to_string())?;
-            let meta = self.insert_database_reservation(
-                tx,
-                &database_id,
-                &name,
-                caller,
-                now,
-                mount_id,
-                initial_deposit_e8s,
-            )?;
-            insert_principal_ledger(
-                tx,
-                caller,
-                "initial_deposit",
-                -initial_deposit_e8s,
-                next_principal_balance,
-                Some(&database_id),
-                None,
-                now,
-            )?;
-            insert_database_ledger(
-                tx,
-                DatabaseLedgerInsert {
-                    database_id: &database_id,
-                    kind: "initial_deposit",
-                    amount_e8s: initial_deposit_e8s,
-                    balance_after_e8s: initial_deposit_e8s,
-                    caller,
-                    method: Some("create_database"),
-                    cycles_delta: None,
-                    config: None,
-                    usage_event_id: None,
-                    now,
-                },
-            )?;
-            Ok(meta)
+            self.insert_database_reservation(tx, &database_id, &name, caller, now, mount_id, 0)
         })
     }
 
@@ -692,11 +400,16 @@ impl VfsService {
         .map_err(|error| error.to_string())?;
         record_mount_history(tx, database_id, mount_id, "create", now)?;
         insert_initial_database_members(tx, database_id, caller, now)?;
+        let suspended_at_ms = if initial_balance_e8s == 0 {
+            Some(now)
+        } else {
+            None
+        };
         tx.execute(
             "INSERT INTO database_billing_accounts
              (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, NULL, ?3, ?3)",
-            params![database_id, initial_balance_e8s, now],
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![database_id, initial_balance_e8s, suspended_at_ms, now],
         )
         .map_err(|error| error.to_string())?;
         Ok(DatabaseMeta {
@@ -727,6 +440,11 @@ impl VfsService {
             )
             .map_err(|error| error.to_string())?;
             tx.execute(
+                "DELETE FROM database_billing_pending_operations WHERE database_id = ?1",
+                params![database_id],
+            )
+            .map_err(|error| error.to_string())?;
+            tx.execute(
                 "DELETE FROM database_billing_accounts WHERE database_id = ?1",
                 params![database_id],
             )
@@ -765,145 +483,132 @@ impl VfsService {
         Ok(())
     }
 
-    pub fn reverse_failed_database_create(
+    pub fn validate_database_top_up(
         &self,
         database_id: &str,
         caller: &str,
-        initial_deposit_e8s: i64,
-        now: i64,
+        amount_e8s: u64,
     ) -> Result<(), String> {
-        let db_file_name = self.write_index(|tx| {
-            let db_file_name: Option<String> = tx
-                .query_row(
-                    "SELECT db_file_name FROM databases WHERE database_id = ?1",
-                    params![database_id],
-                    |row| crate::sqlite::row_get(row, 0),
-                )
-                .optional()
-                .map_err(|error| error.to_string())?;
-            let principal_balance = principal_balance_for_update(tx, caller, now)?;
-            let next_principal_balance =
-                checked_balance_add(principal_balance, initial_deposit_e8s)?;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![caller, next_principal_balance, now],
-            )
-            .map_err(|error| error.to_string())?;
-            insert_principal_ledger(
-                tx,
-                caller,
-                "create_database_reversal",
-                initial_deposit_e8s,
-                next_principal_balance,
-                Some(database_id),
-                None,
-                now,
-            )?;
-            insert_database_ledger(
-                tx,
-                DatabaseLedgerInsert {
-                    database_id,
-                    kind: "create_database_reversal",
-                    amount_e8s: -initial_deposit_e8s,
-                    balance_after_e8s: 0,
-                    caller,
-                    method: Some("create_database"),
-                    cycles_delta: None,
-                    config: None,
-                    usage_event_id: None,
-                    now,
-                },
-            )?;
-            tx.execute(
-                "DELETE FROM database_billing_accounts WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "DELETE FROM database_members WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "DELETE FROM database_restore_chunks WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "DELETE FROM database_mount_history WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
-                "DELETE FROM databases WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(db_file_name)
-        })?;
-        #[cfg(target_arch = "wasm32")]
-        let _ = &db_file_name;
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(db_file_name) = db_file_name
-            && let Err(error) = remove_file(&db_file_name)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error.to_string());
+        if amount_to_i64(amount_e8s)? <= 0 {
+            return Err("top-up amount must be positive".to_string());
         }
+        let _ = caller;
+        self.read_index(|conn| {
+            let status = load_database_status(conn, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            if !database_has_owner(conn, database_id)? {
+                return Err(format!("database has no owner: {database_id}"));
+            }
+            Ok(())
+        })?;
         Ok(())
     }
 
-    pub fn top_up_database(
+    pub fn begin_database_top_up(
         &self,
         database_id: &str,
         caller: &str,
         amount_e8s: u64,
         now: i64,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
+        self.validate_database_top_up(database_id, caller, amount_e8s)?;
+        let amount = amount_to_i64(amount_e8s)?;
+        self.write_index(|tx| {
+            insert_pending_billing_operation(tx, database_id, "top_up", caller, amount, 0, now)
+        })
+    }
+
+    pub fn credit_database_top_up(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        amount_e8s: u64,
+        ledger_block_index: u64,
+        now: i64,
+    ) -> Result<u64, String> {
         let amount = amount_to_i64(amount_e8s)?;
         if amount <= 0 {
             return Err("top-up amount must be positive".to_string());
         }
-        let status = self.read_index(|conn| load_database_status(conn, database_id))?;
-        if status == DatabaseStatus::Deleted {
-            return Err(format!("database is deleted: {database_id}"));
-        }
         let config = self.billing_config()?;
         self.write_index(|tx| {
-            let principal_balance = principal_balance_for_update(tx, caller, now)?;
-            if principal_balance < amount {
-                return Err("principal billing balance is insufficient".to_string());
+            require_pending_billing_operation(
+                tx,
+                PendingBillingOperationMatch {
+                    operation_id,
+                    database_id,
+                    kind: "top_up",
+                    caller,
+                    amount_e8s: amount,
+                    fee_e8s: 0,
+                },
+            )?;
+            let status = load_database_status(tx, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
             }
             let db_balance = database_balance_for_update(tx, database_id, now)?;
-            let next_principal = principal_balance - amount;
             let next_database = checked_balance_add(db_balance, amount)?;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![caller, next_principal, now],
-            )
-            .map_err(|error| error.to_string())?;
             update_database_billing_balance(tx, database_id, next_database, &config, now)?;
-            insert_principal_ledger(
-                tx,
-                caller,
-                "allocate_to_database",
-                -amount,
-                next_principal,
-                Some(database_id),
-                None,
-                now,
-            )?;
             insert_database_ledger(
                 tx,
                 DatabaseLedgerInsert {
                     database_id,
-                    kind: "top_up_from_principal",
+                    kind: "top_up",
                     amount_e8s: amount,
                     balance_after_e8s: next_database,
+                    caller,
+                    method: Some("top_up_database"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: Some(ledger_block_index),
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(next_database as u64)
+        })
+    }
+
+    pub fn mark_database_top_up_ambiguous(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        amount_e8s: u64,
+        now: i64,
+    ) -> Result<u64, String> {
+        let amount = amount_to_i64(amount_e8s)?;
+        if amount <= 0 {
+            return Err("top-up amount must be positive".to_string());
+        }
+        self.write_index(|tx| {
+            require_pending_billing_operation(
+                tx,
+                PendingBillingOperationMatch {
+                    operation_id,
+                    database_id,
+                    kind: "top_up",
+                    caller,
+                    amount_e8s: amount,
+                    fee_e8s: 0,
+                },
+            )?;
+            let status = load_database_status(tx, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "top_up_ambiguous",
+                    amount_e8s: amount,
+                    balance_after_e8s: balance,
                     caller,
                     method: Some("top_up_database"),
                     cycles_delta: None,
@@ -911,46 +616,69 @@ impl VfsService {
                     usage_event_id: None,
                     now,
                 },
-            )
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(balance as u64)
         })
     }
 
-    pub fn withdraw_database_balance(
+    pub fn cancel_database_top_up(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        amount_e8s: u64,
+    ) -> Result<(), String> {
+        let amount = amount_to_i64(amount_e8s)?;
+        self.write_index(|tx| {
+            require_pending_billing_operation(
+                tx,
+                PendingBillingOperationMatch {
+                    operation_id,
+                    database_id,
+                    kind: "top_up",
+                    caller,
+                    amount_e8s: amount,
+                    fee_e8s: 0,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)
+        })
+    }
+
+    pub fn begin_database_withdraw(
         &self,
         database_id: &str,
         caller: &str,
         amount_e8s: u64,
+        fee_e8s: u64,
         now: i64,
-    ) -> Result<(), String> {
+    ) -> Result<u64, String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         let amount = amount_to_i64(amount_e8s)?;
+        let fee = amount_to_i64(fee_e8s)?;
         if amount <= 0 {
             return Err("withdraw amount must be positive".to_string());
         }
+        let total = amount
+            .checked_add(fee)
+            .ok_or_else(|| "withdraw amount overflows".to_string())?;
         let config = self.billing_config()?;
         self.write_index(|tx| {
             let db_balance = database_balance_for_update(tx, database_id, now)?;
-            if db_balance < amount {
+            if db_balance < total {
                 return Err("database billing balance is insufficient".to_string());
             }
-            let principal_balance = principal_balance_for_update(tx, caller, now)?;
-            let next_database = db_balance - amount;
-            let next_principal = checked_balance_add(principal_balance, amount)?;
-            update_database_billing_balance(tx, database_id, next_database, &config, now)?;
-            tx.execute(
-                "UPDATE principal_billing_accounts
-                 SET balance_e8s = ?2, updated_at_ms = ?3
-                 WHERE principal = ?1",
-                params![caller, next_principal, now],
-            )
-            .map_err(|error| error.to_string())?;
+            let after_amount = db_balance - amount;
+            let after_fee = after_amount - fee;
+            update_database_billing_balance(tx, database_id, after_fee, &config, now)?;
             insert_database_ledger(
                 tx,
                 DatabaseLedgerInsert {
                     database_id,
-                    kind: "withdraw_to_owner_principal",
+                    kind: "withdraw_pending",
                     amount_e8s: -amount,
-                    balance_after_e8s: next_database,
+                    balance_after_e8s: after_amount,
                     caller,
                     method: Some("withdraw_database_balance"),
                     cycles_delta: None,
@@ -959,16 +687,145 @@ impl VfsService {
                     now,
                 },
             )?;
-            insert_principal_ledger(
+            insert_database_ledger(
                 tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "withdraw_fee_pending",
+                    amount_e8s: -fee,
+                    balance_after_e8s: after_fee,
+                    caller,
+                    method: Some("withdraw_database_balance"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    now,
+                },
+            )?;
+            insert_pending_billing_operation(tx, database_id, "withdraw", caller, amount, fee, now)
+        })
+    }
+
+    pub fn complete_database_withdraw(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        ledger_block_index: u64,
+        now: i64,
+    ) -> Result<u64, String> {
+        self.write_index(|tx| {
+            require_pending_billing_operation_kind(
+                tx,
+                operation_id,
+                database_id,
+                "withdraw",
                 caller,
-                "database_withdraw",
-                amount,
-                next_principal,
-                Some(database_id),
-                None,
-                now,
-            )
+            )?;
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "withdraw_complete",
+                    amount_e8s: 0,
+                    balance_after_e8s: balance,
+                    caller,
+                    method: Some("withdraw_database_balance"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: Some(ledger_block_index),
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(balance as u64)
+        })
+    }
+
+    pub fn reverse_database_withdraw(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        amount_e8s: u64,
+        fee_e8s: u64,
+        now: i64,
+    ) -> Result<u64, String> {
+        let amount = amount_to_i64(amount_e8s)?;
+        let fee = amount_to_i64(fee_e8s)?;
+        let total = amount
+            .checked_add(fee)
+            .ok_or_else(|| "withdraw reversal amount overflows".to_string())?;
+        let config = self.billing_config()?;
+        self.write_index(|tx| {
+            require_pending_billing_operation(
+                tx,
+                PendingBillingOperationMatch {
+                    operation_id,
+                    database_id,
+                    kind: "withdraw",
+                    caller,
+                    amount_e8s: amount,
+                    fee_e8s: fee,
+                },
+            )?;
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            let next = checked_balance_add(balance, total)?;
+            update_database_billing_balance(tx, database_id, next, &config, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "withdraw_reversal",
+                    amount_e8s: total,
+                    balance_after_e8s: next,
+                    caller,
+                    method: Some("withdraw_database_balance"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(next as u64)
+        })
+    }
+
+    pub fn mark_database_withdraw_ambiguous(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        now: i64,
+    ) -> Result<u64, String> {
+        self.write_index(|tx| {
+            require_pending_billing_operation_kind(
+                tx,
+                operation_id,
+                database_id,
+                "withdraw",
+                caller,
+            )?;
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "withdraw_ambiguous",
+                    amount_e8s: 0,
+                    balance_after_e8s: balance,
+                    caller,
+                    method: Some("withdraw_database_balance"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(balance as u64)
         })
     }
 
@@ -1111,6 +968,7 @@ impl VfsService {
 
     pub fn delete_database(&self, database_id: &str, caller: &str, now: i64) -> Result<(), String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_no_pending_billing_operations(database_id)?;
         let meta = self.database_meta(database_id)?;
         #[cfg(target_arch = "wasm32")]
         let _ = &meta;
@@ -1133,6 +991,25 @@ impl VfsService {
                 params![database_id, now],
             )
             .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+    }
+
+    fn require_no_pending_billing_operations(&self, database_id: &str) -> Result<(), String> {
+        self.read_index(|conn| {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM database_billing_pending_operations
+                     WHERE database_id = ?1",
+                    params![database_id],
+                    |row| crate::sqlite::row_get(row, 0),
+                )
+                .map_err(|error| error.to_string())?;
+            if count > 0 {
+                return Err(format!(
+                    "database has pending billing operation: {database_id}"
+                ));
+            }
             Ok(())
         })
     }
@@ -2371,6 +2248,11 @@ fn run_index_migrations(conn: &mut Connection, config: &BillingConfig) -> Result
         }
     }
     if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
+        if !migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+            let tx = conn.transaction().map_err(|error| error.to_string())?;
+            apply_billing_pending_index_migration(&tx)?;
+            tx.commit().map_err(|error| error.to_string())?;
+        }
         return Ok(());
     }
     if schema_migration_count(conn)? != 0 {
@@ -2387,6 +2269,7 @@ fn run_index_migrations(conn: &mut Connection, config: &BillingConfig) -> Result
         validate_billing_config(config)?;
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         apply_billing_index_migration(&tx, config)?;
+        apply_billing_pending_index_migration(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2409,10 +2292,16 @@ fn run_index_migrations_for_upgrade(
     conn: &mut Connection,
     config: Option<&BillingConfig>,
 ) -> Result<(), String> {
-    if sqlite_master_entry_exists(conn, "table", "schema_migrations")?
-        && migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)?
-    {
-        return Ok(());
+    if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+            return Ok(());
+        }
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
+            let tx = conn.transaction().map_err(|error| error.to_string())?;
+            apply_billing_pending_index_migration(&tx)?;
+            tx.commit().map_err(|error| error.to_string())?;
+            return Ok(());
+        }
     }
     let config =
         config.ok_or_else(|| "billing config required for first billing upgrade".to_string())?;
@@ -2436,6 +2325,10 @@ fn run_index_migrations_in_tx(
             }
             validate_billing_config(config)?;
             apply_billing_index_migration(conn, config)?;
+            apply_billing_pending_index_migration(conn)?;
+        }
+        if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+            apply_billing_pending_index_migration(conn)?;
         }
         validate_wasm_index_schema(conn)?;
         for &version in INDEX_SCHEMA_VERSIONS {
@@ -2477,18 +2370,23 @@ fn run_index_migrations_in_tx_for_upgrade(
     conn: &Transaction<'_>,
     config: Option<&BillingConfig>,
 ) -> Result<(), String> {
-    if wasm_index_table_exists(conn, "schema_migrations")?
-        && wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)?
-    {
-        validate_wasm_index_schema(conn)?;
-        for &version in INDEX_SCHEMA_VERSIONS {
-            if !wasm_index_migration_exists(conn, version)? {
-                return Err(format!(
-                    "unsupported index schema: missing migration {version}"
-                ));
+    if wasm_index_table_exists(conn, "schema_migrations")? {
+        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+            validate_wasm_index_schema(conn)?;
+            for &version in INDEX_SCHEMA_VERSIONS {
+                if !wasm_index_migration_exists(conn, version)? {
+                    return Err(format!(
+                        "unsupported index schema: missing migration {version}"
+                    ));
+                }
             }
+            return Ok(());
         }
-        return Ok(());
+        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
+            apply_billing_pending_index_migration(conn)?;
+            validate_wasm_index_schema(conn)?;
+            return Ok(());
+        }
     }
     let config =
         config.ok_or_else(|| "billing config required for first billing upgrade".to_string())?;
@@ -2520,28 +2418,7 @@ fn apply_billing_index_migration(
     config: &BillingConfig,
 ) -> Result<(), String> {
     conn.execute_batch(
-        "CREATE TABLE principal_billing_accounts (
-           principal TEXT PRIMARY KEY,
-           balance_e8s INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL
-         );
-         CREATE TABLE principal_billing_ledger (
-           entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           principal TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           amount_e8s INTEGER NOT NULL,
-           balance_after_e8s INTEGER NOT NULL,
-           database_id TEXT,
-           ledger_block_index INTEGER,
-           created_at_ms INTEGER NOT NULL
-         );
-         CREATE UNIQUE INDEX principal_billing_ledger_block_idx
-           ON principal_billing_ledger(ledger_block_index)
-           WHERE ledger_block_index IS NOT NULL;
-         CREATE INDEX principal_billing_ledger_principal_idx
-           ON principal_billing_ledger(principal, entry_id);
-         CREATE TABLE database_billing_accounts (
+        "CREATE TABLE database_billing_accounts (
            database_id TEXT PRIMARY KEY,
            balance_e8s INTEGER NOT NULL,
            suspended_at_ms INTEGER,
@@ -2572,25 +2449,41 @@ fn apply_billing_index_migration(
          );",
     )
     .map_err(|error| error.to_string())?;
-    let initial_deposit = amount_to_i64(config.min_initial_deposit_e8s)?;
     conn.execute(
         "INSERT INTO database_billing_accounts
          (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
-         SELECT database_id, ?1, NULL, 0, 0 FROM databases",
-        params![initial_deposit],
-    )
-    .map_err(|error| error.to_string())?;
-    conn.execute(
-        "INSERT INTO database_billing_ledger
-         (database_id, kind, amount_e8s, balance_after_e8s, caller, created_at_ms)
-         SELECT database_id, 'migration_initial_grant', ?1, ?1, 'system', 0 FROM databases",
-        params![initial_deposit],
+         SELECT database_id, 0, 0, 0, 0 FROM databases",
+        params![],
     )
     .map_err(|error| error.to_string())?;
     insert_billing_config(conn, config)?;
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
         params![INDEX_SCHEMA_VERSION_BILLING_INITIAL],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn apply_billing_pending_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE database_billing_pending_operations (
+           operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+           database_id TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           caller TEXT NOT NULL,
+           amount_e8s INTEGER NOT NULL,
+           fee_e8s INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX database_billing_pending_operations_database_idx
+           ON database_billing_pending_operations(database_id);",
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_BILLING_PENDING],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -2691,27 +2584,6 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
            created_at_ms INTEGER NOT NULL,
            FOREIGN KEY (database_id) REFERENCES databases(database_id)
          );
-         CREATE TABLE principal_billing_accounts (
-           principal TEXT PRIMARY KEY,
-           balance_e8s INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL
-         );
-         CREATE TABLE principal_billing_ledger (
-           entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           principal TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           amount_e8s INTEGER NOT NULL,
-           balance_after_e8s INTEGER NOT NULL,
-           database_id TEXT,
-           ledger_block_index INTEGER,
-           created_at_ms INTEGER NOT NULL
-         );
-         CREATE UNIQUE INDEX principal_billing_ledger_block_idx
-           ON principal_billing_ledger(ledger_block_index)
-           WHERE ledger_block_index IS NOT NULL;
-         CREATE INDEX principal_billing_ledger_principal_idx
-           ON principal_billing_ledger(principal, entry_id);
          CREATE TABLE database_billing_accounts (
            database_id TEXT PRIMARY KEY,
            balance_e8s INTEGER NOT NULL,
@@ -2737,6 +2609,18 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
          );
          CREATE INDEX database_billing_ledger_database_idx
            ON database_billing_ledger(database_id, entry_id);
+         CREATE TABLE database_billing_pending_operations (
+           operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+           database_id TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           caller TEXT NOT NULL,
+           amount_e8s INTEGER NOT NULL,
+           fee_e8s INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX database_billing_pending_operations_database_idx
+           ON database_billing_pending_operations(database_id);
          CREATE TABLE billing_config (
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL
@@ -2753,7 +2637,6 @@ fn default_billing_config() -> BillingConfig {
         rate_denominator_cycles: DEFAULT_RATE_DENOMINATOR_CYCLES,
         fixed_update_fee_e8s: DEFAULT_FIXED_UPDATE_FEE_E8S,
         min_update_balance_e8s: DEFAULT_MIN_UPDATE_BALANCE_E8S,
-        min_initial_deposit_e8s: DEFAULT_MIN_INITIAL_DEPOSIT_E8S,
     }
 }
 
@@ -2770,12 +2653,8 @@ fn validate_billing_config(config: &BillingConfig) -> Result<(), String> {
     amount_to_i64(config.rate_denominator_cycles)?;
     amount_to_i64(config.fixed_update_fee_e8s)?;
     amount_to_i64(config.min_update_balance_e8s)?;
-    amount_to_i64(config.min_initial_deposit_e8s)?;
     if config.min_update_balance_e8s < config.fixed_update_fee_e8s {
         return Err("min_update_balance_e8s must be >= fixed_update_fee_e8s".to_string());
-    }
-    if config.min_initial_deposit_e8s < config.min_update_balance_e8s {
-        return Err("min_initial_deposit_e8s must be >= min_update_balance_e8s".to_string());
     }
     Ok(())
 }
@@ -2809,11 +2688,6 @@ fn insert_billing_config(conn: &Transaction<'_>, config: &BillingConfig) -> Resu
         "min_update_balance_e8s",
         config.min_update_balance_e8s,
     )?;
-    set_billing_config_value(
-        conn,
-        "min_initial_deposit_e8s",
-        config.min_initial_deposit_e8s,
-    )?;
     Ok(())
 }
 
@@ -2841,6 +2715,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES,
     INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING,
     INDEX_SCHEMA_VERSION_BILLING_INITIAL,
+    INDEX_SCHEMA_VERSION_BILLING_PENDING,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -2852,10 +2727,9 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "url_ingest_trigger_sessions",
     "ops_answer_sessions",
     "database_restore_sessions",
-    "principal_billing_accounts",
-    "principal_billing_ledger",
     "database_billing_accounts",
     "database_billing_ledger",
+    "database_billing_pending_operations",
     "billing_config",
 ];
 
@@ -2866,8 +2740,8 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "databases",
         "database_restore_chunks",
         "database_restore_sessions",
-        "principal_billing_accounts",
         "database_billing_accounts",
+        "database_billing_pending_operations",
         "billing_config",
     ] {
         if !wasm_index_table_exists(conn, table)? {
@@ -2903,6 +2777,18 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             "database_billing_accounts",
             &["database_id", "balance_e8s", "suspended_at_ms"][..],
         ),
+        (
+            "database_billing_pending_operations",
+            &[
+                "operation_id",
+                "database_id",
+                "kind",
+                "caller",
+                "amount_e8s",
+                "fee_e8s",
+                "created_at_ms",
+            ][..],
+        ),
     ] {
         for column in columns {
             if !index_column_exists(conn, table, column)? {
@@ -2916,6 +2802,7 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "databases_active_mount_id_idx",
         "database_restore_chunks_database_id_idx",
         "database_billing_ledger_database_idx",
+        "database_billing_pending_operations_database_idx",
     ] {
         if !wasm_index_index_exists(conn, index)? {
             return Err(format!("unsupported index schema: missing index {index}"));
@@ -3028,7 +2915,6 @@ fn load_billing_config(conn: &Connection) -> Result<BillingConfig, String> {
         rate_denominator_cycles: load_billing_config_u64(conn, "rate_denominator_cycles")?,
         fixed_update_fee_e8s: load_billing_config_u64(conn, "fixed_update_fee_e8s")?,
         min_update_balance_e8s: load_billing_config_u64(conn, "min_update_balance_e8s")?,
-        min_initial_deposit_e8s: load_billing_config_u64(conn, "min_initial_deposit_e8s")?,
     })
 }
 
@@ -3060,53 +2946,20 @@ fn checked_balance_add(balance: i64, amount: i64) -> Result<i64, String> {
     Ok(next)
 }
 
-fn principal_balance_for_update(
-    conn: &Transaction<'_>,
-    principal: &str,
-    now: i64,
-) -> Result<i64, String> {
-    conn.execute(
-        "INSERT OR IGNORE INTO principal_billing_accounts (principal, balance_e8s, created_at_ms, updated_at_ms) VALUES (?1, 0, ?2, ?2)",
-        params![principal, now],
-    )
-    .map_err(|error| error.to_string())?;
-    conn.query_row(
-        "SELECT balance_e8s FROM principal_billing_accounts WHERE principal = ?1",
-        params![principal],
-        |row| crate::sqlite::row_get(row, 0),
-    )
-    .map_err(|error| error.to_string())
-}
-
-fn principal_balance_or_zero(conn: &Connection, principal: &str) -> Result<i64, String> {
-    conn.query_row(
-        "SELECT balance_e8s FROM principal_billing_accounts WHERE principal = ?1",
-        params![principal],
-        |row| crate::sqlite::row_get(row, 0),
-    )
-    .optional()
-    .map(|balance| balance.unwrap_or(0))
-    .map_err(|error| error.to_string())
-}
-
 fn database_balance_for_update(
     conn: &Transaction<'_>,
     database_id: &str,
     now: i64,
 ) -> Result<i64, String> {
-    conn.execute(
-        "INSERT OR IGNORE INTO database_billing_accounts
-         (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
-         VALUES (?1, 0, NULL, ?2, ?2)",
-        params![database_id, now],
-    )
-    .map_err(|error| error.to_string())?;
+    let _ = now;
     conn.query_row(
         "SELECT balance_e8s FROM database_billing_accounts WHERE database_id = ?1",
         params![database_id],
         |row| crate::sqlite::row_get(row, 0),
     )
-    .map_err(|error| error.to_string())
+    .optional()
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("database billing account not found: {database_id}"))
 }
 
 fn update_database_billing_balance(
@@ -3135,37 +2988,107 @@ fn update_database_billing_balance(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn insert_principal_ledger(
-    conn: &Transaction<'_>,
-    principal: &str,
-    kind: &str,
+struct PendingBillingOperation {
+    database_id: String,
+    kind: String,
+    caller: String,
     amount_e8s: i64,
-    balance_after_e8s: i64,
-    database_id: Option<&str>,
-    ledger_block_index: Option<u64>,
+    fee_e8s: i64,
+}
+
+struct PendingBillingOperationMatch<'a> {
+    operation_id: u64,
+    database_id: &'a str,
+    kind: &'a str,
+    caller: &'a str,
+    amount_e8s: i64,
+    fee_e8s: i64,
+}
+
+fn insert_pending_billing_operation(
+    conn: &Transaction<'_>,
+    database_id: &str,
+    kind: &str,
+    caller: &str,
+    amount_e8s: i64,
+    fee_e8s: i64,
     now: i64,
+) -> Result<u64, String> {
+    conn.execute(
+        "INSERT INTO database_billing_pending_operations
+         (database_id, kind, caller, amount_e8s, fee_e8s, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![database_id, kind, caller, amount_e8s, fee_e8s, now],
+    )
+    .map_err(|error| error.to_string())?;
+    let operation_id = crate::sqlite::last_insert_rowid(conn).map_err(|error| error.to_string())?;
+    u64::try_from(operation_id).map_err(|error| error.to_string())
+}
+
+fn load_pending_billing_operation(
+    conn: &Transaction<'_>,
+    operation_id: u64,
+) -> Result<PendingBillingOperation, String> {
+    let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+    conn.query_row(
+        "SELECT database_id, kind, caller, amount_e8s, fee_e8s
+         FROM database_billing_pending_operations
+         WHERE operation_id = ?1",
+        params![operation_id],
+        |row| {
+            Ok(PendingBillingOperation {
+                database_id: crate::sqlite::row_get(row, 0)?,
+                kind: crate::sqlite::row_get(row, 1)?,
+                caller: crate::sqlite::row_get(row, 2)?,
+                amount_e8s: crate::sqlite::row_get(row, 3)?,
+                fee_e8s: crate::sqlite::row_get(row, 4)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| "pending billing operation not found".to_string())
+}
+
+fn require_pending_billing_operation(
+    conn: &Transaction<'_>,
+    expected: PendingBillingOperationMatch<'_>,
 ) -> Result<(), String> {
-    let values = vec![
-        crate::sqlite::text_value(principal),
-        crate::sqlite::text_value(kind),
-        crate::sqlite::integer_value(amount_e8s),
-        crate::sqlite::integer_value(balance_after_e8s),
-        database_id
-            .map(crate::sqlite::text_value)
-            .unwrap_or(crate::sqlite::types::Value::Null),
-        crate::sqlite::nullable_integer_value(
-            ledger_block_index.map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
-        ),
-        crate::sqlite::integer_value(now),
-    ];
-    crate::sqlite::execute_values(
-        conn,
-        "INSERT INTO principal_billing_ledger
-         (principal, kind, amount_e8s, balance_after_e8s, database_id, ledger_block_index,
-          created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        &values,
+    let operation = load_pending_billing_operation(conn, expected.operation_id)?;
+    if operation.database_id != expected.database_id
+        || operation.kind != expected.kind
+        || operation.caller != expected.caller
+        || operation.amount_e8s != expected.amount_e8s
+        || operation.fee_e8s != expected.fee_e8s
+    {
+        return Err("pending billing operation mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn require_pending_billing_operation_kind(
+    conn: &Transaction<'_>,
+    operation_id: u64,
+    database_id: &str,
+    kind: &str,
+    caller: &str,
+) -> Result<(), String> {
+    let operation = load_pending_billing_operation(conn, operation_id)?;
+    if operation.database_id != database_id || operation.kind != kind || operation.caller != caller
+    {
+        return Err("pending billing operation mismatch".to_string());
+    }
+    Ok(())
+}
+
+fn delete_pending_billing_operation(
+    conn: &Transaction<'_>,
+    operation_id: u64,
+) -> Result<(), String> {
+    let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+    conn.execute(
+        "DELETE FROM database_billing_pending_operations WHERE operation_id = ?1",
+        params![operation_id],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -3253,24 +3176,6 @@ fn compute_update_charge(config: &BillingConfig, cycles_delta: u128) -> Result<i
 
 fn page_limit(limit: u32) -> u32 {
     limit.clamp(1, 100)
-}
-
-fn map_principal_billing_entry(
-    row: &crate::sqlite::Row<'_>,
-) -> crate::sqlite::Result<PrincipalBillingEntry> {
-    let entry_id: i64 = crate::sqlite::row_get(row, 0)?;
-    let balance_after: i64 = crate::sqlite::row_get(row, 4)?;
-    let ledger_block_index: Option<i64> = crate::sqlite::row_get(row, 6)?;
-    Ok(PrincipalBillingEntry {
-        entry_id: entry_id.max(0) as u64,
-        principal: crate::sqlite::row_get(row, 1)?,
-        kind: crate::sqlite::row_get(row, 2)?,
-        amount_e8s: crate::sqlite::row_get(row, 3)?,
-        balance_after_e8s: balance_after.max(0) as u64,
-        database_id: crate::sqlite::row_get(row, 5)?,
-        ledger_block_index: ledger_block_index.map(|value| value.max(0) as u64),
-        created_at_ms: crate::sqlite::row_get(row, 7)?,
-    })
 }
 
 fn map_database_billing_entry(
@@ -3663,6 +3568,19 @@ fn database_exists(conn: &Connection, database_id: &str) -> Result<bool, String>
     .map_err(|error| error.to_string())
 }
 
+fn database_has_owner(conn: &Connection, database_id: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM database_members
+         WHERE database_id = ?1 AND role = 'owner'
+         LIMIT 1",
+        params![database_id],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(|error| error.to_string())
+}
+
 fn insert_initial_database_members(
     tx: &Transaction<'_>,
     database_id: &str,
@@ -4016,7 +3934,6 @@ mod tests {
             rate_denominator_cycles: DEFAULT_RATE_DENOMINATOR_CYCLES,
             fixed_update_fee_e8s: DEFAULT_FIXED_UPDATE_FEE_E8S,
             min_update_balance_e8s: DEFAULT_MIN_UPDATE_BALANCE_E8S,
-            min_initial_deposit_e8s: DEFAULT_MIN_INITIAL_DEPOSIT_E8S,
         }
     }
 

@@ -104,6 +104,20 @@ export type DatabaseSummary = {
   deletedAtMs: string | null;
 };
 
+export type BillingConfig = {
+  kinicLedgerCanisterId: string;
+  snsGovernanceId: string;
+  rateNumeratorE8s: string;
+  rateDenominatorCycles: string;
+  fixedUpdateFeeE8s: string;
+  minUpdateBalanceE8s: string;
+};
+
+export type BillingTransferResult = {
+  blockIndex: string;
+  balanceE8s: string;
+};
+
 export type DatabaseMember = {
   databaseId: string;
   principal: string;

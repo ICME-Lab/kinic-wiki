@@ -16,7 +16,6 @@ use vfs_runtime::{
 use vfs_types::{DatabaseStatus, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
-const SEED_E8S: u64 = 20_000_000;
 const DEPOSIT_E8S: u64 = 1_000_000;
 
 #[derive(Clone, Debug)]
@@ -65,13 +64,39 @@ fn service_with_root() -> TestService {
 }
 
 fn create_billed_database(service: &VfsService, name: &str, now: i64) -> String {
-    service
-        .credit_principal_top_up(OWNER, SEED_E8S, now as u64, now)
-        .expect("principal seed should credit");
-    service
-        .create_generated_database_with_initial_deposit(name, OWNER, DEPOSIT_E8S, now + 1)
+    let database_id = service
+        .create_generated_database(name, OWNER, now + 1)
         .expect("database should create")
-        .database_id
+        .database_id;
+    credit_database(
+        service,
+        &database_id,
+        OWNER,
+        DEPOSIT_E8S,
+        now as u64,
+        now + 2,
+    )
+    .expect("database seed should credit");
+    database_id
+}
+
+fn credit_database(
+    service: &VfsService,
+    database_id: &str,
+    caller: &str,
+    amount_e8s: u64,
+    block_index: u64,
+    now: i64,
+) -> Result<u64, String> {
+    let operation_id = service.begin_database_top_up(database_id, caller, amount_e8s, now)?;
+    service.credit_database_top_up(
+        operation_id,
+        database_id,
+        caller,
+        amount_e8s,
+        block_index,
+        now,
+    )
 }
 
 fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
@@ -135,47 +160,16 @@ fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance
         balance += amount;
         assert_eq!(balance_after, balance, "database ledger chain broke");
         match kind.as_str() {
-            "initial_deposit" | "top_up_from_principal" => assert!(amount > 0),
-            "withdraw_to_owner_principal" | "charge" => assert!(amount <= 0),
+            "top_up" => assert!(amount > 0),
+            "withdraw_pending" | "withdraw_fee_pending" | "charge" => assert!(amount <= 0),
+            "withdraw_complete" => assert_eq!(amount, 0),
+            "withdraw_reversal" => assert!(amount >= 0),
             "suspend" => {
                 assert_eq!(amount, 0);
                 assert!(method.is_some());
                 assert!(cycles_delta.is_some());
             }
             other => panic!("unexpected database ledger kind: {other}"),
-        }
-    }
-    assert_eq!(balance.max(0) as u64, expected_balance);
-}
-
-fn assert_principal_ledger_chain(root: &Path, expected_balance: u64) {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let mut stmt = conn
-        .prepare(
-            "SELECT kind, amount_e8s, balance_after_e8s, ledger_block_index
-             FROM principal_billing_ledger
-             WHERE principal = ?1
-             ORDER BY entry_id ASC",
-        )
-        .expect("principal ledger query should prepare");
-    let rows = stmt
-        .query_map(params![OWNER], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-            ))
-        })
-        .expect("principal ledger query should run")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("principal ledger rows should collect");
-    let mut balance = 0_i64;
-    for (kind, amount, balance_after, block_index) in rows {
-        balance += amount;
-        assert_eq!(balance_after, balance, "principal ledger chain broke");
-        if block_index.is_some() {
-            assert!(matches!(kind.as_str(), "top_up" | "withdraw_complete"));
         }
     }
     assert_eq!(balance.max(0) as u64, expected_balance);
@@ -296,28 +290,31 @@ proptest! {
         let env = service_with_root();
         let service = &env.service;
         let database_id = create_billed_database(service, "billing-pbt", 1);
-        let mut principal_balance = SEED_E8S - DEPOSIT_E8S;
         let mut database_balance = DEPOSIT_E8S;
 
         for (index, operation) in operations.into_iter().enumerate() {
             let now = index as i64 + 100;
             match operation {
                 BillingOp::TopUpDatabase { amount } => {
-                    let result = service.top_up_database(&database_id, OWNER, amount, now);
-                    if principal_balance >= amount {
-                        result.expect("top-up should succeed with enough principal balance");
-                        principal_balance -= amount;
-                        database_balance += amount;
-                    } else {
-                        assert!(result.is_err());
-                    }
+                    credit_database(service, &database_id, OWNER, amount, now as u64, now)
+                        .expect("top-up should succeed");
+                    database_balance += amount;
                 }
                 BillingOp::WithdrawDatabase { amount } => {
-                    let result = service.withdraw_database_balance(&database_id, OWNER, amount, now);
+                    let result = service.begin_database_withdraw(&database_id, OWNER, amount, 0, now);
                     if database_balance >= amount {
-                        result.expect("withdraw should succeed with enough database balance");
+                        let operation_id =
+                            result.expect("withdraw should succeed with enough database balance");
+                        service
+                            .complete_database_withdraw(
+                                operation_id,
+                                &database_id,
+                                OWNER,
+                                now as u64 + 100,
+                                now,
+                            )
+                            .expect("withdraw should complete");
                         database_balance -= amount;
-                        principal_balance += amount;
                     } else {
                         assert!(result.is_err());
                     }
@@ -348,7 +345,6 @@ proptest! {
                 database_balance >= DEFAULT_MIN_UPDATE_BALANCE_E8S
             );
             assert_database_ledger_chain(&env.root, &database_id, database_balance);
-            assert_principal_ledger_chain(&env.root, principal_balance);
         }
     }
 
@@ -457,9 +453,6 @@ proptest! {
     ) {
         let env = service_with_root();
         let service = &env.service;
-        service
-            .credit_principal_top_up(OWNER, 200_000_000, 1, 1)
-            .expect("principal seed should credit");
         let mut slots = vec![None::<String>; 4];
         let mut expected_mount_events = 0_usize;
 
@@ -468,12 +461,7 @@ proptest! {
             match operation {
                 MountOp::Create { slot } if slots[slot].is_none() => {
                     let id = service
-                        .create_generated_database_with_initial_deposit(
-                            &format!("mount-pbt-{slot}-{index}"),
-                            OWNER,
-                            DEPOSIT_E8S,
-                            now,
-                        )
+                        .create_generated_database(&format!("mount-pbt-{slot}-{index}"), OWNER, now)
                         .expect("slot database should create")
                         .database_id;
                     slots[slot] = Some(id);

@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
+    BillingCommand, ConnectionArgs, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
     SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
@@ -24,6 +24,11 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    #[command(about = "Show KINIC billing configuration")]
+    Billing {
+        #[command(subcommand)]
+        command: BillingCommand,
+    },
     #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
     Database {
         #[command(subcommand)]
@@ -642,9 +647,12 @@ pub enum GitHubIngestCommand {
 impl Command {
     pub fn requires_identity(&self) -> bool {
         match self {
+            Self::Billing { command: _ } => false,
             Self::Database { command } => matches!(
                 command,
                 DatabaseCommand::Create { .. }
+                    | DatabaseCommand::TopUp { .. }
+                    | DatabaseCommand::Withdraw { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
@@ -716,6 +724,7 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
+            | Self::Billing { .. }
             | Self::Identity { .. }
             | Self::Hermes { .. }
             | Self::Codex { .. }
@@ -750,6 +759,9 @@ impl Command {
 
     pub fn as_vfs_command(&self) -> Option<VfsCommand> {
         match self {
+            Self::Billing { command } => Some(VfsCommand::Billing {
+                command: command.clone(),
+            }),
             Self::Database { command } => Some(VfsCommand::Database {
                 command: command.clone(),
             }),
@@ -957,8 +969,9 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand, IdentityModeArg,
-        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        BillingCommand, ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand,
+        IdentityModeArg, NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg,
+        SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
 
@@ -1080,6 +1093,72 @@ mod tests {
         assert_eq!(name, "team-db");
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "top-up", "db_alpha", "500000"]);
+        let Command::Database {
+            command:
+                DatabaseCommand::TopUp {
+                    database_id,
+                    amount_e8s,
+                },
+        } = cli.command
+        else {
+            panic!("expected database top-up command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert_eq!(amount_e8s, 500_000);
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "withdraw",
+            "db_alpha",
+            "500000",
+            "--to-principal",
+            "2vxsx-fae",
+            "--to-subaccount-hex",
+            "0000000000000000000000000000000000000000000000000000000000000001",
+        ]);
+        let Command::Database {
+            command:
+                DatabaseCommand::Withdraw {
+                    database_id,
+                    amount_e8s,
+                    to_principal,
+                    to_subaccount_hex,
+                },
+        } = cli.command
+        else {
+            panic!("expected database withdraw command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert_eq!(amount_e8s, 500_000);
+        assert_eq!(to_principal, "2vxsx-fae");
+        assert!(to_subaccount_hex.is_some());
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "deposit",
+            "db_alpha",
+            "500000",
+            "--browser-origin",
+            "http://127.0.0.1:3000",
+        ]);
+        let Command::Database {
+            command:
+                DatabaseCommand::Deposit {
+                    database_id,
+                    amount_e8s,
+                    browser_origin,
+                },
+        } = cli.command
+        else {
+            panic!("expected database deposit command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert_eq!(amount_e8s, 500_000);
+        assert_eq!(browser_origin.as_deref(), Some("http://127.0.0.1:3000"));
+
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
         let Command::Database {
             command: DatabaseCommand::Rename { database_id, name },
@@ -1138,6 +1217,18 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_parses_billing_commands() {
+        let cli = Cli::parse_from(["kinic-vfs-cli", "billing", "config"]);
+        let Command::Billing {
+            command: BillingCommand::Config { json },
+        } = cli.command
+        else {
+            panic!("expected billing config command");
+        };
+        assert!(!json);
+    }
+
+    #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
         let read = Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
         assert!(!read.command.requires_identity());
@@ -1185,6 +1276,29 @@ mod tests {
         let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
+
+        let billing_config = Cli::parse_from(["kinic-vfs-cli", "billing", "config"]);
+        assert!(!billing_config.command.requires_identity());
+        assert!(!billing_config.command.probes_anonymous_database_read());
+
+        let database_top_up =
+            Cli::parse_from(["kinic-vfs-cli", "database", "top-up", "db_alpha", "500000"]);
+        assert!(database_top_up.command.requires_identity());
+
+        let database_withdraw = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "withdraw",
+            "db_alpha",
+            "500000",
+            "--to-principal",
+            "2vxsx-fae",
+        ]);
+        assert!(database_withdraw.command.requires_identity());
+
+        let database_deposit =
+            Cli::parse_from(["kinic-vfs-cli", "database", "deposit", "db_alpha", "500000"]);
+        assert!(!database_deposit.command.requires_identity());
     }
 
     #[test]

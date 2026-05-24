@@ -6,6 +6,7 @@ import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
 import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
+  BillingConfig,
   ChildNode,
   DeleteNodeRequest,
   DeleteNodeResult,
@@ -49,6 +50,15 @@ type RawNode = {
 
 type RawCanisterHealth = {
   cycles_balance: bigint;
+};
+
+type RawBillingConfig = {
+  kinic_ledger_canister_id: string;
+  sns_governance_id: string;
+  rate_numerator_e8s: bigint;
+  rate_denominator_cycles: bigint;
+  fixed_update_fee_e8s: bigint;
+  min_update_balance_e8s: bigint;
 };
 
 type RawDatabaseSummary = {
@@ -198,8 +208,9 @@ type VfsActor = {
   canister_health: () => Promise<RawCanisterHealth>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
-  create_database: (request: { name: string; initial_deposit_e8s: [] | [bigint] }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
+  get_billing_config: () => Promise<{ Ok: RawBillingConfig } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
   move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: string }>;
@@ -347,6 +358,17 @@ export function canisterHealth(canisterId: string): Promise<CanisterHealth> {
   return request;
 }
 
+export async function getBillingConfig(canisterId: string): Promise<BillingConfig> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.get_billing_config();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeBillingConfig(result.Ok);
+  });
+}
+
 export async function listDatabasesAuthenticated(canisterId: string, identity: Identity): Promise<DatabaseSummary[]> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
@@ -369,10 +391,10 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string, initialDepositE8s = 1_000_000n): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database({ name, initial_deposit_e8s: [initialDepositE8s] });
+    const result = await actor.create_database({ name });
     if ("Err" in result) {
       throw new Error(result.Err);
     }
@@ -737,6 +759,17 @@ function normalizeNode(raw: RawNode): WikiNode {
 function normalizeCanisterHealth(raw: RawCanisterHealth): CanisterHealth {
   return {
     cyclesBalance: raw.cycles_balance
+  };
+}
+
+function normalizeBillingConfig(raw: RawBillingConfig): BillingConfig {
+  return {
+    kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
+    snsGovernanceId: raw.sns_governance_id,
+    rateNumeratorE8s: raw.rate_numerator_e8s.toString(),
+    rateDenominatorCycles: raw.rate_denominator_cycles.toString(),
+    fixedUpdateFeeE8s: raw.fixed_update_fee_e8s.toString(),
+    minUpdateBalanceE8s: raw.min_update_balance_e8s.toString()
   };
 }
 

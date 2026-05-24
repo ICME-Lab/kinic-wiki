@@ -2464,7 +2464,7 @@ async fn write_pbt_proposal(
             content: serde_json::json!({
                 "base_etag": base_etag,
                 "candidate_score_gate": if gates_pass { "pass" } else { "fail" },
-                "semantic_drift_gate": "pass",
+                "heading_consistency_gate": "pass",
                 "permission_gate": "pass"
             })
             .to_string(),

@@ -72,7 +72,6 @@ pub struct BillingConfig {
     pub rate_denominator_cycles: u64,
     pub fixed_update_fee_e8s: u64,
     pub min_update_balance_e8s: u64,
-    pub min_initial_deposit_e8s: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -81,7 +80,6 @@ pub struct BillingConfigUpdate {
     pub rate_denominator_cycles: u64,
     pub fixed_update_fee_e8s: u64,
     pub min_update_balance_e8s: u64,
-    pub min_initial_deposit_e8s: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -94,30 +92,6 @@ pub struct BillingAccount {
 pub struct BillingTransferResult {
     pub block_index: u64,
     pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct PrincipalBillingSummary {
-    pub principal: String,
-    pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct PrincipalBillingEntry {
-    pub entry_id: u64,
-    pub principal: String,
-    pub kind: String,
-    pub amount_e8s: i64,
-    pub balance_after_e8s: u64,
-    pub database_id: Option<String>,
-    pub ledger_block_index: Option<u64>,
-    pub created_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct PrincipalBillingEntryPage {
-    pub entries: Vec<PrincipalBillingEntry>,
-    pub next_cursor: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -146,7 +120,6 @@ pub struct DatabaseBillingEntryPage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
-    pub initial_deposit_e8s: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

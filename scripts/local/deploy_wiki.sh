@@ -46,7 +46,6 @@ cat >"${ARGS_FILE}" <<EOF
   rate_denominator_cycles = 1_000_000 : nat64;
   fixed_update_fee_e8s = 100 : nat64;
   min_update_balance_e8s = 10_000 : nat64;
-  min_initial_deposit_e8s = 1_000_000 : nat64;
 })
 EOF
 

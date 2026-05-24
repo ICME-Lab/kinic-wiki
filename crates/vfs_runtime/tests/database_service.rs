@@ -106,13 +106,13 @@ fn index_migration_adds_billing_to_existing_database_index() {
             |row| row.get(0),
         )
         .expect("database billing account should load");
-    let ledger_kind: String = conn
+    let ledger_count: i64 = conn
         .query_row(
-            "SELECT kind FROM database_billing_ledger WHERE database_id = 'db_existing'",
+            "SELECT COUNT(*) FROM database_billing_ledger WHERE database_id = 'db_existing'",
             params![],
             |row| row.get(0),
         )
-        .expect("database billing ledger should exist");
+        .expect("database billing ledger count should load");
     let marker: String = conn
         .query_row(
             "SELECT version FROM schema_migrations WHERE version = 'database_index:011_billing_initial'",
@@ -120,40 +120,27 @@ fn index_migration_adds_billing_to_existing_database_index() {
             |row| row.get(0),
         )
         .expect("billing migration marker should exist");
-    assert_eq!(balance, 1_000_000);
-    assert_eq!(suspended_at_ms, None);
-    assert_eq!(ledger_kind, "migration_initial_grant");
+    let pending_marker: String = conn
+        .query_row(
+            "SELECT version FROM schema_migrations WHERE version = 'database_index:012_billing_pending'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("pending billing migration marker should exist");
+    let pending_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'database_billing_pending_operations'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("pending billing table count should load");
+    assert_eq!(balance, 0);
+    assert_eq!(suspended_at_ms, Some(0));
+    assert_eq!(ledger_count, 0);
     assert_eq!(marker, "database_index:011_billing_initial");
-}
-
-#[test]
-fn principal_billing_summary_does_not_create_missing_account() {
-    let (service, root) = service_with_root();
-
-    let summary = service
-        .principal_billing_summary("new-principal")
-        .expect("summary should load");
-
-    assert_eq!(summary.balance_e8s, 0);
-    assert_eq!(principal_account_count(&root, "new-principal"), 0);
-}
-
-#[test]
-fn principal_top_up_creates_billing_account() {
-    let (service, root) = service_with_root();
-
-    service
-        .credit_principal_top_up("owner", 500, 1, 1)
-        .expect("top-up should create account");
-
-    assert_eq!(principal_account_count(&root, "owner"), 1);
-    assert_eq!(
-        service
-            .principal_billing_summary("owner")
-            .expect("summary should load")
-            .balance_e8s,
-        500
-    );
+    assert_eq!(pending_marker, "database_index:012_billing_pending");
+    assert_eq!(pending_table_count, 1);
 }
 
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
@@ -238,41 +225,6 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
     .expect("member count should load")
 }
 
-fn principal_account_count(root: &std::path::Path, principal: &str) -> i64 {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT COUNT(*) FROM principal_billing_accounts WHERE principal = ?1",
-        params![principal],
-        |row| row.get(0),
-    )
-    .expect("principal account count should load")
-}
-
-fn principal_ledger_count(root: &std::path::Path, principal: &str) -> i64 {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT COUNT(*) FROM principal_billing_ledger WHERE principal = ?1",
-        params![principal],
-        |row| row.get(0),
-    )
-    .expect("principal ledger count should load")
-}
-
-fn principal_ledger_kinds(root: &std::path::Path, principal: &str) -> Vec<String> {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let mut stmt = conn
-        .prepare(
-            "SELECT kind FROM principal_billing_ledger
-             WHERE principal = ?1
-             ORDER BY entry_id ASC",
-        )
-        .expect("principal ledger query should prepare");
-    stmt.query_map(params![principal], |row| row.get(0))
-        .expect("principal ledger query should run")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("principal ledger rows should load")
-}
-
 fn database_billing_balance(root: &std::path::Path, database_id: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -281,6 +233,59 @@ fn database_billing_balance(root: &std::path::Path, database_id: &str) -> i64 {
         |row| row.get(0),
     )
     .expect("database billing balance should load")
+}
+
+fn database_billing_suspended_at(root: &std::path::Path, database_id: &str) -> Option<i64> {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT suspended_at_ms FROM database_billing_accounts WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("database billing suspension should load")
+}
+
+fn database_billing_account_count(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM database_billing_accounts WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("database billing account count should load")
+}
+
+fn database_pending_operation_count(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM database_billing_pending_operations WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("pending billing operation count should load")
+}
+
+fn credit_database(
+    service: &VfsService,
+    database_id: &str,
+    caller: &str,
+    amount_e8s: u64,
+    block_index: u64,
+    now: i64,
+) -> u64 {
+    let operation_id = service
+        .begin_database_top_up(database_id, caller, amount_e8s, now)
+        .expect("database top-up should begin");
+    service
+        .credit_database_top_up(
+            operation_id,
+            database_id,
+            caller,
+            amount_e8s,
+            block_index,
+            now,
+        )
+        .expect("database top-up should credit")
 }
 
 fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<String> {
@@ -959,29 +964,20 @@ fn database_create_returns_generated_id_and_name() {
         1
     );
 
-    service
-        .credit_principal_top_up("owner", 1_000_000, 1, 1)
-        .expect("principal top-up should record");
     let result = service
-        .create_generated_database_with_initial_deposit(" Team skills ", "owner", 1_000_000, 1)
+        .create_generated_database(" Team skills ", "owner", 1)
         .expect("database should create");
 
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
     assert_eq!(result.name, "Team skills");
     assert_eq!(database_member_count(&root, &result.database_id), 2);
+    assert_eq!(database_billing_balance(&root, &result.database_id), 0);
     assert_eq!(
-        database_billing_balance(&root, &result.database_id),
-        1_000_000
+        database_billing_suspended_at(&root, &result.database_id),
+        Some(1)
     );
-    assert_eq!(
-        principal_ledger_kinds(&root, "owner"),
-        vec!["top_up".to_string(), "initial_deposit".to_string()]
-    );
-    assert_eq!(
-        database_ledger_kinds(&root, &result.database_id),
-        vec!["initial_deposit".to_string()]
-    );
+    assert!(database_ledger_kinds(&root, &result.database_id).is_empty());
     let row = database_index_row(&root, &result.database_id);
     assert_eq!(row.0, "hot");
     assert_eq!(row.1, Some(11));
@@ -1186,8 +1182,7 @@ fn requested_database_create_starts_with_zero_billing_balance() {
         .expect("database should create");
 
     assert_eq!(database_billing_balance(&root, "alpha"), 0);
-    assert_eq!(principal_account_count(&root, "owner"), 0);
-    assert_eq!(principal_ledger_count(&root, "owner"), 0);
+    assert_eq!(database_billing_suspended_at(&root, "alpha"), Some(1));
     assert!(database_ledger_kinds(&root, "alpha").is_empty());
 }
 
@@ -1200,9 +1195,218 @@ fn reservation_starts_with_zero_billing_balance() {
         .expect("reservation should create");
 
     assert_eq!(database_billing_balance(&root, "reserved"), 0);
-    assert_eq!(principal_account_count(&root, "owner"), 0);
-    assert_eq!(principal_ledger_count(&root, "owner"), 0);
+    assert_eq!(database_billing_suspended_at(&root, "reserved"), Some(1));
     assert!(database_ledger_kinds(&root, "reserved").is_empty());
+}
+
+#[test]
+fn database_billing_top_up_allows_writer_but_withdraw_requires_owner() {
+    let (service, _root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
+        .expect("writer should grant");
+    credit_database(&service, "alpha", "owner", 1_000, 1, 3);
+
+    service
+        .begin_database_top_up("alpha", "writer", 100, 4)
+        .expect("writer should be allowed to fund database");
+
+    let withdraw = service
+        .begin_database_withdraw("alpha", "writer", 100, 10, 4)
+        .expect_err("writer should not start withdraw");
+    assert!(withdraw.contains("required database role"));
+}
+
+#[test]
+fn database_top_up_settlement_survives_owner_role_change() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let operation_id = service
+        .begin_database_top_up("alpha", "owner", 500, 2)
+        .expect("owner should start top-up");
+    service
+        .grant_database_access("alpha", "owner", "replacement", DatabaseRole::Owner, 2)
+        .expect("replacement owner should grant");
+    service
+        .revoke_database_access("alpha", "replacement", "owner")
+        .expect("replacement should revoke original owner");
+
+    let balance = service
+        .credit_database_top_up(operation_id, "alpha", "owner", 500, 7, 3)
+        .expect("started top-up should settle");
+
+    assert_eq!(balance, 500);
+    assert_eq!(database_billing_balance(&root, "alpha"), 500);
+    assert_eq!(database_ledger_kinds(&root, "alpha"), vec!["top_up"]);
+}
+
+#[test]
+fn database_withdraw_settlement_survives_owner_role_change() {
+    let (service, root) = service_with_root();
+    let mut withdraw_operations = Vec::new();
+    for database_id in ["complete", "reverse", "ambiguous"] {
+        service
+            .create_database(database_id, "owner", 1)
+            .expect("database should create");
+        credit_database(&service, database_id, "owner", 1_000, 1, 2);
+        let operation_id = service
+            .begin_database_withdraw(database_id, "owner", 100, 10, 3)
+            .expect("owner should start withdraw");
+        withdraw_operations.push(operation_id);
+        service
+            .grant_database_access(database_id, "owner", "replacement", DatabaseRole::Owner, 4)
+            .expect("replacement owner should grant");
+        service
+            .revoke_database_access(database_id, "replacement", "owner")
+            .expect("replacement should revoke original owner");
+    }
+
+    let complete = service
+        .complete_database_withdraw(withdraw_operations[0], "complete", "owner", 11, 5)
+        .expect("started withdraw should complete");
+    let reversed = service
+        .reverse_database_withdraw(withdraw_operations[1], "reverse", "owner", 100, 10, 5)
+        .expect("started withdraw should reverse");
+    let ambiguous = service
+        .mark_database_withdraw_ambiguous(withdraw_operations[2], "ambiguous", "owner", 5)
+        .expect("started withdraw should record ambiguity");
+
+    assert_eq!(complete, 890);
+    assert_eq!(reversed, 1_000);
+    assert_eq!(ambiguous, 890);
+    assert_eq!(
+        database_ledger_kinds(&root, "complete"),
+        vec![
+            "top_up",
+            "withdraw_pending",
+            "withdraw_fee_pending",
+            "withdraw_complete"
+        ]
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, "reverse"),
+        vec![
+            "top_up",
+            "withdraw_pending",
+            "withdraw_fee_pending",
+            "withdraw_reversal"
+        ]
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, "ambiguous"),
+        vec![
+            "top_up",
+            "withdraw_pending",
+            "withdraw_fee_pending",
+            "withdraw_ambiguous"
+        ]
+    );
+}
+
+#[test]
+fn database_billing_settlement_rejects_unknown_database_without_orphan_account() {
+    let (service, root) = service_with_root();
+
+    let error = service
+        .complete_database_withdraw(1, "missing", "owner", 1, 1)
+        .expect_err("missing database settlement should fail");
+
+    assert!(error.contains("pending billing operation not found"));
+    assert_eq!(database_billing_account_count(&root, "missing"), 0);
+}
+
+#[test]
+fn pending_database_top_up_blocks_delete_until_resolved() {
+    let (service, root) = service_with_root();
+    for database_id in ["complete", "cancel", "ambiguous"] {
+        service
+            .create_database(database_id, "owner", 1)
+            .expect("database should create");
+    }
+    let complete = service
+        .begin_database_top_up("complete", "owner", 500, 2)
+        .expect("top-up should begin");
+    let cancel = service
+        .begin_database_top_up("cancel", "owner", 500, 2)
+        .expect("top-up should begin");
+    let ambiguous = service
+        .begin_database_top_up("ambiguous", "owner", 500, 2)
+        .expect("top-up should begin");
+
+    for database_id in ["complete", "cancel", "ambiguous"] {
+        let error = service
+            .delete_database(database_id, "owner", 3)
+            .expect_err("pending top-up should block delete");
+        assert!(error.contains("pending billing operation"));
+        assert_eq!(database_pending_operation_count(&root, database_id), 1);
+    }
+
+    service
+        .credit_database_top_up(complete, "complete", "owner", 500, 10, 4)
+        .expect("top-up should complete");
+    service
+        .cancel_database_top_up(cancel, "cancel", "owner", 500)
+        .expect("top-up should cancel");
+    service
+        .mark_database_top_up_ambiguous(ambiguous, "ambiguous", "owner", 500, 4)
+        .expect("ambiguous top-up should record");
+
+    for database_id in ["complete", "cancel", "ambiguous"] {
+        assert_eq!(database_pending_operation_count(&root, database_id), 0);
+        service
+            .delete_database(database_id, "owner", 5)
+            .expect("resolved top-up should allow delete");
+    }
+}
+
+#[test]
+fn pending_database_withdraw_blocks_delete_until_resolved() {
+    let (service, root) = service_with_root();
+    for database_id in ["complete", "reverse", "ambiguous"] {
+        service
+            .create_database(database_id, "owner", 1)
+            .expect("database should create");
+        credit_database(&service, database_id, "owner", 1_000, 1, 2);
+    }
+    let complete = service
+        .begin_database_withdraw("complete", "owner", 100, 10, 3)
+        .expect("withdraw should begin");
+    let reverse = service
+        .begin_database_withdraw("reverse", "owner", 100, 10, 3)
+        .expect("withdraw should begin");
+    let ambiguous = service
+        .begin_database_withdraw("ambiguous", "owner", 100, 10, 3)
+        .expect("withdraw should begin");
+
+    for database_id in ["complete", "reverse", "ambiguous"] {
+        let error = service
+            .delete_database(database_id, "owner", 4)
+            .expect_err("pending withdraw should block delete");
+        assert!(error.contains("pending billing operation"));
+        assert_eq!(database_pending_operation_count(&root, database_id), 1);
+    }
+
+    service
+        .complete_database_withdraw(complete, "complete", "owner", 11, 5)
+        .expect("withdraw should complete");
+    service
+        .reverse_database_withdraw(reverse, "reverse", "owner", 100, 10, 5)
+        .expect("withdraw should reverse");
+    service
+        .mark_database_withdraw_ambiguous(ambiguous, "ambiguous", "owner", 5)
+        .expect("ambiguous withdraw should record");
+
+    for database_id in ["complete", "reverse", "ambiguous"] {
+        assert_eq!(database_pending_operation_count(&root, database_id), 0);
+        service
+            .delete_database(database_id, "owner", 6)
+            .expect("resolved withdraw should allow delete");
+    }
 }
 
 #[test]

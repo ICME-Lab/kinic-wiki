@@ -11,12 +11,10 @@ use vfs_runtime::{DEFAULT_FIXED_UPDATE_FEE_E8S, VfsService};
 use vfs_types::DatabaseStatus;
 
 const OWNER: &str = "owner";
-const INITIAL_PRINCIPAL_E8S: u64 = 5_000_000;
 const INITIAL_DATABASE_E8S: u64 = 1_000_000;
 
 #[derive(Clone, Debug)]
 enum RuntimeOp {
-    PrincipalTopUp { amount: u64 },
     TopUpDatabase { amount: u64 },
     WithdrawDatabase { amount: u64 },
     Charge { cycles_delta: u128 },
@@ -28,7 +26,6 @@ enum RuntimeOp {
 
 #[derive(Debug)]
 struct Model {
-    principal_e8s: u64,
     database_e8s: u64,
     status: DatabaseStatus,
     archive_bytes: Option<Vec<u8>>,
@@ -55,7 +52,6 @@ fn property_config() -> ProptestConfig {
 
 fn operation_strategy() -> impl Strategy<Value = RuntimeOp> {
     prop_oneof![
-        4 => (1_u64..=400_000).prop_map(|amount| RuntimeOp::PrincipalTopUp { amount }),
         4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::TopUpDatabase { amount }),
         3 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::WithdrawDatabase { amount }),
         4 => (0_u128..=20_000_u128).prop_map(|cycles_delta| RuntimeOp::Charge { cycles_delta }),
@@ -81,18 +77,38 @@ fn service_with_root() -> TestService {
 }
 
 fn create_seeded_database(service: &VfsService) -> String {
-    service
-        .credit_principal_top_up(OWNER, INITIAL_PRINCIPAL_E8S, 1, 1)
-        .expect("principal seed should credit");
     let meta = service
-        .create_generated_database_with_initial_deposit(
-            "PBT database",
-            OWNER,
-            INITIAL_DATABASE_E8S,
-            2,
-        )
+        .create_generated_database("PBT database", OWNER, 2)
         .expect("database should create");
+    credit_database(
+        service,
+        &meta.database_id,
+        OWNER,
+        INITIAL_DATABASE_E8S,
+        1,
+        3,
+    )
+    .expect("database seed should credit");
     meta.database_id
+}
+
+fn credit_database(
+    service: &VfsService,
+    database_id: &str,
+    caller: &str,
+    amount_e8s: u64,
+    block_index: u64,
+    now: i64,
+) -> Result<u64, String> {
+    let operation_id = service.begin_database_top_up(database_id, caller, amount_e8s, now)?;
+    service.credit_database_top_up(
+        operation_id,
+        database_id,
+        caller,
+        amount_e8s,
+        block_index,
+        now,
+    )
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
@@ -149,26 +165,6 @@ fn charge_amount(cycles_delta: u128) -> u64 {
 }
 
 fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
-    let principal = service
-        .principal_billing_summary(OWNER)
-        .expect("principal summary should load");
-    assert_eq!(principal.balance_e8s, model.principal_e8s);
-
-    let principal_entries = service
-        .list_principal_billing_entries(OWNER, None, 100)
-        .expect("principal ledger should load")
-        .entries;
-    let principal_after = principal_entries
-        .last()
-        .expect("principal ledger should not be empty")
-        .balance_after_e8s;
-    assert_eq!(principal_after, model.principal_e8s);
-    for entry in &principal_entries {
-        if entry.ledger_block_index.is_some() {
-            assert_eq!(entry.kind, "top_up");
-        }
-    }
-
     let database_entries = service
         .list_database_billing_entries(database_id, OWNER, None, 100)
         .expect("database ledger should load")
@@ -209,34 +205,36 @@ fn apply_operation(
     step: i64,
 ) {
     match operation {
-        RuntimeOp::PrincipalTopUp { amount } => {
-            service
-                .credit_principal_top_up(OWNER, amount, step as u64 + 10, step)
-                .expect("generated top-up should credit");
-            model.principal_e8s += amount;
-        }
         RuntimeOp::TopUpDatabase { amount } => {
-            let before = (model.principal_e8s, model.database_e8s);
-            let result = service.top_up_database(database_id, OWNER, amount, step);
-            if model.status != DatabaseStatus::Deleted && model.principal_e8s >= amount {
+            let before = model.database_e8s;
+            let result =
+                credit_database(service, database_id, OWNER, amount, step as u64 + 10, step);
+            if model.status != DatabaseStatus::Deleted {
                 result.expect("database top-up should succeed");
-                model.principal_e8s -= amount;
                 model.database_e8s += amount;
             } else {
                 assert!(result.is_err());
-                assert_eq!((model.principal_e8s, model.database_e8s), before);
+                assert_eq!(model.database_e8s, before);
             }
         }
         RuntimeOp::WithdrawDatabase { amount } => {
-            let before = (model.principal_e8s, model.database_e8s);
-            let result = service.withdraw_database_balance(database_id, OWNER, amount, step);
+            let before = model.database_e8s;
+            let result = service.begin_database_withdraw(database_id, OWNER, amount, 0, step);
             if model.database_e8s >= amount {
-                result.expect("database withdraw should succeed");
+                let operation_id = result.expect("database withdraw should succeed");
+                service
+                    .complete_database_withdraw(
+                        operation_id,
+                        database_id,
+                        OWNER,
+                        step as u64 + 100,
+                        step,
+                    )
+                    .expect("database withdraw should complete");
                 model.database_e8s -= amount;
-                model.principal_e8s += amount;
             } else {
                 assert!(result.is_err());
-                assert_eq!((model.principal_e8s, model.database_e8s), before);
+                assert_eq!(model.database_e8s, before);
             }
         }
         RuntimeOp::Charge { cycles_delta } => {
@@ -331,13 +329,13 @@ fn apply_operation(
             }
         }
         RuntimeOp::BadOwnerWithdraw { amount } => {
-            let before = (model.principal_e8s, model.database_e8s);
+            let before = model.database_e8s;
             assert!(
                 service
-                    .withdraw_database_balance(database_id, "writer", amount, step)
+                    .begin_database_withdraw(database_id, "writer", amount, 0, step)
                     .is_err()
             );
-            assert_eq!((model.principal_e8s, model.database_e8s), before);
+            assert_eq!(model.database_e8s, before);
         }
     }
 }
@@ -351,7 +349,6 @@ proptest! {
         let service = &env.service;
         let database_id = create_seeded_database(service);
         let mut model = Model {
-            principal_e8s: INITIAL_PRINCIPAL_E8S - INITIAL_DATABASE_E8S,
             database_e8s: INITIAL_DATABASE_E8S,
             status: DatabaseStatus::Hot,
             archive_bytes: None,

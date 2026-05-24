@@ -5,38 +5,52 @@ use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use anyhow::{Result, anyhow};
+use candid::Principal;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult,
-    EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
-    WriteNodeRequest,
+    AppendNodeRequest, BillingAccount, BillingConfig, DatabaseRestoreChunkRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, RecentNodesRequest,
+    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
-use crate::cli::{DatabaseCommand, VfsCommand};
+use crate::cli::{BillingCommand, DatabaseCommand, VfsCommand};
 use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
 };
+
+const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
 
 pub async fn run_vfs_command(
     client: &impl VfsApi,
     connection: &ResolvedConnection,
     command: VfsCommand,
 ) -> Result<()> {
-    if let VfsCommand::Database { command } = command {
-        run_database_command(client, connection, command).await?;
-        return Ok(());
-    }
     let database_id = connection.database_id.as_deref();
+    let command = match command {
+        VfsCommand::Billing { command } => {
+            run_billing_command(client, command).await?;
+            return Ok(());
+        }
+        VfsCommand::Database { command } => {
+            run_database_command(client, connection, command).await?;
+            return Ok(());
+        }
+        command => command,
+    };
     let database_id = require_database_id(database_id)?;
     match command {
+        VfsCommand::Billing { .. } => {
+            unreachable!("billing command handled before db requirement")
+        }
         VfsCommand::Database { .. } => {
             unreachable!("database command handled before db requirement")
         }
@@ -567,7 +581,7 @@ async fn run_database_command(
 ) -> Result<()> {
     match command {
         DatabaseCommand::Create { name } => {
-            let result = client.create_database(&name, 1_000_000).await?;
+            let result = client.create_database(&name).await?;
             println!("{}", result.database_id);
         }
         DatabaseCommand::Rename { database_id, name } => {
@@ -580,15 +594,59 @@ async fn run_database_command(
             } else {
                 for database in databases {
                     println!(
-                        "{}\t{}\t{:?}\t{:?}\t{}",
+                        "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
                         database.database_id,
                         database.name,
                         database.role,
                         database.status,
-                        database.logical_size_bytes
+                        database.logical_size_bytes,
+                        database.billing_balance_e8s.unwrap_or(0),
+                        database
+                            .billing_suspended_at_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string())
                     );
                 }
             }
+        }
+        DatabaseCommand::TopUp {
+            database_id,
+            amount_e8s,
+        } => {
+            let result = client.top_up_database(&database_id, amount_e8s).await?;
+            println!(
+                "{database_id}\t{}\t{}",
+                result.block_index, result.balance_e8s
+            );
+        }
+        DatabaseCommand::Withdraw {
+            database_id,
+            amount_e8s,
+            to_principal,
+            to_subaccount_hex,
+        } => {
+            let to = billing_account(&to_principal, to_subaccount_hex.as_deref())?;
+            let result = client
+                .withdraw_database_balance(&database_id, amount_e8s, to)
+                .await?;
+            println!(
+                "{database_id}\t{}\t{}",
+                result.block_index, result.balance_e8s
+            );
+        }
+        DatabaseCommand::Deposit {
+            database_id,
+            amount_e8s,
+            browser_origin,
+        } => {
+            let url = database_deposit_url(
+                browser_origin.as_deref(),
+                &connection.canister_id,
+                &database_id,
+                amount_e8s,
+            )?;
+            open_browser_url(&url)?;
+            println!("{url}");
         }
         DatabaseCommand::Link { database_id } => {
             let path = link_workspace_database(connection, &database_id)?;
@@ -669,6 +727,118 @@ async fn run_database_command(
         }
     }
     Ok(())
+}
+
+fn billing_account(to_principal: &str, to_subaccount_hex: Option<&str>) -> Result<BillingAccount> {
+    let owner = Principal::from_text(to_principal)
+        .map_err(|error| anyhow!("invalid --to-principal: {error}"))?;
+    let subaccount = match to_subaccount_hex {
+        Some(value) => Some(parse_subaccount_hex(value)?),
+        None => None,
+    };
+    Ok(BillingAccount { owner, subaccount })
+}
+
+fn parse_subaccount_hex(value: &str) -> Result<Vec<u8>> {
+    let normalized = value.strip_prefix("0x").unwrap_or(value);
+    if normalized.len() != 64 {
+        return Err(anyhow!(
+            "--to-subaccount-hex must be 32 bytes / 64 hex chars"
+        ));
+    }
+    let mut bytes = Vec::with_capacity(32);
+    for index in (0..normalized.len()).step_by(2) {
+        let byte = u8::from_str_radix(&normalized[index..index + 2], 16)
+            .map_err(|error| anyhow!("invalid --to-subaccount-hex: {error}"))?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
+fn database_deposit_url(
+    browser_origin: Option<&str>,
+    canister_id: &str,
+    database_id: &str,
+    amount_e8s: u64,
+) -> Result<String> {
+    let origin = browser_origin
+        .map(str::to_string)
+        .or_else(|| std::env::var("KINIC_WIKI_BROWSER_ORIGIN").ok())
+        .unwrap_or_else(|| DEFAULT_BROWSER_ORIGIN.to_string());
+    let origin = origin.trim_end_matches('/');
+    if origin.is_empty() {
+        return Err(anyhow!("browser origin must not be empty"));
+    }
+    Ok(format!(
+        "{origin}/deposit?canisterId={}&databaseId={}&amountE8s={}",
+        query_encode(canister_id),
+        query_encode(database_id),
+        amount_e8s
+    ))
+}
+
+fn query_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn open_browser_url(url: &str) -> Result<()> {
+    let status = if cfg!(target_os = "macos") {
+        ProcessCommand::new("open").arg(url).status()
+    } else if cfg!(target_os = "windows") {
+        ProcessCommand::new("rundll32")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(url)
+            .status()
+    } else {
+        ProcessCommand::new("xdg-open").arg(url).status()
+    };
+    let status = status.map_err(|error| anyhow!("failed to open browser: {error}"))?;
+    if !status.success() {
+        return Err(anyhow!("failed to open browser: exit status {status}"));
+    }
+    Ok(())
+}
+
+async fn run_billing_command(client: &impl VfsApi, command: BillingCommand) -> Result<()> {
+    match command {
+        BillingCommand::Config { json } => {
+            let config = client.get_billing_config().await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&config)?);
+            } else {
+                for line in billing_config_lines(&config) {
+                    println!("{line}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn billing_config_lines(config: &BillingConfig) -> Vec<String> {
+    vec![
+        format!(
+            "kinic_ledger_canister_id\t{}",
+            config.kinic_ledger_canister_id
+        ),
+        format!("sns_governance_id\t{}", config.sns_governance_id),
+        format!("min_update_balance_e8s\t{}", config.min_update_balance_e8s),
+        format!("rate_numerator_e8s\t{}", config.rate_numerator_e8s),
+        format!(
+            "rate_denominator_cycles\t{}",
+            config.rate_denominator_cycles
+        ),
+        format!("fixed_update_fee_e8s\t{}", config.fixed_update_fee_e8s),
+    ]
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1010,10 +1180,11 @@ fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {
 #[cfg(test)]
 mod tests {
     use super::run_vfs_command;
-    use crate::cli::{NodeKindArg, VfsCommand};
+    use crate::cli::{BillingCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::Result;
     use async_trait::async_trait;
+    use candid::Principal;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -1028,6 +1199,9 @@ mod tests {
         entries: Vec<NodeEntry>,
         created: Mutex<u32>,
         database_lists: Mutex<u32>,
+        database_top_ups: Mutex<Vec<(String, u64)>>,
+        database_withdraws: Mutex<Vec<(String, u64, BillingAccount)>>,
+        billing_configs: Mutex<u32>,
         writes: Mutex<Vec<WriteNodeRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
         child_lists: Mutex<Vec<ListChildrenRequest>>,
@@ -1097,16 +1271,53 @@ mod tests {
         async fn status(&self, _database_id: &str) -> Result<Status> {
             unreachable!()
         }
-        async fn create_database(
-            &self,
-            name: &str,
-            _initial_deposit_e8s: u64,
-        ) -> Result<CreateDatabaseResult> {
+        async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
             let mut created = self.created.lock().unwrap();
             *created += 1;
             Ok(CreateDatabaseResult {
                 database_id: "db_testgenerated".to_string(),
                 name: name.to_string(),
+            })
+        }
+        async fn top_up_database(
+            &self,
+            database_id: &str,
+            amount_e8s: u64,
+        ) -> Result<BillingTransferResult> {
+            self.database_top_ups
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), amount_e8s));
+            Ok(BillingTransferResult {
+                block_index: 7,
+                balance_e8s: amount_e8s,
+            })
+        }
+        async fn withdraw_database_balance(
+            &self,
+            database_id: &str,
+            amount_e8s: u64,
+            to: BillingAccount,
+        ) -> Result<BillingTransferResult> {
+            self.database_withdraws
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), amount_e8s, to));
+            Ok(BillingTransferResult {
+                block_index: 8,
+                balance_e8s: 1,
+            })
+        }
+        async fn get_billing_config(&self) -> Result<BillingConfig> {
+            let mut configs = self.billing_configs.lock().unwrap();
+            *configs += 1;
+            Ok(BillingConfig {
+                kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                rate_numerator_e8s: 200,
+                rate_denominator_cycles: 1_000_000,
+                fixed_update_fee_e8s: 100,
+                min_update_balance_e8s: 10_000,
             })
         }
         async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
@@ -1471,6 +1682,108 @@ mod tests {
         .await
         .expect("database create should succeed");
         assert_eq!(*client.created.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn database_top_up_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::TopUp {
+                    database_id: "db_alpha".to_string(),
+                    amount_e8s: 500_000,
+                },
+            },
+        )
+        .await
+        .expect("database top-up should succeed");
+        assert_eq!(
+            *client.database_top_ups.lock().unwrap(),
+            vec![("db_alpha".to_string(), 500_000)]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_withdraw_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::Withdraw {
+                    database_id: "db_alpha".to_string(),
+                    amount_e8s: 500_000,
+                    to_principal: "2vxsx-fae".to_string(),
+                    to_subaccount_hex: Some(
+                        "0000000000000000000000000000000000000000000000000000000000000001"
+                            .to_string(),
+                    ),
+                },
+            },
+        )
+        .await
+        .expect("database withdraw should succeed");
+        let withdraws = client.database_withdraws.lock().unwrap();
+        assert_eq!(withdraws.len(), 1);
+        assert_eq!(withdraws[0].0, "db_alpha");
+        assert_eq!(withdraws[0].1, 500_000);
+        assert_eq!(withdraws[0].2.owner, Principal::anonymous());
+        assert_eq!(
+            withdraws[0].2.subaccount.as_deref(),
+            Some(
+                &[
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 1
+                ][..]
+            )
+        );
+    }
+
+    #[test]
+    fn database_deposit_url_uses_browser_origin() {
+        let url = super::database_deposit_url(
+            Some("http://127.0.0.1:3000/"),
+            "aaaaa-aa",
+            "db alpha",
+            500_000,
+        )
+        .expect("url should build");
+
+        assert_eq!(
+            url,
+            "http://127.0.0.1:3000/deposit?canisterId=aaaaa-aa&databaseId=db%20alpha&amountE8s=500000"
+        );
+    }
+
+    #[tokio::test]
+    async fn billing_config_json_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Billing {
+                command: BillingCommand::Config { json: true },
+            },
+        )
+        .await
+        .expect("billing config should succeed");
+        assert_eq!(*client.billing_configs.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn billing_config_text_includes_governance_principal() {
+        let lines = super::billing_config_lines(&BillingConfig {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+            rate_numerator_e8s: 200,
+            rate_denominator_cycles: 1_000_000,
+            fixed_update_fee_e8s: 100,
+            min_update_balance_e8s: 10_000,
+        });
+
+        assert!(lines.contains(&"sns_governance_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
     }
 
     #[tokio::test]
