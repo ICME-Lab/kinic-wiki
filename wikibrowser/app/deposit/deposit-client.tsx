@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, CircleAlert, PlugZap, Wallet } from "lucide-react";
+import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { parseDepositQuery } from "@/lib/deposit-url";
 import { depositWithOisy, depositWithPlug } from "@/lib/deposit-wallet";
@@ -37,7 +37,7 @@ export function DepositClient({ canisterId, databaseId, amountE8s }: DepositClie
       const result = nextProvider === "oisy" ? await depositWithOisy(request) : await depositWithPlug(request);
       const balance = result.balanceE8s ? `DB balance ${result.balanceE8s} e8s` : "top-up accepted";
       setMessage(
-        `${result.provider} approve block ${result.approveBlockIndex}; DB credited ${result.creditedAmountE8s} e8s; approved allowance ${result.approvedAllowanceE8s} e8s including ${result.transferFeeE8s} e8s transfer fee; ${balance}`
+        `${result.provider} approve block ${result.approveBlockIndex}; DB credited amount ${result.creditedAmountE8s} e8s; approved allowance ${result.approvedAllowanceE8s} e8s; ledger transfer fee in allowance ${result.transferFeeE8s} e8s; ${balance}`
       );
       setStatus("success");
     } catch (cause) {
@@ -61,6 +61,11 @@ export function DepositClient({ canisterId, databaseId, amountE8s }: DepositClie
           <Field label="Amount e8s" value={amountE8s || "-"} />
           <Field label="Canister" value={canisterId || "-"} />
         </section>
+
+        <Notice
+          tone="info"
+          text="Wallet approval uses the DB credit amount plus the ledger transfer fee. The approve transaction fee is paid separately by the wallet."
+        />
 
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
@@ -100,9 +105,14 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Notice({ tone, text }: { tone: "success" | "error"; text: string }) {
-  const Icon = tone === "success" ? CheckCircle2 : CircleAlert;
-  const classes = tone === "success" ? "border-green-200 bg-green-50 text-green-900" : "border-red-200 bg-red-50 text-red-900";
+function Notice({ tone, text }: { tone: "success" | "error" | "info"; text: string }) {
+  const Icon = tone === "success" ? CheckCircle2 : tone === "error" ? CircleAlert : Info;
+  const classes =
+    tone === "success"
+      ? "border-green-200 bg-green-50 text-green-900"
+      : tone === "error"
+        ? "border-red-200 bg-red-50 text-red-900"
+        : "border-infoLine bg-infoSoft text-ink";
   return (
     <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${classes}`}>
       <Icon aria-hidden className="mt-0.5 shrink-0" size={16} />

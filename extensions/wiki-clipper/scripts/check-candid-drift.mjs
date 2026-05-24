@@ -165,8 +165,8 @@ function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_15") return "ResultDatabases";
-  if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_23") return "ResultNode";
+  if (normalized === "Result_17") return "ResultMkdirNode";
+  if (normalized === "Result_21") return "ResultNode";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

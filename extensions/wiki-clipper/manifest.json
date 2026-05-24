@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Kinic Wiki Clipper",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Create Kinic Wiki pages from the current tab and export ChatGPT conversations.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs5287sDaurUdgrnxKcx/A5JjcRpUFrxb5qXEvtkiO2STfEVsprr+uUltmecOlbHzt/8n15LxXPOyl3C9S2ZyArZWgUbOy0o3cCTDwLM80KkMj+x0hHGwC5KGAjZqOWnyQsFe6jonlQuTUye70xFodZdDfgU0V7SMjmrCFArIno+8A+3aVdODpcCMSkwiWaAFmCbvXeVFcAn70tcI0rJ/GXgnksU4gqwL6+0S5ZvLvhc7xRLNRjK+j2YXTRxxrGKQJ1ongCgJSgWzzSnJVOJ3t4K7ZosBlCZV6p/qTrY/4V2LC/XACRPctnKgNmD/9rvedIZdCVBMBYrfPOMSbteZeQIDAQAB",
   "action": {
