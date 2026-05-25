@@ -67,6 +67,19 @@ test("large html can pass fetch guard before extracted text is saved", async () 
   });
 });
 
+test("truncated html does not keep unterminated script text", async () => {
+  const prefix = "<html><head><title>Cut Product</title></head><body><main>Lead fact</main><script>";
+  const html = `${prefix}${"x".repeat(10_000)}</script><main>Late fact</main></body></html>`;
+  await withMockFetch(async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/cut-product", prefix.length + 32);
+
+    assert.equal(fetched.title, "Cut Product");
+    assert.equal(fetched.fetchedTruncated, true);
+    assert.match(fetched.text, /Lead fact/);
+    assert.doesNotMatch(fetched.text, /xxxxx/);
+  });
+});
+
 test("oversized responses are truncated instead of rejected", async () => {
   await withMockFetch(async () => new Response("alpha beta gamma", { status: 200, headers: { "content-type": "text/plain" } }), async () => {
     const fetched = await fetchUrlSource("https://example.com/large.txt", 10);

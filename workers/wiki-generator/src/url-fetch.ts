@@ -122,10 +122,7 @@ async function readTextLimited(response: Response, maxBytes: number): Promise<{ 
 
 function extractHtmlText(html: string): { title: string | null; text: string } {
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? null;
-  const body = html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+  const body = stripRawTextElements(html)
     .replace(/<(nav|footer|header|aside)\b[\s\S]*?<\/\1>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(br|p|div|section|article|h[1-6]|li)\b[^>]*>/gi, "\n")
@@ -134,6 +131,12 @@ function extractHtmlText(html: string): { title: string | null; text: string } {
     title: title ? decodeEntities(normalizeWhitespace(title)) : null,
     text: decodeEntities(body)
   };
+}
+
+function stripRawTextElements(html: string): string {
+  return html
+    .replace(/<(script|style|noscript)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<(script|style|noscript)\b[\s\S]*$/gi, " ");
 }
 
 function firstMarkdownTitle(text: string): string | null {
