@@ -16,6 +16,6 @@ name = "vfs_client"
 anyhow = "1.0.100"
 async-trait = "0.1.89"
 candid = "0.10.20"
-ic-agent = "0.39.3"
+ic-agent = "0.47.3"
 k256 = { version = "0.13.4", features = ["pem"] }
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
