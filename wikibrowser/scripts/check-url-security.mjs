@@ -33,6 +33,10 @@ await withEnv(
     assert.equal(preflight.status, 204);
     assert.equal(preflight.headers.get("access-control-allow-origin"), "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj");
 
+    const storePreflight = triggerRouteModule.OPTIONS(triggerRequest("chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"));
+    assert.equal(storePreflight.status, 204);
+    assert.equal(storePreflight.headers.get("access-control-allow-origin"), "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi");
+
     const invalidPath = await triggerRouteModule.POST(
       triggerRequest("https://kinic.xyz", { requestPath: "/Sources/raw/1.md" })
     );

@@ -6,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Plus, TerminalSquare } from "lucide-react";
 import { CreateDatabaseDialog } from "./create-database-dialog";
-import { AuthControls, CreatedDatabasePanel, DatabaseBody, StatusPanel } from "./home-ui";
+import { AuthControls, CreatedDatabasePanel, DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
@@ -198,31 +198,40 @@ export default function HomePage() {
           onSubmit={() => void createDatabase()}
         />
 
-        <section className="rounded-lg border border-line bg-paper shadow-sm">
-          {principal ? (
+        <OfficialKinicWikiPanel />
+
+        {principal ? (
+          <>
+            <section className="rounded-lg border border-line bg-paper shadow-sm">
+              <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-ink">Database dashboard</h2>
+                  <p className="mt-1 font-mono text-xs text-muted">{principal}</p>
+                </div>
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+                  disabled={creating || loadState === "loading"}
+                  type="button"
+                  onClick={() => setCreateDialogOpen(true)}
+                >
+                  <Plus aria-hidden size={15} />
+                  <span>{creating ? "Creating..." : "Create database"}</span>
+                </button>
+              </div>
+            </section>
+            <DatabaseBody loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+          </>
+        ) : (
+          <section className="rounded-lg border border-line bg-paper shadow-sm">
             <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-ink">Databases</h2>
-                <p className="mt-1 font-mono text-xs text-muted">{principal}</p>
+                <h2 className="text-lg font-semibold text-ink">Public databases</h2>
+                <p className="mt-1 text-sm leading-6 text-muted">Login with Internet Identity to list databases where your principal has membership.</p>
               </div>
-              <button
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
-                disabled={creating || loadState === "loading"}
-                type="button"
-                onClick={() => setCreateDialogOpen(true)}
-              >
-                <Plus aria-hidden size={15} />
-                <span>{creating ? "Creating..." : "Create database"}</span>
-              </button>
             </div>
-          ) : (
-            <div className="border-b border-line px-4 py-4">
-              <h2 className="text-lg font-semibold text-ink">Public databases</h2>
-              <p className="mt-1 text-sm leading-6 text-muted">Login with Internet Identity to list databases where your principal has membership.</p>
-            </div>
-          )}
-          <DatabaseBody loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
-        </section>
+            <DatabaseBody loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+          </section>
+        )}
       </section>
     </main>
   );

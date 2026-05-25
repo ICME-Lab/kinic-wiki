@@ -25,7 +25,7 @@ Core rules:
 - For exact extraction, prefer direct canonical-note reads over broad search.
 - Cite the wiki pages actually used.
 - Keep the read set narrow and intentional.
-- For day-to-day usage boundaries, follow [../../../docs/internal/KINIC_WIKI_OPERATIONS.md](../../../docs/internal/KINIC_WIKI_OPERATIONS.md).
+- For current note roles and boundaries, follow [../../../docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md).
 
 Read [query.md](query.md) before doing substantive Kinic Wiki query work.
 

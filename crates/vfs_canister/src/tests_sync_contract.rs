@@ -56,6 +56,7 @@ fn http_request_serves_certified_ii_alternative_origins() {
     assert!(body.contains("https://kinic.xyz"));
     assert!(body.contains("chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj"));
     assert!(body.contains("chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci"));
+    assert!(body.contains("chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"));
 
     let headers = response.headers;
     assert!(headers.iter().any(|(name, value)| {

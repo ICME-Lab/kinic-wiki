@@ -21,7 +21,7 @@ KINIC_CAPTURE_DATABASE_ID=db_d36yep4rv43e
 ```
 
 Load `extensions/wiki-clipper` as an unpacked extension after `dist/service-worker.js`, `dist/content-ui.js`, and `dist/popup.js` exist.
-The manifest includes a fixed Chrome extension key. The resulting extension origin is `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity uses `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io` as the derivation origin, and that VFS canister allows both the fixed ID and the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`.
+The manifest includes a fixed Chrome extension key. Local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity uses `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io` as the derivation origin, and that VFS canister allows the fixed ID, the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`, and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 Open settings from the extension details page `Extension options`.
 
 ## Chrome Web Store release

@@ -17,24 +17,28 @@ This document defines the current repo-local wiki schema.
 
 ## Current Note Roles
 
-- Scope-level pages:
-  - `index.md`
-    - content-oriented catalog
-    - List the scope entry points, key pages, categories, and child pages with short descriptions.
+- Root catalog:
+  - `/Wiki/index.md`
+    - required content-oriented catalog
+    - List key pages with short descriptions.
     - Do not pack the full overview or detailed body text into the index.
+
+- Optional scoped pages:
+  - `<scope>/index.md`
+    - optional scoped catalog only when the user explicitly wants hierarchy.
   - `overview.md`
-    - corpus-level synthesis
+    - optional corpus-level synthesis.
     - Capture the scope purpose, structure, main themes, gaps, and reading path.
     - Do not make this the canonical source for exact evidence or stable facts.
   - `log.md`
-    - append-only chronological mutation log
+    - optional append-only chronological mutation log.
     - Append ingest, restructure, lint, and query-derived update entries.
     - Do not rewrite existing entries.
   - `schema.md`
-    - scope-local conventions
+    - optional scope-local conventions.
     - Capture operational rules for raw, wiki, topic, summary, and log pages.
   - `topics/*.md`
-    - category-level or topic-level synthesis
+    - optional category or topic-level synthesis.
     - Connect multiple sources or child summaries.
     - Do not use topic pages as raw transcript copies.
 

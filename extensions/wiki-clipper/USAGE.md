@@ -46,7 +46,7 @@ The release package excludes source files, tests, `node_modules`, and local `.en
 4. Select `extensions/wiki-clipper`.
 
 Do not use `Pack extension` for local testing. `Pack extension` is for producing a `.crx` package and reusing a private key.
-The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`.
+The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci` and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 
 ## Configure
 

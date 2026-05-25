@@ -213,7 +213,7 @@ sequenceDiagram
 | `kinic-wiki-lint` | wiki health 点検 |
 | `kinic-wiki-query` | knowledge base query |
 
-日常運用の入口は `KINIC_WIKI_OPERATIONS.md` に置く。構造説明と query / ingest / lint の使い分けは分離する。
+query / ingest / lint の使い分けは `.agents/skills/` 側を正本にする。
 
 ## 10. 現行ビルド対象外
 

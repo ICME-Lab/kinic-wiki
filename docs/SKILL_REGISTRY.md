@@ -409,6 +409,7 @@ Discovery and read tools are read-only.
 `skill_record_run` is a write tool and is not included in the read-only tool set.
 All tools require `database_id` and use existing VFS reads, searches, and writes.
 Agents should ignore `deprecated` skills by default, prefer `promoted` or `reviewed` candidates, and treat the read `SKILL.md` as task-local instruction.
+See [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) for shared Rust library wiring and current tool names.
 Use the CLI for package operations such as `skill upsert`, import, proposal approval, and database linking.
 `skill install` is lockfile-only in v1. It records the selected package identity, etags, hashes, and paths for a downstream agent environment; it does not copy files into a local skills directory.
 

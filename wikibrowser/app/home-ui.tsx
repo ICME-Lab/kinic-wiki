@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { Share2 } from "lucide-react";
+import { BookOpen, Settings, Share2 } from "lucide-react";
 import type { DatabaseSummary } from "@/lib/types";
-import { publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
+import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
+
+const OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv";
+const OFFICIAL_KINIC_WIKI_DATABASE_NAME = "Official Kinic Wiki";
 
 export type DatabaseRow = DatabaseSummary & {
   member: boolean;
@@ -69,10 +72,36 @@ export function DatabaseBody({
     return <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
-    <div className="divide-y divide-line">
+    <div className="grid gap-5">
       <DatabaseSection emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      {publicDatabases.length > 0 || publicError ? <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" /> : null}
+      <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
+  );
+}
+
+export function OfficialKinicWikiPanel() {
+  return (
+    <section className="rounded-lg border border-line bg-paper px-4 py-4 shadow-sm">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Official database</p>
+          <h2 className="mt-1 text-lg font-semibold text-ink">{OFFICIAL_KINIC_WIKI_DATABASE_NAME}</h2>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">A canister-backed file-system wiki for agent memory: structured paths, raw sources, links, search, and safe edits.</p>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Use the Chrome extension to capture ChatGPT conversations and active web pages into the same database.</p>
+          <p className="mt-2 break-all font-mono text-xs text-muted">{OFFICIAL_KINIC_WIKI_DATABASE_ID}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent" href={publicDatabasePath(OFFICIAL_KINIC_WIKI_DATABASE_ID)}>
+            <BookOpen aria-hidden size={15} />
+            <span>Open</span>
+          </Link>
+          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink no-underline hover:border-accent hover:text-accent" href={`/dashboard/${encodeURIComponent(OFFICIAL_KINIC_WIKI_DATABASE_ID)}`}>
+            <Settings aria-hidden size={15} />
+            <span>Access</span>
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -93,7 +122,7 @@ function DatabaseSection({
 }) {
   if (publicError && mode === "public") {
     return (
-      <section className="p-4">
+      <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
         <p className="mt-2 text-sm text-muted">{publicError}</p>
       </section>
@@ -101,16 +130,16 @@ function DatabaseSection({
   }
   if (rows.length === 0) {
     return (
-      <section className="p-4">
+      <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
         <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
       </section>
     );
   }
   return (
-    <section>
+    <section className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : undefined}>
       {showTitle ? (
-        <div className="px-4 py-3">
+        <div className="border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
         </div>
       ) : null}
@@ -150,17 +179,19 @@ function DatabaseSection({
                 <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
-                    <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-                      Open
-                    </Link>
-                    {mode === "member" && database.publicReadable ? (
+                    {isRoutableDatabaseId(database.databaseId) ? (
+                      <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+                        Open
+                      </Link>
+                    ) : <span className="text-muted">-</span>}
+                    {mode === "member" && database.publicReadable && isRoutableDatabaseId(database.databaseId) ? (
                       <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
                         Open public
                       </Link>
                     ) : null}
                   </div>
                 </td>
-                <td className="px-4 py-3">{database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
+                <td className="px-4 py-3">{database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
                 {mode === "member" ? (
                   <td className="px-4 py-3">
                     <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
@@ -197,10 +228,12 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
         <DatabaseCardMeta label="Archive" value={databaseMarker(database)} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
-        <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-          Open
-        </Link>
-        {mode === "member" && database.publicReadable ? (
+        {isRoutableDatabaseId(database.databaseId) ? (
+          <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+            Open
+          </Link>
+        ) : null}
+        {mode === "member" && database.publicReadable && isRoutableDatabaseId(database.databaseId) ? (
           <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
             Open public
           </Link>
@@ -210,7 +243,7 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
             Registry
           </Link>
         ) : null}
-        {database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
+        {database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : null}
         <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
           Access
         </Link>

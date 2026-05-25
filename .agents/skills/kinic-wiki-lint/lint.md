@@ -8,14 +8,14 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 1. Decide whether the inspection target is local, remote, or both.
 2. For local structure checks, inspect the relevant Markdown files directly. `kinic-vfs-cli` no longer provides local mirror lint.
-3. For remote checks, read `index.md` first with `read-node-context`, then inspect the canonical role-matched notes before broad search.
+3. For remote checks, read `/Wiki/index.md` first with `read-node-context`, then inspect directly linked or role-matched notes before broad search.
 4. Use `search-remote`, `search-path-remote`, `list-nodes`, `glob-nodes`, `recent-nodes`, and link commands only to confirm or expand findings after direct note inspection.
    - For wiki-only inspection, pass `--prefix /Wiki` or `path: "/Wiki"` unless raw source material is explicitly in scope.
 5. Group findings into:
    - duplication
    - isolation
    - stale navigation or index
-   - missing LLM Wiki scope shape
+   - unrequested hierarchy or folder sprawl
    - missing cross-links
    - ambiguous page boundaries
    - canonicality leaks between structured notes
@@ -26,10 +26,10 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 ## Working Rules
 
 - Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
-- When `index.md` is stale, recommend or run `rebuild-scope-index --scope <scope>` for single-scope drift, or `rebuild-index` for broad repair.
-- For LLM Wiki scope shape checks, flag a scope when it lacks `index.md`, `overview.md`, `schema.md`, `log.md`, or at least one meaningful `topics/*.md` page.
-- Flag `index.md` pages that are only flat link lists when the scope also needs a content catalog with links to overview, schema, log, topics, and child summaries.
-- Recommend `rebuild-scope-index --scope <scope>` for new page creation, deletion, or large single-scope restructures. Recommend `rebuild-index` only for cross-scope restructures. Do not require rebuilds for routine small edits.
+- When `/Wiki/index.md` is stale, recommend a focused root catalog edit first. Recommend `rebuild-index` only for broad repair.
+- Treat `/Wiki/index.md` as the only required catalog. Do not flag missing `<scope>/index.md`, `overview.md`, `schema.md`, `log.md`, or `topics/*.md` unless the user explicitly requested that scoped structure.
+- Flag folders, scoped indexes, and scaffold pages that were created without a clear user request or retrieval need.
+- Recommend `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Do not require rebuilds for routine small edits.
 - Keep local lint separate from remote content review.
 - Treat note role violations from `WIKI_CANONICALITY.md` as first-class findings.
 - Flag exact-value evidence leaking into `summary.md` or unresolved conflict leaking into settled notes as canonicality findings, not style notes.
@@ -65,7 +65,7 @@ Optionally include:
 
 - candidate page merges
 - candidate missing links
-- recommendation to rebuild `index.md`, usually with `rebuild-scope-index --scope <scope>` first
+- recommendation to repair `/Wiki/index.md`, usually by focused edit; use `rebuild-index` only for broad repair
 - candidate canonicality repairs such as:
   - move exact settled values into the canonical fact note
   - move current value into `facts.md`
