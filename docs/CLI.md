@@ -216,6 +216,7 @@ Common read and write commands:
 - `list-children --path /Wiki --json`
 - `list-nodes --prefix /Wiki --recursive --json`
 - `write-node --path /Wiki/file.md --input file.md`
+- `write-nodes --input nodes.json --json`
 - `append-node --path /Wiki/file.md --input append.md`
 - `edit-node --path /Wiki/file.md --old-text before --new-text after`
 - `delete-node --path /Wiki/file.md`
@@ -226,6 +227,21 @@ Common read and write commands:
 
 Use `list-children` for one-level tree views and UI-style navigation.
 Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.
+Use `write-nodes` for one atomic batch write when the full node bodies are already prepared:
+
+```json
+[
+  {
+    "path": "/Wiki/a.md",
+    "kind": "file",
+    "content": "body",
+    "metadata_json": "{}",
+    "expected_etag": "optional-etag"
+  }
+]
+```
+
+`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes must use canonical source paths such as `/Sources/raw/<source_id>/<source_id>.md`.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:

@@ -63,7 +63,7 @@ Use this workflow when ingesting many local files, for example 10 or more raw so
 
 1. Normalize every raw source id before writing. Each source file must use `/Sources/raw/<source_id>/<source_id>.md`; create the parent folder first.
 2. Build the full write set before mutating remote state: raw sources, wiki pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
-3. Prefer the client/canister `write_nodes` API for the write set. If the CLI has no batch command, use a small one-off client script instead of looping `write-node` for every file.
+3. Prefer `write-nodes --input <nodes.json>` for the write set instead of looping `write-node` for every file.
 4. Set `expected_etag` for overwrites by reading current nodes first. Use `None` only for new nodes.
 5. Do not run `rebuild-scope-index` if it would overwrite a detailed `index.md` that was just generated. If an index rebuild is needed, run it before restoring or rewriting the detailed index.
 6. Verify with `status`, one representative `read-node`, and one representative `search-remote` over the affected prefix.
@@ -123,10 +123,10 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Default conversation wiki path: `/Wiki/<llm-generated-title>.md`
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:
-  - Bulk writes: client/canister `write_nodes`
+  - Bulk writes: CLI `write-nodes --input <nodes.json>`
   - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
   - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
-  - Multi-node edits: no stable single CLI batch command; build a path list, read etags, and run etag-aware per-node edits unless using a deliberate client/canister API script
+  - Multi-node edits: use `write-nodes` only for prepared full-body replacements; otherwise build a path list, read etags, and run etag-aware per-node edits
 - Delete semantics:
   - `delete-node`: delete one node path
   - `delete-tree`: delete real node paths under a prefix, deepest-first; inspect first with `list-nodes --prefix <path> --recursive --json`
