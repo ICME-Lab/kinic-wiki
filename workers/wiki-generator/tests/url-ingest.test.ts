@@ -116,6 +116,63 @@ test("queued URL ingest uses source write ack without reading source after write
   assert.doesNotMatch(vfs.lastSourceWrite.metadataJson, /request_path/);
 });
 
+test("queued URL ingest truncates extracted source text only at source write", async () => {
+  const vfs = new TestVfsClient();
+  const queue = new TestQueue();
+  const config = { ...workerConfig(), maxSourceChars: 12 };
+
+  await withFetchedPage(async () => {
+    await processUrlIngestRequest(testEnv(queue), vfs, config, "db_1", queuedRequest());
+  }, "<html><head><title>Large</title></head><body>Alpha beta gamma delta</body></html>");
+
+  assert.ok(vfs.lastSourceWrite);
+  assert.match(vfs.lastSourceWrite.content, /truncated: "true"/);
+  assert.match(vfs.lastSourceWrite.content, /original_chars: "28"/);
+  assert.match(vfs.lastSourceWrite.content, /saved_chars: "11"/);
+  assert.match(vfs.lastSourceWrite.content, /fetched_truncated: "false"/);
+  assert.match(vfs.lastSourceWrite.content, /Large Alpha/);
+  assert.doesNotMatch(vfs.lastSourceWrite.content, /gamma/);
+  assert.deepEqual(JSON.parse(vfs.lastSourceWrite.metadataJson), {
+    source_type: "url",
+    url: "https://example.com/a",
+    final_url: "https://example.com/a",
+    truncated: true,
+    original_chars: 28,
+    saved_chars: 11,
+    fetched_truncated: false,
+    fetched_bytes: 81,
+    max_fetched_bytes: 5000000
+  });
+});
+
+test("queued URL ingest records fetch truncation separately from source truncation", async () => {
+  const vfs = new TestVfsClient();
+  const queue = new TestQueue();
+  const config = { ...workerConfig(), maxFetchedBytes: 12, maxSourceChars: 100 };
+
+  await withFetchedPage(async () => {
+    await processUrlIngestRequest(testEnv(queue), vfs, config, "db_1", queuedRequest());
+  }, "alpha beta gamma");
+
+  assert.ok(vfs.lastSourceWrite);
+  assert.match(vfs.lastSourceWrite.content, /truncated: "false"/);
+  assert.match(vfs.lastSourceWrite.content, /fetched_truncated: "true"/);
+  assert.match(vfs.lastSourceWrite.content, /fetched_bytes: "12"/);
+  assert.match(vfs.lastSourceWrite.content, /max_fetched_bytes: "12"/);
+  assert.match(vfs.lastSourceWrite.content, /alpha beta g/);
+  assert.deepEqual(JSON.parse(vfs.lastSourceWrite.metadataJson), {
+    source_type: "url",
+    url: "https://example.com/a",
+    final_url: "https://example.com/a",
+    truncated: false,
+    original_chars: 12,
+    saved_chars: 12,
+    fetched_truncated: true,
+    fetched_bytes: 12,
+    max_fetched_bytes: 12
+  });
+});
+
 test("queued URL ingest fails when write_node returns a non-source ack", async () => {
   const vfs = new TestVfsClient();
   vfs.sourceAckKind = "file";

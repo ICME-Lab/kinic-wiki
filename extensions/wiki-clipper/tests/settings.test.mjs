@@ -19,6 +19,9 @@ test("settings popup omits fixed runtime inputs", () => {
   assert.match(html, /<select id="database-id">/);
   assert.match(html, /Kinic Wiki Clipper/);
   assert.match(html, /icons\/icon-48\.png/);
+  assert.doesNotMatch(html, /refresh-databases/);
+  assert.doesNotMatch(html, /save-settings/);
+  assert.doesNotMatch(html, /settings-actions/);
   assert.doesNotMatch(html, /generator-url/);
   assert.doesNotMatch(html, /canister-id/);
   assert.doesNotMatch(html, /IC host/);
@@ -116,6 +119,19 @@ test("ChatGPT export confirmation references Internet Identity principal", () =>
   const contentUi = readFileSync(new URL("../src/content-ui.tsx", import.meta.url), "utf8");
   assert.match(contentUi, /Internet Identity principal/);
   assert.doesNotMatch(contentUi, /anonymous extension actor/);
+});
+
+test("settings docs describe automatic database save", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  const usage = readFileSync(new URL("../USAGE.md", import.meta.url), "utf8");
+  const storeAssets = readFileSync(new URL("../scripts/generate-store-assets.mjs", import.meta.url), "utf8");
+  assert.match(readme, /selected and saved automatically/);
+  assert.match(usage, /saved automatically/);
+  assert.match(storeAssets, /Database selected/);
+  assert.doesNotMatch(readme, /explicitly saved/);
+  assert.doesNotMatch(usage, /save it before/);
+  assert.doesNotMatch(storeAssets, /Save settings/);
+  assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
 function rawDatabase(databaseId, role, status) {

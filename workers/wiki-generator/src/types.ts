@@ -97,6 +97,7 @@ export type WorkerConfig = {
   contextPrefix: string;
   maxRawChars: number;
   maxFetchedBytes: number;
+  maxSourceChars: number;
   maxContextHits: number;
   maxOutputTokens: number;
 };

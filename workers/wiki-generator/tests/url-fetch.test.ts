@@ -56,6 +56,28 @@ test("safe redirects are followed manually", async () => {
   });
 });
 
+test("large html can pass fetch guard before extracted text is saved", async () => {
+  const html = `<html><head><title>Big Product</title><script>${"x".repeat(1_050_000)}</script></head><body><main>Product facts</main></body></html>`;
+  await withMockFetch(async () => new Response(html, { status: 200, headers: { "content-type": "text/html" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/product", 2_000_000);
+
+    assert.equal(fetched.title, "Big Product");
+    assert.match(fetched.text, /Product facts/);
+    assert.doesNotMatch(fetched.text, /xxxxx/);
+  });
+});
+
+test("oversized responses are truncated instead of rejected", async () => {
+  await withMockFetch(async () => new Response("alpha beta gamma", { status: 200, headers: { "content-type": "text/plain" } }), async () => {
+    const fetched = await fetchUrlSource("https://example.com/large.txt", 10);
+
+    assert.equal(fetched.text, "alpha beta");
+    assert.equal(fetched.fetchedTruncated, true);
+    assert.equal(fetched.fetchedBytes, 10);
+    assert.equal(fetched.maxFetchedBytes, 10);
+  });
+});
+
 test("redirects to blocked hosts are rejected before following", async () => {
   let calls = 0;
   await withMockFetch(async () => {
