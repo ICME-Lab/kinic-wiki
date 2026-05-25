@@ -43,27 +43,27 @@ This document defines the current repo-local wiki schema.
     - Do not use topic pages as raw transcript copies.
 
 - Child-level pages:
-- `facts.md`
-  - Settled stable facts and stable attributes.
-  - Store exact facts, current values, selected options, and stable relationships or durations.
-  - Do not store topic-only mentions, ambiguous information, unresolved items, future or pending items, chronology-only events, or recap prose.
-- `events.md`
-  - Chronology of events that happened.
-  - Store only completed events and dated events.
-  - Do not store interpretation, summary, future, or pending items.
-- `plans.md`
-  - Future or pending items, plans, intentions, and next actions.
-  - Scope-specific explicit instructions, temporary constraints, and operational policies.
-- `preferences.md`
-  - Preferences, decision criteria, and choices.
-- `open_questions.md`
-  - Unresolved items, questions to verify, and conflicting information.
-- `summary.md`
-  - Human-facing recap.
-  - Do not use as the exact evidence source.
-  - Do not use as the canonical stable fact source.
-- `provenance.md`
-  - Raw source id, path, import metadata, and reference locations.
+  - `facts.md`
+    - Settled stable facts and stable attributes.
+    - Store exact facts, current values, selected options, and stable relationships or durations.
+    - Do not store topic-only mentions, ambiguous information, unresolved items, future or pending items, chronology-only events, or recap prose.
+  - `events.md`
+    - Chronology of events that happened.
+    - Store only completed events and dated events.
+    - Do not store interpretation, summary, future, or pending items.
+  - `plans.md`
+    - Future or pending items, plans, intentions, and next actions.
+    - Scope-specific explicit instructions, temporary constraints, and operational policies.
+  - `preferences.md`
+    - Preferences, decision criteria, and choices.
+  - `open_questions.md`
+    - Unresolved items, questions to verify, and conflicting information.
+  - `summary.md`
+    - Human-facing recap.
+    - Do not use as the exact evidence source.
+    - Do not use as the canonical stable fact source.
+  - `provenance.md`
+    - Raw source id, path, import metadata, and reference locations.
 
 ## Current Anti-Rules
 

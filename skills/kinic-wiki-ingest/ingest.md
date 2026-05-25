@@ -17,7 +17,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 7. Edit `/Wiki/...` directly through `kinic-vfs-cli` remote VFS commands.
    - Authenticated CLI writes default to Internet Identity via `icp identity default`.
    - Use `--allow-non-ii-identity` only when the user explicitly chooses a PEM or other non-II operator identity.
-8. When a reorganization needs explicit removal of obsolete `/Wiki/...` page groups, use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
+8. When a reorganization needs explicit removal of obsolete `/Wiki/...` page groups, inspect the target first with `list-nodes --prefix <path> --recursive --json`, report the count, then use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
 9. If a relevant `log.md` exists or the user asks for logging, update it for every page creation, deletion, or edit done in the workflow. Do not create `log.md` by default.
 10. When appending to `log.md`, read only the recent tail first, for example `tail -n 5`, unless a longer window is clearly needed.
 11. Append one new log line per workflow mutation. Do not rewrite or restructure older log entries.
@@ -72,8 +72,8 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 
 ## Working Rules
 
-- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
-- Runtime `facts.md` extraction policy currently lives in [facts_policy.rs](../../../crates/vfs_cli_app/src/facts_policy.rs). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
+- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
+- Runtime `facts.md` extraction policy currently lives in [facts_policy.rs](../../crates/vfs_cli_app/src/facts_policy.rs). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
 - Treat local `Wiki/` content as the human review surface.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.
@@ -129,7 +129,10 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
   - Multi-node edits: no stable single CLI batch command; build a path list, read etags, and run etag-aware per-node edits unless using a deliberate client/canister API script
 - Delete semantics:
   - `delete-node`: delete one node path
-  - `delete-tree`: delete real node paths under a prefix, deepest-first
+  - `delete-tree`: delete real node paths under a prefix, deepest-first; inspect first with `list-nodes --prefix <path> --recursive --json`
+- Listing semantics:
+  - `list-children`: one-level tree or UI navigation
+  - `list-nodes --prefix <path> --recursive`: bulk repair, lint, inventory, and destructive operation review
 - `log.md` rule:
   - do not create it by default
   - if it exists or the user asks for logging, read only the recent tail before appending unless more history is needed

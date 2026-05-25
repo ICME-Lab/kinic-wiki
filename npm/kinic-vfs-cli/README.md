@@ -13,6 +13,13 @@ The npm package downloads the matching release binary from GitHub Releases and v
 
 Canonical guide: https://wiki.kinic.xyz/cli
 
+Repo docs:
+
+- CLI operations: ../../docs/CLI.md
+- Skill Registry: ../../docs/SKILL_REGISTRY.md
+- Agent Memory API: ../../docs/AGENT_MEMORY_API.md
+- Validation: ../../docs/validation/VFS_VALIDATION_PLAN.md
+
 Supported platforms:
 
 - macOS arm64

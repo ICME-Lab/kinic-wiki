@@ -44,4 +44,14 @@ pnpm exec wrangler secret put KINIC_WIKI_WORKER_IDENTITY_PEM
 
 After `d1 create`, copy the returned database id into `wrangler.jsonc`.
 
+## Browser URL Ingest Integration
+
+Use this order when enabling WikiBrowser URL ingest:
+
+1. Deploy this Worker with `KINIC_WIKI_WORKER_TOKEN` and `KINIC_WIKI_WORKER_IDENTITY_PEM` set.
+2. Grant the Worker identity writer access to target databases, or keep the default LLM writer service principal grant.
+3. Set WikiBrowser `KINIC_WIKI_GENERATOR_URL` to this Worker URL.
+4. Set the same `KINIC_WIKI_WORKER_TOKEN` as a WikiBrowser runtime secret.
+5. Run a smoke from WikiBrowser's `/<database-id>/Wiki?tab=ingest` route and confirm `/Sources/ingest-requests/...` plus `/Sources/raw/...` output.
+
 PDF, authenticated pages, and multi-URL batching are out of scope for this worker path.

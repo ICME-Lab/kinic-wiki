@@ -6,6 +6,13 @@ It returns wiki context, local graph context, and source evidence without requir
 Use this API when the caller already has an IC canister client and wants long-term wiki memory as structured context.
 Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenAI-compatible or Anthropic-compatible tool schemas.
 
+## Prerequisites
+
+- `canister_id`: the Kinic Wiki canister to query.
+- `database_id`: the target database inside that canister.
+- Public databases require reader access for the anonymous principal `2vxsx-fae` when queried without identity.
+- Private databases require an identity client whose principal is a database member.
+
 ## Methods
 
 - `memory_manifest()`: discover the API version, roots, capability summary, canonical roles, limits, and recommended entrypoint.
@@ -40,6 +47,20 @@ Do not use `memory_manifest()` as content evidence for an answer.
 - `budget_tokens`: approximate context budget. `0` uses the canister default.
 - `include_evidence`: include source evidence for returned wiki nodes when true.
 - `depth`: local graph depth. Valid values are `0`, `1`, and `2`.
+
+Minimal request shape:
+
+```json
+{
+  "database_id": "<database-id>",
+  "task": "summarize current project decisions",
+  "entities": [],
+  "namespace": "/Wiki",
+  "budget_tokens": 1000,
+  "include_evidence": true,
+  "depth": 1
+}
+```
 
 The response includes:
 

@@ -90,7 +90,8 @@ Agents should discover relevant skills, inspect the package, use the instruction
 - Browser: browse, search, edit, and manage database access
 - CLI: scripted database operations and Skill Registry workflows
 - Chrome extension: ChatGPT export and active-tab URL ingest
-- Canister API: Agent Memory API methods such as `memory_manifest`, `query_context`, and `source_evidence`
+- Agent Memory API: direct read-only canister queries such as `memory_manifest`, `query_context`, and `source_evidence`
+- Agent Tool Calling: embedded OpenAI-compatible and Anthropic-compatible tool schemas
 
 The Chrome extension connects browser work to Kinic Wiki. It can save recent ChatGPT conversations as raw sources and queue active web pages for URL ingest. The browser is the capture surface, the Wiki is the structured memory, and the CLI is the operator automation layer.
 
@@ -100,4 +101,5 @@ Developer and operator guides:
 - Skill Registry workflows: [docs/SKILL_REGISTRY.md](docs/SKILL_REGISTRY.md)
 - Canister Agent Memory API: [docs/AGENT_MEMORY_API.md](docs/AGENT_MEMORY_API.md)
 - Shared Rust library tool calling: [docs/AGENT_TOOL_CALLING.md](docs/AGENT_TOOL_CALLING.md)
+- VFS validation and benchmarks: [docs/validation/VFS_VALIDATION_PLAN.md](docs/validation/VFS_VALIDATION_PLAN.md)
 - Public CLI guide: https://wiki.kinic.xyz/cli

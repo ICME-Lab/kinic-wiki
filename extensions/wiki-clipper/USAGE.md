@@ -48,6 +48,8 @@ The release package excludes source files, tests, `node_modules`, and local `.en
 Do not use `Pack extension` for local testing. `Pack extension` is for producing a `.crx` package and reusing a private key.
 The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci` and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
 
+Normal local testing does not require changing extension IDs. Treat the old local ID and additional Chrome extension origin as allowlist/debug notes only.
+
 ## Configure
 
 Open settings from `chrome://extensions` → Kinic Wiki Clipper → `Extension options`.

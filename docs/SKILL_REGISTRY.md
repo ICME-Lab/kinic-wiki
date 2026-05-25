@@ -333,7 +333,7 @@ The dashboard reads proposal records from:
 `skill upsert` stores the package, not just the entry file.
 It writes `SKILL.md`, `manifest.md`, optional `provenance.md` and `evals.md`, and direct package-local `.md` links from `SKILL.md`.
 If `manifest.md` is missing, it is generated from `--id` plus `SKILL.md` frontmatter.
-For example, `[ingest](ingest.md)` is stored as `/Wiki/skills/<name>/ingest.md`.
+For example, a package-local Markdown link with label `ingest` and target `ingest.md` is stored as `/Wiki/skills/<name>/ingest.md`.
 URLs, absolute paths, missing files, and files outside the package directory are ignored.
 By default, upsert does not delete existing DB files.
 Use `--prune` when the source package is the desired exact file set and stale package files should be removed.

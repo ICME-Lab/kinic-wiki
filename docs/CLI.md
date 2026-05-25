@@ -64,7 +64,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- status
 
 Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then host default. Use `database unlink` to remove the workspace DB link.
 
-## Identity Mode
+## Database Setup
 
 `--identity-mode auto` is the default. Mutating and owner commands always use the selected `icp identity`. Read-only DB commands first check anonymous access; if the selected identity is a DB member, the command still uses identity. Public DB reads use anonymous only when the selected identity is not a member.
 
@@ -214,13 +214,19 @@ Common read and write commands:
 - `read-node --path /Wiki/file.md`
 - `read-node-context --path /Wiki/file.md --link-limit 20 --json`
 - `list-children --path /Wiki --json`
+- `list-nodes --prefix /Wiki --recursive --json`
 - `write-node --path /Wiki/file.md --input file.md`
 - `append-node --path /Wiki/file.md --input append.md`
 - `edit-node --path /Wiki/file.md --old-text before --new-text after`
 - `delete-node --path /Wiki/file.md`
+- `delete-tree --path /Wiki/obsolete-scope --json`
 - `move-node --from-path /Wiki/a.md --to-path /Wiki/b.md`
 - `glob-nodes "**/*.md" --path /Wiki --json`
 - `recent-nodes 20 --path /Wiki --json`
+
+Use `list-children` for one-level tree views and UI-style navigation.
+Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.
+`delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:
 

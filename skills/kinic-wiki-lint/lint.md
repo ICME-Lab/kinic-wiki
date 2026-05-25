@@ -25,7 +25,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 ## Working Rules
 
-- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
+- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
 - When `/Wiki/index.md` is stale, recommend a focused root catalog edit first. Recommend `rebuild-index` only for broad repair.
 - Treat `/Wiki/index.md` as the only required catalog. Do not flag missing `<scope>/index.md`, `overview.md`, `schema.md`, `log.md`, or `topics/*.md` unless the user explicitly requested that scoped structure.
 - Flag folders, scoped indexes, and scaffold pages that were created without a clear user request or retrieval need.
@@ -53,6 +53,8 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 - Local lint: inspect Markdown files directly; no local mirror lint command exists.
 - Remote inspection primitives:
   - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Use `list-children` for one-level tree navigation.
+  - Use `list-nodes --prefix <path> --recursive --json` for inventory, bulk repair review, and destructive operation review.
 
 ## Output
 

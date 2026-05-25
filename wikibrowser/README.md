@@ -1,6 +1,7 @@
 # Wiki Browser
 
 Dashboard for Kinic Wiki canister databases. The app is a lightweight knowledge IDE and debug UI, not the primary Agent Memory API surface.
+Official mainnet uses canister `xis3j-paaaa-aaaai-axumq-cai`; use placeholders only for forks or local deployments.
 
 ## Local
 
@@ -34,7 +35,7 @@ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<local-wiki-canister-id>
 # mainnet / Cloudflare Workers
 NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io
 NEXT_PUBLIC_II_PROVIDER_URL=https://id.ai
-NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<mainnet-wiki-canister-id>
+NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai
 ```
 
 Query Q&A uses `DEEPSEEK_API_KEY` only in the server runtime. Store it in `wikibrowser/.env.local` for local runs. For production, set it as a Cloudflare Worker secret:
@@ -163,7 +164,7 @@ Covered methods:
 
 ## Public MVP
 
-Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<mainnet-wiki-canister-id>`.
+Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`.
 The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility.
 Canister unreachable / API failures are shown as browser errors and are not treated as not-found states.
 The `/<database-id>/...` and `/dashboard/<database-id>` URLs are App Router dynamic routes. Read and authenticated calls go directly from the browser to the configured IC gateway.
@@ -185,7 +186,7 @@ Cloudflare settings:
 - Root Directory: `wikibrowser`
 - Install Command: `pnpm install --frozen-lockfile`
 - Build Command: `pnpm deploy`
-- Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<mainnet-wiki-canister-id>` for Preview and Production
+- Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai` for Preview and Production
 - Runtime: Cloudflare Workers via `@opennextjs/cloudflare`
 
 Both variables are public browser bundle values. Set them as Cloudflare build variables, not only runtime Worker variables, because Next.js inlines `NEXT_PUBLIC_*` values into the client bundle during build.

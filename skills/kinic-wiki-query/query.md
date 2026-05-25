@@ -16,8 +16,7 @@ Answer questions against the current wiki using the canister Agent Memory API wh
 
 ## Working Rules
 
-- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md). Treat that file as the source of truth for current note names and role mapping.
-- Answer-shape rules live in [../references/query-rules.md](../references/query-rules.md). Use that file for abstention, extraction, and exact-value behavior.
+- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Treat that file as the source of truth for current note names and role mapping.
 - Prefer `/Wiki/index.md` and flat page reads before broad search.
 - Treat `query_context` as the primary context bundle API. Do not repeat broad search if its returned nodes and evidence already answer the question.
 - Treat `memory_manifest` as capability discovery, not as content evidence.
@@ -46,8 +45,40 @@ Answer questions against the current wiki using the canister Agent Memory API wh
 - Treat `summary.md` as recap support for summary-style synthesis, not as the primary source for exact extraction.
 - For multi-value extraction, preserve the requested slot order instead of collapsing multiple values into a generic summary.
 
+## Answer Rules
+
+- Prefer scope-first exploration.
+- Read at least one note that directly supports the final answer.
+- Do not answer from `index.md`, a list result, or a search hit alone.
+- Do not conclude absence before reading the highest-priority role-matched note for the question.
+- If the primary role-matched note is empty or lacks the value, inspect the next canonical note directly before broad search.
+- Use `search-path-remote` and `search-remote` only after role-matched notes are still insufficient.
+- Prefer reading the note whose role best matches the question shape before broad search.
+- Preserve exact value formatting for dates, times, places, person names, identifiers, fractions, ratios, spelling variants, and other explicit attribute values.
+- Do not paraphrase, normalize, translate, or complete an exact value when the wiki already states it directly.
+- For exact-value or single-attribute extraction questions, answer with the value first and avoid explanation unless the question explicitly asks for it.
+- When a note contains the requested value directly, stay on that span and do not drift into summary, background, or inferred context.
+- Do not return `insufficient evidence` when the exact value is present in the note you read.
+- Do not return `insufficient evidence` while a higher-priority canonical note remains unread.
+- If a note you read already contains one requested slot, keep checking the remaining requested slots before concluding `insufficient evidence`.
+- Return the smallest answer span that directly matches the evidence.
+- For multi-value extraction, keep the answer aligned to the requested slots and preserve their order.
+- For paired-slot extraction such as `when and where` or `age and role`, answer every requested slot in one short response.
+- Return only the requested attribute, not nearby qualifiers, adjacent summary text, or generic recommendations.
+- Use normal synthesis only for open-ended, comparative, or multi-fact explanation questions.
+- For contradiction questions, if notes contain unresolved conflict, explicitly state that there is contradictory information and ask for clarification instead of choosing one side.
+- For temporal questions, extract the relevant time anchors before answering and compute the result from those anchors.
+- For ordering questions, return the ordered items directly instead of replacing the order with a thematic summary.
+- If the question is about order or time, do not answer from the index alone.
+- If the question asks for a single turn, timestamp, or attribute value, prefer extraction over summarization.
+- If the requested attribute or value is not directly supported by the notes you read, answer exactly `insufficient evidence`.
+- For abstention questions, only an explicit statement in a note counts as evidence.
+- For abstention questions, do not treat recap notes, adjacent context, implication, or cross-note synthesis as direct evidence for a missing relation or attribute.
+- Do not paraphrase quoted text or referenced turn content when the question asks for that exact item.
+
 ## Repo Contract
 
 - Preferred query primitives:
   - Canister Agent Memory API: `memory_manifest`, `query_context`, `source_evidence`
-  - CLI fallback commands: `read-node-context`, `read-node`, `list-nodes`, `search-remote`, `search-path-remote`, `recent-nodes`, `graph-neighborhood`, `incoming-links`, `outgoing-links`
+  - CLI fallback commands: `read-node-context`, `read-node`, `list-children`, `list-nodes`, `search-remote`, `search-path-remote`, `recent-nodes`, `graph-neighborhood`, `incoming-links`, `outgoing-links`
+  - Use `list-children` for one-level navigation and `list-nodes --prefix <path> --recursive --json` for inventory.

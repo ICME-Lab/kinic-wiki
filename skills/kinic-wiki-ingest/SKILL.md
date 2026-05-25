@@ -27,6 +27,8 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
+- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<source_id>/<source_id>.md`.
+- Treat local Markdown as review or drafting aid unless the workflow explicitly writes it back through VFS commands.
 - Stop at review-ready unless the user explicitly asks for push. `review-ready` means edits and any existing or requested `log.md` updates are complete, but no push or publish step has run.
 - Keep source persistence separate from wiki synthesis.
 - For conversation sources, default to one generated wiki page rather than a fixed page scaffold.
@@ -38,12 +40,6 @@ Core rules:
 - Do not create `log.md` by default.
 - PDF handling stays inside kinic-wiki-ingest as source normalization.
 - Treat `WIKI_CANONICALITY.md` as the schema authority.
-- For current note roles and boundaries, follow [../../../docs/internal/WIKI_CANONICALITY.md](../../../docs/internal/WIKI_CANONICALITY.md).
+- For current note roles and boundaries, follow [../../docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md).
 
 Read [ingest.md](ingest.md) before doing substantive Kinic Wiki ingest work.
-
-Read these references when needed:
-
-- shared repo rules: [../references/shared-rules.md](../references/shared-rules.md)
-- vendor markdown rules: [../vendor/obsidian-skills/obsidian-markdown/SKILL.md](../vendor/obsidian-skills/obsidian-markdown/SKILL.md)
-- vendor source cleanup: [../vendor/obsidian-skills/defuddle/SKILL.md](../vendor/obsidian-skills/defuddle/SKILL.md)

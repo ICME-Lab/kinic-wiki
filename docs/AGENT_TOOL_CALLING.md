@@ -24,8 +24,8 @@ async fn run() -> Result<()> {
     // When the model returns a tool call:
     let result = handle_openai_tool_call(
         &client,
-        "append",
-        r#"{"database_id":"<database-id>","path":"/Wiki/memory.md","content":"remember this"}"#,
+        "read",
+        r#"{"database_id":"<database-id>","path":"/Wiki/index.md"}"#,
     )
     .await?;
 
@@ -36,6 +36,7 @@ async fn run() -> Result<()> {
 
 The dispatcher also exposes Anthropic-format schemas through `create_anthropic_tools` and `handle_anthropic_tool_call`.
 Use `create_openai_read_only_tools` when an agent should only inspect wiki and skill content.
+Write tools such as `write`, `append`, `edit`, `multi_edit`, `rm`, and `skill_record_run` require a client identity with writer access to the selected database.
 
 ## Tool Names
 
