@@ -30,6 +30,8 @@ For each queued request it:
 The worker identity in `KINIC_WIKI_WORKER_IDENTITY_PEM` must have writer access to the target database.
 Use the exact PEM output from `icp identity export <identity-name>`.
 New databases include the default LLM writer service principal as a `writer` member. That automatic grant is part of the URL ingest permission model: if an owner revokes the service principal, URL ingest session authorization and checks fail until writer access is restored.
+Session checks are not permanent capability grants. The canister rejects them after billing suspension or low balance, and the worker re-checks immediately before external URL fetch and DeepSeek generation.
+Manual `/run` and source queue jobs without a browser session call `check_database_billable` before DeepSeek; the worker identity must be writer or owner.
 
 ## Cloudflare Setup
 

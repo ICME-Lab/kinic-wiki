@@ -68,6 +68,14 @@ Wiki は自動正答エンジンではなく、作業記憶、根拠確認、報
 - `open_questions.md` に矛盾が隠れず残っているか
 - `log.md` が append-only で更新されているか
 
+公開 Wiki の `open_questions.md` は読者向けの要検証事項だけに使う。解決済みの質問は `facts.md`、`plans.md`、または repo docs に移し、公開不要な内部実装論点は公開 Wiki から削除する。
+
+現行判断:
+
+- Self DB seed は既存の `write_nodes` を使う。
+- URL ingest / draft generation を使う DB では default LLM writer principal を `writer` のままにする。
+- raw 正本は `/Sources/raw/...` に置き、`/Wiki/...` には短い evidence span / recap だけを残す。
+
 ## Code Notes
 
 Wiki はコード正本ではない。実装の正本は常に repo の実ファイル。

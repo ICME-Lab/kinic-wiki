@@ -49,6 +49,7 @@ type DatabaseBillingEntry = record {
   created_at_ms : int64;
   amount_e8s : int64;
   rate_numerator_e8s : opt nat64;
+  ledger_block_index : opt nat64;
   database_id : text;
   balance_after_e8s : nat64;
   caller : text;
@@ -58,6 +59,19 @@ type DatabaseBillingEntry = record {
 };
 type DatabaseBillingEntryPage = record {
   entries : vec DatabaseBillingEntry;
+  next_cursor : opt nat64;
+};
+type DatabaseBillingPendingOperation = record {
+  kind : text;
+  fee_e8s : int64;
+  operation_id : nat64;
+  created_at_ms : int64;
+  amount_e8s : int64;
+  database_id : text;
+  caller : text;
+};
+type DatabaseBillingPendingOperationPage = record {
+  entries : vec DatabaseBillingPendingOperation;
   next_cursor : opt nat64;
 };
 type DatabaseMember = record {
@@ -296,21 +310,26 @@ type Result_10 = variant { Ok : vec GlobNodeHit; Err : text };
 type Result_11 = variant { Ok : vec LinkEdge; Err : text };
 type Result_12 = variant { Ok : vec ChildNode; Err : text };
 type Result_13 = variant { Ok : DatabaseBillingEntryPage; Err : text };
-type Result_14 = variant { Ok : vec DatabaseMember; Err : text };
-type Result_15 = variant { Ok : vec DatabaseSummary; Err : text };
-type Result_16 = variant { Ok : vec NodeEntry; Err : text };
-type Result_17 = variant { Ok : MkdirNodeResult; Err : text };
-type Result_18 = variant { Ok : MoveNodeResult; Err : text };
-type Result_19 = variant { Ok : QueryContext; Err : text };
+type Result_14 = variant {
+  Ok : DatabaseBillingPendingOperationPage;
+  Err : text;
+};
+type Result_15 = variant { Ok : vec DatabaseMember; Err : text };
+type Result_16 = variant { Ok : vec DatabaseSummary; Err : text };
+type Result_17 = variant { Ok : vec NodeEntry; Err : text };
+type Result_18 = variant { Ok : MkdirNodeResult; Err : text };
+type Result_19 = variant { Ok : MoveNodeResult; Err : text };
 type Result_2 = variant { Ok : DatabaseArchiveInfo; Err : text };
-type Result_20 = variant { Ok : DatabaseArchiveChunk; Err : text };
-type Result_21 = variant { Ok : opt Node; Err : text };
-type Result_22 = variant { Ok : opt NodeContext; Err : text };
-type Result_23 = variant { Ok : vec RecentNodeHit; Err : text };
-type Result_24 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_25 = variant { Ok : SourceEvidence; Err : text };
-type Result_26 = variant { Ok : BillingTransferResult; Err : text };
-type Result_27 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_20 = variant { Ok : QueryContext; Err : text };
+type Result_21 = variant { Ok : DatabaseArchiveChunk; Err : text };
+type Result_22 = variant { Ok : opt Node; Err : text };
+type Result_23 = variant { Ok : opt NodeContext; Err : text };
+type Result_24 = variant { Ok : vec RecentNodeHit; Err : text };
+type Result_25 = variant { Ok : BillingTransferResult; Err : text };
+type Result_26 = variant { Ok : nat64; Err : text };
+type Result_27 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_28 = variant { Ok : SourceEvidence; Err : text };
+type Result_29 = variant { Ok : vec WriteNodeResult; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
@@ -397,6 +416,7 @@ service : (BillingConfig) -> {
   cancel_database_archive : (text) -> (Result_1);
   cancel_database_restore : (text) -> (Result_1);
   canister_health : () -> (CanisterHealth) query;
+  check_database_billable : (text) -> (Result_1) query;
   check_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_3) query;
   check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
       Result_1,
@@ -418,30 +438,38 @@ service : (BillingConfig) -> {
   incoming_links : (IncomingLinksRequest) -> (Result_11) query;
   list_children : (ListChildrenRequest) -> (Result_12) query;
   list_database_billing_entries : (text, opt nat64, nat32) -> (Result_13) query;
-  list_database_members : (text) -> (Result_14) query;
-  list_databases : () -> (Result_15) query;
-  list_nodes : (ListNodesRequest) -> (Result_16) query;
+  list_database_billing_pending_operations : (text, opt nat64, nat32) -> (
+      Result_14,
+    ) query;
+  list_database_members : (text) -> (Result_15) query;
+  list_databases : () -> (Result_16) query;
+  list_nodes : (ListNodesRequest) -> (Result_17) query;
   memory_manifest : () -> (MemoryManifest) query;
-  mkdir_node : (MkdirNodeRequest) -> (Result_17);
-  move_node : (MoveNodeRequest) -> (Result_18);
+  mkdir_node : (MkdirNodeRequest) -> (Result_18);
+  move_node : (MoveNodeRequest) -> (Result_19);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_6);
   outgoing_links : (OutgoingLinksRequest) -> (Result_11) query;
-  query_context : (QueryContextRequest) -> (Result_19) query;
-  read_database_archive_chunk : (text, nat64, nat32) -> (Result_20) query;
-  read_node : (text, text) -> (Result_21) query;
-  read_node_context : (NodeContextRequest) -> (Result_22) query;
-  recent_nodes : (RecentNodesRequest) -> (Result_23) query;
+  preview_database_top_up : (text, nat64) -> (Result_1) query;
+  query_context : (QueryContextRequest) -> (Result_20) query;
+  read_database_archive_chunk : (text, nat64, nat32) -> (Result_21) query;
+  read_node : (text, text) -> (Result_22) query;
+  read_node_context : (NodeContextRequest) -> (Result_23) query;
+  recent_nodes : (RecentNodesRequest) -> (Result_24) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
+  repair_database_top_up_cancel : (text, nat64) -> (Result_1);
+  repair_database_top_up_complete : (text, nat64, nat64) -> (Result_25);
+  repair_database_withdraw_complete : (text, nat64, nat64) -> (Result_25);
+  repair_database_withdraw_reverse : (text, nat64) -> (Result_26);
   revoke_database_access : (text, text) -> (Result_1);
-  search_node_paths : (SearchNodePathsRequest) -> (Result_24) query;
-  search_nodes : (SearchNodesRequest) -> (Result_24) query;
-  source_evidence : (SourceEvidenceRequest) -> (Result_25) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_27) query;
+  search_nodes : (SearchNodesRequest) -> (Result_27) query;
+  source_evidence : (SourceEvidenceRequest) -> (Result_28) query;
   status : (text) -> (Status) query;
-  top_up_database : (text, nat64) -> (Result_26);
+  top_up_database : (text, nat64) -> (Result_25);
   update_billing_config : (blob) -> (Result_1);
   validate_update_billing_config : (blob) -> (Result_1);
-  withdraw_database_balance : (text, nat64, BillingAccount) -> (Result_26);
+  withdraw_database_balance : (text, nat64, BillingAccount) -> (Result_25);
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_27);
+  write_nodes : (WriteNodesRequest) -> (Result_29);
 }

@@ -26,18 +26,18 @@ use ic_sqlite_vfs::{Db, DbHandle};
 use ic_stable_structures::DefaultMemoryImpl;
 #[cfg(target_arch = "wasm32")]
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
-use vfs_runtime::{DatabaseMeta, UsageEvent, VfsService};
+use vfs_runtime::{DatabaseMeta, RequiredRole, UsageEvent, VfsService};
 use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, BillingTransferResult,
     CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage,
+    DatabaseBillingPendingOperationPage, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
+    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
+    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
@@ -281,9 +281,10 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
 #[update]
 fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_metered_update(
+    with_role_metered_update(
         "rename_database",
         Some(database_id),
+        RequiredRole::Owner,
         |service, caller, now| {
             service.rename_database(&request.database_id, caller, &request.name, now)
         },
@@ -296,9 +297,10 @@ fn grant_database_access(
     principal: String,
     role: DatabaseRole,
 ) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "grant_database_access",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let principal = Principal::from_text(&principal)
                 .map_err(|error| format!("invalid principal: {error}"))?
@@ -310,9 +312,10 @@ fn grant_database_access(
 
 #[update]
 fn revoke_database_access(database_id: String, principal: String) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "revoke_database_access",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, _now| {
             let principal = Principal::from_text(&principal)
                 .map_err(|error| format!("invalid principal: {error}"))?
@@ -332,6 +335,13 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
     with_service(|service| service.list_database_summaries_for_caller(&caller_text()))
 }
 
+#[query]
+fn preview_database_top_up(database_id: String, amount_e8s: u64) -> Result<(), String> {
+    with_service(|service| {
+        service.validate_database_top_up(&database_id, &caller_text(), amount_e8s)
+    })
+}
+
 #[update]
 async fn top_up_database(
     database_id: String,
@@ -346,7 +356,7 @@ async fn top_up_database(
     })?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    match ledger_transfer_from(ledger, caller_principal(), amount_e8s).await {
+    match ledger_transfer_from(ledger, caller_principal(), amount_e8s, operation_id).await {
         LedgerTransferFromOutcome::Completed(block_index) => {
             let balance = with_service(|service| {
                 service.credit_database_top_up(
@@ -391,6 +401,7 @@ async fn withdraw_database_balance(
     to: BillingAccount,
 ) -> Result<BillingTransferResult, String> {
     require_authenticated_caller()?;
+    validate_billing_account(&to)?;
     let caller = caller_text();
     let now = now_millis();
     let config = with_service(|service| service.billing_config())?;
@@ -400,7 +411,7 @@ async fn withdraw_database_balance(
     let operation_id = with_service(|service| {
         service.begin_database_withdraw(&database_id, &caller, amount_e8s, fee_e8s, now)
     })?;
-    match ledger_transfer(ledger, to, amount_e8s, fee_e8s).await {
+    match ledger_transfer(ledger, to, amount_e8s, fee_e8s, operation_id).await {
         LedgerTransferOutcome::Completed(block_index) => {
             let balance = with_service(|service| {
                 service.complete_database_withdraw(
@@ -450,6 +461,86 @@ fn list_database_billing_entries(
 }
 
 #[query]
+fn list_database_billing_pending_operations(
+    database_id: String,
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<DatabaseBillingPendingOperationPage, String> {
+    with_service(|service| {
+        service.list_database_billing_pending_operations(
+            &database_id,
+            &caller_text(),
+            cursor,
+            limit,
+        )
+    })
+}
+
+#[update]
+fn repair_database_top_up_complete(
+    database_id: String,
+    operation_id: u64,
+    ledger_block_index: u64,
+) -> Result<BillingTransferResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let balance = with_service(|service| {
+        service.repair_database_top_up_complete(
+            &database_id,
+            operation_id,
+            ledger_block_index,
+            &caller,
+            now_millis(),
+        )
+    })?;
+    Ok(BillingTransferResult {
+        block_index: ledger_block_index,
+        balance_e8s: balance,
+    })
+}
+
+#[update]
+fn repair_database_top_up_cancel(database_id: String, operation_id: u64) -> Result<(), String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    with_service(|service| {
+        service.repair_database_top_up_cancel(&database_id, operation_id, &caller, now_millis())
+    })
+}
+
+#[update]
+fn repair_database_withdraw_complete(
+    database_id: String,
+    operation_id: u64,
+    ledger_block_index: u64,
+) -> Result<BillingTransferResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let balance = with_service(|service| {
+        service.repair_database_withdraw_complete(
+            &database_id,
+            operation_id,
+            ledger_block_index,
+            &caller,
+            now_millis(),
+        )
+    })?;
+    Ok(BillingTransferResult {
+        block_index: ledger_block_index,
+        balance_e8s: balance,
+    })
+}
+
+#[update]
+fn repair_database_withdraw_reverse(database_id: String, operation_id: u64) -> Result<u64, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    with_service(|service| {
+        service.repair_database_withdraw_reverse(&database_id, operation_id, &caller, now_millis())
+    })
+}
+
+#[query]
 fn get_billing_config() -> Result<BillingConfig, String> {
     with_service(|service| service.billing_config())
 }
@@ -474,9 +565,10 @@ fn update_billing_config(payload: Vec<u8>) -> Result<(), String> {
 
 #[update]
 fn delete_database(database_id: String) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "delete_database",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta = service.list_databases().and_then(|databases| {
                 databases
@@ -493,9 +585,10 @@ fn delete_database(database_id: String) -> Result<(), String> {
 
 #[update]
 fn begin_database_archive(database_id: String) -> Result<DatabaseArchiveInfo, String> {
-    with_metered_update(
+    with_role_metered_update(
         "begin_database_archive",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| service.begin_database_archive(&database_id, caller, now),
     )
 }
@@ -515,9 +608,10 @@ fn read_database_archive_chunk(
 
 #[update]
 fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "finalize_database_archive",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta =
                 service.finalize_database_archive(&database_id, caller, snapshot_hash, now)?;
@@ -529,9 +623,10 @@ fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Res
 
 #[update]
 fn cancel_database_archive(database_id: String) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "cancel_database_archive",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             service.cancel_database_archive(&database_id, caller, now)?;
             Ok(())
@@ -545,9 +640,10 @@ fn begin_database_restore(
     snapshot_hash: Vec<u8>,
     size_bytes: u64,
 ) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "begin_database_restore",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let restore = service.begin_database_restore_session(
                 &database_id,
@@ -572,9 +668,10 @@ fn begin_database_restore(
 #[update]
 fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_metered_update(
+    with_role_metered_update(
         "write_database_restore_chunk",
         Some(database_id),
+        RequiredRole::Owner,
         |service, caller, _now| {
             service.write_database_restore_chunk(
                 &request.database_id,
@@ -588,9 +685,10 @@ fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<
 
 #[update]
 fn finalize_database_restore(database_id: String) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "finalize_database_restore",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta = service.finalize_database_restore(&database_id, caller, now)?;
             mount_database_file(&meta)
@@ -600,9 +698,10 @@ fn finalize_database_restore(database_id: String) -> Result<(), String> {
 
 #[update]
 fn cancel_database_restore(database_id: String) -> Result<(), String> {
-    with_metered_update(
+    with_role_metered_update(
         "cancel_database_restore",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta = service.cancel_database_restore(&database_id, caller, now)?;
             unmount_database_file(&meta.db_file_name);
@@ -614,17 +713,23 @@ fn cancel_database_restore(database_id: String) -> Result<(), String> {
 #[update]
 fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("write_node", Some(database_id), |service, caller, now| {
-        service.write_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "write_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.write_node(caller, request, now),
+    )
 }
 
 #[update]
 fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("write_nodes", Some(database_id), |service, caller, now| {
-        service.write_nodes(caller, request, now)
-    })
+    with_role_metered_update(
+        "write_nodes",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.write_nodes(caller, request, now),
+    )
 }
 
 #[update]
@@ -632,9 +737,10 @@ fn authorize_url_ingest_trigger_session(
     request: UrlIngestTriggerSessionRequest,
 ) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_metered_update(
+    with_role_metered_update(
         "authorize_url_ingest_trigger_session",
         Some(database_id),
+        RequiredRole::Writer,
         |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
     )
 }
@@ -646,12 +752,18 @@ fn check_url_ingest_trigger_session(
     with_service(|service| service.check_url_ingest_trigger_session(request, now_millis()))
 }
 
+#[query]
+fn check_database_billable(database_id: String) -> Result<(), String> {
+    with_service(|service| service.check_database_billable(&database_id, &caller_text()))
+}
+
 #[update]
 fn authorize_ops_answer_session(request: OpsAnswerSessionRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_metered_update(
+    with_role_metered_update(
         "authorize_ops_answer_session",
         Some(database_id),
+        RequiredRole::Reader,
         |service, caller, now| service.authorize_ops_answer_session(caller, request, now),
     )
 }
@@ -666,41 +778,56 @@ fn check_ops_answer_session(
 #[update]
 fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("append_node", Some(database_id), |service, caller, now| {
-        service.append_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "append_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.append_node(caller, request, now),
+    )
 }
 
 #[update]
 fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("edit_node", Some(database_id), |service, caller, now| {
-        service.edit_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "edit_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.edit_node(caller, request, now),
+    )
 }
 
 #[update]
 fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("delete_node", Some(database_id), |service, caller, now| {
-        service.delete_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "delete_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.delete_node(caller, request, now),
+    )
 }
 
 #[update]
 fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("move_node", Some(database_id), |service, caller, now| {
-        service.move_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "move_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.move_node(caller, request, now),
+    )
 }
 
 #[update]
 fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update("mkdir_node", Some(database_id), |service, caller, now| {
-        service.mkdir_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "mkdir_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.mkdir_node(caller, request, now),
+    )
 }
 
 #[query]
@@ -751,9 +878,10 @@ fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, Str
 #[update]
 fn multi_edit_node(request: MultiEditNodeRequest) -> Result<MultiEditNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_metered_update(
+    with_role_metered_update(
         "multi_edit_node",
         Some(database_id),
+        RequiredRole::Writer,
         |service, caller, now| service.multi_edit_node(caller, request, now),
     )
 }
@@ -896,6 +1024,7 @@ thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_LEDGER_TRANSFER_OUTCOME: RefCell<Option<LedgerTransferOutcome>> = const { RefCell::new(None) };
     static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
+    static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
 }
 
@@ -922,6 +1051,25 @@ fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOut
 fn set_test_caller_principal_for_test(principal: Principal) {
     TEST_CALLER_PRINCIPAL.with(|slot| {
         slot.replace(Some(principal));
+    });
+}
+
+#[cfg(test)]
+fn record_test_ledger_memo(memo: &[u8]) {
+    TEST_LAST_LEDGER_MEMO.with(|slot| {
+        slot.replace(Some(memo.to_vec()));
+    });
+}
+
+#[cfg(test)]
+fn last_ledger_memo_for_test() -> Option<Vec<u8>> {
+    TEST_LAST_LEDGER_MEMO.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+fn clear_last_ledger_memo_for_test() {
+    TEST_LAST_LEDGER_MEMO.with(|slot| {
+        slot.replace(None);
     });
 }
 
@@ -967,6 +1115,15 @@ fn test_caller_principal() -> Principal {
 fn require_authenticated_caller() -> Result<(), String> {
     if caller_principal() == Principal::anonymous() {
         return Err("anonymous caller not allowed".to_string());
+    }
+    Ok(())
+}
+
+fn validate_billing_account(account: &BillingAccount) -> Result<(), String> {
+    if let Some(subaccount) = account.subaccount.as_ref()
+        && subaccount.len() != 32
+    {
+        return Err("billing account subaccount must be 32 bytes".to_string());
     }
     Ok(())
 }
@@ -1026,10 +1183,13 @@ async fn ledger_transfer_from(
     ledger: Principal,
     from_owner: Principal,
     amount_e8s: u64,
+    operation_id: u64,
 ) -> LedgerTransferFromOutcome {
+    let memo = billing_operation_memo("top_up", operation_id);
     #[cfg(test)]
     {
         let _ = (ledger, from_owner, amount_e8s);
+        record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
             outcome
                 .borrow_mut()
@@ -1055,7 +1215,7 @@ async fn ledger_transfer_from(
             },
             amount: Nat::from(amount_e8s),
             fee: Some(Nat::from(fee)),
-            memo: None,
+            memo: Some(memo),
             created_at_time: Some(ic_cdk::api::time()),
         };
         let response = Call::bounded_wait(ledger, "icrc2_transfer_from")
@@ -1093,10 +1253,13 @@ async fn ledger_transfer(
     to: BillingAccount,
     amount_e8s: u64,
     fee_e8s: u64,
+    operation_id: u64,
 ) -> LedgerTransferOutcome {
+    let memo = billing_operation_memo("withdraw", operation_id);
     #[cfg(test)]
     {
         let _ = (ledger, to, amount_e8s, fee_e8s);
+        record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_OUTCOME.with(|outcome| {
             outcome
                 .borrow_mut()
@@ -1114,7 +1277,7 @@ async fn ledger_transfer(
             },
             amount: Nat::from(amount_e8s),
             fee: Some(Nat::from(fee_e8s)),
-            memo: None,
+            memo: Some(memo),
             created_at_time: Some(ic_cdk::api::time()),
         };
         let response = Call::bounded_wait(ledger, "icrc1_transfer")
@@ -1173,6 +1336,10 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
         .map_err(|_| "nat exceeds u64".to_string())
 }
 
+fn billing_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
+    format!("kinic:vfs:{kind}:{operation_id}").into_bytes()
+}
+
 fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
 where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
@@ -1217,8 +1384,37 @@ where
     })
 }
 
-fn with_metered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
+fn with_role_metered_update<T, F>(
+    method: &str,
+    database_id: Option<String>,
+    required_role: RequiredRole,
+    f: F,
+) -> Result<T, String>
 where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+{
+    let authorization_database_id = database_id.clone();
+    with_authorized_metered_update(
+        method,
+        database_id,
+        |service, caller| {
+            let database_id = authorization_database_id
+                .as_deref()
+                .ok_or_else(|| "database_id is required for role metering".to_string())?;
+            service.require_database_role(database_id, caller, required_role)
+        },
+        f,
+    )
+}
+
+fn with_authorized_metered_update<T, A, F>(
+    method: &str,
+    database_id: Option<String>,
+    authorize: A,
+    f: F,
+) -> Result<T, String>
+where
+    A: FnOnce(&VfsService, &str) -> Result<(), String>,
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
     let caller = caller_text();
@@ -1229,6 +1425,7 @@ where
         let service = borrowed
             .as_ref()
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
+        authorize(service, &caller)?;
         if let Some(database_id) = database_id.as_deref() {
             service.require_database_billable(database_id)?;
         }

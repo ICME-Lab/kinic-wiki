@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { BillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
+  getBillingConfig,
   grantDatabaseAccessAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
@@ -26,6 +27,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
+  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +53,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       if (!nextDatabaseId) {
         setPrincipal(client?.getIdentity().getPrincipal().toText() ?? null);
         setDatabases([]);
+        setBillingConfig(null);
         setMembers([]);
         setError(null);
         setWarning(null);
@@ -64,9 +67,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setMemberError(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [publicResult, memberResult] = await Promise.allSettled([
+        const [publicResult, memberResult, billingConfigResult] = await Promise.allSettled([
           listDatabasesPublic(canisterId),
-          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
+          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([]),
+          getBillingConfig(canisterId)
         ]);
         if (publicResult.status === "rejected" && !identity) {
           throw new Error(errorMessage(publicResult.reason));
@@ -81,9 +85,13 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         const nextDatabase = nextDatabases.find((item) => item.databaseId === nextDatabaseId) ?? null;
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
+        setBillingConfig(billingConfigResult.status === "fulfilled" ? billingConfigResult.value : null);
         setMembers([]);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
+        }
+        if (billingConfigResult.status === "rejected") {
+          setWarning(`Billing config unavailable: ${errorMessage(billingConfigResult.reason)}`);
         }
         if (memberResult.status === "rejected") {
           setMemberError(`Member database list unavailable: ${errorMessage(memberResult.reason)}`);
@@ -160,6 +168,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     refreshSeqRef.current += 1;
     await authClient.logout();
     setPrincipal(null);
+    setBillingConfig(null);
     setDatabases([]);
     setMembers([]);
     setError(null);
@@ -248,7 +257,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
 
-        {database ? <SummaryPanel database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
+        {database ? <SummaryPanel billingConfig={billingConfig} canisterId={canisterId} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
           canManage ? (

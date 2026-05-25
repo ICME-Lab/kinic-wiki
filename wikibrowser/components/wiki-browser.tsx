@@ -18,12 +18,13 @@ import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import { databaseBillingDisabledReason } from "@/lib/billing-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import { xShareDatabaseHref } from "@/lib/share-links";
-import type { ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
-import { listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import type { BillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
+import { getBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
 import {
   errorHint,
@@ -82,6 +83,7 @@ export function WikiBrowser() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
   const [memberDatabases, setMemberDatabases] = useState<DatabaseSummary[]>([]);
+  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
   const [publicDatabaseIds, setPublicDatabaseIds] = useState<Set<string>>(() => new Set());
   const [memberDatabasesLoaded, setMemberDatabasesLoaded] = useState(false);
   const [databaseListError, setDatabaseListError] = useState<string | null>(null);
@@ -143,15 +145,17 @@ export function WikiBrowser() {
         setDatabaseListError(null);
         return Promise.allSettled([
           listDatabasesPublic(canisterId),
-          readIdentity ? listDatabasesAuthenticated(canisterId, readIdentity) : Promise.resolve<DatabaseSummary[]>([])
+          readIdentity ? listDatabasesAuthenticated(canisterId, readIdentity) : Promise.resolve<DatabaseSummary[]>([]),
+          getBillingConfig(canisterId)
         ]);
       })
       .then((results) => {
         if (cancelled || !results) return;
-        const [publicResult, memberResult] = results;
+        const [publicResult, memberResult, billingConfigResult] = results;
         if (publicResult.status === "rejected" && memberResult.status === "rejected") {
           setDatabases([]);
           setMemberDatabases([]);
+          setBillingConfig(null);
           setPublicDatabaseIds(new Set());
           setMemberDatabasesLoaded(false);
           setDatabaseListError(`${errorMessage(publicResult.reason)}; ${errorMessage(memberResult.reason)}`);
@@ -161,14 +165,16 @@ export function WikiBrowser() {
         const authenticatedDatabases = memberResult.status === "fulfilled" ? memberResult.value : [];
         setDatabases(mergeDatabaseSummaries(authenticatedDatabases, publicDatabases));
         setMemberDatabases(authenticatedDatabases);
+        setBillingConfig(billingConfigResult.status === "fulfilled" ? billingConfigResult.value : null);
         setPublicDatabaseIds(new Set(publicDatabases.map((database) => database.databaseId)));
         setMemberDatabasesLoaded(memberResult.status === "fulfilled");
-        setDatabaseListError(databaseListWarning(publicResult, memberResult));
+        setDatabaseListError(databaseListWarning(publicResult, memberResult, billingConfigResult));
       })
       .catch((cause) => {
         if (!cancelled) {
           setDatabases([]);
           setMemberDatabases([]);
+          setBillingConfig(null);
           setPublicDatabaseIds(new Set());
           setMemberDatabasesLoaded(false);
           setDatabaseListError(errorMessage(cause));
@@ -355,6 +361,10 @@ export function WikiBrowser() {
   }, [canLeaveDirtyEdit, logout]);
   const databaseOptions = useMemo(() => withCurrentDatabase(databases, databaseId), [databaseId, databases]);
   const currentDatabase = useMemo(() => databaseOptions.find((database) => database.databaseId === databaseId) ?? null, [databaseId, databaseOptions]);
+  const currentDatabaseBillingReason = useMemo(
+    () => readIdentity && currentDatabaseRole ? databaseBillingDisabledReason(currentDatabase, billingConfig) : null,
+    [billingConfig, currentDatabase, currentDatabaseRole, readIdentity]
+  );
   const explorerSelectionKey = nodeRequestKey(canisterId, databaseId, selectedPath, readPrincipal);
   const selectedExplorerNode = selectedExplorerState?.key === explorerSelectionKey
     ? selectedExplorerState.node
@@ -363,7 +373,8 @@ export function WikiBrowser() {
     readMode,
     readIdentity,
     currentDatabaseRole,
-    readIdentity && !currentDatabaseRole ? databaseListError : null
+    readIdentity && !currentDatabaseRole ? databaseListError : null,
+    currentDatabaseBillingReason
   );
   const explorerCreateDirectory = createDirectoryForExplorerNode(selectedExplorerNode);
   const explorerMutationTarget = selectedExplorerNode && isMutableWikiExplorerNode(selectedExplorerNode) ? selectedExplorerNode : null;
@@ -396,6 +407,7 @@ export function WikiBrowser() {
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to create Markdown files.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseBillingReason) throw new Error(currentDatabaseBillingReason);
     const nextPath = wikiMarkdownChildPath(directoryPath, fileName);
     const { writeNodeAuthenticated } = await import("@/lib/vfs-client");
     await writeNodeAuthenticated(canisterId, readIdentity, {
@@ -410,12 +422,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, "edit", tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseBillingReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
   const createFolderNode = useCallback(async (directoryPath: string, folderName: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to create folders.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseBillingReason) throw new Error(currentDatabaseBillingReason);
     const nextPath = wikiChildPath(directoryPath, folderName, "folder");
     const { mkdirNodeAuthenticated } = await import("@/lib/vfs-client");
     await mkdirNodeAuthenticated(canisterId, readIdentity, {
@@ -426,12 +439,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, undefined, tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseBillingReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
   const renameExplorerNode = useCallback(async (target: ChildNode, nextName: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to rename nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseBillingReason) throw new Error(currentDatabaseBillingReason);
     if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Wiki Markdown files and folders can be renamed.");
     if (!target.etag) throw new Error("Cannot rename a node without an etag.");
     const normalizedName = target.kind === "file" ? normalizeMarkdownFileName(nextName) : normalizePathSegment(nextName);
@@ -450,12 +464,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseBillingReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
   const moveExplorerNode = useCallback(async (target: ChildNode, targetDirectory: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to move nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseBillingReason) throw new Error(currentDatabaseBillingReason);
     if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Wiki Markdown files and folders can be moved.");
     if (!target.etag) throw new Error("Cannot move a node without an etag.");
     if (!isWikiPath(targetDirectory)) throw new Error("Move destination must be under /Wiki.");
@@ -473,12 +488,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseBillingReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
   const deleteExplorerNode = useCallback(async (target: ChildNode) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to delete nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseBillingReason) throw new Error(currentDatabaseBillingReason);
     const targetChildren = target.kind === "folder"
       ? childNodesCache.current.get(nodeRequestKey(canisterId, databaseId, target.path, readPrincipal))
       : undefined;
@@ -501,7 +517,7 @@ export function WikiBrowser() {
       router.replace(hrefForPath(canisterId, databaseId, parentPath(target.path) ?? "/Wiki", undefined, tab, undefined, undefined, readMode));
     }
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, readPrincipal, router, selectedPath, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseBillingReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, readPrincipal, router, selectedPath, setEditState, tab]);
 
   async function submitExplorerCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -750,6 +766,7 @@ export function WikiBrowser() {
                 writeIdentity={readIdentity}
                 currentDatabaseRole={currentDatabaseRole}
                 databaseRoleError={readIdentity && !currentDatabaseRole ? databaseListError : null}
+                databaseBillingError={currentDatabaseBillingReason}
                 onNodeSaved={refreshSelectedNodeContext}
                 onFolderIndexSaved={refreshSelectedFolderIndex}
                 onEditStateChange={setEditState}
@@ -1149,13 +1166,15 @@ function writeDisabledReason(
   readMode: "anonymous" | null,
   writeIdentity: Identity | null,
   currentDatabaseRole: DatabaseRole | null,
-  databaseRoleError: string | null
+  databaseRoleError: string | null,
+  databaseBillingError: string | null
 ): string | null {
   if (readMode === "anonymous") return "Switch to authenticated mode to change files.";
   if (!writeIdentity) return "Login with Internet Identity to change files.";
   if (databaseRoleError) return databaseRoleError;
   if (!currentDatabaseRole) return "Database role unavailable.";
   if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") return "Writer or owner access required.";
+  if (databaseBillingError) return databaseBillingError;
   return null;
 }
 
@@ -1397,7 +1416,8 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
   ];
 }
 
-function databaseListWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
+function databaseListWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>, billingConfigResult: PromiseSettledResult<BillingConfig>): string | null {
+  if (billingConfigResult.status === "rejected") return `Billing config unavailable: ${errorMessage(billingConfigResult.reason)}`;
   if (publicResult.status === "rejected") return `Public database list unavailable: ${errorMessage(publicResult.reason)}`;
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;

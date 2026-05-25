@@ -208,6 +208,7 @@ type VfsActor = {
   canister_health: () => Promise<RawCanisterHealth>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
+  check_database_billable: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_billing_config: () => Promise<{ Ok: RawBillingConfig } | { Err: string }>;
@@ -225,6 +226,7 @@ type VfsActor = {
   >;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
+  preview_database_top_up: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
@@ -366,6 +368,26 @@ export async function getBillingConfig(canisterId: string): Promise<BillingConfi
       throwCanisterError(result.Err);
     }
     return normalizeBillingConfig(result.Ok);
+  });
+}
+
+export async function previewDatabaseTopUp(canisterId: string, databaseId: string, amountE8s: bigint): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.preview_database_top_up(databaseId, amountE8s);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+  });
+}
+
+export async function checkDatabaseBillable(canisterId: string, identity: Identity, databaseId: string): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.check_database_billable(databaseId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
   });
 }
 

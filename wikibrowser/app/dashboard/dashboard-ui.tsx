@@ -7,7 +7,8 @@ import { useState } from "react";
 import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRoleFromValue, isBusyGrant, isBusyRevoke, principalDisplayName, type BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 import { MemberTable } from "./member-table";
-import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { databaseBillingView, databaseDepositHref } from "@/lib/billing-state";
+import type { BillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import { publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -35,17 +36,23 @@ export function AuthControls(props: { authReady: boolean; loading: boolean; prin
 }
 
 export function SummaryPanel({
+  billingConfig,
+  canisterId,
   database,
   databaseId,
   principal,
   publicReadable
 }: {
+  billingConfig: BillingConfig | null;
+  canisterId: string;
   database: DatabaseSummary | null;
   databaseId: string;
   principal: string;
   publicReadable: boolean;
 }) {
   const openHref = publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`;
+  const billing = databaseBillingView(database, billingConfig);
+  const depositHref = database && billingConfig && database.status !== "deleted" ? databaseDepositHref(canisterId, database, billingConfig) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
@@ -54,6 +61,13 @@ export function SummaryPanel({
       <Field label="Role" value={database?.role ?? "-"} />
       <Field label="Status" value={database?.status ?? "-"} />
       <Field label="Logical size" value={database ? formatBytes(database.logicalSizeBytes) : "-"} />
+      <Field label="Billing" value={billing.summary} />
+      <Field label="Minimum update" value={billing.configAvailable ? `${billing.minUpdateBalanceE8s.toString()} e8s` : "Unavailable"} />
+      {depositHref ? (
+        <Link className="text-accent no-underline hover:underline" href={depositHref}>
+          Deposit
+        </Link>
+      ) : null}
       <Link className="text-accent no-underline hover:underline" href={openHref}>
         Open
       </Link>
@@ -225,7 +239,7 @@ export function OwnerPanel(props: {
         <AclQuickAction label="Public" enabled={publicEnabled} busy={props.busy} actionBusy={publicBusy} enabledLabel="Disable public" disabledLabel="Enable public" onDisable={() => publicMember && requestRevoke(publicMember)} onEnable={() => requestGrant(ANONYMOUS_PRINCIPAL, "reader")} />
         <AclQuickAction label={LLM_WRITER_LABEL} enabled={llmWriterEnabled} busy={props.busy} actionBusy={llmWriterBusy} enabledLabel="Disable LLM writer" disabledLabel={llmWriterButtonLabel} onDisable={() => llmWriterMember && requestRevoke(llmWriterMember)} onEnable={() => requestGrant(LLM_WRITER_PRINCIPAL, "writer")} />
         <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-muted">
-          URL ingest trigger sessions are valid for 30 minutes. Revoking writer access does not immediately invalidate an already issued session ticket before it expires.
+          URL ingest trigger sessions expire within 30 minutes and can fail earlier when role or billing state changes.
         </p>
       </div>
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />

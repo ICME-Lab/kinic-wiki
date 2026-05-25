@@ -9,8 +9,6 @@ const principalText = document.querySelector("#principal");
 const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
-const refreshDatabasesButton = document.querySelector("#refresh-databases");
-const saveButton = document.querySelector("#save-settings");
 const statusText = document.querySelector("#status");
 const latestStatusText = document.querySelector("#latest-status");
 const DEFAULT_DATABASE_ID = process.env.KINIC_CAPTURE_DATABASE_ID || "";
@@ -20,7 +18,6 @@ loginButton.addEventListener("click", async () => {
     statusText.textContent = "Opening Internet Identity...";
     await loginWithInternetIdentity();
     await refreshAuthAndDatabases();
-    statusText.textContent = "Logged in";
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : String(error);
   }
@@ -36,18 +33,10 @@ logoutButton.addEventListener("click", async () => {
   }
 });
 
-refreshDatabasesButton.addEventListener("click", async () => {
+databaseSelect.addEventListener("change", async () => {
+  if (!databaseSelect.value) return;
   try {
-    await refreshAuthAndDatabases();
-  } catch (error) {
-    statusText.textContent = error instanceof Error ? error.message : String(error);
-  }
-});
-
-saveButton.addEventListener("click", async () => {
-  try {
-    await send({ type: "save-config", config: currentConfig() });
-    statusText.textContent = "Settings saved";
+    await saveDatabaseSelection(databaseSelect.value);
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : String(error);
   }
@@ -72,10 +61,9 @@ async function send(message) {
   return response;
 }
 
-function currentConfig() {
-  return {
-    databaseId: databaseSelect.value || ""
-  };
+async function saveDatabaseSelection(databaseId) {
+  await send({ type: "save-config", config: { databaseId } });
+  statusText.textContent = databaseId ? "Database selected" : "No writable hot databases found.";
 }
 
 async function refreshAuthAndDatabases() {
@@ -83,8 +71,6 @@ async function refreshAuthAndDatabases() {
   principalText.textContent = snapshot.isAuthenticated ? snapshot.principal : "Not logged in";
   loginButton.disabled = snapshot.isAuthenticated;
   logoutButton.disabled = !snapshot.isAuthenticated;
-  refreshDatabasesButton.disabled = !snapshot.isAuthenticated;
-  saveButton.disabled = !snapshot.isAuthenticated;
   if (!snapshot.isAuthenticated) {
     renderDatabaseOptions([], "", "Login to load writable databases.");
     return;
@@ -95,8 +81,17 @@ async function refreshAuthAndDatabases() {
     host: DEFAULT_IC_HOST,
     identity: snapshot.identity
   });
-  renderDatabaseOptions(databases, response.config.databaseId || DEFAULT_DATABASE_ID);
-  statusText.textContent = databases.length === 0 ? "No writable hot databases found." : "Databases loaded";
+  const storedDatabaseId = response.config?.databaseId || "";
+  const selectedDatabaseId = renderDatabaseOptions(databases, storedDatabaseId || DEFAULT_DATABASE_ID);
+  if (!selectedDatabaseId) {
+    await saveDatabaseSelection("");
+    return;
+  }
+  if (selectedDatabaseId !== storedDatabaseId) {
+    await saveDatabaseSelection(selectedDatabaseId);
+    return;
+  }
+  statusText.textContent = "Database selected";
 }
 
 function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No writable hot databases found.") {
@@ -107,8 +102,7 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     option.textContent = placeholder;
     databaseSelect.append(option);
     databaseSelect.disabled = true;
-    saveButton.disabled = true;
-    return;
+    return "";
   }
   for (const database of databases) {
     const option = document.createElement("option");
@@ -120,7 +114,7 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     ? selectedDatabaseId
     : databases[0].databaseId;
   databaseSelect.disabled = false;
-  saveButton.disabled = false;
+  return databaseSelect.value;
 }
 
 async function refreshLatestStatus() {

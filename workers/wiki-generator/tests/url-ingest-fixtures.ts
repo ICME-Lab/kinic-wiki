@@ -64,6 +64,9 @@ export async function withFetchedPage(run: () => Promise<void>, html = "<html><h
 export class TestVfsClient implements VfsClient {
   existingSource: WikiNode | null = null;
   requestNode: WikiNode | null = null;
+  failSessionCheck = false;
+  sessionChecks: { databaseId: string; requestPath: string; sessionNonce: string }[] = [];
+  billableChecks: string[] = [];
   failExpectedEtagOnce = false;
   sourceAckKind: NodeKind = "source";
   sourceReadsBeforeWrite = 0;
@@ -72,6 +75,15 @@ export class TestVfsClient implements VfsClient {
   sourceWrites = 0;
   lastRequest: UrlIngestRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
+
+  async checkDatabaseBillable(databaseId: string): Promise<void> {
+    this.billableChecks.push(databaseId);
+  }
+
+  async checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void> {
+    this.sessionChecks.push({ databaseId, requestPath, sessionNonce });
+    if (this.failSessionCheck) throw new Error("session denied");
+  }
 
   async readNode(_databaseId: string, path: string): Promise<WikiNode | null> {
     if (path.startsWith("/Sources/raw/")) {
@@ -195,9 +207,11 @@ function isQueueMessage(value: unknown): value is QueueMessage {
       "canisterId" in value &&
       "databaseId" in value &&
       "requestPath" in value &&
+      "sessionNonce" in value &&
       typeof value.canisterId === "string" &&
       typeof value.databaseId === "string" &&
-      typeof value.requestPath === "string"
+      typeof value.requestPath === "string" &&
+      typeof value.sessionNonce === "string"
     );
   }
   return false;

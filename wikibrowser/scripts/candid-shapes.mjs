@@ -43,6 +43,48 @@ export const expectedTypes = {
       database_id: "text"
     }
   },
+  DatabaseBillingEntry: {
+    kind: "record",
+    fields: {
+      method: "opt text",
+      fixed_update_fee_e8s: "opt nat64",
+      kind: "text",
+      rate_denominator_cycles: "opt nat64",
+      created_at_ms: "int64",
+      amount_e8s: "int64",
+      rate_numerator_e8s: "opt nat64",
+      ledger_block_index: "opt nat64",
+      database_id: "text",
+      balance_after_e8s: "nat64",
+      caller: "text",
+      cycles_delta: "opt nat64",
+      entry_id: "nat64",
+      usage_event_id: "opt nat64"
+    }
+  },
+  DatabaseBillingEntryPage: {
+    kind: "record",
+    fields: { entries: "vec DatabaseBillingEntry", next_cursor: "opt nat64" }
+  },
+  DatabaseBillingPendingOperation: {
+    kind: "record",
+    fields: {
+      kind: "text",
+      fee_e8s: "int64",
+      operation_id: "nat64",
+      created_at_ms: "int64",
+      amount_e8s: "int64",
+      database_id: "text",
+      caller: "text"
+    }
+  },
+  DatabaseBillingPendingOperationPage: {
+    kind: "record",
+    fields: {
+      entries: "vec DatabaseBillingPendingOperation",
+      next_cursor: "opt nat64"
+    }
+  },
   CanonicalRole: {
     kind: "record",
     fields: { name: "text", path_pattern: "text", purpose: "text" }
@@ -212,6 +254,9 @@ export const expectedTypes = {
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
   ResultBillingConfig: { kind: "variant", cases: { Ok: "BillingConfig", Err: "text" } },
   ResultBillingTransfer: { kind: "variant", cases: { Ok: "BillingTransferResult", Err: "text" } },
+  ResultBillingEntries: { kind: "variant", cases: { Ok: "DatabaseBillingEntryPage", Err: "text" } },
+  ResultBillingPending: { kind: "variant", cases: { Ok: "DatabaseBillingPendingOperationPage", Err: "text" } },
+  ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
   ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
@@ -291,22 +336,25 @@ export const didTypeAliases = {
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultChildren: "Result_12",
   ResultBillingConfig: "Result_9",
-  ResultBillingTransfer: "Result_26",
+  ResultBillingTransfer: "Result_25",
+  ResultBillingEntries: "Result_13",
+  ResultBillingPending: "Result_14",
+  ResultNat64: "Result_26",
   ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_15",
+  ResultDatabases: "Result_16",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_17",
-  ResultMoveNode: "Result_18",
-  ResultMembers: "Result_14",
+  ResultMkdirNode: "Result_18",
+  ResultMoveNode: "Result_19",
+  ResultMembers: "Result_15",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_21",
-  ResultNodeContext: "Result_22",
-  ResultQueryContext: "Result_19",
-  ResultRecent: "Result_23",
-  ResultSearch: "Result_24",
-  ResultSourceEvidence: "Result_25",
+  ResultNode: "Result_22",
+  ResultNodeContext: "Result_23",
+  ResultQueryContext: "Result_20",
+  ResultRecent: "Result_24",
+  ResultSearch: "Result_27",
+  ResultSourceEvidence: "Result_28",
   ResultOpsAnswerSessionCheck: "Result_3"
 };
 
@@ -314,6 +362,7 @@ export const expectedMethods = {
   authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
+  check_database_billable: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
@@ -325,20 +374,28 @@ export const expectedMethods = {
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },
   incoming_links: { input: ["IncomingLinksRequest"], output: "ResultLinks", mode: "query" },
   list_children: { input: ["ListChildrenRequest"], output: "ResultChildren", mode: "query" },
+  list_database_billing_entries: { input: ["text", "opt nat64", "nat32"], output: "ResultBillingEntries", mode: "query" },
+  list_database_billing_pending_operations: { input: ["text", "opt nat64", "nat32"], output: "ResultBillingPending", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
   memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
+  preview_database_top_up: { input: ["text", "nat64"], output: "ResultUnit", mode: "query" },
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
   recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
+  repair_database_top_up_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
+  repair_database_top_up_complete: { input: ["text", "nat64", "nat64"], output: "ResultBillingTransfer", mode: "update" },
+  repair_database_withdraw_complete: { input: ["text", "nat64", "nat64"], output: "ResultBillingTransfer", mode: "update" },
+  repair_database_withdraw_reverse: { input: ["text", "nat64"], output: "ResultNat64", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
   top_up_database: { input: ["text", "nat64"], output: "ResultBillingTransfer", mode: "update" },
+  withdraw_database_balance: { input: ["text", "nat64", "BillingAccount"], output: "ResultBillingTransfer", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" }
 };

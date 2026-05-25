@@ -7,7 +7,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use candid::Principal;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
@@ -634,6 +634,100 @@ async fn run_database_command(
                 result.block_index, result.balance_e8s
             );
         }
+        DatabaseCommand::BillingHistory { database_id, json } => {
+            let page = client
+                .list_database_billing_entries(&database_id, None, 100)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                for entry in page.entries {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        entry.entry_id,
+                        entry.kind,
+                        entry.amount_e8s,
+                        entry.balance_after_e8s,
+                        entry.caller,
+                        entry.method.unwrap_or_else(|| "-".to_string()),
+                        entry
+                            .usage_event_id
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        entry
+                            .ledger_block_index
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        entry.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::BillingPending { database_id, json } => {
+            let page = client
+                .list_database_billing_pending_operations(&database_id, None, 100)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                for operation in page.entries {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        operation.operation_id,
+                        operation.database_id,
+                        operation.kind,
+                        operation.caller,
+                        operation.amount_e8s,
+                        operation.fee_e8s,
+                        operation.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::RepairTopUpComplete {
+            database_id,
+            operation_id,
+            block_index,
+        } => {
+            let result = client
+                .repair_database_top_up_complete(&database_id, operation_id, block_index)
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}",
+                result.block_index, result.balance_e8s
+            );
+        }
+        DatabaseCommand::RepairTopUpCancel {
+            database_id,
+            operation_id,
+        } => {
+            client
+                .repair_database_top_up_cancel(&database_id, operation_id)
+                .await?;
+            println!("{database_id}\t{operation_id}");
+        }
+        DatabaseCommand::RepairWithdrawComplete {
+            database_id,
+            operation_id,
+            block_index,
+        } => {
+            let result = client
+                .repair_database_withdraw_complete(&database_id, operation_id, block_index)
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}",
+                result.block_index, result.balance_e8s
+            );
+        }
+        DatabaseCommand::RepairWithdrawReverse {
+            database_id,
+            operation_id,
+        } => {
+            let balance = client
+                .repair_database_withdraw_reverse(&database_id, operation_id)
+                .await?;
+            println!("{database_id}\t{operation_id}\t{balance}");
+        }
         DatabaseCommand::Deposit {
             database_id,
             amount_e8s,
@@ -812,10 +906,25 @@ async fn run_billing_command(client: &impl VfsApi, command: BillingCommand) -> R
     match command {
         BillingCommand::Config { json } => {
             let config = client.get_billing_config().await?;
+            let ledger_fee_e8s = client
+                .kinic_ledger_fee_e8s(&config.kinic_ledger_canister_id)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to query icrc1_fee from ledger {}",
+                        config.kinic_ledger_canister_id
+                    )
+                })?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&config)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&BillingConfigOutput::new(
+                        config,
+                        ledger_fee_e8s
+                    ))?
+                );
             } else {
-                for line in billing_config_lines(&config) {
+                for line in billing_config_lines(&config, ledger_fee_e8s) {
                     println!("{line}");
                 }
             }
@@ -824,7 +933,32 @@ async fn run_billing_command(client: &impl VfsApi, command: BillingCommand) -> R
     Ok(())
 }
 
-fn billing_config_lines(config: &BillingConfig) -> Vec<String> {
+#[derive(Debug, serde::Serialize)]
+struct BillingConfigOutput {
+    kinic_ledger_canister_id: String,
+    sns_governance_id: String,
+    rate_numerator_e8s: u64,
+    rate_denominator_cycles: u64,
+    fixed_update_fee_e8s: u64,
+    min_update_balance_e8s: u64,
+    ledger_fee_e8s: u64,
+}
+
+impl BillingConfigOutput {
+    fn new(config: BillingConfig, ledger_fee_e8s: u64) -> Self {
+        Self {
+            kinic_ledger_canister_id: config.kinic_ledger_canister_id,
+            sns_governance_id: config.sns_governance_id,
+            rate_numerator_e8s: config.rate_numerator_e8s,
+            rate_denominator_cycles: config.rate_denominator_cycles,
+            fixed_update_fee_e8s: config.fixed_update_fee_e8s,
+            min_update_balance_e8s: config.min_update_balance_e8s,
+            ledger_fee_e8s,
+        }
+    }
+}
+
+fn billing_config_lines(config: &BillingConfig, ledger_fee_e8s: u64) -> Vec<String> {
     vec![
         format!(
             "kinic_ledger_canister_id\t{}",
@@ -838,6 +972,7 @@ fn billing_config_lines(config: &BillingConfig) -> Vec<String> {
             config.rate_denominator_cycles
         ),
         format!("fixed_update_fee_e8s\t{}", config.fixed_update_fee_e8s),
+        format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
     ]
 }
 
@@ -1182,7 +1317,7 @@ mod tests {
     use super::run_vfs_command;
     use crate::cli::{BillingCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
-    use anyhow::Result;
+    use anyhow::{Result, anyhow};
     use async_trait::async_trait;
     use candid::Principal;
     use std::path::PathBuf;
@@ -1201,7 +1336,15 @@ mod tests {
         database_lists: Mutex<u32>,
         database_top_ups: Mutex<Vec<(String, u64)>>,
         database_withdraws: Mutex<Vec<(String, u64, BillingAccount)>>,
+        database_billing_history: Mutex<Vec<String>>,
+        database_billing_pending: Mutex<Vec<String>>,
+        database_top_up_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
+        database_top_up_repairs_cancel: Mutex<Vec<(String, u64)>>,
+        database_withdraw_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
+        database_withdraw_repairs_reverse: Mutex<Vec<(String, u64)>>,
         billing_configs: Mutex<u32>,
+        ledger_fee_queries: Mutex<Vec<String>>,
+        fail_ledger_fee_query: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
         child_lists: Mutex<Vec<ListChildrenRequest>>,
@@ -1308,6 +1451,112 @@ mod tests {
                 balance_e8s: 1,
             })
         }
+        async fn list_database_billing_entries(
+            &self,
+            database_id: &str,
+            _cursor: Option<u64>,
+            _limit: u32,
+        ) -> Result<DatabaseBillingEntryPage> {
+            self.database_billing_history
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(DatabaseBillingEntryPage {
+                entries: vec![DatabaseBillingEntry {
+                    entry_id: 1,
+                    database_id: database_id.to_string(),
+                    kind: "top_up".to_string(),
+                    amount_e8s: 500_000,
+                    balance_after_e8s: 500_000,
+                    caller: "caller".to_string(),
+                    method: Some("top_up_database".to_string()),
+                    cycles_delta: None,
+                    rate_numerator_e8s: None,
+                    rate_denominator_cycles: None,
+                    fixed_update_fee_e8s: None,
+                    usage_event_id: None,
+                    ledger_block_index: Some(7),
+                    created_at_ms: 1,
+                }],
+                next_cursor: None,
+            })
+        }
+        async fn list_database_billing_pending_operations(
+            &self,
+            database_id: &str,
+            _cursor: Option<u64>,
+            _limit: u32,
+        ) -> Result<DatabaseBillingPendingOperationPage> {
+            self.database_billing_pending
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(DatabaseBillingPendingOperationPage {
+                entries: vec![DatabaseBillingPendingOperation {
+                    operation_id: 9,
+                    database_id: database_id.to_string(),
+                    kind: "top_up".to_string(),
+                    caller: "caller".to_string(),
+                    amount_e8s: 500_000,
+                    fee_e8s: 0,
+                    created_at_ms: 1,
+                }],
+                next_cursor: None,
+            })
+        }
+        async fn repair_database_top_up_complete(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+            ledger_block_index: u64,
+        ) -> Result<BillingTransferResult> {
+            self.database_top_up_repairs_complete.lock().unwrap().push((
+                database_id.to_string(),
+                operation_id,
+                ledger_block_index,
+            ));
+            Ok(BillingTransferResult {
+                block_index: ledger_block_index,
+                balance_e8s: 500_000,
+            })
+        }
+        async fn repair_database_top_up_cancel(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+        ) -> Result<()> {
+            self.database_top_up_repairs_cancel
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id));
+            Ok(())
+        }
+        async fn repair_database_withdraw_complete(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+            ledger_block_index: u64,
+        ) -> Result<BillingTransferResult> {
+            self.database_withdraw_repairs_complete
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id, ledger_block_index));
+            Ok(BillingTransferResult {
+                block_index: ledger_block_index,
+                balance_e8s: 1,
+            })
+        }
+        async fn repair_database_withdraw_reverse(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+        ) -> Result<u64> {
+            self.database_withdraw_repairs_reverse
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id));
+            Ok(500_000)
+        }
         async fn get_billing_config(&self) -> Result<BillingConfig> {
             let mut configs = self.billing_configs.lock().unwrap();
             *configs += 1;
@@ -1319,6 +1568,16 @@ mod tests {
                 fixed_update_fee_e8s: 100,
                 min_update_balance_e8s: 10_000,
             })
+        }
+        async fn kinic_ledger_fee_e8s(&self, ledger_canister_id: &str) -> Result<u64> {
+            self.ledger_fee_queries
+                .lock()
+                .unwrap()
+                .push(ledger_canister_id.to_string());
+            if *self.fail_ledger_fee_query.lock().unwrap() {
+                return Err(anyhow!("ledger unavailable"));
+            }
+            Ok(12_345)
         }
         async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
             Ok(())
@@ -1741,6 +2000,120 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn database_billing_history_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::BillingHistory {
+                    database_id: "db_alpha".to_string(),
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect("database billing-history should succeed");
+        assert_eq!(
+            *client.database_billing_history.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_billing_pending_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::BillingPending {
+                    database_id: "db_alpha".to_string(),
+                    json: true,
+                },
+            },
+        )
+        .await
+        .expect("database billing-pending should succeed");
+        assert_eq!(
+            *client.database_billing_pending.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_repair_commands_call_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::RepairTopUpComplete {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 9,
+                    block_index: 77,
+                },
+            },
+        )
+        .await
+        .expect("repair top-up complete should succeed");
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::RepairTopUpCancel {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 10,
+                },
+            },
+        )
+        .await
+        .expect("repair top-up cancel should succeed");
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::RepairWithdrawComplete {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 11,
+                    block_index: 78,
+                },
+            },
+        )
+        .await
+        .expect("repair withdraw complete should succeed");
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::RepairWithdrawReverse {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 12,
+                },
+            },
+        )
+        .await
+        .expect("repair withdraw reverse should succeed");
+
+        assert_eq!(
+            *client.database_top_up_repairs_complete.lock().unwrap(),
+            vec![("db_alpha".to_string(), 9, 77)]
+        );
+        assert_eq!(
+            *client.database_top_up_repairs_cancel.lock().unwrap(),
+            vec![("db_alpha".to_string(), 10)]
+        );
+        assert_eq!(
+            *client.database_withdraw_repairs_complete.lock().unwrap(),
+            vec![("db_alpha".to_string(), 11, 78)]
+        );
+        assert_eq!(
+            *client.database_withdraw_repairs_reverse.lock().unwrap(),
+            vec![("db_alpha".to_string(), 12)]
+        );
+    }
+
     #[test]
     fn database_deposit_url_uses_browser_origin() {
         let url = super::database_deposit_url(
@@ -1770,20 +2143,52 @@ mod tests {
         .await
         .expect("billing config should succeed");
         assert_eq!(*client.billing_configs.lock().unwrap(), 1);
+        assert_eq!(
+            *client.ledger_fee_queries.lock().unwrap(),
+            vec!["ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn billing_config_fails_when_ledger_fee_query_fails() {
+        let client = MockClient::default();
+        *client.fail_ledger_fee_query.lock().unwrap() = true;
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Billing {
+                command: BillingCommand::Config { json: false },
+            },
+        )
+        .await
+        .expect_err("ledger fee query failure should fail command");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("icrc1_fee"));
+        assert!(message.contains("ryjl3-tyaaa-aaaaa-aaaba-cai"));
+        assert_eq!(*client.billing_configs.lock().unwrap(), 1);
+        assert_eq!(
+            *client.ledger_fee_queries.lock().unwrap(),
+            vec!["ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()]
+        );
     }
 
     #[test]
     fn billing_config_text_includes_governance_principal() {
-        let lines = super::billing_config_lines(&BillingConfig {
-            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
-            sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-            rate_numerator_e8s: 200,
-            rate_denominator_cycles: 1_000_000,
-            fixed_update_fee_e8s: 100,
-            min_update_balance_e8s: 10_000,
-        });
+        let lines = super::billing_config_lines(
+            &BillingConfig {
+                kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                rate_numerator_e8s: 200,
+                rate_denominator_cycles: 1_000_000,
+                fixed_update_fee_e8s: 100,
+                min_update_balance_e8s: 10_000,
+            },
+            12_345,
+        );
 
         assert!(lines.contains(&"sns_governance_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
+        assert!(lines.contains(&"ledger_fee_e8s\t12345".to_string()));
     }
 
     #[tokio::test]

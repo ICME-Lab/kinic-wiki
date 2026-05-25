@@ -293,4 +293,5 @@ bash scripts/run_canbench_guard.sh
 - Public entry docs stay in English
 - Validation docs describe VFS behavior, not product marketing
 - Internal operating notes stay repo-local and are not part of the public entry path
+- Unresolved implementation questions stay in internal docs until they become public-facing decisions.
 - Historical or exploratory material is removed or archived instead of being linked from the README

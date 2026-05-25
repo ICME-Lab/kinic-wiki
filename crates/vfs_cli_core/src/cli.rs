@@ -285,6 +285,40 @@ pub enum DatabaseCommand {
         #[arg(long)]
         to_subaccount_hex: Option<String>,
     },
+    #[command(about = "List billing ledger entries for one database")]
+    BillingHistory {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List pending billing operations for one database")]
+    BillingPending {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Governance repair: complete a pending database top-up")]
+    RepairTopUpComplete {
+        database_id: String,
+        operation_id: u64,
+        block_index: u64,
+    },
+    #[command(about = "Governance repair: cancel a pending database top-up")]
+    RepairTopUpCancel {
+        database_id: String,
+        operation_id: u64,
+    },
+    #[command(about = "Governance repair: complete a pending database withdraw")]
+    RepairWithdrawComplete {
+        database_id: String,
+        operation_id: u64,
+        block_index: u64,
+    },
+    #[command(about = "Governance repair: reverse a pending database withdraw")]
+    RepairWithdrawReverse {
+        database_id: String,
+        operation_id: u64,
+    },
     #[command(about = "Open the browser deposit page for one database")]
     Deposit {
         database_id: String,

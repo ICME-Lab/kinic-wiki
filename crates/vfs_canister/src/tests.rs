@@ -22,17 +22,19 @@ use vfs_types::{
 use super::{
     LedgerTransferFromOutcome, LedgerTransferOutcome, SERVICE, TransferError, TransferFromError,
     append_node, begin_database_archive, begin_database_restore, cancel_database_archive,
-    create_database, delete_node, edit_node, export_snapshot,
-    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
-    finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
-    incoming_links, list_children, list_database_billing_entries, list_database_members,
+    check_database_billable, clear_last_ledger_memo_for_test, create_database, delete_node,
+    edit_node, export_snapshot, fail_next_mount_database_file_for_test, fetch_updates,
+    finalize_database_archive, finalize_database_restore, glob_nodes, grant_database_access,
+    graph_links, graph_neighborhood, incoming_links, last_ledger_memo_for_test, list_children,
+    list_database_billing_entries, list_database_billing_pending_operations, list_database_members,
     list_databases, list_nodes, memory_manifest, mkdir_node, move_node, multi_edit_node,
-    outgoing_links, parse_upgrade_billing_config_arg, query_context, read_database_archive_chunk,
-    read_node, read_node_context, recent_nodes, rename_database, revoke_database_access,
-    search_node_paths, search_nodes, set_next_ledger_transfer_from_outcome_for_test,
-    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test, source_evidence,
-    status, top_up_database, transfer_error_outcome, transfer_from_error_outcome,
-    withdraw_database_balance, write_database_restore_chunk, write_node, write_nodes,
+    outgoing_links, parse_upgrade_billing_config_arg, preview_database_top_up, query_context,
+    read_database_archive_chunk, read_node, read_node_context, recent_nodes, rename_database,
+    repair_database_top_up_complete, revoke_database_access, search_node_paths, search_nodes,
+    set_next_ledger_transfer_from_outcome_for_test, set_next_ledger_transfer_outcome_for_test,
+    set_test_caller_principal_for_test, source_evidence, status, top_up_database,
+    transfer_error_outcome, transfer_from_error_outcome, withdraw_database_balance,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -92,6 +94,21 @@ fn explicit_billing_config() -> BillingConfig {
     }
 }
 
+#[test]
+fn billing_config_rejects_anonymous_principals() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let mut config = explicit_billing_config();
+    config.sns_governance_id = Principal::anonymous().to_text();
+
+    let error = service
+        .run_index_migrations_with_config(config)
+        .expect_err("anonymous governance should reject");
+
+    assert!(error.contains("principal must not be anonymous"));
+}
+
 fn fund_database(database_id: &str, amount_e8s: u64, ledger_block_index: u64) {
     let principal = Principal::management_canister().to_text();
     SERVICE.with(|slot| {
@@ -121,6 +138,10 @@ fn test_billing_account() -> BillingAccount {
         owner: Principal::management_canister(),
         subaccount: None,
     }
+}
+
+fn test_governance_principal() -> Principal {
+    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("governance principal should parse")
 }
 
 struct AuthenticatedCallerGuard;
@@ -225,7 +246,45 @@ fn top_up_database_credits_completed_transfer_from() {
         .entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "top_up");
-    assert_eq!(entries[0].usage_event_id, Some(42));
+    assert_eq!(entries[0].usage_event_id, None);
+    assert_eq!(entries[0].ledger_block_index, Some(42));
+}
+
+#[test]
+fn preview_database_top_up_rejects_invalid_target_before_approve() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Preview".to_string(),
+    })
+    .expect("database should create");
+
+    preview_database_top_up(database.database_id.clone(), 500).expect("preview should accept");
+    let zero = preview_database_top_up(database.database_id.clone(), 0)
+        .expect_err("zero amount should reject");
+    assert!(zero.contains("top-up amount must be positive"));
+    let missing = preview_database_top_up("missing".to_string(), 500)
+        .expect_err("missing database should reject");
+    assert!(missing.contains("database not found"));
+}
+
+#[test]
+fn top_up_database_rejects_balance_overflow_before_ledger_call() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Overflow".to_string(),
+    })
+    .expect("database should create");
+    fund_database(&database.database_id, i64::MAX as u64, 41);
+    clear_last_ledger_memo_for_test();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+
+    let error = block_on_ready(top_up_database(database.database_id, 1))
+        .expect_err("overflow should reject before ledger");
+
+    assert!(error.contains("balance overflow"));
+    assert_eq!(last_ledger_memo_for_test(), None);
 }
 
 #[test]
@@ -274,6 +333,62 @@ fn top_up_database_records_ambiguous_transfer_from() {
     assert_eq!(entries[0].amount_e8s, 500);
     assert_eq!(entries[0].balance_after_e8s, 0);
     assert_eq!(entries[0].usage_event_id, None);
+    assert_eq!(entries[0].ledger_block_index, None);
+}
+
+#[test]
+fn governance_can_repair_ambiguous_top_up() {
+    install_empty_test_service();
+    let database_id;
+    let operation_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Repair top-up".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+            "icrc2_transfer_from decode failed".to_string(),
+        ));
+        let error = block_on_ready(top_up_database(database_id.clone(), 500))
+            .expect_err("ambiguous transfer-from should return pending error");
+        assert!(error.contains("top-up pending"));
+
+        let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("owner should list pending operations")
+            .entries;
+        assert_eq!(pending.len(), 1);
+        operation_id = pending[0].operation_id;
+
+        let error = repair_database_top_up_complete(database_id.clone(), operation_id, 77)
+            .expect_err("owner repair should reject");
+        assert!(error.contains("caller is not SNS governance"));
+    }
+
+    {
+        let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+        let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("governance should list pending operations")
+            .entries;
+        assert_eq!(pending.len(), 1);
+        let result = repair_database_top_up_complete(database_id.clone(), operation_id, 77)
+            .expect("governance should repair top-up");
+        assert_eq!(result.block_index, 77);
+        assert_eq!(result.balance_e8s, 500);
+    }
+
+    let _owner = AuthenticatedCallerGuard::install();
+    let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+        .expect("owner should list pending operations")
+        .entries;
+    assert!(pending.is_empty());
+    let entries = list_database_billing_entries(database_id, None, 10)
+        .expect("database ledger should load")
+        .entries;
+    assert_eq!(entries[0].kind, "top_up_ambiguous");
+    assert_eq!(entries[1].kind, "top_up_repair_complete");
+    assert_eq!(entries[1].ledger_block_index, Some(77));
 }
 
 #[test]
@@ -297,6 +412,24 @@ fn top_up_database_allows_non_owner_payer() {
 
     assert_eq!(result.block_index, 43);
     assert_eq!(result.balance_e8s, 700);
+}
+
+#[test]
+fn top_up_database_sends_operation_memo_to_ledger() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Memo".to_string(),
+    })
+    .expect("database should create");
+    clear_last_ledger_memo_for_test();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(43));
+
+    block_on_ready(top_up_database(database.database_id, 700)).expect("top-up should succeed");
+
+    let memo = String::from_utf8(last_ledger_memo_for_test().expect("memo should be recorded"))
+        .expect("memo should be utf8");
+    assert!(memo.starts_with("kinic:vfs:top_up:"));
 }
 
 #[test]
@@ -346,7 +479,58 @@ fn withdraw_database_balance_completes_transfer() {
     assert_eq!(entries[1].kind, "withdraw_pending");
     assert_eq!(entries[2].kind, "withdraw_fee_pending");
     assert_eq!(entries[3].kind, "withdraw_complete");
-    assert_eq!(entries[3].usage_event_id, Some(77));
+    assert_eq!(entries[3].usage_event_id, None);
+    assert_eq!(entries[3].ledger_block_index, Some(77));
+}
+
+#[test]
+fn withdraw_database_balance_rejects_invalid_subaccount_before_ledger_call() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Invalid subaccount".to_string(),
+    })
+    .expect("database should create");
+    fund_database(&database.database_id, 1_000, 43);
+    clear_last_ledger_memo_for_test();
+    let account = BillingAccount {
+        owner: Principal::management_canister(),
+        subaccount: Some(vec![1]),
+    };
+
+    let error = block_on_ready(withdraw_database_balance(
+        database.database_id,
+        400,
+        account,
+    ))
+    .expect_err("invalid subaccount should reject");
+
+    assert!(error.contains("subaccount must be 32 bytes"));
+    assert_eq!(last_ledger_memo_for_test(), None);
+}
+
+#[test]
+fn withdraw_database_balance_sends_operation_memo_to_ledger() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Withdraw memo".to_string(),
+    })
+    .expect("database should create");
+    fund_database(&database.database_id, 1_000, 43);
+    clear_last_ledger_memo_for_test();
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Completed(77));
+
+    block_on_ready(withdraw_database_balance(
+        database.database_id,
+        400,
+        test_billing_account(),
+    ))
+    .expect("withdraw should succeed");
+
+    let memo = String::from_utf8(last_ledger_memo_for_test().expect("memo should be recorded"))
+        .expect("memo should be utf8");
+    assert!(memo.starts_with("kinic:vfs:withdraw:"));
 }
 
 #[test]
@@ -684,6 +868,77 @@ fn suspended_database_rejects_metered_mutations() {
     assert!(batch.contains("database billing is suspended"));
     assert!(mkdir.contains("database billing is suspended"));
     assert!(cancel.contains("database billing is suspended"));
+}
+
+#[test]
+fn metered_update_checks_access_before_billing_state() {
+    install_suspended_default_service();
+    let _caller = AuthenticatedCallerGuard::install();
+
+    let error = write_nodes(WriteNodesRequest {
+        database_id: "default".to_string(),
+        nodes: vec![WriteNodeItem {
+            path: "/Wiki/no-access.md".to_string(),
+            kind: NodeKind::File,
+            content: "no access".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        }],
+    })
+    .expect_err("non-member should fail before billing state");
+
+    assert!(error.contains("principal has no access"));
+    assert!(!error.contains("database billing is suspended"));
+}
+
+#[test]
+fn check_database_billable_requires_authenticated_writer() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let reader =
+        Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("reader principal should parse");
+    let database_id = {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        create_database(CreateDatabaseRequest {
+            name: "Billable check".to_string(),
+        })
+        .expect("database should create")
+        .database_id
+    };
+
+    let anonymous =
+        check_database_billable(database_id.clone()).expect_err("anonymous caller should fail");
+    assert!(anonymous.contains("anonymous caller not allowed"));
+
+    let suspended = {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        check_database_billable(database_id.clone()).expect_err("suspended database should fail")
+    };
+    assert!(suspended.contains("database billing is suspended"));
+
+    fund_database(&database_id, 1_000_000, 91);
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .grant_database_access(
+                &database_id,
+                &owner.to_text(),
+                &reader.to_text(),
+                DatabaseRole::Reader,
+                2,
+            )
+            .expect("reader should grant");
+    });
+
+    let reader_error = {
+        let _caller = AuthenticatedCallerGuard::install_principal(reader);
+        check_database_billable(database_id.clone()).expect_err("reader should fail")
+    };
+    assert!(reader_error.contains("principal lacks required database role"));
+
+    let _caller = AuthenticatedCallerGuard::install_principal(owner);
+    check_database_billable(database_id).expect("owner should pass billable check");
 }
 
 #[test]

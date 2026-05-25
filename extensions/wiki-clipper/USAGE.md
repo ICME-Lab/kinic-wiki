@@ -58,7 +58,7 @@ Use these extension settings:
 
 The extension fixes canister ID to `xis3j-paaaa-aaaai-axumq-cai` and IC host to `https://icp0.io`. The database must already exist. Mainnet writes require explicit confirmation before ChatGPT raw export.
 
-Login with Internet Identity from the extension settings page, select a writable database, and save it before clicking the toolbar icon. The logged-in principal must have writer access to the selected database.
+Login with Internet Identity from the extension settings page and select a writable database before clicking the toolbar icon. The selected database is saved automatically. The logged-in principal must have writer access to the selected database.
 
 ## Export
 

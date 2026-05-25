@@ -80,25 +80,40 @@ Successful DB update calls are charged after execution. The charge is:
 ceil(cycles_delta * rate_numerator_e8s / rate_denominator_cycles) + fixed_update_fee_e8s
 ```
 
-The default rate is `200 / 1_000_000` cycles and the default fixed update fee is `100` e8s. Before a metered update, the DB balance must be at least `min_update_balance_e8s` and the DB must not be suspended. If the post-update charge exceeds the DB balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+The default rate is `200 / 1_000_000` cycles and the default fixed update fee is `100` e8s. Before a metered update, the caller role is checked first, then the DB balance must be at least `min_update_balance_e8s` and the DB must not be suspended. Non-members receive access errors without learning billing state. If the post-update charge exceeds the DB balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
 
-`database_billing_ledger` is the billing source of truth. `usage_events` remains an operational log only.
+`database_billing_ledger` is the billing source of truth. `usage_events` remains an operational log only. Usage charges store their operational id in `usage_event_id`; ledger-backed top-up, withdraw, and repair entries store ledger block indexes in `ledger_block_index`.
+
+Billing history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full billing history. Pending billing operations remain visible only to DB owner and SNS governance. New billing history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_billing_config` with a Candid-encoded `BillingConfigUpdate` blob. `validate_update_billing_config` performs the same validation without changing state.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. By default it injects fixed local ledger canister ID `73mez-iiaaa-aaaaq-aaasq-cai` and anonymous SNS governance placeholder `2vxsx-fae`; both can be overridden with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`. The script does not create the ledger canister. Local top-up tests that hit the external ledger require an ICRC ledger already installed at that ID.
+`scripts/local/deploy_wiki.sh` carries local development init args. By default it injects fixed local ledger canister ID `73mez-iiaaa-aaaaq-aaasq-cai`; `SNS_GOVERNANCE_ID` must be set explicitly. The script does not create the ledger canister. Local top-up tests that hit the external ledger require an ICRC ledger already installed at that ID.
 
 Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
 
 Normal operator flow:
 
 1. Owner creates a DB with `create_database(display_name)`.
-2. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. The approve transaction fee is paid separately by the wallet.
+2. Payer previews the DB top-up, then approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
 3. Payer calls `top_up_database(database_id, amount_e8s)`.
 4. Successful DB updates consume DB balance.
 5. Owner can withdraw DB balance to an external KINIC account with `withdraw_database_balance(database_id, amount_e8s, to)`.
 
-If DB withdraw receives an explicit ledger error, the debit is reversed. If the inter-canister call or response decoding is ambiguous, the debit remains pending and the DB ledger records `withdraw_ambiguous`; initial repair is manual.
+URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or billing-config-unavailable DBs as not writable. Browser and worker paths re-check billing before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
+
+Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented.
+
+If DB top-up or withdraw receives an explicit ledger error, top-up is cancelled and withdraw debit is reversed. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `top_up_ambiguous` or `withdraw_ambiguous`.
+
+Pending operations block DB delete until SNS governance resolves them with a repair API:
+
+- `repair_database_top_up_complete(database_id, operation_id, ledger_block_index)`
+- `repair_database_top_up_cancel(database_id, operation_id)`
+- `repair_database_withdraw_complete(database_id, operation_id, ledger_block_index)`
+- `repair_database_withdraw_reverse(database_id, operation_id)`
+
+DB owner and SNS governance can inspect pending operations. Repair updates are governance-only.
 
 ## Delete
 

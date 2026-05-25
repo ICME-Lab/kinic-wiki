@@ -19,7 +19,8 @@ use sha2::{Digest, Sha256};
 use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, BillingConfig, BillingConfigUpdate, ChildNode, DatabaseArchiveInfo,
-    DatabaseBillingEntry, DatabaseBillingEntryPage, DatabaseInfo, DatabaseMember, DatabaseRole,
+    DatabaseBillingEntry, DatabaseBillingEntryPage, DatabaseBillingPendingOperation,
+    DatabaseBillingPendingOperationPage, DatabaseInfo, DatabaseMember, DatabaseRole,
     DatabaseStatus, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
@@ -49,6 +50,8 @@ const INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING: &str =
     "database_index:010_database_name_breaking";
 const INDEX_SCHEMA_VERSION_BILLING_INITIAL: &str = "database_index:011_billing_initial";
 const INDEX_SCHEMA_VERSION_BILLING_PENDING: &str = "database_index:012_billing_pending";
+const INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX: &str =
+    "database_index:013_billing_ledger_block_index";
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
@@ -489,21 +492,15 @@ impl VfsService {
         caller: &str,
         amount_e8s: u64,
     ) -> Result<(), String> {
-        if amount_to_i64(amount_e8s)? <= 0 {
+        let amount = amount_to_i64(amount_e8s)?;
+        if amount <= 0 {
             return Err("top-up amount must be positive".to_string());
         }
         let _ = caller;
         self.read_index(|conn| {
-            let status = load_database_status(conn, database_id)?;
-            if status == DatabaseStatus::Deleted {
-                return Err(format!("database is deleted: {database_id}"));
-            }
-            if !database_has_owner(conn, database_id)? {
-                return Err(format!("database has no owner: {database_id}"));
-            }
+            validate_database_top_up_for_conn(conn, database_id, amount)?;
             Ok(())
-        })?;
-        Ok(())
+        })
     }
 
     pub fn begin_database_top_up(
@@ -513,9 +510,9 @@ impl VfsService {
         amount_e8s: u64,
         now: i64,
     ) -> Result<u64, String> {
-        self.validate_database_top_up(database_id, caller, amount_e8s)?;
         let amount = amount_to_i64(amount_e8s)?;
         self.write_index(|tx| {
+            validate_database_top_up_for_conn(tx, database_id, amount)?;
             insert_pending_billing_operation(tx, database_id, "top_up", caller, amount, 0, now)
         })
     }
@@ -564,7 +561,8 @@ impl VfsService {
                     method: Some("top_up_database"),
                     cycles_delta: None,
                     config: None,
-                    usage_event_id: Some(ledger_block_index),
+                    usage_event_id: None,
+                    ledger_block_index: Some(ledger_block_index),
                     now,
                 },
             )?;
@@ -614,10 +612,10 @@ impl VfsService {
                     cycles_delta: None,
                     config: None,
                     usage_event_id: None,
+                    ledger_block_index: None,
                     now,
                 },
             )?;
-            delete_pending_billing_operation(tx, operation_id)?;
             Ok(balance as u64)
         })
     }
@@ -684,6 +682,7 @@ impl VfsService {
                     cycles_delta: None,
                     config: None,
                     usage_event_id: None,
+                    ledger_block_index: None,
                     now,
                 },
             )?;
@@ -699,6 +698,7 @@ impl VfsService {
                     cycles_delta: None,
                     config: None,
                     usage_event_id: None,
+                    ledger_block_index: None,
                     now,
                 },
             )?;
@@ -734,7 +734,8 @@ impl VfsService {
                     method: Some("withdraw_database_balance"),
                     cycles_delta: None,
                     config: None,
-                    usage_event_id: Some(ledger_block_index),
+                    usage_event_id: None,
+                    ledger_block_index: Some(ledger_block_index),
                     now,
                 },
             )?;
@@ -785,6 +786,7 @@ impl VfsService {
                     cycles_delta: None,
                     config: None,
                     usage_event_id: None,
+                    ledger_block_index: None,
                     now,
                 },
             )?;
@@ -821,10 +823,10 @@ impl VfsService {
                     cycles_delta: None,
                     config: None,
                     usage_event_id: None,
+                    ledger_block_index: None,
                     now,
                 },
             )?;
-            delete_pending_billing_operation(tx, operation_id)?;
             Ok(balance as u64)
         })
     }
@@ -836,16 +838,29 @@ impl VfsService {
         cursor: Option<u64>,
         limit: u32,
     ) -> Result<DatabaseBillingEntryPage, String> {
-        self.require_role(database_id, caller, RequiredRole::Reader)?;
+        let config = self.billing_config()?;
         let limit = page_limit(limit);
         let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
         self.read_index(|conn| {
+            let _status = load_database_status(conn, database_id)?;
+            let show_principal = if caller == config.sns_governance_id {
+                true
+            } else {
+                let role = load_member_role(conn, database_id, caller)?
+                    .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
+                if !role_allows(role, RequiredRole::Reader) {
+                    return Err(format!(
+                        "principal lacks required database role: {database_id}"
+                    ));
+                }
+                role == DatabaseRole::Owner
+            };
             let mut stmt = conn
                 .prepare(
                     "SELECT entry_id, database_id, kind, amount_e8s, balance_after_e8s,
                             caller, method, cycles_delta, rate_numerator_e8s,
                             rate_denominator_cycles, fixed_update_fee_e8s, usage_event_id,
-                            created_at_ms
+                            ledger_block_index, created_at_ms
                      FROM database_billing_ledger
                      WHERE database_id = ?1 AND entry_id > ?2
                      ORDER BY entry_id ASC
@@ -858,6 +873,11 @@ impl VfsService {
                 map_database_billing_entry,
             )
             .map_err(|error| error.to_string())?;
+            if !show_principal {
+                for entry in &mut entries {
+                    entry.caller = "redacted".to_string();
+                }
+            }
             let next_cursor = if entries.len() > limit as usize {
                 entries.pop();
                 entries.last().map(|entry| entry.entry_id)
@@ -868,6 +888,218 @@ impl VfsService {
                 entries,
                 next_cursor,
             })
+        })
+    }
+
+    pub fn list_database_billing_pending_operations(
+        &self,
+        database_id: &str,
+        caller: &str,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<DatabaseBillingPendingOperationPage, String> {
+        let config = self.billing_config()?;
+        let limit = page_limit(limit);
+        let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
+        self.read_index(|conn| {
+            let status = load_database_status(conn, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            if caller != config.sns_governance_id {
+                let role = load_member_role(conn, database_id, caller)?
+                    .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
+                if role != DatabaseRole::Owner {
+                    return Err(format!(
+                        "principal lacks required database role: {database_id}"
+                    ));
+                }
+            }
+            let mut stmt = conn
+                .prepare(
+                    "SELECT operation_id, database_id, kind, caller, amount_e8s, fee_e8s,
+                            created_at_ms
+                     FROM database_billing_pending_operations
+                     WHERE database_id = ?1 AND operation_id > ?2
+                     ORDER BY operation_id ASC
+                     LIMIT ?3",
+                )
+                .map_err(|error| error.to_string())?;
+            let mut entries = crate::sqlite::query_map(
+                &mut stmt,
+                params![database_id, after, i64::from(limit) + 1],
+                map_database_billing_pending_operation,
+            )
+            .map_err(|error| error.to_string())?;
+            let next_cursor = if entries.len() > limit as usize {
+                entries.pop();
+                entries.last().map(|entry| entry.operation_id)
+            } else {
+                None
+            };
+            Ok(DatabaseBillingPendingOperationPage {
+                entries,
+                next_cursor,
+            })
+        })
+    }
+
+    pub fn repair_database_top_up_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        ledger_block_index: u64,
+        caller: &str,
+        now: i64,
+    ) -> Result<u64, String> {
+        self.require_sns_governance(caller)?;
+        let config = self.billing_config()?;
+        self.write_index(|tx| {
+            let operation = load_pending_billing_operation(tx, operation_id)?;
+            require_pending_database_kind(&operation, database_id, "top_up")?;
+            let status = load_database_status(tx, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            let next = checked_balance_add(balance, operation.amount_e8s)?;
+            update_database_billing_balance(tx, database_id, next, &config, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "top_up_repair_complete",
+                    amount_e8s: operation.amount_e8s,
+                    balance_after_e8s: next,
+                    caller,
+                    method: Some("repair_database_top_up_complete"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    ledger_block_index: Some(ledger_block_index),
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(next as u64)
+        })
+    }
+
+    pub fn repair_database_top_up_cancel(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        self.require_sns_governance(caller)?;
+        self.write_index(|tx| {
+            let operation = load_pending_billing_operation(tx, operation_id)?;
+            require_pending_database_kind(&operation, database_id, "top_up")?;
+            let status = load_database_status(tx, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "top_up_repair_cancel",
+                    amount_e8s: 0,
+                    balance_after_e8s: balance,
+                    caller,
+                    method: Some("repair_database_top_up_cancel"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)
+        })
+    }
+
+    pub fn repair_database_withdraw_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        ledger_block_index: u64,
+        caller: &str,
+        now: i64,
+    ) -> Result<u64, String> {
+        self.require_sns_governance(caller)?;
+        self.write_index(|tx| {
+            let operation = load_pending_billing_operation(tx, operation_id)?;
+            require_pending_database_kind(&operation, database_id, "withdraw")?;
+            let status = load_database_status(tx, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "withdraw_repair_complete",
+                    amount_e8s: 0,
+                    balance_after_e8s: balance,
+                    caller,
+                    method: Some("repair_database_withdraw_complete"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    ledger_block_index: Some(ledger_block_index),
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(balance as u64)
+        })
+    }
+
+    pub fn repair_database_withdraw_reverse(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+        now: i64,
+    ) -> Result<u64, String> {
+        self.require_sns_governance(caller)?;
+        let config = self.billing_config()?;
+        self.write_index(|tx| {
+            let operation = load_pending_billing_operation(tx, operation_id)?;
+            require_pending_database_kind(&operation, database_id, "withdraw")?;
+            let status = load_database_status(tx, database_id)?;
+            if status == DatabaseStatus::Deleted {
+                return Err(format!("database is deleted: {database_id}"));
+            }
+            let total = operation
+                .amount_e8s
+                .checked_add(operation.fee_e8s)
+                .ok_or_else(|| "withdraw repair amount overflows".to_string())?;
+            let balance = database_balance_for_update(tx, database_id, now)?;
+            let next = checked_balance_add(balance, total)?;
+            update_database_billing_balance(tx, database_id, next, &config, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "withdraw_repair_reverse",
+                    amount_e8s: total,
+                    balance_after_e8s: next,
+                    caller,
+                    method: Some("repair_database_withdraw_reverse"),
+                    cycles_delta: None,
+                    config: None,
+                    usage_event_id: None,
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
+            delete_pending_billing_operation(tx, operation_id)?;
+            Ok(next as u64)
         })
     }
 
@@ -901,6 +1133,14 @@ impl VfsService {
         Ok(())
     }
 
+    pub fn check_database_billable(&self, database_id: &str, caller: &str) -> Result<(), String> {
+        if caller == ANONYMOUS_PRINCIPAL {
+            return Err("anonymous caller not allowed".to_string());
+        }
+        self.require_role(database_id, caller, RequiredRole::Writer)?;
+        self.require_database_billable(database_id)
+    }
+
     pub fn charge_database_update(
         &self,
         database_id: &str,
@@ -929,6 +1169,7 @@ impl VfsService {
                     cycles_delta: Some(cycles_delta),
                     config: Some(&config),
                     usage_event_id,
+                    ledger_block_index: None,
                     now,
                 },
             )?;
@@ -945,6 +1186,7 @@ impl VfsService {
                         cycles_delta: Some(cycles_delta),
                         config: Some(&config),
                         usage_event_id,
+                        ledger_block_index: None,
                         now,
                     },
                 )?;
@@ -1538,7 +1780,8 @@ impl VfsService {
         let node = self
             .read_node(&request.database_id, &principal, &request.request_path)?
             .ok_or_else(|| format!("url ingest request not found: {}", request.request_path))?;
-        validate_url_ingest_request_node(&node, &principal)
+        validate_url_ingest_request_node(&node, &principal)?;
+        self.require_database_billable(&request.database_id)
     }
 
     pub fn authorize_ops_answer_session(
@@ -1596,6 +1839,7 @@ impl VfsService {
             .ok_or_else(|| "ops answer session is missing or expired".to_string())
         })?;
         self.require_role(&request.database_id, &principal, RequiredRole::Reader)?;
+        self.require_database_billable(&request.database_id)?;
         Ok(OpsAnswerSessionCheckResult { principal })
     }
 
@@ -1926,6 +2170,15 @@ impl VfsService {
         f(&store)
     }
 
+    pub fn require_database_role(
+        &self,
+        database_id: &str,
+        caller: &str,
+        required_role: RequiredRole,
+    ) -> Result<(), String> {
+        self.require_role(database_id, caller, required_role)
+    }
+
     fn require_role(
         &self,
         database_id: &str,
@@ -1942,6 +2195,18 @@ impl VfsService {
             Err(format!(
                 "principal lacks required database role: {database_id}"
             ))
+        }
+    }
+
+    fn require_sns_governance(&self, caller: &str) -> Result<(), String> {
+        if caller == ANONYMOUS_PRINCIPAL {
+            return Err("anonymous caller not allowed".to_string());
+        }
+        let config = self.billing_config()?;
+        if caller == config.sns_governance_id {
+            Ok(())
+        } else {
+            Err("caller is not SNS governance".to_string())
         }
     }
 
@@ -2248,11 +2513,14 @@ fn run_index_migrations(conn: &mut Connection, config: &BillingConfig) -> Result
         }
     }
     if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
-        if !migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
-            let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
             apply_billing_pending_index_migration(&tx)?;
-            tx.commit().map_err(|error| error.to_string())?;
         }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX)? {
+            apply_billing_ledger_block_index_migration(&tx)?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
     if schema_migration_count(conn)? != 0 {
@@ -2270,6 +2538,7 @@ fn run_index_migrations(conn: &mut Connection, config: &BillingConfig) -> Result
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         apply_billing_index_migration(&tx, config)?;
         apply_billing_pending_index_migration(&tx)?;
+        apply_billing_ledger_block_index_migration(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2292,16 +2561,21 @@ fn run_index_migrations_for_upgrade(
     conn: &mut Connection,
     config: Option<&BillingConfig>,
 ) -> Result<(), String> {
-    if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+    if sqlite_master_entry_exists(conn, "table", "schema_migrations")?
+        && migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)?
+    {
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX)? {
             return Ok(());
         }
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
-            let tx = conn.transaction().map_err(|error| error.to_string())?;
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
             apply_billing_pending_index_migration(&tx)?;
-            tx.commit().map_err(|error| error.to_string())?;
-            return Ok(());
         }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX)? {
+            apply_billing_ledger_block_index_migration(&tx)?;
+        }
+        tx.commit().map_err(|error| error.to_string())?;
+        return Ok(());
     }
     let config =
         config.ok_or_else(|| "billing config required for first billing upgrade".to_string())?;
@@ -2326,9 +2600,13 @@ fn run_index_migrations_in_tx(
             validate_billing_config(config)?;
             apply_billing_index_migration(conn, config)?;
             apply_billing_pending_index_migration(conn)?;
+            apply_billing_ledger_block_index_migration(conn)?;
         }
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
             apply_billing_pending_index_migration(conn)?;
+        }
+        if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX)? {
+            apply_billing_ledger_block_index_migration(conn)?;
         }
         validate_wasm_index_schema(conn)?;
         for &version in INDEX_SCHEMA_VERSIONS {
@@ -2371,7 +2649,7 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&BillingConfig>,
 ) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX)? {
             validate_wasm_index_schema(conn)?;
             for &version in INDEX_SCHEMA_VERSIONS {
                 if !wasm_index_migration_exists(conn, version)? {
@@ -2383,7 +2661,10 @@ fn run_index_migrations_in_tx_for_upgrade(
             return Ok(());
         }
         if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
-            apply_billing_pending_index_migration(conn)?;
+            if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
+                apply_billing_pending_index_migration(conn)?;
+            }
+            apply_billing_ledger_block_index_migration(conn)?;
             validate_wasm_index_schema(conn)?;
             return Ok(());
         }
@@ -2439,6 +2720,7 @@ fn apply_billing_index_migration(
            rate_denominator_cycles INTEGER,
            fixed_update_fee_e8s INTEGER,
            usage_event_id INTEGER,
+           ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
          );
          CREATE INDEX database_billing_ledger_database_idx
@@ -2484,6 +2766,32 @@ fn apply_billing_pending_index_migration(conn: &Transaction<'_>) -> Result<(), S
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
         params![INDEX_SCHEMA_VERSION_BILLING_PENDING],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn apply_billing_ledger_block_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    if !index_column_exists(conn, "database_billing_ledger", "ledger_block_index")? {
+        conn.execute(
+            "ALTER TABLE database_billing_ledger ADD COLUMN ledger_block_index INTEGER",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    conn.execute(
+        "UPDATE database_billing_ledger
+         SET ledger_block_index = usage_event_id,
+             usage_event_id = NULL
+         WHERE kind IN ('top_up', 'withdraw_complete')
+           AND ledger_block_index IS NULL
+           AND usage_event_id IS NOT NULL",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -2605,6 +2913,7 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
            rate_denominator_cycles INTEGER,
            fixed_update_fee_e8s INTEGER,
            usage_event_id INTEGER,
+           ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
          );
          CREATE INDEX database_billing_ledger_database_idx
@@ -2631,8 +2940,8 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
 
 fn default_billing_config() -> BillingConfig {
     BillingConfig {
-        kinic_ledger_canister_id: "2vxsx-fae".to_string(),
-        sns_governance_id: "2vxsx-fae".to_string(),
+        kinic_ledger_canister_id: "aaaaa-aa".to_string(),
+        sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         rate_numerator_e8s: DEFAULT_RATE_NUMERATOR_E8S,
         rate_denominator_cycles: DEFAULT_RATE_DENOMINATOR_CYCLES,
         fixed_update_fee_e8s: DEFAULT_FIXED_UPDATE_FEE_E8S,
@@ -2660,9 +2969,12 @@ fn validate_billing_config(config: &BillingConfig) -> Result<(), String> {
 }
 
 fn validate_principal_text(value: &str) -> Result<(), String> {
-    Principal::from_text(value)
-        .map(|_| ())
-        .map_err(|error| format!("principal text is invalid: {error}"))
+    let principal = Principal::from_text(value)
+        .map_err(|error| format!("principal text is invalid: {error}"))?;
+    if principal == Principal::anonymous() {
+        return Err("principal must not be anonymous".to_string());
+    }
+    Ok(())
 }
 
 fn insert_billing_config(conn: &Transaction<'_>, config: &BillingConfig) -> Result<(), String> {
@@ -2716,6 +3028,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING,
     INDEX_SCHEMA_VERSION_BILLING_INITIAL,
     INDEX_SCHEMA_VERSION_BILLING_PENDING,
+    INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -2776,6 +3089,21 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         (
             "database_billing_accounts",
             &["database_id", "balance_e8s", "suspended_at_ms"][..],
+        ),
+        (
+            "database_billing_ledger",
+            &[
+                "entry_id",
+                "database_id",
+                "kind",
+                "amount_e8s",
+                "balance_after_e8s",
+                "caller",
+                "method",
+                "usage_event_id",
+                "ledger_block_index",
+                "created_at_ms",
+            ][..],
         ),
         (
             "database_billing_pending_operations",
@@ -2884,6 +3212,18 @@ fn migration_applied(conn: &Connection, version: &str) -> Result<bool, String> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn migration_applied_tx(conn: &Transaction<'_>, version: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM schema_migrations WHERE version = ?1",
+        params![version],
+        |row| crate::sqlite::row_get::<i64>(row, 0),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn schema_migration_count(conn: &Connection) -> Result<i64, String> {
     conn.query_row("SELECT COUNT(*) FROM schema_migrations", params![], |row| {
         crate::sqlite::row_get(row, 0)
@@ -2946,6 +3286,41 @@ fn checked_balance_add(balance: i64, amount: i64) -> Result<i64, String> {
     Ok(next)
 }
 
+fn validate_database_top_up_for_conn(
+    conn: &Connection,
+    database_id: &str,
+    amount: i64,
+) -> Result<(), String> {
+    let status = load_database_status(conn, database_id)?;
+    if status == DatabaseStatus::Deleted {
+        return Err(format!("database is deleted: {database_id}"));
+    }
+    if !database_has_owner(conn, database_id)? {
+        return Err(format!("database has no owner: {database_id}"));
+    }
+    let balance: i64 = conn
+        .query_row(
+            "SELECT balance_e8s FROM database_billing_accounts WHERE database_id = ?1",
+            params![database_id],
+            |row| crate::sqlite::row_get(row, 0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("database billing account not found: {database_id}"))?;
+    let pending_top_up: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(amount_e8s), 0)
+             FROM database_billing_pending_operations
+             WHERE database_id = ?1 AND kind = 'top_up'",
+            params![database_id],
+            |row| crate::sqlite::row_get(row, 0),
+        )
+        .map_err(|error| error.to_string())?;
+    let reserved = checked_balance_add(balance, pending_top_up)?;
+    checked_balance_add(reserved, amount)?;
+    Ok(())
+}
+
 fn database_balance_for_update(
     conn: &Transaction<'_>,
     database_id: &str,
@@ -2989,11 +3364,13 @@ fn update_database_billing_balance(
 }
 
 struct PendingBillingOperation {
+    operation_id: u64,
     database_id: String,
     kind: String,
     caller: String,
     amount_e8s: i64,
     fee_e8s: i64,
+    created_at_ms: i64,
 }
 
 struct PendingBillingOperationMatch<'a> {
@@ -3031,23 +3408,26 @@ fn load_pending_billing_operation(
 ) -> Result<PendingBillingOperation, String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT database_id, kind, caller, amount_e8s, fee_e8s
+        "SELECT operation_id, database_id, kind, caller, amount_e8s, fee_e8s, created_at_ms
          FROM database_billing_pending_operations
          WHERE operation_id = ?1",
         params![operation_id],
-        |row| {
-            Ok(PendingBillingOperation {
-                database_id: crate::sqlite::row_get(row, 0)?,
-                kind: crate::sqlite::row_get(row, 1)?,
-                caller: crate::sqlite::row_get(row, 2)?,
-                amount_e8s: crate::sqlite::row_get(row, 3)?,
-                fee_e8s: crate::sqlite::row_get(row, 4)?,
-            })
-        },
+        map_pending_billing_operation,
     )
     .optional()
     .map_err(|error| error.to_string())?
     .ok_or_else(|| "pending billing operation not found".to_string())
+}
+
+fn require_pending_database_kind(
+    operation: &PendingBillingOperation,
+    database_id: &str,
+    kind: &str,
+) -> Result<(), String> {
+    if operation.database_id != database_id || operation.kind != kind {
+        return Err("pending billing operation mismatch".to_string());
+    }
+    Ok(())
 }
 
 fn require_pending_billing_operation(
@@ -3094,6 +3474,36 @@ fn delete_pending_billing_operation(
     Ok(())
 }
 
+fn map_pending_billing_operation(
+    row: &crate::sqlite::Row<'_>,
+) -> crate::sqlite::Result<PendingBillingOperation> {
+    let operation_id: i64 = crate::sqlite::row_get(row, 0)?;
+    Ok(PendingBillingOperation {
+        operation_id: operation_id.max(0) as u64,
+        database_id: crate::sqlite::row_get(row, 1)?,
+        kind: crate::sqlite::row_get(row, 2)?,
+        caller: crate::sqlite::row_get(row, 3)?,
+        amount_e8s: crate::sqlite::row_get(row, 4)?,
+        fee_e8s: crate::sqlite::row_get(row, 5)?,
+        created_at_ms: crate::sqlite::row_get(row, 6)?,
+    })
+}
+
+fn map_database_billing_pending_operation(
+    row: &crate::sqlite::Row<'_>,
+) -> crate::sqlite::Result<DatabaseBillingPendingOperation> {
+    let operation = map_pending_billing_operation(row)?;
+    Ok(DatabaseBillingPendingOperation {
+        operation_id: operation.operation_id,
+        database_id: operation.database_id,
+        kind: operation.kind,
+        caller: operation.caller,
+        amount_e8s: operation.amount_e8s,
+        fee_e8s: operation.fee_e8s,
+        created_at_ms: operation.created_at_ms,
+    })
+}
+
 struct DatabaseLedgerInsert<'a> {
     database_id: &'a str,
     kind: &'a str,
@@ -3104,6 +3514,7 @@ struct DatabaseLedgerInsert<'a> {
     cycles_delta: Option<u128>,
     config: Option<&'a BillingConfig>,
     usage_event_id: Option<u64>,
+    ledger_block_index: Option<u64>,
     now: i64,
 }
 
@@ -3146,6 +3557,11 @@ fn insert_database_ledger(
                 .usage_event_id
                 .map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
         ),
+        crate::sqlite::nullable_integer_value(
+            entry
+                .ledger_block_index
+                .map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
+        ),
         crate::sqlite::integer_value(entry.now),
     ];
     crate::sqlite::execute_values(
@@ -3153,8 +3569,8 @@ fn insert_database_ledger(
         "INSERT INTO database_billing_ledger
          (database_id, kind, amount_e8s, balance_after_e8s, caller, method, cycles_delta,
           rate_numerator_e8s, rate_denominator_cycles, fixed_update_fee_e8s, usage_event_id,
-          created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          ledger_block_index, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -3188,6 +3604,7 @@ fn map_database_billing_entry(
     let rate_denominator: Option<i64> = crate::sqlite::row_get(row, 9)?;
     let fixed_fee: Option<i64> = crate::sqlite::row_get(row, 10)?;
     let usage_event_id: Option<i64> = crate::sqlite::row_get(row, 11)?;
+    let ledger_block_index: Option<i64> = crate::sqlite::row_get(row, 12)?;
     Ok(DatabaseBillingEntry {
         entry_id: entry_id.max(0) as u64,
         database_id: crate::sqlite::row_get(row, 1)?,
@@ -3201,7 +3618,8 @@ fn map_database_billing_entry(
         rate_denominator_cycles: rate_denominator.map(|value| value.max(0) as u64),
         fixed_update_fee_e8s: fixed_fee.map(|value| value.max(0) as u64),
         usage_event_id: usage_event_id.map(|value| value.max(0) as u64),
-        created_at_ms: crate::sqlite::row_get(row, 12)?,
+        ledger_block_index: ledger_block_index.map(|value| value.max(0) as u64),
+        created_at_ms: crate::sqlite::row_get(row, 13)?,
     })
 }
 
@@ -3272,7 +3690,11 @@ fn validate_url_ingest_request_node(node: &Node, caller: &str) -> Result<(), Str
         .get("status")
         .and_then(|value| value.as_deref())
         .ok_or_else(|| "url ingest request status is required".to_string())?;
-    if status != "queued" && status != "fetching" && status != "source_written" {
+    if status != "queued"
+        && status != "fetching"
+        && status != "source_written"
+        && status != "generating"
+    {
         return Err("url ingest request is not triggerable".to_string());
     }
     let requested_by = frontmatter

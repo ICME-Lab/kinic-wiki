@@ -3,7 +3,7 @@
 // Why: CLI and non-CLI consumers should share one transport implementation.
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use candid::{Decode, Encode};
+use candid::{Decode, Encode, Nat};
 use ic_agent::{
     Agent,
     export::Principal,
@@ -13,13 +13,13 @@ use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingTransferResult, CanisterHealth,
     ChildNode, CreateDatabaseRequest, CreateDatabaseResult, DatabaseArchiveChunk,
-    DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseMember, DatabaseRestoreChunkRequest,
-    DatabaseRole, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseBillingPendingOperationPage,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
     SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
@@ -52,6 +52,16 @@ pub trait VfsApi: Sync {
     ) -> Result<BillingTransferResult> {
         Err(anyhow!("top_up_database is not implemented by this client"))
     }
+    async fn preview_database_top_up(&self, _database_id: &str, _amount_e8s: u64) -> Result<()> {
+        Err(anyhow!(
+            "preview_database_top_up is not implemented by this client"
+        ))
+    }
+    async fn check_database_billable(&self, _database_id: &str) -> Result<()> {
+        Err(anyhow!(
+            "check_database_billable is not implemented by this client"
+        ))
+    }
     async fn withdraw_database_balance(
         &self,
         _database_id: &str,
@@ -72,9 +82,62 @@ pub trait VfsApi: Sync {
             "list_database_billing_entries is not implemented by this client"
         ))
     }
+    async fn list_database_billing_pending_operations(
+        &self,
+        _database_id: &str,
+        _cursor: Option<u64>,
+        _limit: u32,
+    ) -> Result<DatabaseBillingPendingOperationPage> {
+        Err(anyhow!(
+            "list_database_billing_pending_operations is not implemented by this client"
+        ))
+    }
+    async fn repair_database_top_up_complete(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+        _ledger_block_index: u64,
+    ) -> Result<BillingTransferResult> {
+        Err(anyhow!(
+            "repair_database_top_up_complete is not implemented by this client"
+        ))
+    }
+    async fn repair_database_top_up_cancel(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+    ) -> Result<()> {
+        Err(anyhow!(
+            "repair_database_top_up_cancel is not implemented by this client"
+        ))
+    }
+    async fn repair_database_withdraw_complete(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+        _ledger_block_index: u64,
+    ) -> Result<BillingTransferResult> {
+        Err(anyhow!(
+            "repair_database_withdraw_complete is not implemented by this client"
+        ))
+    }
+    async fn repair_database_withdraw_reverse(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+    ) -> Result<u64> {
+        Err(anyhow!(
+            "repair_database_withdraw_reverse is not implemented by this client"
+        ))
+    }
     async fn get_billing_config(&self) -> Result<BillingConfig> {
         Err(anyhow!(
             "get_billing_config is not implemented by this client"
+        ))
+    }
+    async fn kinic_ledger_fee_e8s(&self, _ledger_canister_id: &str) -> Result<u64> {
+        Err(anyhow!(
+            "kinic_ledger_fee_e8s is not implemented by this client"
         ))
     }
     async fn grant_database_access(
@@ -395,6 +458,14 @@ pub fn identity_from_pem(identity_pem: &[u8]) -> Result<Box<dyn ic_agent::Identi
     Ok(Box::new(Secp256k1Identity::from_private_key(private_key)))
 }
 
+fn nat_to_u64(value: &Nat) -> Result<u64> {
+    value
+        .0
+        .to_string()
+        .parse::<u64>()
+        .map_err(|_| anyhow!("nat exceeds u64"))
+}
+
 #[async_trait]
 impl VfsApi for CanisterVfsClient {
     fn caller_principal(&self) -> Option<String> {
@@ -449,6 +520,24 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn preview_database_top_up(&self, database_id: &str, amount_e8s: u64) -> Result<()> {
+        let result: Result<(), String> = self
+            .query2(
+                "preview_database_top_up",
+                &database_id.to_string(),
+                &amount_e8s,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn check_database_billable(&self, database_id: &str) -> Result<()> {
+        let result: Result<(), String> = self
+            .query("check_database_billable", &database_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn withdraw_database_balance(
         &self,
         database_id: &str,
@@ -483,9 +572,104 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn list_database_billing_pending_operations(
+        &self,
+        database_id: &str,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<DatabaseBillingPendingOperationPage> {
+        let result: Result<DatabaseBillingPendingOperationPage, String> = self
+            .query3(
+                "list_database_billing_pending_operations",
+                &database_id.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_top_up_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        ledger_block_index: u64,
+    ) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> = self
+            .update3(
+                "repair_database_top_up_complete",
+                &database_id.to_string(),
+                &operation_id,
+                &ledger_block_index,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_top_up_cancel(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<()> {
+        let result: Result<(), String> = self
+            .update2(
+                "repair_database_top_up_cancel",
+                &database_id.to_string(),
+                &operation_id,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_withdraw_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        ledger_block_index: u64,
+    ) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> = self
+            .update3(
+                "repair_database_withdraw_complete",
+                &database_id.to_string(),
+                &operation_id,
+                &ledger_block_index,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_withdraw_reverse(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<u64> {
+        let result: Result<u64, String> = self
+            .update2(
+                "repair_database_withdraw_reverse",
+                &database_id.to_string(),
+                &operation_id,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn get_billing_config(&self) -> Result<BillingConfig> {
         let result: Result<BillingConfig, String> = self.query("get_billing_config", &()).await?;
         result.map_err(|error| anyhow!(error))
+    }
+
+    async fn kinic_ledger_fee_e8s(&self, ledger_canister_id: &str) -> Result<u64> {
+        let ledger = Principal::from_text(ledger_canister_id)
+            .with_context(|| format!("failed to parse ledger canister id: {ledger_canister_id}"))?;
+        let bytes = self
+            .agent
+            .query(&ledger, "icrc1_fee")
+            .with_arg(Encode!().context("failed to encode icrc1_fee args")?)
+            .call()
+            .await
+            .context("query failed for icrc1_fee")?;
+        let fee = Decode!(&bytes, Nat).context("failed to decode icrc1_fee response")?;
+        nat_to_u64(&fee).context("ledger fee exceeds u64")
     }
 
     async fn grant_database_access(

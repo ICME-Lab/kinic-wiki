@@ -84,19 +84,25 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> da
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database top-up "$DB_ID" 500000
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database deposit "$DB_ID" 500000
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database withdraw "$DB_ID" 100000 --to-principal <principal>
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database billing-history "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database billing-pending "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`billing config` prints the KINIC ledger canister, SNS governance principal, minimum update balance, and update charge rate.
+`billing config` prints the KINIC ledger canister, SNS governance principal, minimum update balance, update charge rate, and current ledger transfer fee from `icrc1_fee`.
+If the ledger fee query fails, `billing config` fails without printing a partial config.
 `database create <database-name>` creates a generated database ID with zero DB balance and prints it on success. Updates remain suspended until the DB balance is funded.
 `database top-up <database-id> <e8s>` pulls KINIC from the caller through the ledger allowance already approved outside the CLI and credits the DB balance. The allowance must include the transfer fee returned by the ledger `icrc1_fee`.
-`database deposit <database-id> <e8s>` opens `https://wiki.kinic.xyz/deposit?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow approves `e8s + ledger transfer fee`; the wallet also pays the approve transaction fee from its balance.
+`database deposit <database-id> <e8s>` opens `https://wiki.kinic.xyz/deposit?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, previews the DB top-up before approve, approves `e8s + ledger transfer fee` with a 30 minute expiry, and the wallet also pays the approve transaction fee from its balance.
 `database withdraw <database-id> <e8s> --to-principal <principal> [--to-subaccount-hex <hex>]` transfers DB balance to an external ICRC account and requires the DB owner identity.
+`database billing-history <database-id> [--json]` lists DB billing ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and SNS governance see full details.
+`database billing-pending <database-id> [--json]` lists pending billing operations. DB owner and SNS governance can read it.
+`database repair-*` commands resolve ambiguous pending operations and are accepted only from the configured SNS governance principal.
 `database list` prints databases attached to the caller principal, including DB billing balance and suspension time.
-Successful DB updates consume DB balance.
+Successful DB updates consume DB balance. Browser write surfaces disable writes when the DB is suspended, below `min_update_balance_e8s`, or billing config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB balance changes.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 

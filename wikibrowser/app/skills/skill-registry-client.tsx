@@ -9,12 +9,13 @@ import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-manageme
 import { usePackageManager } from "@/app/skills/skill-registry-package-state";
 import { EmptyState, SkillCard, StatusPanel, SummaryStrip } from "@/app/skills/skill-registry-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import { databaseBillingDisabledReason, databaseCanWrite } from "@/lib/billing-state";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
 import { loadSkillCatalogDetails } from "@/lib/skill-registry-details";
 import { applyProposalDiff, previewApplyProposalDiff, type ProposalDiffPreview } from "@/lib/skill-registry-diff";
 import { approveSkillProposal, recordSkillEvent, recordSkillRun, updateSkillStatus, type RunOutcome, type SkillStatus } from "@/lib/skill-registry-operations";
-import type { DatabaseRole } from "@/lib/types";
-import { listDatabasesAuthenticated } from "@/lib/vfs-client";
+import type { BillingConfig, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { getBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type ActionDraft = {
@@ -53,6 +54,8 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [actions, setActions] = useState<Record<string, ActionDraft>>({});
   const [databaseRole, setDatabaseRole] = useState<DatabaseRole | null>(null);
+  const [databaseSummary, setDatabaseSummary] = useState<DatabaseSummary | null>(null);
+  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
 
   const loadCatalog = useCallback(
     async (identity?: Identity) => {
@@ -92,10 +95,18 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
 
   const loadRole = useCallback(async (activeIdentity: Identity) => {
     try {
-      const databases = await listDatabasesAuthenticated(canisterId, activeIdentity);
-      setDatabaseRole(databases.find((database) => database.databaseId === databaseId)?.role ?? null);
+      const [databases, config] = await Promise.all([
+        listDatabasesAuthenticated(canisterId, activeIdentity),
+        getBillingConfig(canisterId)
+      ]);
+      const database = databases.find((item) => item.databaseId === databaseId) ?? null;
+      setDatabaseSummary(database);
+      setDatabaseRole(database?.role ?? null);
+      setBillingConfig(config);
     } catch {
+      setDatabaseSummary(null);
       setDatabaseRole(null);
+      setBillingConfig(null);
     }
   }, [canisterId, databaseId]);
 
@@ -148,6 +159,8 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     await authClient.logout();
     setPrincipal(null);
     setDatabaseRole(null);
+    setDatabaseSummary(null);
+    setBillingConfig(null);
     setSkills([]);
     setError(null);
     setLoadState("idle");
@@ -157,7 +170,8 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const filteredSkills = useMemo(() => filterSkills(skills, query, statusFilter), [skills, query, statusFilter]);
   const summary = useMemo(() => summarizeSkills(skills), [skills]);
   const identity = authClient?.getIdentity();
-  const writable = databaseRole === "writer" || databaseRole === "owner";
+  const billingReason = databaseBillingDisabledReason(databaseSummary, billingConfig);
+  const writable = databaseCanWrite(databaseSummary, billingConfig);
   const packageManager = usePackageManager({ canisterId, databaseId, identity, writable, refresh: loadCatalog, errorMessage });
 
   function actionFor(skill: CatalogSkill): ActionDraft {
@@ -300,7 +314,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
             ) : null}
           </div>
           <aside className="space-y-3 lg:sticky lg:top-6">
-            <RoleBanner role={databaseRole} principal={principal} />
+            <RoleBanner billingReason={billingReason} role={databaseRole} principal={principal} />
             <PackageManager draft={packageManager.draft} busy={packageManager.busy} writable={writable} message={packageManager.message} handlers={packageManager.handlers} />
           </aside>
         </div>

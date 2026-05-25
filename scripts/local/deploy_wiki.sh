@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local}"
 KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-73mez-iiaaa-aaaaq-aaasq-cai}"
-SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID:-2vxsx-fae}"
+SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID:-}"
 
 case "${ICP_ENVIRONMENT}" in
   local | local-wiki) ;;

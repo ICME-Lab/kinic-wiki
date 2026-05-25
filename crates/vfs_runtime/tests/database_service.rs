@@ -135,12 +135,33 @@ fn index_migration_adds_billing_to_existing_database_index() {
             |row| row.get(0),
         )
         .expect("pending billing table count should load");
+    let block_index_marker: String = conn
+        .query_row(
+            "SELECT version FROM schema_migrations
+             WHERE version = 'database_index:013_billing_ledger_block_index'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("billing ledger block index migration marker should exist");
+    let block_index_column_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_billing_ledger')
+             WHERE name = 'ledger_block_index'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("billing ledger block index column count should load");
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(ledger_count, 0);
     assert_eq!(marker, "database_index:011_billing_initial");
     assert_eq!(pending_marker, "database_index:012_billing_pending");
+    assert_eq!(
+        block_index_marker,
+        "database_index:013_billing_ledger_block_index"
+    );
     assert_eq!(pending_table_count, 1);
+    assert_eq!(block_index_column_count, 1);
 }
 
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
@@ -618,6 +639,7 @@ fn url_ingest_trigger_session_requires_writer_and_allows_replay() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
@@ -648,6 +670,7 @@ fn url_ingest_trigger_session_requires_default_llm_writer() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
     service
@@ -685,6 +708,7 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "other", DatabaseRole::Reader, 2)
         .expect("reader grant should succeed");
@@ -794,6 +818,7 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
@@ -829,11 +854,70 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
 }
 
 #[test]
+fn url_ingest_trigger_session_check_requires_billable_database() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let request_path = "/Sources/ingest-requests/1.md";
+    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+    service
+        .authorize_url_ingest_trigger_session(
+            "owner",
+            url_ingest_session_request("alpha", "session-1"),
+            100,
+        )
+        .expect("session should authorize before billing changes");
+
+    let error = service
+        .check_url_ingest_trigger_session(
+            url_ingest_session_check_request("alpha", request_path, "session-1"),
+            101,
+        )
+        .expect_err("suspended database should reject session check");
+
+    assert!(error.contains("database billing is suspended"));
+}
+
+#[test]
+fn url_ingest_trigger_session_check_allows_generating_status() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    let request_path = "/Sources/ingest-requests/1.md";
+    write_url_ingest_request(
+        &service,
+        "owner",
+        "alpha",
+        request_path,
+        "generating",
+        "owner",
+    );
+    service
+        .authorize_url_ingest_trigger_session(
+            "owner",
+            url_ingest_session_request("alpha", "session-1"),
+            100,
+        )
+        .expect("session should authorize");
+
+    service
+        .check_url_ingest_trigger_session(
+            url_ingest_session_check_request("alpha", request_path, "session-1"),
+            101,
+        )
+        .expect("generating request should remain session-checkable");
+}
+
+#[test]
 fn ops_answer_session_allows_database_members_and_replay() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
         .expect("writer grant should succeed");
@@ -866,6 +950,7 @@ fn ops_answer_session_rejects_anonymous_and_non_members() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "2vxsx-fae", DatabaseRole::Reader, 2)
         .expect("anonymous public grant should succeed");
@@ -890,11 +975,69 @@ fn ops_answer_session_rejects_anonymous_and_non_members() {
 }
 
 #[test]
+fn ops_answer_session_check_requires_billable_database() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .authorize_ops_answer_session("owner", ops_answer_session_request("alpha", "session-1"), 0)
+        .expect("session should authorize before billing changes");
+
+    let error = service
+        .check_ops_answer_session(ops_answer_session_check_request("alpha", "session-1"), 1)
+        .expect_err("suspended database should reject ops answer session check");
+
+    assert!(error.contains("database billing is suspended"));
+}
+
+#[test]
+fn check_database_billable_requires_writer_and_funded_database() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
+        .expect("writer grant should succeed");
+    service
+        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
+        .expect("reader grant should succeed");
+
+    let suspended = service
+        .check_database_billable("alpha", "writer")
+        .expect_err("suspended database should reject writer");
+    assert!(suspended.contains("database billing is suspended"));
+
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 4);
+    service
+        .check_database_billable("alpha", "owner")
+        .expect("owner should pass billable check");
+    service
+        .check_database_billable("alpha", "writer")
+        .expect("writer should pass billable check");
+
+    let reader = service
+        .check_database_billable("alpha", "reader")
+        .expect_err("reader should fail billable check");
+    assert!(reader.contains("principal lacks required database role"));
+    let anonymous = service
+        .check_database_billable("alpha", "2vxsx-fae")
+        .expect_err("anonymous should fail billable check");
+    assert!(anonymous.contains("anonymous caller not allowed"));
+    let missing = service
+        .check_database_billable("alpha", "missing")
+        .expect_err("non-member should fail billable check");
+    assert!(missing.contains("principal has no access"));
+}
+
+#[test]
 fn ops_answer_session_rechecks_current_role_after_revoke() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
         .expect("reader grant should succeed");
@@ -930,6 +1073,7 @@ fn ops_answer_session_rejects_invalid_and_expired_nonce() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
 
     service
         .authorize_ops_answer_session("owner", ops_answer_session_request("alpha", "session-1"), 0)
@@ -1356,12 +1500,17 @@ fn pending_database_top_up_blocks_delete_until_resolved() {
         .mark_database_top_up_ambiguous(ambiguous, "ambiguous", "owner", 500, 4)
         .expect("ambiguous top-up should record");
 
-    for database_id in ["complete", "cancel", "ambiguous"] {
+    for database_id in ["complete", "cancel"] {
         assert_eq!(database_pending_operation_count(&root, database_id), 0);
         service
             .delete_database(database_id, "owner", 5)
             .expect("resolved top-up should allow delete");
     }
+    assert_eq!(database_pending_operation_count(&root, "ambiguous"), 1);
+    let error = service
+        .delete_database("ambiguous", "owner", 5)
+        .expect_err("ambiguous top-up should keep delete blocked");
+    assert!(error.contains("pending billing operation"));
 }
 
 #[test]
@@ -1401,12 +1550,228 @@ fn pending_database_withdraw_blocks_delete_until_resolved() {
         .mark_database_withdraw_ambiguous(ambiguous, "ambiguous", "owner", 5)
         .expect("ambiguous withdraw should record");
 
-    for database_id in ["complete", "reverse", "ambiguous"] {
+    for database_id in ["complete", "reverse"] {
         assert_eq!(database_pending_operation_count(&root, database_id), 0);
         service
             .delete_database(database_id, "owner", 6)
             .expect("resolved withdraw should allow delete");
     }
+    assert_eq!(database_pending_operation_count(&root, "ambiguous"), 1);
+    let error = service
+        .delete_database("ambiguous", "owner", 6)
+        .expect_err("ambiguous withdraw should keep delete blocked");
+    assert!(error.contains("pending billing operation"));
+}
+
+#[test]
+fn pending_billing_operations_are_visible_to_owner_and_governance_only() {
+    let (service, _root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
+        .expect("writer should be granted");
+    service
+        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
+        .expect("reader should be granted");
+    service
+        .begin_database_top_up("alpha", "payer", 500, 3)
+        .expect("top-up should begin");
+
+    let owner_page = service
+        .list_database_billing_pending_operations("alpha", "owner", None, 10)
+        .expect("owner should list pending operations");
+    assert_eq!(owner_page.entries.len(), 1);
+    assert_eq!(owner_page.entries[0].kind, "top_up");
+    assert_eq!(owner_page.entries[0].caller, "payer");
+
+    let governance_page = service
+        .list_database_billing_pending_operations("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
+        .expect("governance should list pending operations");
+    assert_eq!(governance_page.entries.len(), 1);
+
+    for caller in ["writer", "reader", "2vxsx-fae"] {
+        let error = service
+            .list_database_billing_pending_operations("alpha", caller, None, 10)
+            .expect_err("non-owner should not list pending operations");
+        assert!(
+            error.contains("principal lacks required database role")
+                || error.contains("principal has no access")
+        );
+    }
+}
+
+#[test]
+fn billing_history_redacts_principals_for_non_owner_readers() {
+    let (service, _root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
+        .expect("writer should be granted");
+    service
+        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
+        .expect("reader should be granted");
+    credit_database(&service, "alpha", "payer-principal", 500, 42, 3);
+
+    let reader_entry = service
+        .list_database_billing_entries("alpha", "reader", None, 10)
+        .expect("reader should list history")
+        .entries
+        .remove(0);
+    assert_eq!(reader_entry.caller, "redacted");
+    assert_eq!(reader_entry.ledger_block_index, Some(42));
+    assert_eq!(reader_entry.usage_event_id, None);
+
+    let writer_entry = service
+        .list_database_billing_entries("alpha", "writer", None, 10)
+        .expect("writer should list history")
+        .entries
+        .remove(0);
+    assert_eq!(writer_entry.caller, "redacted");
+
+    let owner_entry = service
+        .list_database_billing_entries("alpha", "owner", None, 10)
+        .expect("owner should list history")
+        .entries
+        .remove(0);
+    assert_eq!(owner_entry.caller, "payer-principal");
+
+    let governance_entry = service
+        .list_database_billing_entries("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
+        .expect("governance should list history without membership")
+        .entries
+        .remove(0);
+    assert_eq!(governance_entry.caller, "payer-principal");
+
+    let error = service
+        .list_database_billing_entries("alpha", "outsider", None, 10)
+        .expect_err("outsider should not list history");
+    assert!(error.contains("principal has no access"));
+}
+
+#[test]
+fn governance_repairs_pending_top_up_operations() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("complete", "owner", 1)
+        .expect("database should create");
+    service
+        .create_database("cancel", "owner", 1)
+        .expect("database should create");
+    let complete = service
+        .begin_database_top_up("complete", "payer", 500, 2)
+        .expect("top-up should begin");
+    let cancel = service
+        .begin_database_top_up("cancel", "payer", 700, 2)
+        .expect("top-up should begin");
+    service
+        .mark_database_top_up_ambiguous(complete, "complete", "payer", 500, 3)
+        .expect("top-up ambiguity should record");
+    service
+        .mark_database_top_up_ambiguous(cancel, "cancel", "payer", 700, 3)
+        .expect("top-up ambiguity should record");
+
+    let non_governance_error = service
+        .repair_database_top_up_complete("complete", complete, 77, "owner", 4)
+        .expect_err("owner repair should reject");
+    assert!(non_governance_error.contains("caller is not SNS governance"));
+
+    let balance = service
+        .repair_database_top_up_complete("complete", complete, 77, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
+        .expect("governance should complete top-up");
+    assert_eq!(balance, 500);
+    service
+        .repair_database_top_up_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
+        .expect("governance should cancel top-up");
+
+    assert_eq!(database_billing_balance(&root, "complete"), 500);
+    assert_eq!(database_billing_balance(&root, "cancel"), 0);
+    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
+    assert_eq!(database_pending_operation_count(&root, "cancel"), 0);
+    assert_eq!(
+        database_ledger_kinds(&root, "complete"),
+        vec!["top_up_ambiguous", "top_up_repair_complete"]
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, "cancel"),
+        vec!["top_up_ambiguous", "top_up_repair_cancel"]
+    );
+    let entries = service
+        .list_database_billing_entries("complete", "owner", None, 10)
+        .expect("billing entries should load")
+        .entries;
+    assert_eq!(entries[1].ledger_block_index, Some(77));
+}
+
+#[test]
+fn governance_repairs_pending_withdraw_operations() {
+    let (service, root) = service_with_root();
+    for database_id in ["complete", "reverse"] {
+        service
+            .create_database(database_id, "owner", 1)
+            .expect("database should create");
+        credit_database(&service, database_id, "owner", 1_000, 1, 2);
+    }
+    let complete = service
+        .begin_database_withdraw("complete", "owner", 100, 10, 3)
+        .expect("withdraw should begin");
+    let reverse = service
+        .begin_database_withdraw("reverse", "owner", 100, 10, 3)
+        .expect("withdraw should begin");
+    service
+        .mark_database_withdraw_ambiguous(complete, "complete", "owner", 4)
+        .expect("withdraw ambiguity should record");
+    service
+        .mark_database_withdraw_ambiguous(reverse, "reverse", "owner", 4)
+        .expect("withdraw ambiguity should record");
+
+    let non_governance_error = service
+        .repair_database_withdraw_reverse("reverse", reverse, "owner", 5)
+        .expect_err("owner repair should reject");
+    assert!(non_governance_error.contains("caller is not SNS governance"));
+
+    let complete_balance = service
+        .repair_database_withdraw_complete(
+            "complete",
+            complete,
+            88,
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            5,
+        )
+        .expect("governance should complete withdraw");
+    let reversed_balance = service
+        .repair_database_withdraw_reverse("reverse", reverse, "rrkah-fqaaa-aaaaa-aaaaq-cai", 5)
+        .expect("governance should reverse withdraw");
+
+    assert_eq!(complete_balance, 890);
+    assert_eq!(reversed_balance, 1_000);
+    assert_eq!(database_billing_balance(&root, "complete"), 890);
+    assert_eq!(database_billing_balance(&root, "reverse"), 1_000);
+    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
+    assert_eq!(database_pending_operation_count(&root, "reverse"), 0);
+    assert_eq!(
+        database_ledger_kinds(&root, "complete"),
+        vec![
+            "top_up",
+            "withdraw_pending",
+            "withdraw_fee_pending",
+            "withdraw_ambiguous",
+            "withdraw_repair_complete"
+        ]
+    );
+    assert_eq!(
+        database_ledger_kinds(&root, "reverse"),
+        vec![
+            "top_up",
+            "withdraw_pending",
+            "withdraw_fee_pending",
+            "withdraw_ambiguous",
+            "withdraw_repair_reverse"
+        ]
+    );
 }
 
 #[test]

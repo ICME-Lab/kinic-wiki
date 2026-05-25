@@ -108,12 +108,30 @@ pub struct DatabaseBillingEntry {
     pub rate_denominator_cycles: Option<u64>,
     pub fixed_update_fee_e8s: Option<u64>,
     pub usage_event_id: Option<u64>,
+    pub ledger_block_index: Option<u64>,
     pub created_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseBillingEntryPage {
     pub entries: Vec<DatabaseBillingEntry>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseBillingPendingOperation {
+    pub operation_id: u64,
+    pub database_id: String,
+    pub kind: String,
+    pub caller: String,
+    pub amount_e8s: i64,
+    pub fee_e8s: i64,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseBillingPendingOperationPage {
+    pub entries: Vec<DatabaseBillingPendingOperation>,
     pub next_cursor: Option<u64>,
 }
 

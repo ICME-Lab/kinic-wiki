@@ -76,14 +76,22 @@ test("source-kind request node is ignored", () => {
 });
 
 test("url ingest trigger input carries database and request path", () => {
-  assert.deepEqual(parseUrlIngestTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Sources/ingest-requests/1.md" }), {
+  assert.deepEqual(
+    parseUrlIngestTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Sources/ingest-requests/1.md", sessionNonce: "session-1" }),
+    {
     canisterId: "canister-1",
     databaseId: "db_1",
-    requestPath: "/Sources/ingest-requests/1.md"
-  });
+      requestPath: "/Sources/ingest-requests/1.md",
+      sessionNonce: "session-1"
+    }
+  );
   assert.equal(parseUrlIngestTriggerInput({ databaseId: "db_1" }), "canisterId is required");
   assert.equal(
-    parseUrlIngestTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Wiki/secret.md" }),
+    parseUrlIngestTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Sources/ingest-requests/1.md" }),
+    "sessionNonce is required"
+  );
+  assert.equal(
+    parseUrlIngestTriggerInput({ canisterId: "canister-1", databaseId: "db_1", requestPath: "/Wiki/secret.md", sessionNonce: "session-1" }),
     "non-canonical ingest request path: /Wiki/secret.md"
   );
 });
@@ -114,6 +122,39 @@ test("queued URL ingest uses source write ack without reading source after write
   assert.equal(metadata.custom, "preserved");
   assert.doesNotMatch(vfs.lastSourceWrite.content, /request_path/);
   assert.doesNotMatch(vfs.lastSourceWrite.metadataJson, /request_path/);
+});
+
+test("queued URL ingest checks session before external URL fetch", async () => {
+  const vfs = new TestVfsClient();
+  const queue = new TestQueue();
+
+  await withFetchedPage(async () => {
+    await processUrlIngestRequest(testEnv(queue), vfs, workerConfig(), "db_1", queuedRequest(), "session-1");
+  });
+
+  assert.deepEqual(vfs.sessionChecks, [{ databaseId: "db_1", requestPath: "/Sources/ingest-requests/1.md", sessionNonce: "session-1" }]);
+  assert.equal(queue.messages.length, 1);
+  assert.equal(sourceMessage(queue.messages[0]).sessionNonce, "session-1");
+});
+
+test("queued URL ingest session failure avoids external URL fetch", async () => {
+  const vfs = new TestVfsClient();
+  vfs.failSessionCheck = true;
+  const queue = new TestQueue();
+  let fetchCalled = false;
+
+  await withFetchedPage(async () => {
+    globalThis.fetch = async (): Promise<Response> => {
+      fetchCalled = true;
+      return new Response("should not fetch");
+    };
+    await processUrlIngestRequest(testEnv(queue), vfs, workerConfig(), "db_1", queuedRequest(), "session-1");
+  });
+
+  assert.equal(fetchCalled, false);
+  assert.equal(queue.messages.length, 0);
+  assert.equal(vfs.lastRequest?.status, "failed");
+  assert.match(vfs.lastRequest?.error ?? "", /session denied/);
 });
 
 test("queued URL ingest fails when write_node returns a non-source ack", async () => {
@@ -245,7 +286,8 @@ test("second trigger for the same request is accepted without reprocessing", asy
       {
         canisterId: "xis3j-paaaa-aaaai-axumq-cai",
         databaseId: "db_1",
-        requestPath: "/Sources/ingest-requests/1.md"
+        requestPath: "/Sources/ingest-requests/1.md",
+        sessionNonce: "session-1"
       },
       { config: workerConfig(), vfs }
     );
@@ -254,7 +296,8 @@ test("second trigger for the same request is accepted without reprocessing", asy
       {
         canisterId: "xis3j-paaaa-aaaai-axumq-cai",
         databaseId: "db_1",
-        requestPath: "/Sources/ingest-requests/1.md"
+        requestPath: "/Sources/ingest-requests/1.md",
+        sessionNonce: "session-1"
       },
       { config: workerConfig(), vfs }
     );
@@ -290,7 +333,8 @@ test("stale fetching request is claimed before retry", async () => {
       {
         canisterId: "xis3j-paaaa-aaaai-axumq-cai",
         databaseId: "db_1",
-        requestPath: "/Sources/ingest-requests/1.md"
+        requestPath: "/Sources/ingest-requests/1.md",
+        sessionNonce: "session-1"
       },
       { config: workerConfig(), vfs }
     );

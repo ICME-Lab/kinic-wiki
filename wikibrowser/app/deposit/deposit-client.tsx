@@ -19,16 +19,24 @@ export function DepositClient({ canisterId, databaseId, amountE8s }: DepositClie
   const [status, setStatus] = useState<DepositStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [provider, setProvider] = useState<DepositProvider | null>(null);
+  const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const parsed = useMemo(() => {
     const params = new URLSearchParams();
     params.set("database_id", databaseId);
     params.set("amount_e8s", amountE8s);
     return parseDepositQuery(params);
   }, [amountE8s, databaseId]);
-  const error = typeof parsed === "string" ? parsed : !canisterId ? "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured" : null;
+  const error =
+    typeof parsed === "string"
+      ? parsed
+      : !configuredCanisterId
+        ? "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured"
+        : canisterId !== configuredCanisterId
+          ? "deposit canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID"
+          : null;
 
   async function deposit(nextProvider: DepositProvider) {
-    if (typeof parsed === "string" || !canisterId) return;
+    if (typeof parsed === "string" || error) return;
     setStatus("running");
     setProvider(nextProvider);
     setMessage(null);
@@ -64,7 +72,7 @@ export function DepositClient({ canisterId, databaseId, amountE8s }: DepositClie
 
         <Notice
           tone="info"
-          text="Wallet approval uses the DB credit amount plus the ledger transfer fee. The approve transaction fee is paid separately by the wallet."
+          text="Wallet approval uses the DB credit amount plus the ledger transfer fee and expires after 30 minutes. The approve transaction fee is paid separately by the wallet."
         />
 
         <div className="flex flex-col gap-3 sm:flex-row">

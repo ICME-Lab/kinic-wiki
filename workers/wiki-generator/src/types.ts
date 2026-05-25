@@ -74,6 +74,7 @@ export type SourceQueueMessage = {
   sourcePath: string;
   sourceEtag: string;
   requestPath?: string;
+  sessionNonce?: string;
 };
 
 export type UrlIngestQueueMessage = UrlIngestTriggerInput & {
@@ -135,4 +136,5 @@ export type UrlIngestTriggerInput = {
   canisterId: string;
   databaseId: string;
   requestPath: string;
+  sessionNonce: string;
 };

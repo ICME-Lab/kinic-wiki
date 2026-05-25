@@ -8,7 +8,7 @@ import { ensureTargetCanBeWritten, renderDraftMarkdown, slugForDraft } from "./r
 import { validateCanonicalSourcePath } from "./source-path.js";
 import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
-import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiNode, WorkerConfig } from "./types.js";
+import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export async function runManual(env: RuntimeEnv, input: ManualRunInput): Promise<Response> {
@@ -27,7 +27,9 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput): Promise
     return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: source.etag }, 202);
   }
 
-  const generated = await generateFromSource(env, vfs, config, input.databaseId, source);
+  const generated = await generateFromSource(env, vfs, config, input.databaseId, source, () =>
+    ensureExternalCostAllowed(vfs, input.databaseId)
+  );
   return jsonResponse(
     {
       dryRun: true,
@@ -49,21 +51,40 @@ export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage
   await processSourceQueueMessage(env, message);
 }
 
-async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage): Promise<void> {
-  const config = loadConfig(env);
+export async function processSourceQueueMessageForTest(
+  env: RuntimeEnv,
+  message: SourceQueueMessage,
+  context: { config: WorkerConfig; vfs: VfsClient }
+): Promise<void> {
+  await processSourceQueueMessage(env, message, context);
+}
+
+async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage, context?: { config: WorkerConfig; vfs: VfsClient }): Promise<void> {
+  const config = context?.config ?? loadConfig(env);
   validateCanonicalSourcePath(message.sourcePath, config.sourcePrefix);
   const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
   if (shouldSkipJob(job, message.sourceEtag)) {
     return;
   }
-  const vfs = await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM);
+  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
   if (source.etag !== message.sourceEtag) {
     return;
   }
   await markProcessing(env.DB, message);
+  let deepSeekAttempted = false;
   try {
-    const generated = await generateFromSource(env, vfs, config, message.databaseId, source);
+    const generated = await generateFromSource(
+      env,
+      vfs,
+      config,
+      message.databaseId,
+      source,
+      () => ensureExternalCostAllowed(vfs, message.databaseId, message.requestPath, message.sessionNonce),
+      () => {
+        deepSeekAttempted = true;
+      }
+    );
     await writeGeneratedDraft(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
     await markCompleted(env.DB, message, generated.targetPath);
     if (message.requestPath) {
@@ -72,10 +93,45 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, generated.targetPath, source.path);
   } catch (error) {
     const messageText = errorMessage(error);
-    await markFailed(env.DB, message, messageText);
-    if (message.requestPath) {
-      await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
+    if (error instanceof ExternalCostGateError || deepSeekAttempted) {
+      await bestEffortMarkQueueFailed(env, vfs, message, messageText);
+      return;
     }
+    await markQueueFailed(env, vfs, message, messageText);
+  }
+}
+
+class ExternalCostGateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExternalCostGateError";
+  }
+}
+
+async function ensureExternalCostAllowed(vfs: VfsClient, databaseId: string, requestPath?: string, sessionNonce?: string): Promise<void> {
+  try {
+    if (requestPath && sessionNonce) {
+      await vfs.checkUrlIngestTriggerSession(databaseId, requestPath, sessionNonce);
+      return;
+    }
+    await vfs.checkDatabaseBillable(databaseId);
+  } catch (error) {
+    throw new ExternalCostGateError(errorMessage(error));
+  }
+}
+
+async function markQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
+  await markFailed(env.DB, message, messageText);
+  if (message.requestPath) {
+    await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
+  }
+}
+
+async function bestEffortMarkQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
+  try {
+    await markQueueFailed(env, vfs, message, messageText);
+  } catch (error) {
+    console.warn("failed to record source generation non-retry failure", errorMessage(error));
   }
 }
 
@@ -107,31 +163,49 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if (typeof value.sourcePath !== "string") return null;
     if (typeof value.sourceEtag !== "string") return null;
     if ("requestPath" in value && value.requestPath !== undefined && typeof value.requestPath !== "string") return null;
+    if ("sessionNonce" in value && value.sessionNonce !== undefined && typeof value.sessionNonce !== "string") return null;
     return {
       kind: "source",
       databaseId: value.databaseId,
       sourcePath: value.sourcePath,
       sourceEtag: value.sourceEtag,
-      requestPath: typeof value.requestPath === "string" ? value.requestPath : undefined
+      requestPath: typeof value.requestPath === "string" ? value.requestPath : undefined,
+      sessionNonce: typeof value.sessionNonce === "string" ? value.sessionNonce : undefined
     };
   }
   if (value.kind === "url_ingest") {
     if (typeof value.canisterId !== "string") return null;
     if (typeof value.databaseId !== "string") return null;
     if (typeof value.requestPath !== "string") return null;
+    if (typeof value.sessionNonce !== "string") return null;
     return {
       kind: "url_ingest",
       canisterId: value.canisterId,
       databaseId: value.databaseId,
-      requestPath: value.requestPath
+      requestPath: value.requestPath,
+      sessionNonce: value.sessionNonce
     };
   }
   return null;
 }
 
-async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, source: WikiNode): Promise<GeneratedDraft> {
+async function generateFromSource(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  config: WorkerConfig,
+  databaseId: string,
+  source: WikiNode,
+  beforeDeepSeek?: () => Promise<void>,
+  afterDeepSeekAttempt?: () => void
+): Promise<GeneratedDraft> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
-  const draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
+  await beforeDeepSeek?.();
+  let draft: WikiDraft;
+  try {
+    draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
+  } finally {
+    afterDeepSeekAttempt?.();
+  }
   validateDraftSources(draft, source.path);
   const targetPath = `${config.targetRoot}/${slugForDraft(draft)}.md`;
   return {

@@ -14,6 +14,7 @@ This document defines the current repo-local wiki schema.
 - Do not mix exact evidence with recap.
 - Do not promote unresolved state into settled facts.
 - When old and new values both exist, state the current value explicitly in `facts.md`.
+- Public `open_questions.md` pages are only for reader-facing verification questions. Do not leave internal implementation TODOs or resolved questions in public wiki content.
 
 ## Current Note Roles
 
@@ -54,6 +55,7 @@ This document defines the current repo-local wiki schema.
   - Preferences, decision criteria, and choices.
 - `open_questions.md`
   - Unresolved items, questions to verify, and conflicting information.
+  - Public pages must not contain stale internal implementation questions.
 - `summary.md`
   - Human-facing recap.
   - Do not use as the exact evidence source.
@@ -69,3 +71,9 @@ This document defines the current repo-local wiki schema.
 - Do not put exact facts, causal claims, or resolution claims in `summary.md`.
 - Do not put unresolved contradictions in settled notes.
 - Do not duplicate raw transcripts into `/Wiki/...` as canonical content.
+
+## Current Operational Decisions
+
+- Self DB seeding uses the existing `write_nodes` batch write path. Do not add a dedicated canister API for seed-only writes.
+- Databases that use URL ingest or draft generation keep the default LLM writer service principal as `writer`. Owners may revoke it when those workflows are not used.
+- Raw source material stays under `/Sources/raw/...`. Wiki pages may keep short evidence spans or recaps, but must not duplicate raw transcripts as documents.

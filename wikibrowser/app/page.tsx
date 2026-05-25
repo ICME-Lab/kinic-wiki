@@ -8,8 +8,8 @@ import { Plus, TerminalSquare } from "lucide-react";
 import { CreateDatabaseDialog } from "./create-database-dialog";
 import { AuthControls, CreatedDatabasePanel, DatabaseBody, StatusPanel } from "./home-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { DatabaseSummary } from "@/lib/types";
-import { createDatabaseAuthenticated, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import type { BillingConfig, DatabaseSummary } from "@/lib/types";
+import { createDatabaseAuthenticated, getBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import type { DatabaseRow } from "./home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -20,6 +20,7 @@ export default function HomePage() {
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseRow[]>([]);
+  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [publicError, setPublicError] = useState<string | null>(null);
@@ -44,9 +45,10 @@ export default function HomePage() {
       setWarning(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [publicResult, memberResult] = await Promise.allSettled([
+        const [publicResult, memberResult, billingConfigResult] = await Promise.allSettled([
           listDatabasesPublic(canisterId),
-          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
+          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([]),
+          getBillingConfig(canisterId)
         ]);
         if (publicResult.status === "rejected" && memberResult.status === "rejected") {
           throw new Error(`${errorMessage(publicResult.reason)}; ${errorMessage(memberResult.reason)}`);
@@ -56,9 +58,10 @@ export default function HomePage() {
         const nextDatabases = mergeDatabaseRows(memberDatabases, publicDatabases);
         if (!isCurrentRefresh()) return;
         setDatabases(nextDatabases);
+        setBillingConfig(billingConfigResult.status === "fulfilled" ? billingConfigResult.value : null);
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
-        setWarning(listWarning(publicResult, memberResult));
+        setWarning(listWarning(publicResult, memberResult, billingConfigResult));
         setLoadState("ready");
       } catch (cause) {
         if (!isCurrentRefresh()) return;
@@ -112,6 +115,7 @@ export default function HomePage() {
     if (!authClient) return;
     await authClient.logout();
     setPrincipal(null);
+    setBillingConfig(null);
     setCreatedDatabase(null);
     setCreateDialogOpen(false);
     setNewDatabaseName("");
@@ -221,7 +225,7 @@ export default function HomePage() {
               <p className="mt-1 text-sm leading-6 text-muted">Login with Internet Identity to list databases where your principal has membership.</p>
             </div>
           )}
-          <DatabaseBody loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+          <DatabaseBody billingConfig={billingConfig} canisterId={canisterId} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
         </section>
       </section>
     </main>
@@ -240,7 +244,8 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   return [...rows.values()].sort((left, right) => left.databaseId.localeCompare(right.databaseId));
 }
 
-function listWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
+function listWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>, billingConfigResult: PromiseSettledResult<BillingConfig>): string | null {
+  if (billingConfigResult.status === "rejected") return `Billing config unavailable: ${errorMessage(billingConfigResult.reason)}`;
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;
 }

@@ -4,7 +4,7 @@ import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
 import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
-import { getBillingConfig } from "@/lib/vfs-client";
+import { getBillingConfig, previewDatabaseTopUp } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
 
 type WalletProvider = "oisy" | "plug";
@@ -41,11 +41,22 @@ type PlugVfsActor = {
 };
 
 type LedgerActor = {
+  icrc2_allowance: (request: LedgerAllowanceArgs) => Promise<LedgerAllowance>;
   icrc1_fee: () => Promise<bigint>;
   icrc2_approve: (request: LedgerApproveArgs) => Promise<{ Ok: bigint } | { Err: unknown }>;
 };
 
 type PlugLedgerActor = LedgerActor;
+
+type LedgerAllowanceArgs = {
+  account: LedgerAccount;
+  spender: LedgerAccount;
+};
+
+type LedgerAllowance = {
+  allowance: bigint;
+  expires_at: [] | [bigint];
+};
 
 type LedgerApproveArgs = {
   fee: [] | [bigint];
@@ -77,12 +88,16 @@ declare global {
 
 const DEFAULT_OISY_SIGNER_URL = "https://oisy.com/sign";
 const CALL_TIMEOUT_MS = 120_000;
+const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export async function depositWithOisy(request: DepositRequest): Promise<DepositResult> {
+  assertConfiguredDepositCanister(request.canisterId);
   const config = await getBillingConfig(request.canisterId);
+  await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
   const transferFeeE8s = await getLedgerTransferFee(config.kinicLedgerCanisterId);
   const approvedAllowanceE8s = allowanceForTopUp(request.amountE8s, transferFeeE8s);
+  const expiresAt = approveExpiresAt();
   const wallet = await IcrcWallet.connect({
     url: process.env.NEXT_PUBLIC_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
     host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
@@ -91,13 +106,14 @@ export async function depositWithOisy(request: DepositRequest): Promise<DepositR
     const accounts = await wallet.accounts();
     const account = accounts[0];
     if (!account) throw new Error("OISY account not found");
+    const currentAllowance = await getLedgerAllowance(config.kinicLedgerCanisterId, account.owner, request.canisterId);
     const approveBlockIndex = await wallet.approve({
       owner: account.owner,
       ledgerCanisterId: config.kinicLedgerCanisterId,
-      params: approveParams(request.canisterId, approvedAllowanceE8s),
+      params: approveParams(request.canisterId, approvedAllowanceE8s, currentAllowance, expiresAt),
       options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
     });
-    const topUp = await oisyCallTopUp(wallet, account.owner, request);
+    const topUp = await topUpAfterApprove(() => oisyCallTopUp(wallet, account.owner, request), expiresAt);
     return {
       provider: "oisy",
       approveBlockIndex: approveBlockIndex.toString(),
@@ -113,7 +129,9 @@ export async function depositWithOisy(request: DepositRequest): Promise<DepositR
 }
 
 export async function depositWithPlug(request: DepositRequest): Promise<DepositResult> {
+  assertConfiguredDepositCanister(request.canisterId);
   const config = await getBillingConfig(request.canisterId);
+  await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
   const connected = await plug.requestConnect({
@@ -121,54 +139,77 @@ export async function depositWithPlug(request: DepositRequest): Promise<DepositR
     host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
   });
   if (!connected) throw new Error("Plug connection rejected");
+  const principal = await plug.agent?.getPrincipal();
+  if (!principal) throw new Error("Plug principal is not available");
   const ledgerActor = await plug.createActor({
     canisterId: config.kinicLedgerCanisterId,
     interfaceFactory: ledgerIdlFactory
   });
   const transferFeeE8s = await (ledgerActor as PlugLedgerActor).icrc1_fee();
   const approvedAllowanceE8s = allowanceForTopUp(request.amountE8s, transferFeeE8s);
-  const approve = await (ledgerActor as PlugLedgerActor).icrc2_approve(rawApproveArgs(request.canisterId, approvedAllowanceE8s));
+  const currentAllowance = await (ledgerActor as PlugLedgerActor).icrc2_allowance(allowanceArgs(principal.toText(), request.canisterId));
+  const expiresAt = approveExpiresAt();
+  const approve = await (ledgerActor as PlugLedgerActor).icrc2_approve(
+    rawApproveArgs(request.canisterId, approvedAllowanceE8s, currentAllowance.allowance, expiresAt)
+  );
   if ("Err" in approve) throw new Error(`ledger approve failed: ${JSON.stringify(approve.Err)}`);
   const vfsActor = await plug.createActor({
     canisterId: request.canisterId,
     interfaceFactory: idlFactory
   });
-  const topUp = await (vfsActor as PlugVfsActor).top_up_database(request.databaseId, request.amountE8s);
-  if ("Err" in topUp) throw new Error(topUp.Err);
+  const topUp = await topUpAfterApprove(async () => {
+    const result = await (vfsActor as PlugVfsActor).top_up_database(request.databaseId, request.amountE8s);
+    if ("Err" in result) throw new Error(result.Err);
+    return result.Ok;
+  }, expiresAt);
   return {
     provider: "plug",
     approveBlockIndex: approve.Ok.toString(),
     approvedAllowanceE8s: approvedAllowanceE8s.toString(),
     creditedAmountE8s: request.amountE8s.toString(),
     transferFeeE8s: transferFeeE8s.toString(),
-    topUpBlockIndex: topUp.Ok.block_index.toString(),
-    balanceE8s: topUp.Ok.balance_e8s.toString()
+    topUpBlockIndex: topUp.block_index.toString(),
+    balanceE8s: topUp.balance_e8s.toString()
   };
 }
 
-function approveParams(canisterId: string, allowanceE8s: bigint): ApproveParams {
+function approveParams(canisterId: string, allowanceE8s: bigint, expectedAllowanceE8s: bigint, expiresAt: bigint): ApproveParams {
   return {
     spender: { owner: Principal.fromText(canisterId), subaccount: [] },
     amount: allowanceE8s,
+    expected_allowance: expectedAllowanceE8s,
+    expires_at: expiresAt,
     created_at_time: BigInt(Date.now()) * 1_000_000n
   };
 }
 
-function rawApproveArgs(canisterId: string, allowanceE8s: bigint): LedgerApproveArgs {
+function rawApproveArgs(canisterId: string, allowanceE8s: bigint, expectedAllowanceE8s: bigint, expiresAt: bigint): LedgerApproveArgs {
   return {
     fee: [],
     memo: [],
     from_subaccount: [],
     created_at_time: [BigInt(Date.now()) * 1_000_000n],
     amount: allowanceE8s,
-    expected_allowance: [],
-    expires_at: [],
+    expected_allowance: [expectedAllowanceE8s],
+    expires_at: [expiresAt],
     spender: { owner: Principal.fromText(canisterId), subaccount: [] }
   };
 }
 
 function allowanceForTopUp(amountE8s: bigint, transferFeeE8s: bigint): bigint {
   return amountE8s + transferFeeE8s;
+}
+
+function approveExpiresAt(): bigint {
+  return BigInt(Date.now() + APPROVE_EXPIRES_IN_MS) * 1_000_000n;
+}
+
+function assertConfiguredDepositCanister(canisterId: string): void {
+  const configured = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID;
+  if (!configured) throw new Error("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
+  if (Principal.fromText(canisterId).toText() !== Principal.fromText(configured).toText()) {
+    throw new Error("deposit canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
+  }
 }
 
 async function getLedgerTransferFee(ledgerCanisterId: string): Promise<bigint> {
@@ -180,6 +221,25 @@ async function getLedgerTransferFee(ledgerCanisterId: string): Promise<bigint> {
     canisterId: Principal.fromText(ledgerCanisterId)
   });
   return actor.icrc1_fee();
+}
+
+async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spender: string): Promise<bigint> {
+  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
+  if (agent.isLocal()) await agent.fetchRootKey();
+  const actor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
+    agent,
+    canisterId: Principal.fromText(ledgerCanisterId)
+  });
+  const result = await actor.icrc2_allowance(allowanceArgs(owner, spender));
+  return result.allowance;
+}
+
+function allowanceArgs(owner: string, spender: string): LedgerAllowanceArgs {
+  return {
+    account: { owner: Principal.fromText(owner), subaccount: [] },
+    spender: { owner: Principal.fromText(spender), subaccount: [] }
+  };
 }
 
 async function oisyCallTopUp(wallet: IcrcWallet, owner: string, request: DepositRequest): Promise<{ blockIndex: string; balanceE8s: string }> {
@@ -200,6 +260,19 @@ async function oisyCallTopUp(wallet: IcrcWallet, owner: string, request: Deposit
     arg,
     result
   });
+}
+
+async function topUpAfterApprove<T>(run: () => Promise<T>, expiresAt: bigint): Promise<T> {
+  try {
+    return await run();
+  } catch (cause) {
+    const expiry = new Date(Number(expiresAt / 1_000_000n)).toISOString();
+    throw new Error(`top-up failed after approve; approval remains until ${expiry}: ${errorMessage(cause)}`);
+  }
+}
+
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function encodeTopUpArgs(databaseId: string, amountE8s: bigint): string {
@@ -256,6 +329,8 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
 
 const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const account = idl.Record({ owner: idl.Principal, subaccount: idl.Opt(idl.Vec(idl.Nat8)) });
+  const allowanceArgs = idl.Record({ account, spender: account });
+  const allowance = idl.Record({ allowance: idl.Nat, expires_at: idl.Opt(idl.Nat64) });
   const approveArgs = idl.Record({
     fee: idl.Opt(idl.Nat),
     memo: idl.Opt(idl.Vec(idl.Nat8)),
@@ -279,6 +354,7 @@ const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   return idl.Service({
     icrc1_fee: idl.Func([], [idl.Nat], ["query"]),
+    icrc2_allowance: idl.Func([allowanceArgs], [allowance], ["query"]),
     icrc2_approve: idl.Func([approveArgs], [idl.Variant({ Ok: idl.Nat, Err: approveError })], [])
   });
 };

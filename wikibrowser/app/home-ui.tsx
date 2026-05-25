@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { Share2 } from "lucide-react";
-import type { DatabaseSummary } from "@/lib/types";
+import { databaseBillingView, databaseDepositHref } from "@/lib/billing-state";
+import type { BillingConfig, DatabaseSummary } from "@/lib/types";
 import { publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 export type DatabaseRow = DatabaseSummary & {
@@ -52,12 +53,16 @@ export function AuthControls({
 }
 
 export function DatabaseBody({
+  billingConfig,
+  canisterId,
   loading,
   myDatabases,
   principal,
   publicError,
   publicDatabases
 }: {
+  billingConfig: BillingConfig | null;
+  canisterId: string;
   loading: boolean;
   myDatabases: DatabaseRow[];
   principal: string | null;
@@ -66,17 +71,19 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection billingConfig={billingConfig} canisterId={canisterId} emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="divide-y divide-line">
-      <DatabaseSection emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      {publicDatabases.length > 0 || publicError ? <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" /> : null}
+      <DatabaseSection billingConfig={billingConfig} canisterId={canisterId} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      {publicDatabases.length > 0 || publicError ? <DatabaseSection billingConfig={billingConfig} canisterId={canisterId} emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" /> : null}
     </div>
   );
 }
 
 function DatabaseSection({
+  billingConfig,
+  canisterId,
   emptyMessage,
   mode,
   publicError = null,
@@ -84,6 +91,8 @@ function DatabaseSection({
   showTitle = true,
   title
 }: {
+  billingConfig: BillingConfig | null;
+  canisterId: string;
   emptyMessage: string;
   mode: "member" | "public";
   publicError?: string | null;
@@ -116,7 +125,7 @@ function DatabaseSection({
       ) : null}
       <div className="grid gap-3 p-3 sm:hidden">
         {rows.map((database) => (
-          <DatabaseMobileCard key={database.databaseId} database={database} mode={mode} />
+          <DatabaseMobileCard key={database.databaseId} billingConfig={billingConfig} canisterId={canisterId} database={database} mode={mode} />
         ))}
       </div>
       <div className="hidden overflow-x-auto sm:block">
@@ -127,6 +136,8 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Role</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Logical size</th>
+              <th className="px-4 py-3 font-medium">Billing</th>
+              {mode === "member" ? <th className="px-4 py-3 font-medium">Deposit</th> : null}
               <th className="px-4 py-3 font-medium">Archive</th>
               <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
@@ -147,6 +158,18 @@ function DatabaseSection({
                 <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
                 <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
                 <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
+                <td className="px-4 py-3 text-ink">{billingLabel(database, billingConfig)}</td>
+                {mode === "member" ? (
+                  <td className="px-4 py-3">
+                    {billingConfig && database.status !== "deleted" ? (
+                      <Link className="text-accent no-underline hover:underline" href={databaseDepositHref(canisterId, database, billingConfig)}>
+                        Deposit
+                      </Link>
+                    ) : (
+                      <span className="text-muted">-</span>
+                    )}
+                  </td>
+                ) : null}
                 <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
@@ -182,7 +205,7 @@ function DatabaseSection({
   );
 }
 
-function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseMobileCard({ billingConfig, canisterId, database, mode }: { billingConfig: BillingConfig | null; canisterId: string; database: DatabaseRow; mode: "member" | "public" }) {
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -194,6 +217,7 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
         <DatabaseCardMeta label="Role" value={database.role} />
         <DatabaseCardMeta label="Status" value={database.status} />
         <DatabaseCardMeta label="Logical size" value={formatBytes(database.logicalSizeBytes)} />
+        <DatabaseCardMeta label="Billing" value={billingLabel(database, billingConfig)} />
         <DatabaseCardMeta label="Archive" value={databaseMarker(database)} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
@@ -211,6 +235,11 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
           </Link>
         ) : null}
         {database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
+        {mode === "member" && billingConfig && database.status !== "deleted" ? (
+          <Link className="text-accent no-underline hover:underline" href={databaseDepositHref(canisterId, database, billingConfig)}>
+            Deposit
+          </Link>
+        ) : null}
         <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
           Access
         </Link>
@@ -277,6 +306,11 @@ function databaseMarker(database: DatabaseSummary): string {
   if (database.deletedAtMs) return `Deleted ${formatTimestamp(database.deletedAtMs)}`;
   if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
   return "-";
+}
+
+function billingLabel(database: DatabaseSummary, config: BillingConfig | null): string {
+  const billing = databaseBillingView(database, config);
+  return billing.summary;
 }
 
 function openDatabaseHref(database: DatabaseRow): string {
