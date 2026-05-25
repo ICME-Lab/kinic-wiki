@@ -8,7 +8,7 @@ import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRo
 import { ActionButton } from "./action-button";
 import { MemberTable } from "./member-table";
 import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
-import { publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
+import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
   title: string;
@@ -45,7 +45,8 @@ export function SummaryPanel({
   principal: string;
   publicReadable: boolean;
 }) {
-  const openHref = publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`;
+  const routable = isRoutableDatabaseId(databaseId);
+  const openHref = routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
@@ -54,10 +55,12 @@ export function SummaryPanel({
       <Field label="Role" value={database?.role ?? "-"} />
       <Field label="Status" value={database?.status ?? "-"} />
       <Field label="Logical size" value={database ? formatBytes(database.logicalSizeBytes) : "-"} />
-      <Link className="text-accent no-underline hover:underline" href={openHref}>
-        Open
-      </Link>
-      {publicReadable ? (
+      {openHref ? (
+        <Link className="text-accent no-underline hover:underline" href={openHref}>
+          Open
+        </Link>
+      ) : <span className="text-muted">Reserved route</span>}
+      {publicReadable && routable ? (
         <a
           aria-label={`Share ${database?.name ?? databaseId} on X`}
           className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"

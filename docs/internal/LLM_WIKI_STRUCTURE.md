@@ -3,7 +3,7 @@
 ## 1. 要約
 
 `llm-wiki` は「IC canister 上の VFS を正本にした wiki / agent memory 基盤」。
-現行の主軸は Rust workspace 8 crate と、検証・運用・Obsidian 連携補助で構成される。
+現行の主軸は Rust workspace 9 crate と、検証・運用・agent 向け skill 補助で構成される。
 現在の中心概念は `/Wiki/...` と `/Sources/...` を同一 VFS 上で扱う FS-first 構成と、agent が読むための task-scoped memory query。
 
 ## 2. 全体像
@@ -29,22 +29,22 @@ flowchart LR
 
 | パス | 役割 | 補足 |
 | --- | --- | --- |
-| `README.md` | 公開入口 | 現行アーキテクチャ、CLI、検証導線 |
-| `Cargo.toml` | workspace 定義 | 現行ビルド対象は 8 crate |
+| `README.md` | 公開入口 | product 概要、CLI、公開 doc 導線 |
+| `Cargo.toml` | workspace 定義 | 現行ビルド対象は 9 crate |
 | `icp.yaml` | canister build 定義 | `scripts/build-vfs-canister.sh` を実行 |
 | `crates/` | Rust 実装本体 | 現行 crate と空ディレクトリが混在 |
 | `docs/` | 方針・検証資料 | `internal` と `validation` に分離 |
 | `scripts/` | build / bench / canbench 補助 | Bash と Python 混在 |
 | `fixtures/` | テスト・比較用固定入力 | beam sample |
 | `artifacts/` | 生成物・測定結果保管 | 大容量データを含む |
-| `.agents/skills/` | Codex/agent 向け skill | ingest / lint / query |
+| `skills/` | repo-local skill 正本 | ingest / lint / query / edit |
 | `.benchmarks/`, `.canbench*` | bench 関連補助 | 実行補助と結果置き場 |
 | `.wiki/` | repo-local wiki 領域 | 現状調査対象外、補助用途 |
 | `target/` | Rust build 生成物 | 派生物、正本ではない |
 
 ## 4. 現行 workspace crate
 
-`Cargo.toml` 上の現行メンバーは次の 8 個。
+`Cargo.toml` 上の現行メンバーは次の 9 個。
 
 | crate | 役割 | 主要ファイル |
 | --- | --- | --- |
@@ -56,6 +56,7 @@ flowchart LR
 | `vfs_store` | SQLite / FTS / sync / migration | `src/fs_store.rs`, `src/fs_search.rs`, `src/schema.rs` |
 | `vfs_types` | 共通型 | `src/fs.rs`, `src/lib.rs` |
 | `wiki_domain` | wiki 固有 path 検証 | `src/lib.rs` |
+| `ic_sqlite_vfs_probe` | ic-sqlite-vfs 検証用 probe canister | `src/lib.rs`, `src/canister.rs` |
 
 ## 5. crate 依存と責務分離
 
@@ -106,7 +107,7 @@ flowchart LR
 
 - `status`
 - `canister_health`
-- `read_node`, `list_nodes`
+- `read_node`, `list_nodes`, `list_children`
 - `write_node`, `append_node`, `edit_node`, `delete_node`, `move_node`
 - `mkdir_node`, `glob_nodes`, `recent_nodes`, `multi_edit_node`
 - `search_nodes`, `search_node_paths`
@@ -205,7 +206,7 @@ sequenceDiagram
 
 ## 9. agent / editor 連携
 
-### 9.1 `.agents/skills/`
+### 9.1 `skills/`
 
 | skill | 用途 |
 | --- | --- |
@@ -213,7 +214,7 @@ sequenceDiagram
 | `kinic-wiki-lint` | wiki health 点検 |
 | `kinic-wiki-query` | knowledge base query |
 
-日常運用の入口は `KINIC_WIKI_OPERATIONS.md` に置く。構造説明と query / ingest / lint の使い分けは分離する。
+query / ingest / lint / edit の使い分けは `skills/` 側を正本にする。
 
 ## 10. 現行ビルド対象外
 
@@ -243,6 +244,6 @@ sequenceDiagram
 - 利用面中核: `vfs_client` + `vfs_cli_core` + `vfs_cli_app`
 - wiki 固有規約: `wiki_domain` + `docs/internal/WIKI_CANONICALITY.md`
 - 品質担保: `tests`, `docs/validation`, `scripts/canbench`, `scripts/bench`
-- 周辺連携: `.agents/skills`
+- 周辺連携: `skills`
 
 現状の repo は「wiki アプリ」より「wiki 用 VFS 基盤 + 運用補助一式」と読むのが最も正確。

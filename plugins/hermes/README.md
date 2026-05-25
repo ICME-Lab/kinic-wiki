@@ -59,16 +59,14 @@ plugin logは `KINIC_HOME/hermes-plugin.log` に追記する。
 `KINIC_VFS_CLI_ALLOW_NON_II=1` を設定した場合だけ、pluginは `kinic-vfs-cli` 呼び出しに `--allow-non-ii-identity` を付ける。
 未指定時はInternet Identity identity前提のまま。
 
-Codexからの記録と改善job処理はHermesを経由しない。
-通常は `kinic-vfs-cli codex setup` で自己完結pluginを `~/.codex/plugins/kinic-skill-recorder` へ配置する。
-repo開発時だけ `scripts/install-codex-skill-recorder.sh` で同じsourceを同期する。
-Codex側は `kinic-record-skill-run` と `kinic-evolve-skill-job` を使う。
-Codex側の改善job処理もplugin同梱の `kinic_agent_runtime/evolve.py` runnerを呼び、Codex自身がcandidate `SKILL.md` を生成する。
+Codex と Claude Code の記録と改善 job 処理は Hermes を経由しない。
+詳細は [`../codex/README.md`](../codex/README.md) と [`../claude-code/README.md`](../claude-code/README.md) を参照する。
 
 Metrics route:
 
 - Hermes: `generator=hermes-plugin`, `llm_route=hermes-ctx-llm`
 - Codex: `generator=codex-plugin`, `llm_route=codex-skill`
+- Claude Code: `generator=claude-code-plugin`, `llm_route=claude-code-skill`
 
 確認:
 

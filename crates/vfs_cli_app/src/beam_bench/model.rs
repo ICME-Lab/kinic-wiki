@@ -466,17 +466,14 @@ fn load_query_skill_contract() -> Result<String> {
         .join("../..")
         .canonicalize()
         .with_context(|| "failed to resolve workspace root from CARGO_MANIFEST_DIR")?;
-    let skill_path = repo_root.join(".agents/skills/kinic-wiki-query/SKILL.md");
-    let workflow_path = repo_root.join(".agents/skills/kinic-wiki-query/query.md");
-    let answer_rules_path = repo_root.join(".agents/skills/references/query-rules.md");
+    let skill_path = repo_root.join("skills/kinic-wiki-query/SKILL.md");
+    let workflow_path = repo_root.join("skills/kinic-wiki-query/query.md");
     let skill = fs::read_to_string(&skill_path)
         .with_context(|| format!("failed to read {}", skill_path.display()))?;
     let workflow = fs::read_to_string(&workflow_path)
         .with_context(|| format!("failed to read {}", workflow_path.display()))?;
-    let answer_rules = fs::read_to_string(&answer_rules_path)
-        .with_context(|| format!("failed to read {}", answer_rules_path.display()))?;
     Ok(format!(
-        "=== kinic-wiki-query/SKILL.md ===\n{skill}\n\n=== kinic-wiki-query/query.md ===\n{workflow}\n\n=== references/query-rules.md ===\n{answer_rules}"
+        "=== kinic-wiki-query/SKILL.md ===\n{skill}\n\n=== kinic-wiki-query/query.md ===\n{workflow}"
     ))
 }
 
@@ -610,7 +607,7 @@ mod tests {
         assert!(prompt.contains("Preserve exact value formatting"));
         assert!(prompt.contains("Do not answer from an index, list, or search result alone."));
         assert!(prompt.contains("docs/internal/WIKI_CANONICALITY.md"));
-        assert!(prompt.contains("=== references/query-rules.md ==="));
+        assert!(prompt.contains("## Answer Rules"));
         assert!(prompt.contains(
             "Before the final answer, read at least one note that directly supports the answer."
         ));

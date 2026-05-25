@@ -17,7 +17,7 @@
 - `IF NOT EXISTS` に依存した schema 管理はしない。
 - 正本と検索更新は同じ SQLite、同じ transaction にまとめる。
 - 判断に迷う場合は、互換維持より構成の単純さを優先する。
-- IC 関連の build、deploy、local network、canister 管理は [`icp-cli`](/Users/0xhude/.agents/skills/icp-cli/SKILL.md) を正とする。
+- IC 関連の build、deploy、local network、canister 管理は `icp-cli` skill を正とする。
 - `dfx` は legacy 扱いとし、このリポジトリでは原則使わない。local network は project-local に `icp network start -d` / `icp network stop` で管理する。
 
 ## コミュニケーション

@@ -98,6 +98,12 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    WriteNodes {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     AppendNode {
         #[arg(long)]
         path: String,

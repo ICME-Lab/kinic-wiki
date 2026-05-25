@@ -10,7 +10,7 @@ Apply small, auditable repairs to existing canister-backed wiki nodes without ac
 2. Use `edit-node` for one text replacement in one node.
 3. Use `multi-edit-node` for multiple text replacements in one node.
 4. Use a controlled per-node loop when multiple nodes need edits. `multi-edit-node` is not a multi-node batch command.
-5. Use the client/canister `write_nodes` API only when replacing full node bodies as a prepared write set. It is not a standalone CLI command.
+5. Use `write-nodes --input <nodes.json>` when replacing full node bodies as a prepared write set.
 6. If command flags are not already known, run `<command> --help` before mutation.
 
 ## `edit-node`
@@ -62,6 +62,6 @@ For leakage cleanup, prefer per-node etag writes over an unknown batch path. Spe
 Report:
 
 - paths edited
-- command family used: `edit-node`, `multi-edit-node`, or client `write_nodes`
+- command family used: `edit-node`, `multi-edit-node`, or `write-nodes`
 - verification performed
 - skipped false positives or etag conflicts

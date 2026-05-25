@@ -3,10 +3,11 @@
 // Why: App Router pages are route leaves; keeping WikiBrowser in a layout preserves Explorer state across child navigation.
 
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { WikiBrowser } from "@/components/wiki-browser";
 import { databasePreviewDescription, databasePreviewTitle, loadDatabasePreview } from "@/lib/database-preview";
-import { publicDatabasePath } from "@/lib/share-links";
+import { isReservedDatabaseRouteSlug, publicDatabasePath } from "@/lib/share-links";
 
 type WikiDatabaseLayoutProps = {
   children: ReactNode;
@@ -15,6 +16,9 @@ type WikiDatabaseLayoutProps = {
 
 export async function generateMetadata({ params }: { params: Promise<{ databaseId: string }> }): Promise<Metadata> {
   const { databaseId } = await params;
+  if (isReservedDatabaseRouteSlug(databaseId)) {
+    notFound();
+  }
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const preview = await loadDatabasePreview(canisterId, databaseId);
   const title = databasePreviewTitle(preview.databaseName);
@@ -56,8 +60,12 @@ export async function generateMetadata({ params }: { params: Promise<{ databaseI
   };
 }
 
-export default function WikiDatabaseLayout({ children }: WikiDatabaseLayoutProps) {
+export default async function WikiDatabaseLayout({ children, params }: WikiDatabaseLayoutProps) {
   void children;
+  const { databaseId } = await params;
+  if (isReservedDatabaseRouteSlug(databaseId)) {
+    notFound();
+  }
   return (
     <Suspense fallback={<div className="min-h-screen bg-canvas" />}>
       <WikiBrowser />
