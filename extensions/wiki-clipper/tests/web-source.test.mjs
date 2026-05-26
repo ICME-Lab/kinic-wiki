@@ -23,6 +23,9 @@ test("buildWebRawSource emits canonical browser DOM source", async () => {
   assert.match(raw.content, /capture_method: browser_dom/);
   assert.match(raw.content, /url: "https:\/\/example\.com\/post"/);
   assert.match(raw.content, /text_chars: 35/);
+  assert.match(raw.content, /truncated: "false"/);
+  assert.match(raw.content, /original_chars: "35"/);
+  assert.match(raw.content, /saved_chars: "35"/);
   assert.match(raw.content, /# Example Post/);
   assert.match(raw.content, /First paragraph\./);
   assert.deepEqual(JSON.parse(raw.metadataJson), {
@@ -32,7 +35,39 @@ test("buildWebRawSource emits canonical browser DOM source", async () => {
     title: "Example Post",
     captured_at: "2026-05-01T00:00:00.000Z",
     capture_method: "browser_dom",
-    text_chars: 35
+    text_chars: 35,
+    truncated: false,
+    original_chars: 35,
+    saved_chars: 35
+  });
+});
+
+test("buildWebRawSource truncates oversized browser DOM text", async () => {
+  const text = `${"a".repeat(300_000)}   \nSHOULD_NOT_BE_SAVED`;
+  const raw = await buildWebRawSource(
+    {
+      url: "https://example.com/large",
+      title: "Large Page",
+      text
+    },
+    new Date("2026-05-01T00:00:00.000Z")
+  );
+
+  assert.match(raw.content, /truncated: "true"/);
+  assert.match(raw.content, /original_chars: "300023"/);
+  assert.match(raw.content, /saved_chars: "300000"/);
+  assert.doesNotMatch(raw.content, /SHOULD_NOT_BE_SAVED/);
+  assert.deepEqual(JSON.parse(raw.metadataJson), {
+    source_type: "url",
+    url: "https://example.com/large",
+    final_url: "https://example.com/large",
+    title: "Large Page",
+    captured_at: "2026-05-01T00:00:00.000Z",
+    capture_method: "browser_dom",
+    text_chars: 300023,
+    truncated: true,
+    original_chars: 300023,
+    saved_chars: 300000
   });
 });
 

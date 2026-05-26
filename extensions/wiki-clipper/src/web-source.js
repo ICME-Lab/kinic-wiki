@@ -3,6 +3,8 @@
 // Why: Web page capture should save source evidence before queueing generation.
 import { normalizedHttpUrl } from "./url-ingest-request.js";
 
+const MAX_WEB_SOURCE_CHARS = 300_000;
+
 export async function buildWebRawSource(snapshot, now = new Date()) {
   const finalUrl = normalizedHttpUrl(snapshot?.url);
   const sourceId = await webSourceId(finalUrl);
@@ -10,6 +12,7 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
   if (!text) {
     throw new Error("page text is empty");
   }
+  const sourceText = limitSourceText(text, MAX_WEB_SOURCE_CHARS);
   const title = String(snapshot?.title || new URL(finalUrl).hostname).trim() || finalUrl;
   const capturedAt = now.toISOString();
   const content = [
@@ -22,13 +25,16 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
     `captured_at: ${JSON.stringify(capturedAt)}`,
     "capture_method: browser_dom",
     `text_chars: ${text.length}`,
+    `truncated: ${JSON.stringify(sourceText.truncated ? "true" : "false")}`,
+    `original_chars: ${JSON.stringify(String(sourceText.originalChars))}`,
+    `saved_chars: ${JSON.stringify(String(sourceText.savedChars))}`,
     "---",
     "",
     `# ${title}`,
     "",
     `Source URL: ${finalUrl}`,
     "",
-    text,
+    sourceText.text,
     ""
   ].join("\n");
   return {
@@ -42,7 +48,10 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
       title,
       captured_at: capturedAt,
       capture_method: "browser_dom",
-      text_chars: text.length
+      text_chars: text.length,
+      truncated: sourceText.truncated,
+      original_chars: sourceText.originalChars,
+      saved_chars: sourceText.savedChars
     })
   };
 }
@@ -145,6 +154,15 @@ export function collectWebPageSnapshot() {
 
 async function webSourceId(finalUrl) {
   return `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
+}
+
+function limitSourceText(text, maxChars) {
+  const originalChars = text.length;
+  if (originalChars <= maxChars) {
+    return { text, truncated: false, originalChars, savedChars: originalChars };
+  }
+  const limited = text.slice(0, maxChars).trimEnd();
+  return { text: limited, truncated: true, originalChars, savedChars: limited.length };
 }
 
 async function sha256Hex(value) {
