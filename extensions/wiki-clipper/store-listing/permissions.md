@@ -8,6 +8,10 @@ Stores the selected database id and short-lived export or ingest status. It does
 
 Reads the URL and title of the active tab only after the user clicks the extension action. This is required to queue the current page for wiki ingest.
 
+## scripting
+
+Captures the visible active page content only after the user clicks the extension action. This is required to create a raw source snapshot for wiki ingest and does not run on pages without user action.
+
 ## offscreen
 
 Runs Internet Identity and authenticated canister writes in a DOM-capable extension context.
