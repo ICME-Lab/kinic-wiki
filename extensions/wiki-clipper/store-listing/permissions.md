@@ -2,7 +2,7 @@
 
 ## storage
 
-Stores the selected database id and short-lived export or ingest status. It does not store ChatGPT conversation bodies after export completes.
+Stores the selected database id and short-lived export or ingest status. It does not store ChatGPT or Claude conversation bodies after export completes.
 
 ## activeTab
 
@@ -21,5 +21,6 @@ Adds an extension settings shortcut.
 - `https://wiki.kinic.xyz/*`: triggers URL ingest through the Kinic Wiki web app.
 - `https://id.ai/*`: authenticates with Internet Identity.
 - `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and reads conversations only when the user starts export.
+- `https://claude.ai/*`: shows the Claude export UI and reads conversations only when the user starts export.
 - `https://icp0.io/*`: writes raw sources and ingest requests to the Kinic Wiki canister.
 - `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io/*`: fixed derivation origin for Internet Identity.

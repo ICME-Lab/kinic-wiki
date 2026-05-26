@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/service-worker.js
 // What: MV3 background workflow for canister persistence.
-// Why: Content scripts fetch ChatGPT data while the worker owns canister writes.
+// Why: Content scripts fetch AI conversation data while the worker owns canister writes.
 import { buildRawSource } from "./raw-source.js";
 import {
   DEFAULT_CANISTER_ID,
@@ -14,7 +14,20 @@ const DEFAULT_CONFIG = {
   databaseId: "",
   host: DEFAULT_IC_HOST
 };
-const ALLOWED_CHATGPT_ORIGINS = new Set(["https://chatgpt.com", "https://chat.openai.com"]);
+const PROVIDERS = {
+  chatgpt: {
+    label: "ChatGPT",
+    origins: new Set(["https://chatgpt.com", "https://chat.openai.com"]),
+    pathPattern: /^\/c\/[^/]+\/?$/,
+    pathHint: "/c/<id>"
+  },
+  claude: {
+    label: "Claude",
+    origins: new Set(["https://claude.ai"]),
+    pathPattern: /^\/chat\/[^/]+\/?$/,
+    pathHint: "/chat/<id>"
+  }
+};
 const ALLOWED_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const MAX_MESSAGE_COUNT = 500;
 const MAX_MESSAGE_CONTENT_CHARS = 200_000;
@@ -349,17 +362,23 @@ async function ensureOffscreen() {
 }
 
 export function validateSaveSource(capture, sender) {
-  if (!isAllowedChatGptUrl(sender?.tab?.url)) {
-    throw new Error("save-source sender must be a ChatGPT tab");
+  const senderProvider = providerForUrl(sender?.tab?.url);
+  if (!senderProvider) {
+    throw new Error("save-source sender must be a supported AI conversation tab");
   }
-  if (!isAllowedChatGptUrl(capture?.url)) {
-    throw new Error("capture url must be a ChatGPT conversation");
+  const captureProvider = providerForUrl(capture?.url);
+  if (!captureProvider) {
+    throw new Error("capture url must be a supported AI conversation");
   }
-  if (!isConversationUrl(capture.url)) {
-    throw new Error("capture url must use /c/<id>");
+  if (senderProvider !== captureProvider) {
+    throw new Error("capture provider must match sender origin");
   }
-  if (capture.provider !== "chatgpt") {
-    throw new Error("capture provider must be chatgpt");
+  if (capture.provider !== captureProvider) {
+    throw new Error("capture provider must match sender origin");
+  }
+  const rule = PROVIDERS[captureProvider];
+  if (!isConversationUrl(capture.url, rule)) {
+    throw new Error(`capture url must use ${rule.pathHint}`);
   }
   if (typeof capture.conversationTitle !== "string") {
     throw new Error("capture conversationTitle must be a string");
@@ -389,17 +408,21 @@ export function validateSaveSource(capture, sender) {
   }
 }
 
-function isAllowedChatGptUrl(value) {
+function providerForUrl(value) {
   try {
-    return ALLOWED_CHATGPT_ORIGINS.has(new URL(value).origin);
+    const origin = new URL(value).origin;
+    for (const [provider, rule] of Object.entries(PROVIDERS)) {
+      if (rule.origins.has(origin)) return provider;
+    }
+    return "";
   } catch {
-    return false;
+    return "";
   }
 }
 
-function isConversationUrl(value) {
+function isConversationUrl(value, rule) {
   try {
-    return /^\/c\/[^/]+\/?$/.test(new URL(value).pathname);
+    return rule.pathPattern.test(new URL(value).pathname);
   } catch {
     return false;
   }

@@ -27,7 +27,7 @@ export function buildRawSource(capture, now = new Date()) {
 function sourceIdForCapture(capture, now) {
   const provider = slug(capture.provider || "conversation");
   const conversationId = conversationIdFromUrl(capture.url);
-  if (capture.provider === "chatgpt" && conversationId) {
+  if ((capture.provider === "chatgpt" || capture.provider === "claude") && conversationId) {
     return `${provider}-${slug(conversationId)}`;
   }
   const title = slug(capture.conversationTitle || "untitled");
@@ -39,7 +39,7 @@ function sourceIdForCapture(capture, now) {
 function conversationIdFromUrl(value) {
   try {
     const url = new URL(value);
-    const match = url.pathname.match(/^\/c\/([^/]+)/);
+    const match = url.pathname.match(/^\/(?:c|chat)\/([^/]+)/);
     return match?.[1] || "";
   } catch {
     return "";

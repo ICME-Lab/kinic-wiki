@@ -1,9 +1,15 @@
 // Where: extensions/wiki-clipper/src/content-ui.tsx
-// What: Inject an on-demand recent-chat export modal into ChatGPT pages.
+// What: Inject an on-demand recent-chat export modal into supported AI chat pages.
 // Why: Users should explicitly export recent chats without switching the visible tab.
 import { computed, signal } from "@preact/signals";
 import { render } from "preact";
-import { cancelCurrentTabExport, resumeCurrentTabExport, startCurrentTabExport } from "./current-tab-export.js";
+import {
+  cancelCurrentTabExport,
+  providerFromLocation,
+  providerLabel,
+  resumeCurrentTabExport,
+  startCurrentTabExport
+} from "./current-tab-export.js";
 import { DEFAULT_EXPORT_LIMIT, normalizeExportLimit } from "./history-links.js";
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./url-ingest-request.js";
 
@@ -19,6 +25,8 @@ const phase = signal("idle");
 const progress = signal({ total: 0, done: 0, ok: 0, failed: 0 });
 const hasDatabaseConfig = computed(() => config.value.databaseId.trim().length > 0);
 const canExport = computed(() => status.value !== "exporting" && hasDatabaseConfig.value);
+const exportProvider = computed(() => providerFromLocation(location) || "chatgpt");
+const exportProviderLabel = computed(() => providerLabel(exportProvider.value));
 const logoUrl = chrome.runtime.getURL("icons/icon-32.png");
 let resumeStarted = false;
 
@@ -56,9 +64,9 @@ function Modal() {
           <img class="kinic-logo" src={logoUrl} alt="" />
           <div>
             <strong>Kinic Wiki Clipper</strong>
-            <p>Export ChatGPT conversations into your wiki</p>
+            <p>Export {exportProviderLabel.value} conversations into your wiki</p>
           </div>
-          <span class="pill">ChatGPT export</span>
+          <span class="pill">{exportProviderLabel.value} export</span>
         </div>
         <button class="close" type="button" aria-label="Close" onClick={() => (panelOpen.value = false)}>
           x
@@ -147,6 +155,7 @@ async function startExport() {
     await startCurrentTabExport({
       limit,
       config: nextConfig,
+      provider: exportProvider.value,
       originalUrl: location.href,
       callbacks: exportCallbacks()
     });
@@ -200,7 +209,7 @@ function isMainnetHost(host) {
 
 function confirmMainnetExport() {
   return globalThis.confirm(
-    "This will write ChatGPT conversations to a mainnet IC host using your Internet Identity principal. Continue?"
+    `This will write ${exportProviderLabel.value} conversations to a mainnet IC host using your Internet Identity principal. Continue?`
   );
 }
 

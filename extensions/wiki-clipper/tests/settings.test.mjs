@@ -38,10 +38,11 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /--kinic-hot-pink:#ff2686/);
   assert.match(contentUi, /chrome\.runtime\.getURL\("icons\/icon-32\.png"\)/);
   assert.match(contentUi, /type: "open-settings"/);
+  assert.match(contentUi, /exportProviderLabel/);
   assert.match(storeAssets, /#ff2686/);
   assert.match(storeAssets, /icons\/icon-128\.png/);
   assert.match(contentUi, /Kinic Wiki Clipper/);
-  assert.match(contentUi, /ChatGPT export/);
+  assert.match(contentUi, /providerLabel/);
   assert.doesNotMatch(contentUi, /Database ID/);
   assert.doesNotMatch(contentUi, /type: "save-config"/);
   assert.doesNotMatch(contentUi, /Kinic Memory/);
@@ -54,15 +55,20 @@ test("manifest exposes settings as options page without popup", () => {
   assert.ok(manifest.permissions.includes("contextMenus"));
   assert.equal(manifest.permissions.includes("tabs"), false);
   assert.ok(manifest.host_permissions.includes("https://wiki.kinic.xyz/*"));
+  assert.ok(manifest.host_permissions.includes("https://claude.ai/*"));
   assert.equal(manifest.host_permissions.includes("https://*.icp0.io/*"), false);
   assert.equal(manifest.host_permissions.includes("http://127.0.0.1/*"), false);
   assert.equal(manifest.host_permissions.includes("http://localhost/*"), false);
   assert.deepEqual(manifest.web_accessible_resources, [
     {
       resources: ["icons/icon-32.png"],
-      matches: ["https://chatgpt.com/*", "https://chat.openai.com/*"]
+      matches: ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*"]
     }
   ]);
+  assert.deepEqual(
+    manifest.content_scripts.map((script) => script.matches),
+    [["https://chatgpt.com/*", "https://chat.openai.com/*"], ["https://claude.ai/*"]]
+  );
   assert.equal(manifest.icons["128"], "icons/icon-128.png");
   assert.equal(manifest.action.default_icon["128"], "icons/icon-128.png");
 });

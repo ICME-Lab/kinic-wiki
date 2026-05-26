@@ -12,6 +12,7 @@ import {
   fetchRecentConversationTargets,
   isValidState,
   mapWithConcurrency,
+  providerFromLocation,
   readExportState,
   startCurrentTabExport,
   writeExportState
@@ -27,6 +28,14 @@ const VALID_CAPTURE = {
   messages: [{ role: "user", content: "Hello" }]
 };
 const VALID_SENDER = { tab: { url: "https://chatgpt.com/c/abc" } };
+const VALID_CLAUDE_CAPTURE = {
+  provider: "claude",
+  conversationTitle: "Claude Project",
+  url: "https://claude.ai/chat/claude-abc",
+  capturedAt: "2026-05-01T00:00:00.000Z",
+  messages: [{ role: "user", content: "Hello" }]
+};
+const VALID_CLAUDE_SENDER = { tab: { url: "https://claude.ai/chat/claude-abc" } };
 
 test("createExportState initializes direct-api state", () => {
   const state = createExportState({
@@ -169,6 +178,35 @@ test("fetchConversationCapture converts payloads and rejects empty messages", as
   );
   assert.equal(empty.ok, false);
   assert.match(empty.error, /no conversation messages/);
+});
+
+test("fetchConversationCapture converts Claude private API payloads", async () => {
+  const result = await fetchConversationCapture(
+    {
+      id: "claude-abc",
+      title: "Claude Project",
+      url: "https://claude.ai/chat/claude-abc",
+      organizationId: "12345678-1234-1234-1234-123456789abc"
+    },
+    async () =>
+      jsonResponse({
+        chat: {
+          name: "Claude Project",
+          chat_messages: [
+            { sender: "human", text: "Hello" },
+            { sender: "assistant", content: [{ text: "Hi" }] }
+          ]
+        }
+      })
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.capture.provider, "claude");
+  assert.equal(result.capture.captureMethod, "claude private api");
+  assert.deepEqual(result.capture.messages, [
+    { role: "user", content: "Hello" },
+    { role: "assistant", content: "Hi" }
+  ]);
 });
 
 test("exportTarget saves immediately after fetching a valid conversation", async () => {
@@ -327,25 +365,37 @@ test("validateSaveSource accepts ChatGPT captures from ChatGPT tabs", () => {
   );
 });
 
-test("validateSaveSource rejects non-ChatGPT senders and capture urls", () => {
+test("validateSaveSource accepts Claude captures from Claude tabs", () => {
+  assert.doesNotThrow(() => validateSaveSource(VALID_CLAUDE_CAPTURE, VALID_CLAUDE_SENDER));
+});
+
+test("validateSaveSource rejects unsupported senders and capture urls", () => {
   assert.throws(
     () => validateSaveSource(VALID_CAPTURE, { tab: { url: "https://evil.test/c/abc" } }),
-    /sender must be a ChatGPT tab/
+    /sender must be a supported AI conversation tab/
   );
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, url: "https://evil.test/c/abc" }, VALID_SENDER),
-    /capture url must be a ChatGPT conversation/
+    /capture url must be a supported AI conversation/
   );
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, url: "https://chatgpt.com/" }, VALID_SENDER),
     /must use \/c\/<id>/
+  );
+  assert.throws(
+    () => validateSaveSource({ ...VALID_CLAUDE_CAPTURE, url: "https://claude.ai/" }, VALID_CLAUDE_SENDER),
+    /must use \/chat\/<id>/
   );
 });
 
 test("validateSaveSource rejects wrong provider and malformed messages", () => {
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, provider: "other" }, VALID_SENDER),
-    /provider must be chatgpt/
+    /provider must match sender origin/
+  );
+  assert.throws(
+    () => validateSaveSource(VALID_CLAUDE_CAPTURE, VALID_SENDER),
+    /provider must match sender origin/
   );
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, messages: [] }, VALID_SENDER),
@@ -391,6 +441,12 @@ test("validateSaveSource rejects wrong provider and malformed messages", () => {
       ),
     /raw source must not exceed/
   );
+});
+
+test("providerFromLocation detects supported AI hosts", () => {
+  assert.equal(providerFromLocation({ href: "https://chatgpt.com/", origin: "https://chatgpt.com" }), "chatgpt");
+  assert.equal(providerFromLocation({ href: "https://claude.ai/new", origin: "https://claude.ai" }), "claude");
+  assert.equal(providerFromLocation({ href: "https://example.com/", origin: "https://example.com" }), "");
 });
 
 test("handleMessage stores export state in chrome.storage.session", async () => {

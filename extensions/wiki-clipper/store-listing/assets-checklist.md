@@ -19,5 +19,5 @@
 
 - Options page after Internet Identity login.
 - Database selection state.
-- ChatGPT export panel.
+- AI conversation export panel.
 - Successful URL ingest status.

@@ -1,10 +1,10 @@
 # Kinic Wiki Clipper
 
-MV3 Chrome extension for creating Kinic Wiki pages from the active tab and saving recent ChatGPT conversations as raw sources.
+MV3 Chrome extension for creating Kinic Wiki pages from the active tab and saving recent ChatGPT and Claude conversations as raw sources.
 
 See [USAGE.md](./USAGE.md) for local canister setup and Chrome loading steps.
 
-ChatGPT raw-source export and URL ingest use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude raw-source export and URL ingest use Internet Identity and require writer access for the selected database.
 
 ## Build
 
@@ -34,11 +34,11 @@ npm run release:package
 ```
 
 The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies required store image files and dimensions.
-Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT export, active-tab URL ingest, Internet Identity auth, and selected database storage behavior.
+Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude export, active-tab URL ingest, Internet Identity auth, and selected database storage behavior.
 
 ## Flow
 
-1. Open a ChatGPT conversation tab.
+1. Open a ChatGPT or Claude conversation tab.
 2. Select a database from extension settings.
 3. Use the page-level `Kinic Memory` button.
 4. Enter the number of recent chats to export. The default is `10`.
@@ -54,7 +54,7 @@ Required settings:
 
 The active-tab flow writes `/Sources/ingest-requests/<request-id>.md` as a VFS `file`, then asks WikiBrowser to trigger the generator Worker with its server-side token.
 
-ChatGPT export only writes raw evidence. Generate wiki pages later:
+ChatGPT/Claude export only writes raw evidence. Generate wiki pages later:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/<source_id>/<source_id>.md
@@ -69,7 +69,7 @@ The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edite
 - Database ID is selected and saved automatically from writable hot databases. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
 - Mainnet hosts require explicit confirmation before export.
-- ChatGPT raw-source export and URL ingest writes use the logged-in Internet Identity principal and require writer access for that principal.
+- ChatGPT/Claude raw-source export and URL ingest writes use the logged-in Internet Identity principal and require writer access for that principal.
 - URL ingest needs WikiBrowser `KINIC_WIKI_WORKER_TOKEN` configured to trigger processing.
-- ChatGPT export uses private `/backend-api/*` endpoints. Endpoint shape can change without notice.
+- ChatGPT export uses private `/backend-api/*` endpoints. Claude export uses private `claude.ai/api/.../chat_conversations/*` endpoints. Endpoint shape can change without notice.
 - Public release requires owner, allowlist, token, delegation, or equivalent write authorization on the canister.

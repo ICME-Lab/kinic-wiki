@@ -48,6 +48,19 @@ test("buildRawSource keeps the same path for the same ChatGPT conversation", () 
   assert.equal(first.path, second.path);
 });
 
+test("buildRawSource keeps a stable path for Claude conversations", () => {
+  const raw = buildRawSource({
+    provider: "claude",
+    conversationTitle: "Claude Project",
+    url: "https://claude.ai/chat/claude-abc",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.equal(raw.path, "/Sources/raw/claude-claude-abc/claude-claude-abc.md");
+  assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
+});
+
 test("buildRawSource rejects empty captures", () => {
   assert.throws(
     () =>
