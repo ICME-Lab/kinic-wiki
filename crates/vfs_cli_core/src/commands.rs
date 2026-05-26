@@ -12,7 +12,7 @@ use candid::Principal;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, BillingAccount, BillingConfig, DatabaseRestoreChunkRequest,
+    AppendNodeRequest, BillingAccount, BillingConfig, DatabaseRestoreChunkRequest, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
@@ -47,6 +47,9 @@ pub async fn run_vfs_command(
         command => command,
     };
     let database_id = require_database_id(database_id)?;
+    if command_requires_billable_database(&command) {
+        require_billable_database(client, database_id).await?;
+    }
     match command {
         VfsCommand::Billing { .. } => {
             unreachable!("billing command handled before db requirement")
@@ -461,6 +464,59 @@ pub async fn run_vfs_command(
         }
     }
     Ok(())
+}
+
+fn command_requires_billable_database(command: &VfsCommand) -> bool {
+    matches!(
+        command,
+        VfsCommand::WriteNode { .. }
+            | VfsCommand::AppendNode { .. }
+            | VfsCommand::EditNode { .. }
+            | VfsCommand::DeleteNode { .. }
+            | VfsCommand::DeleteTree { .. }
+            | VfsCommand::MkdirNode { .. }
+            | VfsCommand::MoveNode { .. }
+            | VfsCommand::MultiEditNode { .. }
+    )
+}
+
+async fn require_billable_database(client: &impl VfsApi, database_id: &str) -> Result<()> {
+    let config = client
+        .get_billing_config()
+        .await
+        .context("billing config unavailable")?;
+    let databases = client
+        .list_databases()
+        .await
+        .context("database list unavailable for billing check")?;
+    let database = databases
+        .iter()
+        .find(|database| database.database_id == database_id)
+        .ok_or_else(|| anyhow!("database billing state unavailable: {database_id}"))?;
+    if let Some(reason) = database_billing_disabled_reason(database, &config) {
+        return Err(anyhow!("{reason}"));
+    }
+    Ok(())
+}
+
+fn database_billing_disabled_reason(
+    database: &DatabaseSummary,
+    config: &BillingConfig,
+) -> Option<String> {
+    let balance = database.billing_balance_e8s.unwrap_or(0);
+    if database.billing_suspended_at_ms.is_some() {
+        return Some(format!(
+            "database billing is suspended: {}",
+            database.database_id
+        ));
+    }
+    if balance < config.min_update_balance_e8s {
+        return Some(format!(
+            "database billing balance is below minimum: {} balance_e8s={} min_update_balance_e8s={}",
+            database.database_id, balance, config.min_update_balance_e8s
+        ));
+    }
+    None
 }
 
 fn print_links(links: Vec<LinkEdge>, json: bool) -> Result<()> {
@@ -1314,7 +1370,7 @@ fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {
 
 #[cfg(test)]
 mod tests {
-    use super::run_vfs_command;
+    use super::{command_requires_billable_database, run_vfs_command};
     use crate::cli::{BillingCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
@@ -1342,7 +1398,9 @@ mod tests {
         database_top_up_repairs_cancel: Mutex<Vec<(String, u64)>>,
         database_withdraw_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
         database_withdraw_repairs_reverse: Mutex<Vec<(String, u64)>>,
+        database_summaries: Mutex<Vec<DatabaseSummary>>,
         billing_configs: Mutex<u32>,
+        fail_billing_config: Mutex<bool>,
         ledger_fee_queries: Mutex<Vec<String>>,
         fail_ledger_fee_query: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
@@ -1406,6 +1464,24 @@ mod tests {
             updated_at: 2,
             etag: etag.to_string(),
             has_children,
+        }
+    }
+
+    fn database_summary(
+        database_id: &str,
+        balance_e8s: Option<u64>,
+        suspended_at_ms: Option<i64>,
+    ) -> DatabaseSummary {
+        DatabaseSummary {
+            database_id: database_id.to_string(),
+            name: database_id.to_string(),
+            status: DatabaseStatus::Hot,
+            role: DatabaseRole::Owner,
+            logical_size_bytes: 42,
+            billing_balance_e8s: balance_e8s,
+            billing_suspended_at_ms: suspended_at_ms,
+            archived_at_ms: None,
+            deleted_at_ms: None,
         }
     }
 
@@ -1560,6 +1636,9 @@ mod tests {
         async fn get_billing_config(&self) -> Result<BillingConfig> {
             let mut configs = self.billing_configs.lock().unwrap();
             *configs += 1;
+            if *self.fail_billing_config.lock().unwrap() {
+                return Err(anyhow!("billing config unavailable"));
+            }
             Ok(BillingConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
@@ -1585,13 +1664,17 @@ mod tests {
         async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
             let mut lists = self.database_lists.lock().unwrap();
             *lists += 1;
+            let summaries = self.database_summaries.lock().unwrap();
+            if !summaries.is_empty() {
+                return Ok(summaries.clone());
+            }
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
                 status: DatabaseStatus::Hot,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
-                billing_balance_e8s: Some(0),
+                billing_balance_e8s: Some(10_000),
                 billing_suspended_at_ms: None,
                 archived_at_ms: None,
                 deleted_at_ms: None,
@@ -1814,6 +1897,190 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_node_rejects_low_billing_balance_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(9_999), None)]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: true,
+            },
+        )
+        .await
+        .expect_err("low balance should reject");
+
+        assert!(error.to_string().contains("balance is below minimum"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mkdir_node_rejects_suspended_billing_before_write() {
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(20_000), Some(1))]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::MkdirNode {
+                path: "/Wiki/new".to_string(),
+                json: false,
+            },
+        )
+        .await
+        .expect_err("suspended billing should reject");
+
+        assert!(error.to_string().contains("billing is suspended"));
+    }
+
+    #[tokio::test]
+    async fn mutating_commands_reject_missing_billing_config_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            fail_billing_config: Mutex::new(true),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("missing config should reject");
+
+        assert!(error.to_string().contains("billing config unavailable"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mutating_commands_reject_missing_database_summary_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("other", Some(20_000), None)]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("missing summary should reject");
+
+        assert!(error.to_string().contains("billing state unavailable"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn billing_gate_covers_content_mutation_commands_only() {
+        assert!(command_requires_billable_database(&VfsCommand::WriteNode {
+            path: "/Wiki/a.md".to_string(),
+            kind: NodeKindArg::File,
+            input: PathBuf::from("a.md"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+            json: false,
+        }));
+        assert!(command_requires_billable_database(
+            &VfsCommand::AppendNode {
+                path: "/Wiki/a.md".to_string(),
+                input: PathBuf::from("a.md"),
+                kind: None,
+                metadata_json: None,
+                expected_etag: None,
+                separator: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_billable_database(&VfsCommand::EditNode {
+            path: "/Wiki/a.md".to_string(),
+            old_text: "a".to_string(),
+            new_text: "b".to_string(),
+            expected_etag: None,
+            replace_all: false,
+            json: false,
+        }));
+        assert!(command_requires_billable_database(
+            &VfsCommand::DeleteNode {
+                path: "/Wiki/a.md".to_string(),
+                expected_etag: None,
+                expected_folder_index_etag: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_billable_database(
+            &VfsCommand::DeleteTree {
+                path: "/Wiki/a".to_string(),
+                json: false,
+            }
+        ));
+        assert!(command_requires_billable_database(&VfsCommand::MkdirNode {
+            path: "/Wiki/a".to_string(),
+            json: false,
+        }));
+        assert!(command_requires_billable_database(&VfsCommand::MoveNode {
+            from_path: "/Wiki/a.md".to_string(),
+            to_path: "/Wiki/b.md".to_string(),
+            expected_etag: None,
+            overwrite: false,
+            json: false,
+        }));
+        assert!(command_requires_billable_database(
+            &VfsCommand::MultiEditNode {
+                path: "/Wiki/a.md".to_string(),
+                edits_file: PathBuf::from("edits.json"),
+                expected_etag: None,
+                json: false,
+            }
+        ));
+        assert!(!command_requires_billable_database(&VfsCommand::ReadNode {
+            path: "/Wiki/a.md".to_string(),
+            metadata_only: false,
+            fields: None,
+            json: false,
+        }));
+        assert!(!command_requires_billable_database(&VfsCommand::Database {
+            command: super::DatabaseCommand::TopUp {
+                database_id: "alpha".to_string(),
+                amount_e8s: 1,
+            },
+        }));
+    }
+
+    #[tokio::test]
     async fn list_children_sends_path_request() {
         let client = MockClient::default();
         run_vfs_command(
@@ -1958,6 +2225,30 @@ mod tests {
         )
         .await
         .expect("database top-up should succeed");
+        assert_eq!(
+            *client.database_top_ups.lock().unwrap(),
+            vec![("db_alpha".to_string(), 500_000)]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_top_up_does_not_require_billing_precheck() {
+        let client = MockClient {
+            fail_billing_config: Mutex::new(true),
+            ..MockClient::default()
+        };
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::TopUp {
+                    database_id: "db_alpha".to_string(),
+                    amount_e8s: 500_000,
+                },
+            },
+        )
+        .await
+        .expect("database top-up should not need billing precheck");
         assert_eq!(
             *client.database_top_ups.lock().unwrap(),
             vec![("db_alpha".to_string(), 500_000)]

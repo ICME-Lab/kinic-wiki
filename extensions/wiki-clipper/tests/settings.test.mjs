@@ -69,17 +69,43 @@ test("manifest exposes settings as options page without popup", () => {
 
 test("database dropdown options include only hot owner and writer databases", () => {
   const databases = normalizeWritableDatabases([
-    rawDatabase("owner-db", "Owner", "Hot"),
-    rawDatabase("writer-db", "Writer", "Hot"),
-    rawDatabase("reader-db", "Reader", "Hot"),
-    rawDatabase("archived-db", "Owner", "Archived")
+    rawDatabase("owner-db", "Owner", "Hot", 20_000n),
+    rawDatabase("writer-db", "Writer", "Hot", 20_000n),
+    rawDatabase("reader-db", "Reader", "Hot", 20_000n),
+    rawDatabase("archived-db", "Owner", "Archived", 20_000n)
+  ], { minUpdateBalanceE8s: "10000" });
+  assert.deepEqual(
+    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.billable]),
+    [
+      ["owner-db", "owner-db name", "Owner", "Hot", true],
+      ["writer-db", "writer-db name", "Writer", "Hot", true]
+    ]
+  );
+});
+
+test("database dropdown keeps billing-disabled writer databases with reasons", () => {
+  const databases = normalizeWritableDatabases([
+    rawDatabase("active-db", "Owner", "Hot", 20_000n),
+    rawDatabase("low-db", "Writer", "Hot", 9_999n),
+    rawDatabase("suspended-db", "Writer", "Hot", 20_000n, 1n)
+  ], { minUpdateBalanceE8s: "10000" });
+  assert.deepEqual(
+    databases.map((database) => [database.databaseId, database.billable, database.billingReason]),
+    [
+      ["active-db", true, null],
+      ["low-db", false, "Database balance is below the minimum update balance."],
+      ["suspended-db", false, "Database billing is suspended."]
+    ]
+  );
+});
+
+test("database dropdown disables writer databases when billing config is unavailable", () => {
+  const databases = normalizeWritableDatabases([
+    rawDatabase("owner-db", "Owner", "Hot", 20_000n)
   ]);
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.name, database.role, database.status]),
-    [
-      ["owner-db", "owner-db name", "Owner", "Hot"],
-      ["writer-db", "writer-db name", "Writer", "Hot"]
-    ]
+    databases.map((database) => [database.databaseId, database.billable, database.billingReason]),
+    [["owner-db", false, "Billing config unavailable."]]
   );
 });
 
@@ -134,13 +160,15 @@ test("settings docs describe automatic database save", () => {
   assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
-function rawDatabase(databaseId, role, status) {
+function rawDatabase(databaseId, role, status, billingBalanceE8s = 20_000n, billingSuspendedAtMs = null) {
   return {
     database_id: databaseId,
     name: `${databaseId} name`,
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
+    billing_balance_e8s: [billingBalanceE8s],
+    billing_suspended_at_ms: billingSuspendedAtMs === null ? [] : [billingSuspendedAtMs],
     archived_at_ms: [],
     deleted_at_ms: []
   };

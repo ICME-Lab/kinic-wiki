@@ -126,11 +126,14 @@ assert.match(homeUi, /!database\.member && database\.publicReadable \? `\$\{base
 assert.match(homeUi, /read=anonymous/);
 assert.match(wikiBrowser, /"ingest"/);
 assert.match(wikiBrowser, /<IngestPanel/);
+assert.match(wikiBrowser, /databaseBillingError=\{currentDatabaseBillingReason\}/);
 assert.match(wikiBrowser, /parseReadMode/);
 assert.match(wikiBrowser, /effectiveReadIdentity/);
 assert.match(wikiBrowser, /hrefForCurrentReadRoute/);
 assert.match(wikiBrowser, /router\.replace\(anonymousHref\)/);
 assert.match(ingestPanel, /createUrlIngestRequest/);
+assert.match(ingestPanel, /databaseBillingError/);
+assert.match(ingestPanel, /const submitDisabled = busy \|\| !url\.trim\(\) \|\| Boolean\(databaseBillingError\)/);
 assert.doesNotMatch(ingestPanel, /ensureUrlIngestTriggerSession\(canisterId, databaseId, readIdentity\)/);
 assert.doesNotMatch(ingestPanel, /Checking access/);
 assert.doesNotMatch(ingestPanel, /URL ingest disabled/);

@@ -24,14 +24,15 @@ use vfs_types::{
     DatabaseStatus, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -187,6 +188,32 @@ impl VfsService {
 
     pub fn list_database_infos(&self) -> Result<Vec<DatabaseInfo>, String> {
         self.read_index(load_database_infos)
+    }
+
+    pub fn query_index_sql_json(
+        &self,
+        sql: &str,
+        limit: u32,
+    ) -> Result<IndexSqlJsonQueryResult, String> {
+        validate_index_select_sql(sql)?;
+        let limit = page_limit(limit);
+        self.read_index(|conn| {
+            let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
+            let rows = crate::sqlite::query_map_limit(&mut stmt, params![], limit as usize, |row| {
+                let value: Option<String> = crate::sqlite::row_get(row, 0)?;
+                value.ok_or_else(crate::sqlite::invalid_query)
+            })
+            .map_err(|error| {
+                format!(
+                    "index SQL must return one non-null TEXT JSON column as the first column: {error}"
+                )
+            })?;
+            Ok(IndexSqlJsonQueryResult {
+                row_count: rows.len() as u32,
+                rows,
+                limit,
+            })
+        })
     }
 
     pub fn list_database_summaries_for_caller(
@@ -3272,6 +3299,45 @@ fn load_billing_config_u64(conn: &Connection, key: &str) -> Result<u64, String> 
     value.parse::<u64>().map_err(|error| error.to_string())
 }
 
+fn validate_index_select_sql(sql: &str) -> Result<(), String> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err("index SQL must not be empty".to_string());
+    }
+    if trimmed.contains(';') {
+        return Err("index SQL must be a single SELECT statement".to_string());
+    }
+    let first = trimmed
+        .split(|character: char| !is_sql_identifier_character(character))
+        .find(|token| !token.is_empty())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if first != "select" {
+        return Err("index SQL must start with SELECT".to_string());
+    }
+    let blocked = [
+        "pragma", "attach", "detach", "insert", "update", "delete", "create", "drop", "alter",
+        "replace", "vacuum", "reindex", "analyze",
+    ];
+    for token in sql_identifier_tokens(trimmed) {
+        if blocked.contains(&token.as_str()) {
+            return Err(format!("index SQL token is not allowed: {token}"));
+        }
+    }
+    Ok(())
+}
+
+fn sql_identifier_tokens(sql: &str) -> Vec<String> {
+    sql.split(|character: char| !is_sql_identifier_character(character))
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn is_sql_identifier_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
+}
+
 fn amount_to_i64(amount: u64) -> Result<i64, String> {
     i64::try_from(amount).map_err(|_| "amount exceeds i64 limit".to_string())
 }
@@ -4427,5 +4493,130 @@ mod tests {
             service.billing_config().expect("config should load"),
             config
         );
+    }
+
+    #[test]
+    fn index_sql_json_returns_billing_json_rows() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("default", "2vxsx-fae", 1_700_000_000_000)
+            .expect("database should create");
+        let operation_id = service
+            .begin_database_top_up("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+            .expect("top-up should begin");
+        service
+            .credit_database_top_up(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+                1,
+                1_700_000_000_001,
+            )
+            .expect("top-up should credit");
+
+        let result = service
+            .query_index_sql_json(
+                "SELECT json_object('top_up_e8s', COALESCE(SUM(amount_e8s), 0)) FROM database_billing_ledger WHERE kind = 'top_up' LIMIT 1",
+                10,
+            )
+            .expect("index SQL should query");
+
+        assert_eq!(result.limit, 10);
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows, vec![r#"{"top_up_e8s":1000000}"#.to_string()]);
+    }
+
+    #[test]
+    fn index_sql_json_clamps_limit() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+
+        let result = service
+            .query_index_sql_json(
+                "SELECT json_object('n', 1) UNION ALL SELECT json_object('n', 2) LIMIT 2",
+                0,
+            )
+            .expect("index SQL should query");
+
+        assert_eq!(result.limit, 1);
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows, vec![r#"{"n":1}"#.to_string()]);
+    }
+
+    #[test]
+    fn index_sql_json_stops_reading_at_limit() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+
+        let result = service
+            .query_index_sql_json("SELECT json_object('n', 1) UNION ALL SELECT 2", 1)
+            .expect("second non-text row should not be read");
+
+        assert_eq!(result.limit, 1);
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows, vec![r#"{"n":1}"#.to_string()]);
+    }
+
+    #[test]
+    fn index_sql_json_rejects_mutating_sql() {
+        for sql in [
+            "UPDATE database_billing_accounts SET balance_e8s = 0",
+            "DELETE FROM database_billing_ledger",
+            "INSERT INTO database_billing_ledger (database_id) VALUES ('x')",
+            "CREATE TABLE x (id INTEGER)",
+            "DROP TABLE database_billing_ledger",
+            "ALTER TABLE database_billing_ledger ADD COLUMN x INTEGER",
+            "REPLACE INTO billing_config (key, value) VALUES ('x', 'y')",
+            "VACUUM",
+            "PRAGMA table_info(database_billing_ledger)",
+            "ATTACH DATABASE 'x' AS x",
+            "DETACH DATABASE x",
+            "REINDEX database_billing_ledger_database_idx",
+            "ANALYZE",
+            "SELECT json_object('ok', 1); SELECT json_object('ok', 2)",
+        ] {
+            assert!(
+                validate_index_select_sql(sql).is_err(),
+                "SQL should reject: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn index_sql_json_rejects_non_text_first_column() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+
+        let error = service
+            .query_index_sql_json("SELECT 1 LIMIT 1", 10)
+            .expect_err("non-text first column should reject");
+
+        assert!(error.contains("one non-null TEXT JSON column"));
     }
 }

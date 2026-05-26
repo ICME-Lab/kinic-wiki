@@ -3,7 +3,7 @@
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
 import { buildUrlIngestRequest } from "./url-ingest-request.js";
-import { createVfsActor as defaultCreateVfsActor } from "./vfs-actor.js";
+import { createVfsActor as defaultCreateVfsActor, requireDatabaseBillable } from "./vfs-actor.js";
 
 const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
 const TRIGGER_SESSION_TTL_MS = 30 * 60 * 1000;
@@ -40,6 +40,7 @@ export async function queueUrlIngest(tab, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  await requireDatabaseBillable(actor, config.databaseId);
   const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
   const request = buildUrlIngestRequest({
     url: tab.url,
@@ -75,6 +76,7 @@ export async function saveRawSource(rawSource, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  await requireDatabaseBillable(actor, config.databaseId);
   const existing = await actor.read_node(config.databaseId, rawSource.path);
   if ("Err" in existing) throw new Error(existing.Err);
   const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];

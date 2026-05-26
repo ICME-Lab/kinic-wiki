@@ -17,6 +17,7 @@ test("queueUrlIngest writes request and triggers via wiki route", async () => {
     createVfsActor: async (config) => {
       calls.push(["create", config.identity, config.databaseId]);
       return {
+        ...billableActorMethods(),
         async authorize_url_ingest_trigger_session(request) {
           calls.push(["session", request.database_id, request.session_nonce]);
           return { Ok: null };
@@ -67,6 +68,7 @@ test("queueUrlIngest keeps request result when trigger fails", async () => {
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     fetch: async () => new Response("nope", { status: 502 }),
     createVfsActor: async () => ({
+      ...billableActorMethods(),
       async mkdir_node(request) {
         return { Ok: { created: true, path: request.path } };
       },
@@ -99,6 +101,7 @@ test("queueUrlIngest rejects before writing when session authorize fails", async
       return Response.json({ accepted: true });
     },
     createVfsActor: async () => ({
+      ...billableActorMethods(),
       async write_node() {
         calls.push(["write"]);
         return { Ok: { created: true, node: { etag: "etag-request" } } };
@@ -132,6 +135,7 @@ test("queueUrlIngest reuses session nonce inside ttl", async () => {
       return Response.json({ accepted: true });
     },
     createVfsActor: async () => ({
+      ...billableActorMethods(),
       async authorize_url_ingest_trigger_session(request) {
         calls.push(["session", request.session_nonce]);
         return { Ok: null };
@@ -171,6 +175,7 @@ test("saveRawSource writes with authenticated identity", async () => {
     createVfsActor: async (config) => {
       calls.push(["create", config.identity, config.databaseId]);
       return {
+        ...billableActorMethods(),
         async read_node(databaseId, path) {
           calls.push(["read", databaseId, path]);
           return { Ok: [{ etag: "etag-1" }] };
@@ -215,6 +220,67 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   }
 });
 
+test("queueUrlIngest rejects low billing balance before writing", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...billableActorMethods({ balanceE8s: 9_999n }),
+      async authorize_url_ingest_trigger_session() {
+        calls.push(["session"]);
+        return { Ok: null };
+      },
+      async mkdir_node() {
+        calls.push(["mkdir"]);
+        return { Ok: { created: true, path: "/Sources" } };
+      },
+      async write_node() {
+        calls.push(["write"]);
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () => queueUrlIngest({ url: "https://example.com/#x", title: "Example" }, config()),
+      /minimum update balance/
+    );
+
+    assert.deepEqual(calls, []);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveRawSource rejects suspended billing before writing", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...billableActorMethods({ suspendedAtMs: 1n }),
+      async read_node() {
+        calls.push(["read"]);
+        return { Ok: [] };
+      },
+      async mkdir_node() {
+        calls.push(["mkdir"]);
+        return { Ok: { created: true, path: "/Sources" } };
+      },
+      async write_node() {
+        calls.push(["write"]);
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
+      }
+    })
+  });
+  try {
+    await assert.rejects(() => saveRawSource(rawSource(), config()), /billing is suspended/);
+
+    assert.deepEqual(calls, []);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("authStatus returns principal without identity", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { secret: "identity" }, principal: "principal-1" })
@@ -243,5 +309,39 @@ function config() {
     canisterId: "xis3j-paaaa-aaaai-axumq-cai",
     databaseId: "team-db",
     host: "https://icp0.io"
+  };
+}
+
+function billableActorMethods({ databaseId = "team-db", balanceE8s = 20_000n, suspendedAtMs = null } = {}) {
+  return {
+    async list_databases() {
+      return {
+        Ok: [
+          {
+            database_id: databaseId,
+            name: "Team DB",
+            role: { Writer: null },
+            status: { Hot: null },
+            logical_size_bytes: 0n,
+            billing_balance_e8s: [balanceE8s],
+            billing_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
+            archived_at_ms: [],
+            deleted_at_ms: []
+          }
+        ]
+      };
+    },
+    async get_billing_config() {
+      return {
+        Ok: {
+          kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+          sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+          rate_numerator_e8s: 1n,
+          rate_denominator_cycles: 1n,
+          fixed_update_fee_e8s: 1n,
+          min_update_balance_e8s: 10_000n
+        }
+      };
+    }
   };
 }

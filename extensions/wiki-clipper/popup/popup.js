@@ -107,12 +107,21 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
   for (const database of databases) {
     const option = document.createElement("option");
     option.value = database.databaseId;
-    option.textContent = `${database.name || database.databaseId} (${database.role})`;
+    option.disabled = !database.billable;
+    option.textContent = database.billable
+      ? `${database.name || database.databaseId} (${database.role})`
+      : `${database.name || database.databaseId} (${database.role}) - ${database.billingReason}`;
     databaseSelect.append(option);
   }
-  databaseSelect.value = databases.some((database) => database.databaseId === selectedDatabaseId)
+  const selectable = databases.filter((database) => database.billable);
+  if (selectable.length === 0) {
+    databaseSelect.value = "";
+    databaseSelect.disabled = true;
+    return "";
+  }
+  databaseSelect.value = selectable.some((database) => database.databaseId === selectedDatabaseId)
     ? selectedDatabaseId
-    : databases[0].databaseId;
+    : selectable[0].databaseId;
   databaseSelect.disabled = false;
   return databaseSelect.value;
 }

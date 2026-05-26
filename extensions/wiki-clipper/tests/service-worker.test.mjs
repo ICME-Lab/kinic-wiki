@@ -139,6 +139,29 @@ test("unauthenticated save-source opens settings once", async () => {
   }
 });
 
+test("billing-disabled save-source opens settings once", async () => {
+  const syncStorage = memoryStorage();
+  const settingsTabs = [];
+  resetSettingsOpenThrottleForTest();
+  const restore = installChromeForSettings(syncStorage, settingsTabs);
+  setOffscreenBridgeForTest(async () => ({ ok: false, error: "Database balance is below the minimum update balance." }));
+  try {
+    const message = {
+      type: "save-source",
+      capture: capture(),
+      config: { canisterId: "aaaaa-aa", databaseId: "team-db", host: "http://127.0.0.1:8001" }
+    };
+    await assert.rejects(() => handleMessage(message, sender()), /minimum update balance/);
+    await assert.rejects(() => handleMessage(message, sender()), /minimum update balance/);
+
+    assert.deepEqual(settingsTabs, ["options"]);
+  } finally {
+    setOffscreenBridgeForTest(null);
+    resetSettingsOpenThrottleForTest();
+    restore();
+  }
+});
+
 test("action click rejects non-http pages", async () => {
   const calls = [];
   const response = await handleActionClick(
@@ -175,6 +198,26 @@ test("action click opens settings when database config is incomplete", async () 
     ["badge", "..."],
     ["status", "setup_required", "Login and select a writable database."],
     ["badge", "SET"],
+    ["settings"]
+  ]);
+});
+
+test("action click opens settings and stores status when billing is disabled", async () => {
+  const calls = [];
+  const response = await handleActionClick(
+    { url: "https://example.com/", title: "Example" },
+    actionDeps({
+      sendOffscreen: async () => ({ ok: false, error: "Database billing is suspended." }),
+      openSettings: async () => calls.push(["settings"]),
+      writeStatus: async (status) => calls.push(["status", status.status, status.message]),
+      setBadge: async (text) => calls.push(["badge", text])
+    })
+  );
+  assert.equal(response.ok, false);
+  assert.deepEqual(calls, [
+    ["badge", "..."],
+    ["status", "error", "Database billing is suspended."],
+    ["badge", "ERR"],
     ["settings"]
   ]);
 });

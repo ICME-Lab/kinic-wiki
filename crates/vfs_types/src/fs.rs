@@ -136,6 +136,13 @@ pub struct DatabaseBillingPendingOperationPage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct IndexSqlJsonQueryResult {
+    pub rows: Vec<String>,
+    pub row_count: u32,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
 }

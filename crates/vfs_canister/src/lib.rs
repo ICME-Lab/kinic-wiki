@@ -35,14 +35,15 @@ use vfs_types::{
     DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
-    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -474,6 +475,12 @@ fn list_database_billing_pending_operations(
             limit,
         )
     })
+}
+
+#[query]
+fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResult, String> {
+    require_controller_caller()?;
+    with_service(|service| service.query_index_sql_json(&sql, limit))
 }
 
 #[update]
@@ -1117,6 +1124,23 @@ fn require_authenticated_caller() -> Result<(), String> {
         return Err("anonymous caller not allowed".to_string());
     }
     Ok(())
+}
+
+fn require_controller_caller() -> Result<(), String> {
+    let caller = caller_principal();
+    #[cfg(test)]
+    {
+        if caller == Principal::management_canister() {
+            return Ok(());
+        }
+    }
+    #[cfg(not(test))]
+    {
+        if ic_cdk::api::is_controller(&caller) {
+            return Ok(());
+        }
+    }
+    Err("caller is not a canister controller".to_string())
 }
 
 fn validate_billing_account(account: &BillingAccount) -> Result<(), String> {

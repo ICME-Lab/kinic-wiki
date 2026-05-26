@@ -29,12 +29,12 @@ use super::{
     list_database_billing_entries, list_database_billing_pending_operations, list_database_members,
     list_databases, list_nodes, memory_manifest, mkdir_node, move_node, multi_edit_node,
     outgoing_links, parse_upgrade_billing_config_arg, preview_database_top_up, query_context,
-    read_database_archive_chunk, read_node, read_node_context, recent_nodes, rename_database,
-    repair_database_top_up_complete, revoke_database_access, search_node_paths, search_nodes,
-    set_next_ledger_transfer_from_outcome_for_test, set_next_ledger_transfer_outcome_for_test,
-    set_test_caller_principal_for_test, source_evidence, status, top_up_database,
-    transfer_error_outcome, transfer_from_error_outcome, withdraw_database_balance,
-    write_database_restore_chunk, write_node, write_nodes,
+    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context, recent_nodes,
+    rename_database, repair_database_top_up_complete, revoke_database_access, search_node_paths,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test, source_evidence,
+    status, top_up_database, transfer_error_outcome, transfer_from_error_outcome,
+    withdraw_database_balance, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -107,6 +107,80 @@ fn billing_config_rejects_anonymous_principals() {
         .expect_err("anonymous governance should reject");
 
     assert!(error.contains("principal must not be anonymous"));
+}
+
+#[test]
+fn controller_can_query_index_sql_json() {
+    install_test_service();
+    set_test_caller_principal_for_test(Principal::management_canister());
+
+    let result = query_index_sql_json(
+        "SELECT json_object('top_up_e8s', COALESCE(SUM(amount_e8s), 0)) FROM database_billing_ledger WHERE kind = 'top_up' LIMIT 1".to_string(),
+        10,
+    )
+    .expect("controller should query index SQL");
+
+    assert_eq!(result.limit, 10);
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows, vec![r#"{"top_up_e8s":1000000}"#.to_string()]);
+}
+
+#[test]
+fn index_sql_json_rejects_non_controller_callers() {
+    install_test_service();
+    let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
+        .expect("valid non-controller principal");
+    set_test_caller_principal_for_test(non_controller);
+
+    let error = query_index_sql_json("SELECT json_object('ok', 1) LIMIT 1".to_string(), 10)
+        .expect_err("non-controller should reject");
+
+    assert!(error.contains("caller is not a canister controller"));
+}
+
+#[test]
+fn index_sql_json_rejects_anonymous_callers() {
+    install_test_service();
+    set_test_caller_principal_for_test(Principal::anonymous());
+
+    let error = query_index_sql_json("SELECT json_object('ok', 1) LIMIT 1".to_string(), 10)
+        .expect_err("anonymous should reject");
+
+    assert!(error.contains("caller is not a canister controller"));
+}
+
+#[test]
+fn index_sql_json_rejects_mutating_and_multi_statement_sql() {
+    install_test_service();
+    set_test_caller_principal_for_test(Principal::management_canister());
+
+    for sql in [
+        "UPDATE database_billing_accounts SET balance_e8s = 0",
+        "DELETE FROM database_billing_ledger",
+        "INSERT INTO database_billing_ledger (database_id) VALUES ('x')",
+        "CREATE TABLE x (id INTEGER)",
+        "DROP TABLE database_billing_ledger",
+        "PRAGMA table_info(database_billing_ledger)",
+        "ATTACH DATABASE 'x' AS x",
+        "SELECT json_object('ok', 1); SELECT json_object('ok', 2)",
+    ] {
+        let error = query_index_sql_json(sql.to_string(), 10).expect_err("SQL should reject");
+        assert!(
+            error.contains("index SQL must") || error.contains("index SQL token is not allowed"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn index_sql_json_requires_text_json_first_column() {
+    install_test_service();
+    set_test_caller_principal_for_test(Principal::management_canister());
+
+    let error = query_index_sql_json("SELECT 1 LIMIT 1".to_string(), 10)
+        .expect_err("non-text first column should reject");
+
+    assert!(error.contains("one non-null TEXT JSON column"));
 }
 
 fn fund_database(database_id: &str, amount_e8s: u64, ledger_block_index: u64) {

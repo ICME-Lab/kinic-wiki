@@ -723,6 +723,7 @@ export function WikiBrowser() {
             currentNode={currentNode.data}
             readIdentityMode={currentReadIdentityMode}
             readMode={readMode}
+            databaseBillingError={currentDatabaseBillingReason}
             explorerRevision={explorerRevision}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
@@ -812,6 +813,7 @@ function LeftPane({
   currentNode,
   readIdentityMode,
   readMode,
+  databaseBillingError,
   explorerRevision,
   onSelectedExplorerNode
 }: {
@@ -826,6 +828,7 @@ function LeftPane({
   currentNode: WikiNode | null;
   readIdentityMode: "anonymous" | "user";
   readMode: "anonymous" | null;
+  databaseBillingError: string | null;
   explorerRevision: number;
   onSelectedExplorerNode: (node: ChildNode) => void;
 }) {
@@ -840,10 +843,20 @@ function LeftPane({
         writeIdentity={readIdentity}
         readMode={readMode}
         readIdentityMode={readIdentityMode}
+        databaseBillingError={databaseBillingError}
       />
     );
   }
-  if (tab === "ingest") return <IngestPanel canisterId={canisterId} databaseId={databaseId} readIdentity={readIdentity} />;
+  if (tab === "ingest") {
+    return (
+      <IngestPanel
+        canisterId={canisterId}
+        databaseId={databaseId}
+        readIdentity={readIdentity}
+        databaseBillingError={databaseBillingError}
+      />
+    );
+  }
   return (
     <ExplorerTree
       key={explorerRevision}

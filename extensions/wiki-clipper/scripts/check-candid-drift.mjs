@@ -24,6 +24,17 @@ const expectedTypes = {
       deleted_at_ms: "opt int64"
     }
   },
+  BillingConfig: {
+    kind: "record",
+    fields: {
+      kinic_ledger_canister_id: "text",
+      sns_governance_id: "text",
+      rate_numerator_e8s: "nat64",
+      rate_denominator_cycles: "nat64",
+      fixed_update_fee_e8s: "nat64",
+      min_update_balance_e8s: "nat64"
+    }
+  },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -58,6 +69,7 @@ const expectedTypes = {
 
 const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
+  get_billing_config: { input: [], output: "ResultBillingConfig", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
@@ -164,9 +176,10 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_15") return "ResultDatabases";
-  if (normalized === "Result_17") return "ResultMkdirNode";
-  if (normalized === "Result_21") return "ResultNode";
+  if (normalized === "Result_9") return "ResultBillingConfig";
+  if (normalized === "Result_16") return "ResultDatabases";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_23") return "ResultNode";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -198,6 +211,7 @@ function splitActorInputs(value) {
 function actorResultName(okShape) {
   const normalized = normalizeActorShape(okShape);
   if (normalized === "null") return "ResultUnit";
+  if (normalized === "BillingConfig") return "ResultBillingConfig";
   if (normalized === "Vec(DatabaseSummary)") return "ResultDatabases";
   if (normalized === "MkdirNodeResult") return "ResultMkdirNode";
   if (normalized === "opt Node") return "ResultNode";
