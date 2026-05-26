@@ -319,6 +319,12 @@ type SourceEvidenceRef = record {
   raw_href : text;
 };
 type SourceEvidenceRequest = record { node_path : text; database_id : text };
+type SourceRunSessionCheckRequest = record {
+  source_path : text;
+  source_etag : text;
+  session_nonce : text;
+  database_id : text;
+};
 type Status = record { source_count : nat64; file_count : nat64 };
 type UrlIngestTriggerSessionCheckRequest = record {
   request_path : text;
@@ -341,10 +347,23 @@ type WriteNodeRequest = record {
   database_id : text;
 };
 type WriteNodeResult = record { created : bool; node : RecentNodeHit };
+type WriteSourceForGenerationRequest = record {
+  content : text;
+  path : text;
+  session_nonce : text;
+  expected_etag : opt text;
+  metadata_json : text;
+  database_id : text;
+};
+type WriteSourceForGenerationResult = record {
+  session_nonce : text;
+  write : WriteNodeResult;
+};
 type WriteNodesRequest = record {
   nodes : vec WriteNodeItem;
   database_id : text;
 };
+type Result_25 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 service : () -> {
   append_node : (AppendNodeRequest) -> (Result);
   authorize_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_1);
@@ -357,6 +376,7 @@ service : () -> {
   cancel_database_restore : (text) -> (Result_1);
   canister_health : () -> (CanisterHealth) query;
   check_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_3) query;
+  check_source_run_session : (SourceRunSessionCheckRequest) -> (Result_1) query;
   check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
       Result_1,
     ) query;
@@ -396,5 +416,6 @@ service : () -> {
   status : (text) -> (Status) query;
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
+  write_source_for_generation : (WriteSourceForGenerationRequest) -> (Result_25);
   write_nodes : (WriteNodesRequest) -> (Result_24);
 }

@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/url-ingest.ts
 // What: URL ingest request parsing, source persistence, and request state writes.
-// Why: Browser-submitted URLs should become raw sources before wiki draft generation.
+// Why: Browser-submitted URLs should become raw sources before wiki page generation.
 import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
@@ -321,7 +321,7 @@ async function requireSourceAck(vfs: VfsClient, databaseId: string, path: string
 
 async function sourcePathForUrl(sourcePrefix: string, finalUrl: string): Promise<string> {
   const id = `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
-  return `${sourcePrefix}/${id}/${id}.md`;
+  return `${sourcePrefix}/web/${id.slice("web-".length)}.md`;
 }
 
 async function sha256Hex(value: string): Promise<string> {

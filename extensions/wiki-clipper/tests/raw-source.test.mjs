@@ -20,7 +20,7 @@ test("buildRawSource emits canonical source path and metadata", () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.equal(raw.path, "/Sources/raw/chatgpt-abc/chatgpt-abc.md");
+  assert.equal(raw.path, "/Sources/raw/chatgpt/abc.md");
   assert.match(raw.content, /# Raw Conversation Source/);
   assert.match(raw.content, /- message_count: 2/);
   assert.match(raw.content, /### Turn 0001/);
@@ -57,7 +57,7 @@ test("buildRawSource keeps a stable path for Claude conversations", () => {
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/raw/claude-claude-abc/claude-claude-abc.md");
+  assert.equal(raw.path, "/Sources/raw/claude/claude-abc.md");
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 

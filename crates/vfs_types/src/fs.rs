@@ -177,6 +177,16 @@ pub struct WriteNodeRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WriteSourceForGenerationRequest {
+    pub database_id: String,
+    pub path: String,
+    pub content: String,
+    pub metadata_json: String,
+    pub expected_etag: Option<String>,
+    pub session_nonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct WriteNodeItem {
     pub path: String,
     pub kind: NodeKind,
@@ -222,6 +232,14 @@ pub struct OpsAnswerSessionCheckResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct SourceRunSessionCheckRequest {
+    pub database_id: String,
+    pub source_path: String,
+    pub source_etag: String,
+    pub session_nonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct NodeMutationAck {
     pub path: String,
     pub kind: NodeKind,
@@ -233,6 +251,12 @@ pub struct NodeMutationAck {
 pub struct WriteNodeResult {
     pub node: NodeMutationAck,
     pub created: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WriteSourceForGenerationResult {
+    pub write: WriteNodeResult,
+    pub session_nonce: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

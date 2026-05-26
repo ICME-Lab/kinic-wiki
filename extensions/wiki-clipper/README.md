@@ -42,7 +42,7 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 2. Select a database from extension settings, or create one there if none exists.
 3. Use the page-level `Kinic Memory` button.
 4. Enter the number of recent chats to export. The default is `10`.
-5. Export to `/Sources/raw/<source_id>/<source_id>.md`.
+5. Export to `/Sources/raw/<provider>/<source_id>.md`.
 
 ## Active Tab URL Ingest
 
@@ -57,7 +57,7 @@ The active-tab flow writes `/Sources/ingest-requests/<request-id>.md` as a VFS `
 ChatGPT/Claude export only writes raw evidence. Generate wiki pages later:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/<source_id>/<source_id>.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/chatgpt/<conversationId>.md
 ```
 
 The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edited scaffold pages unless `--force` is supplied.

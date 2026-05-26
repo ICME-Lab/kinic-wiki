@@ -217,7 +217,7 @@ test("exportTarget saves immediately after fetching a valid conversation", async
     { canisterId: "canister", host: "http://127.0.0.1:8001" },
     async (message) => {
       calls.push(["save", message.capture.conversationTitle]);
-      return { result: { path: "/Sources/raw/chatgpt-abc/chatgpt-abc.md", created: true, generationQueued: true, generationError: null } };
+      return { result: { path: "/Sources/raw/chatgpt/abc.md", created: true, generationQueued: true, generationError: null } };
     },
     chatGptFetch(async (url) => {
       calls.push(["fetch", target.id]);
@@ -231,6 +231,38 @@ test("exportTarget saves immediately after fetching a valid conversation", async
   ]);
   assert.equal(event.ok, true);
   assert.equal(event.captureMethod, "direct api");
+});
+
+test("exportTarget treats saved source with failed generation queue as partial event", async () => {
+  const target = { id: "abc", title: "Project", url: "https://chatgpt.com/c/abc" };
+  const event = await exportTarget(
+    target,
+    { canisterId: "canister", host: "http://127.0.0.1:8001" },
+    async () => ({
+      result: {
+        path: "/Sources/raw/chatgpt/abc.md",
+        created: true,
+        generationQueued: false,
+        generationError: "worker trigger failed: HTTP 502"
+      }
+    }),
+    chatGptFetch(async () => jsonResponse(conversationPayload("abc", "Project")))
+  );
+
+  assert.equal(event.ok, false);
+  assert.equal(event.sourceSaved, true);
+  assert.equal(event.path, "/Sources/raw/chatgpt/abc.md");
+  assert.equal(event.generationQueued, false);
+  assert.equal(event.generationError, "worker trigger failed: HTTP 502");
+
+  const state = advanceState(
+    { ...createExportState({ limit: 1, config: {}, originalUrl: "https://chatgpt.com/" }), progress: { total: 1, done: 0, ok: 0, failed: 0 } },
+    event
+  );
+  assert.deepEqual(state.progress, { total: 1, done: 1, ok: 0, failed: 1 });
+  assert.equal(state.logs[0].kind, "error");
+  assert.match(state.logs[0].message, /Source saved: \/Sources\/raw\/chatgpt\/abc\.md/);
+  assert.match(state.logs[0].message, /worker trigger failed: HTTP 502/);
 });
 
 test("exportTarget does not save API failures or empty conversations", async () => {
@@ -501,7 +533,19 @@ test("save-source delegates raw source write with database_id", async () => {
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    return { ok: true, result: { path: message.rawSource.path, sourceId: message.rawSource.sourceId, created: false, etag: "etag-2" } };
+    if (message.type === "save-raw-source") {
+      return {
+        ok: true,
+        result: {
+          path: message.rawSource.path,
+          sourceId: message.rawSource.sourceId,
+          created: false,
+          etag: "etag-2",
+          sourceRunSessionNonce: "session-source"
+        }
+      };
+    }
+    return { ok: true, result: { sourcePath: message.sourcePath, triggered: true, triggerError: null } };
   });
   try {
     const response = await handleMessage(
@@ -520,8 +564,13 @@ test("save-source delegates raw source write with database_id", async () => {
     assert.equal(response.ok, true);
     assert.equal(calls[0].type, "save-raw-source");
     assert.equal(calls[0].config.databaseId, "team_wiki");
-    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt-abc/chatgpt-abc.md");
-    assert.equal(calls.length, 1);
+    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].type, "trigger-source-generation");
+    assert.equal(calls[1].sourcePath, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].sourceEtag, "etag-2");
+    assert.equal(calls[1].sessionNonce, "session-source");
+    assert.equal(calls.length, 2);
+    assert.equal(response.result.generationQueued, true);
   } finally {
     setOffscreenBridgeForTest(null);
     restore();

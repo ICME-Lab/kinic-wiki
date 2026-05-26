@@ -6,11 +6,11 @@ type SourceRunRequest = {
   canisterId: string;
   databaseId: string;
   sourcePath: string;
-  requestPath: string;
+  sourceEtag: string;
   sessionNonce: string;
 };
 
-type CheckSession = (canisterId: string, input: { databaseId: string; requestPath: string; sessionNonce: string }) => Promise<void>;
+type CheckSession = (canisterId: string, input: { databaseId: string; sourcePath: string; sourceEtag: string; sessionNonce: string }) => Promise<void>;
 
 const ALLOWED_ORIGINS = new Set([
   "https://wiki.kinic.xyz",
@@ -64,7 +64,8 @@ export async function POST(request: Request): Promise<Response> {
   try {
     await checkSession(input.canisterId, {
       databaseId: input.databaseId,
-      requestPath: input.requestPath,
+      sourcePath: input.sourcePath,
+      sourceEtag: input.sourceEtag,
       sessionNonce: input.sessionNonce
     });
   } catch {
@@ -88,30 +89,24 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 function parseSourceRunRequest(value: unknown): SourceRunRequest | string {
-  if (!isRecord(value)) return "canisterId, databaseId, sourcePath, requestPath, and sessionNonce are required";
+  if (!isRecord(value)) return "canisterId, databaseId, sourcePath, sourceEtag, and sessionNonce are required";
   const canisterId = value.canisterId;
   const databaseId = value.databaseId;
   const sourcePath = value.sourcePath;
-  const requestPath = value.requestPath;
+  const sourceEtag = value.sourceEtag;
   const sessionNonce = value.sessionNonce;
   if (typeof canisterId !== "string" || !canisterId) return "canisterId is required";
   if (typeof databaseId !== "string" || !databaseId) return "databaseId is required";
   if (typeof sourcePath !== "string" || !sourcePath) return "sourcePath is required";
-  if (!isCanonicalSourcePath(sourcePath)) return "sourcePath must use /Sources/raw/<id>/<id>.md";
-  if (typeof requestPath !== "string" || !requestPath) return "requestPath is required";
-  if (!isCanonicalRequestPath(requestPath)) return "requestPath must be a URL ingest request path";
+  if (!isCanonicalSourcePath(sourcePath)) return "sourcePath must use /Sources/raw/<provider>/<id>.md";
+  if (typeof sourceEtag !== "string" || !sourceEtag) return "sourceEtag is required";
   if (typeof sessionNonce !== "string" || !sessionNonce) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
-  return { canisterId, databaseId, sourcePath, requestPath, sessionNonce };
+  return { canisterId, databaseId, sourcePath, sourceEtag, sessionNonce };
 }
 
 function isCanonicalSourcePath(path: string): boolean {
-  const match = path.match(/^\/Sources\/raw\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
-  return Boolean(match && match[1] === match[2]);
-}
-
-function isCanonicalRequestPath(path: string): boolean {
-  return /^\/Sources\/ingest-requests\/[^/]+\.md$/.test(path);
+  return /^\/Sources\/raw\/[a-z][a-z0-9]{0,31}\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(path);
 }
 
 function allowedOrigin(request: Request): string | null {
@@ -137,7 +132,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-async function defaultCheckSession(canisterId: string, input: { databaseId: string; requestPath: string; sessionNonce: string }): Promise<void> {
-  const vfsClient: { checkUrlIngestTriggerSession: CheckSession } = await import("@/lib/vfs-client");
-  await vfsClient.checkUrlIngestTriggerSession(canisterId, input);
+async function defaultCheckSession(canisterId: string, input: { databaseId: string; sourcePath: string; sourceEtag: string; sessionNonce: string }): Promise<void> {
+  const vfsClient: { checkSourceRunSession: CheckSession } = await import("@/lib/vfs-client");
+  await vfsClient.checkSourceRunSession(canisterId, input);
 }

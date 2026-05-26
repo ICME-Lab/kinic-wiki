@@ -768,11 +768,11 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     })
     .expect("canonical source write should succeed");
 
-    ensure_parent_folders("/Sources/raw/renamed/wrong.md");
+    ensure_parent_folders("/Sources/raw/renamed-/wrong.md");
     let move_error = move_node(MoveNodeRequest {
         database_id: "default".to_string(),
         from_path: "/Sources/raw/keep/keep.md".to_string(),
-        to_path: "/Sources/raw/renamed/wrong.md".to_string(),
+        to_path: "/Sources/raw/renamed-/wrong.md".to_string(),
         expected_etag: Some(created.node.etag),
         overwrite: false,
     })

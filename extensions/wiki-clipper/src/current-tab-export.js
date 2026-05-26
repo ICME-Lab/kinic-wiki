@@ -258,13 +258,19 @@ async function saveCaptureResult(result, config, send) {
   }
   try {
     const response = await send({ type: "save-source", capture: result.capture, config });
+    const saved = response.result || {};
+    const generationQueued = saved.generationQueued === true;
     return {
-      ok: true,
+      ok: generationQueued,
       title: result.capture.conversationTitle || result.target.title,
       provider: result.capture.provider,
       captureMethod: result.capture.captureMethod,
-      path: response.result.path,
-      created: response.result.created
+      path: saved.path,
+      created: saved.created,
+      sourceSaved: Boolean(saved.path),
+      generationQueued,
+      generationError: saved.generationError || null,
+      error: generationQueued ? "" : `Generation queue failed: ${saved.generationError || "unknown error"}`
     };
   } catch (error) {
     return {
@@ -431,6 +437,9 @@ function logFromEvent(event) {
 }
 
 function logMessageFromEvent(event) {
+  if (!event.ok && event.sourceSaved) {
+    return `Source saved: ${event.path}. Generation queue failed: ${event.generationError || event.error || "unknown error"}`;
+  }
   if (event.ok) {
     return `Memory: ${event.title || event.path} via ${event.captureMethod || "unknown"} (${event.created ? "Created" : "Updated"})`;
   }

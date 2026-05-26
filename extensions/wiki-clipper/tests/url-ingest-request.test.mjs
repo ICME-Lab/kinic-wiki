@@ -3,7 +3,7 @@
 // Why: Extension-created requests must match the worker/browser contract.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSourceRunRequest, buildUrlIngestRequest, normalizedHttpUrl } from "../src/url-ingest-request.js";
+import { buildUrlIngestRequest, normalizedHttpUrl } from "../src/url-ingest-request.js";
 
 test("buildUrlIngestRequest creates a file request with frontmatter", () => {
   const request = buildUrlIngestRequest({
@@ -24,25 +24,6 @@ test("buildUrlIngestRequest creates a file request with frontmatter", () => {
   assert.deepEqual(JSON.parse(request.writeRequest.metadataJson), {
     request_type: "url_ingest",
     url: "https://example.com/post"
-  });
-});
-
-test("buildSourceRunRequest creates source_written request with source path", () => {
-  const request = buildSourceRunRequest({
-    url: "https://example.com/post#section",
-    requestedBy: "aaaaa-aa",
-    sourcePath: "/Sources/raw/web-abc/web-abc.md",
-    now: new Date("2026-05-13T00:00:00.000Z"),
-    uuid: "uuid-2"
-  });
-  assert.equal(request.requestPath, "/Sources/ingest-requests/1778630400000-uuid-2.md");
-  assert.deepEqual(request.writeRequest.kind, { File: null });
-  assert.match(request.writeRequest.content, /status: source_written/);
-  assert.match(request.writeRequest.content, /source_path: "\/Sources\/raw\/web-abc\/web-abc\.md"/);
-  assert.deepEqual(JSON.parse(request.writeRequest.metadataJson), {
-    request_type: "source_run",
-    url: "https://example.com/post",
-    source_path: "/Sources/raw/web-abc/web-abc.md"
   });
 });
 

@@ -588,7 +588,7 @@ mod tests {
                 ImportedNote {
                     path: "/Wiki/run/conv-1/provenance.md".to_string(),
                     content:
-                        "source_path: /Sources/raw/run-conv-1/run-conv-1.md\nmeeting date: March 15, 2024"
+                        "source_path: /Sources/raw/beam/run-conv-1.md\nmeeting date: March 15, 2024"
                             .to_string(),
                     note_type: "provenance.md".to_string(),
                 },

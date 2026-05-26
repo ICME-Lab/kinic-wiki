@@ -179,9 +179,14 @@ test("saveRawSource writes with authenticated identity", async () => {
           calls.push(["mkdir", request.database_id, request.path]);
           return { Ok: { created: true, path: request.path } };
         },
-        async write_node(request) {
-          calls.push(["write", request.database_id, request.path, request.expected_etag]);
-          return { Ok: { created: false, node: { etag: "etag-2" } } };
+        async write_source_for_generation(request) {
+          calls.push(["write", request.database_id, request.path, request.expected_etag, request.session_nonce]);
+          return {
+            Ok: {
+              write: { created: false, node: { etag: "etag-2" } },
+              session_nonce: request.session_nonce
+            }
+          };
         }
       };
     }
@@ -191,14 +196,19 @@ test("saveRawSource writes with authenticated identity", async () => {
 
     assert.equal(result.etag, "etag-2");
     assert.equal(result.principal, "principal-1");
-    assert.deepEqual(calls, [
+    assert.deepEqual(calls.slice(0, 5), [
       ["create", { tag: "identity" }, "team-db"],
-      ["read", "team-db", "/Sources/raw/chatgpt-abc/chatgpt-abc.md"],
+      ["read", "team-db", "/Sources/raw/chatgpt/abc.md"],
       ["mkdir", "team-db", "/Sources"],
       ["mkdir", "team-db", "/Sources/raw"],
-      ["mkdir", "team-db", "/Sources/raw/chatgpt-abc"],
-      ["write", "team-db", "/Sources/raw/chatgpt-abc/chatgpt-abc.md", ["etag-1"]]
+      ["mkdir", "team-db", "/Sources/raw/chatgpt"]
     ]);
+    assert.equal(calls[5][0], "write");
+    assert.equal(calls[5][1], "team-db");
+    assert.equal(calls[5][2], "/Sources/raw/chatgpt/abc.md");
+    assert.deepEqual(calls[5][3], ["etag-1"]);
+    assert.equal(typeof calls[5][4], "string");
+    assert.equal(result.sourceRunSessionNonce, calls[5][4]);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -215,49 +225,27 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   }
 });
 
-test("triggerSourceGeneration authorizes session and calls source run route", async () => {
-  const calls = [];
+test("triggerSourceGeneration calls source run route with issued source-run session", async () => {
   const fetchCalls = [];
   setOffscreenDepsForTest({
-    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     fetch: async (url, init) => {
       fetchCalls.push([url, init]);
       return Response.json({ accepted: true }, { status: 202 });
-    },
-    createVfsActor: async () => ({
-      async authorize_url_ingest_trigger_session(request) {
-        calls.push(["session", request.database_id, request.session_nonce]);
-        return { Ok: null };
-      },
-      async mkdir_node(request) {
-        calls.push(["mkdir", request.database_id, request.path]);
-        return { Ok: { created: true, path: request.path } };
-      },
-      async write_node(request) {
-        calls.push(["write", request.database_id, request.path, request.kind]);
-        return { Ok: { created: true, node: { etag: "etag-request" } } };
-      }
-    })
+    }
   });
   try {
-    const result = await triggerSourceGeneration(config(), "/Sources/raw/web-abc/web-abc.md", "https://example.com/");
+    const result = await triggerSourceGeneration(config(), "/Sources/raw/web/abc.md", "etag-source", "session-source");
 
     assert.equal(result.triggered, true);
-    assert.equal(result.sourcePath, "/Sources/raw/web-abc/web-abc.md");
-    assert.match(result.requestPath, /^\/Sources\/ingest-requests\/.+\.md$/);
-    assert.equal(calls[0][0], "session");
-    assert.deepEqual(calls[1], ["mkdir", "team-db", "/Sources"]);
-    assert.deepEqual(calls[2], ["mkdir", "team-db", "/Sources/ingest-requests"]);
-    assert.equal(calls[3][0], "write");
-    assert.equal(calls[3][1], "team-db");
-    assert.equal(calls[3][2], result.requestPath);
+    assert.equal(result.sourcePath, "/Sources/raw/web/abc.md");
+    assert.equal(result.sourceEtag, "etag-source");
     assert.equal(fetchCalls[0][0], "https://wiki.kinic.xyz/api/source/run");
     assert.deepEqual(JSON.parse(fetchCalls[0][1].body), {
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "team-db",
-      sourcePath: "/Sources/raw/web-abc/web-abc.md",
-      requestPath: result.requestPath,
-      sessionNonce: calls[0][2]
+      sourcePath: "/Sources/raw/web/abc.md",
+      sourceEtag: "etag-source",
+      sessionNonce: "session-source"
     });
   } finally {
     setOffscreenDepsForTest();
@@ -310,7 +298,7 @@ test("listWritableDatabases returns hot writable database summaries", async () =
 
 function rawSource() {
   return {
-    path: "/Sources/raw/chatgpt-abc/chatgpt-abc.md",
+    path: "/Sources/raw/chatgpt/abc.md",
     sourceId: "chatgpt-abc",
     content: "# ChatGPT",
     metadataJson: "{}"

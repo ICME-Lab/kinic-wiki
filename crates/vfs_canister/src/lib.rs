@@ -36,8 +36,10 @@ use vfs_types::{
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -402,6 +404,18 @@ fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
 }
 
 #[update]
+fn write_source_for_generation(
+    request: WriteSourceForGenerationRequest,
+) -> Result<WriteSourceForGenerationResult, String> {
+    let database_id = request.database_id.clone();
+    with_usage(
+        "write_source_for_generation",
+        Some(database_id),
+        |service, caller, now| service.write_source_for_generation(caller, request, now),
+    )
+}
+
+#[update]
 fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
     let database_id = request.database_id.clone();
     with_usage("write_nodes", Some(database_id), |service, caller, now| {
@@ -443,6 +457,11 @@ fn check_ops_answer_session(
     request: OpsAnswerSessionCheckRequest,
 ) -> Result<OpsAnswerSessionCheckResult, String> {
     with_service(|service| service.check_ops_answer_session(request, now_millis()))
+}
+
+#[query]
+fn check_source_run_session(request: SourceRunSessionCheckRequest) -> Result<(), String> {
+    with_service(|service| service.check_source_run_session(request, now_millis()))
 }
 
 #[update]

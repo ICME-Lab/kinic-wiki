@@ -32,7 +32,7 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
     ""
   ].join("\n");
   return {
-    path: `/Sources/raw/${sourceId}/${sourceId}.md`,
+    path: `/Sources/raw/web/${sourceId.slice("web-".length)}.md`,
     sourceId,
     content,
     metadataJson: JSON.stringify({

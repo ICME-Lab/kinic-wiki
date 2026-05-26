@@ -29,7 +29,7 @@ test("processExportTargets records out-of-order worker completions without losin
           states.push(next);
         },
         async send() {
-          return { result: { path: "/Sources/raw/chatgpt-test/chatgpt-test.md", created: true, generationQueued: true, generationError: null } };
+          return { result: { path: "/Sources/raw/chatgpt/test.md", created: true, generationQueued: true, generationError: null } };
         }
       },
       2
@@ -70,7 +70,7 @@ test("processExportTargets serializes state writes that would otherwise lose pro
           if (message.capture.url.endsWith("/one")) {
             throw new Error("write failed");
           }
-          return { result: { path: "/Sources/raw/chatgpt-two/chatgpt-two.md", created: true, generationQueued: true, generationError: null } };
+          return { result: { path: "/Sources/raw/chatgpt/two.md", created: true, generationQueued: true, generationError: null } };
         }
       },
       2
@@ -99,7 +99,7 @@ test("processExportTargets suppresses events completed after cancellation", asyn
       {
         async send() {
           await writeExportState({ ...state, status: "cancelled" });
-          return { result: { path: "/Sources/raw/chatgpt-cancelled/chatgpt-cancelled.md", created: true } };
+          return { result: { path: "/Sources/raw/chatgpt/cancelled.md", created: true } };
         }
       },
       1
@@ -135,7 +135,7 @@ test("processExportTargets does not overwrite cancellation during progress write
       state,
       {
         async send() {
-          return { result: { path: "/Sources/raw/chatgpt-cancelled/chatgpt-cancelled.md", created: true } };
+          return { result: { path: "/Sources/raw/chatgpt/cancelled.md", created: true } };
         }
       },
       1
@@ -168,7 +168,7 @@ test("processExportTargets does not save after cancellation before save starts",
       {
         async send() {
           saveCount += 1;
-          return { result: { path: "/Sources/raw/chatgpt-cancelled/chatgpt-cancelled.md", created: true } };
+          return { result: { path: "/Sources/raw/chatgpt/cancelled.md", created: true } };
         }
       },
       1

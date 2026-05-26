@@ -89,19 +89,24 @@ fn source_id_from_path(source_path: &str) -> Result<String> {
         .strip_prefix(&format!("{RAW_SOURCES_PREFIX}/"))
         .ok_or_else(|| anyhow!("source path must be under {RAW_SOURCES_PREFIX}: {source_path}"))?;
     let mut segments = relative.split('/');
-    let directory = segments
+    let provider = segments
         .next()
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("source path is missing source id: {source_path}"))?;
+        .ok_or_else(|| anyhow!("source path is missing source provider: {source_path}"))?;
     let file = segments
         .next()
         .ok_or_else(|| anyhow!("source path is missing source file: {source_path}"))?;
-    if segments.next().is_some() || file != format!("{directory}.md") {
+    let Some(file_stem) = file.strip_suffix(".md").filter(|value| !value.is_empty()) else {
         return Err(anyhow!(
-            "source path must use {RAW_SOURCES_PREFIX}/<id>/<id>.md: {source_path}"
+            "source path must use {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
+        ));
+    };
+    if segments.next().is_some() {
+        return Err(anyhow!(
+            "source path must use {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {source_path}"
         ));
     }
-    Ok(directory.to_string())
+    Ok(format!("{provider}-{file_stem}"))
 }
 
 fn metadata_value(content: &str, key: &str) -> Option<String> {
@@ -240,8 +245,8 @@ mod tests {
 
     #[test]
     fn parse_raw_conversation_reads_metadata() {
-        let raw = parse_raw_conversation("/Sources/raw/chatgpt-abc/chatgpt-abc.md", RAW)
-            .expect("raw should parse");
+        let raw =
+            parse_raw_conversation("/Sources/raw/chatgpt/abc.md", RAW).expect("raw should parse");
         assert_eq!(raw.source_id, "chatgpt-abc");
         assert_eq!(raw.provider, "chatgpt");
         assert_eq!(raw.title, "Project Notes");
@@ -250,8 +255,8 @@ mod tests {
 
     #[test]
     fn generated_wiki_does_not_copy_transcript_body() {
-        let raw = parse_raw_conversation("/Sources/raw/chatgpt-abc/chatgpt-abc.md", RAW)
-            .expect("raw should parse");
+        let raw =
+            parse_raw_conversation("/Sources/raw/chatgpt/abc.md", RAW).expect("raw should parse");
         let docs = build_wiki_documents(&raw, "/Wiki/conversations/chatgpt-abc");
         assert!(docs.iter().any(|doc| doc.path.ends_with("/provenance.md")));
         assert!(docs.iter().all(|doc| !doc.content.contains("secret fact")));

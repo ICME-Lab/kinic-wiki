@@ -2,7 +2,7 @@
 // What: DOM-backed authenticated URL/source ingest worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
-import { buildSourceRunRequest, buildUrlIngestRequest } from "./url-ingest-request.js";
+import { buildUrlIngestRequest } from "./url-ingest-request.js";
 import { createVfsActor as defaultCreateVfsActor, normalizeWritableDatabases } from "./vfs-actor.js";
 
 const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
@@ -24,7 +24,7 @@ if (globalThis.chrome?.runtime?.onMessage) {
         : message?.type === "save-raw-source"
           ? saveRawSource(message.rawSource, message.config)
           : message?.type === "trigger-source-generation"
-            ? triggerSourceGeneration(message.config, message.sourcePath, message.url)
+            ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
             : message?.type === "auth-status"
               ? authStatus()
               : message?.type === "list-writable-databases"
@@ -84,52 +84,36 @@ export async function saveRawSource(rawSource, config) {
   if ("Err" in existing) throw new Error(existing.Err);
   const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];
   await ensureParentFolders(actor, config.databaseId, rawSource.path);
-  const result = await actor.write_node({
+  const sessionNonce = crypto.randomUUID();
+  const result = await actor.write_source_for_generation({
     database_id: config.databaseId,
     path: rawSource.path,
-    kind: { Source: null },
     content: rawSource.content,
     metadata_json: rawSource.metadataJson,
-    expected_etag: expected
+    expected_etag: expected,
+    session_nonce: sessionNonce
   });
   if ("Err" in result) throw new Error(result.Err);
   return {
     path: rawSource.path,
     sourceId: rawSource.sourceId || "",
-    created: result.Ok.created,
+    created: result.Ok.write.created,
     principal: snapshot.principal,
-    etag: result.Ok.node.etag
+    etag: result.Ok.write.node.etag,
+    sourceRunSessionNonce: result.Ok.session_nonce
   };
 }
 
-export async function triggerSourceGeneration(config, sourcePath, url) {
+export async function triggerSourceGeneration(config, sourcePath, sourceEtag, sessionNonce) {
   if (!config?.canisterId) throw new Error("canister id is required");
   if (!config?.databaseId) throw new Error("database id is required");
   if (typeof sourcePath !== "string" || !sourcePath) throw new Error("source path is required");
-  if (typeof url !== "string" || !url) throw new Error("source url is required");
-  const snapshot = await authenticatedSnapshot();
-  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
-  const request = buildSourceRunRequest({
-    url,
-    requestedBy: snapshot.principal,
-    sourcePath
-  });
-  await ensureParentFolders(actor, config.databaseId, request.writeRequest.path);
-  const result = await actor.write_node({
-    database_id: config.databaseId,
-    path: request.writeRequest.path,
-    kind: request.writeRequest.kind,
-    content: request.writeRequest.content,
-    metadata_json: request.writeRequest.metadataJson,
-    expected_etag: request.writeRequest.expectedEtag
-  });
-  if ("Err" in result) throw new Error(result.Err);
-  const trigger = await triggerSourceRun(config.canisterId, config.databaseId, sourcePath, request.requestPath, session);
+  if (typeof sourceEtag !== "string" || !sourceEtag) throw new Error("source etag is required");
+  if (typeof sessionNonce !== "string" || !sessionNonce) throw new Error("source run session nonce is required");
+  const trigger = await triggerSourceRun(config.canisterId, config.databaseId, sourcePath, sourceEtag, sessionNonce);
   return {
     sourcePath,
-    requestPath: request.requestPath,
-    principal: snapshot.principal,
+    sourceEtag,
     triggered: trigger.ok,
     triggerError: trigger.error
   };
@@ -232,12 +216,12 @@ async function triggerUrlIngest(canisterId, databaseId, requestPath, sessionNonc
   }
 }
 
-async function triggerSourceRun(canisterId, databaseId, sourcePath, requestPath, sessionNonce) {
+async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {
   try {
     const response = await fetchFactory(SOURCE_RUN_TRIGGER_URL, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ canisterId, databaseId, sourcePath, requestPath, sessionNonce })
+      body: JSON.stringify({ canisterId, databaseId, sourcePath, sourceEtag, sessionNonce })
     });
     if (!response.ok) {
       return { ok: false, error: `worker trigger failed: HTTP ${response.status}` };

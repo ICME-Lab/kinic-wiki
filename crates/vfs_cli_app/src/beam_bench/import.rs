@@ -234,7 +234,7 @@ mod tests {
             imported
                 .note_paths
                 .iter()
-                .any(|path| { path.starts_with("/Sources/raw/run-a-conv-1/") })
+                .any(|path| { path.starts_with("/Sources/raw/beam/") })
         );
         assert!(
             imported
@@ -248,7 +248,7 @@ mod tests {
         assert!(
             writes
                 .iter()
-                .any(|request| { request.path.starts_with("/Sources/raw/run-a-conv-1/") })
+                .any(|request| { request.path.starts_with("/Sources/raw/beam/") })
         );
         assert!(
             writes
@@ -270,7 +270,7 @@ mod tests {
             imported
                 .notes
                 .iter()
-                .any(|note| note.path.starts_with("/Sources/raw/run-a-conv-1/"))
+                .any(|note| note.path.starts_with("/Sources/raw/beam/"))
         );
         assert!(
             imported

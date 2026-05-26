@@ -731,7 +731,7 @@ mod tests {
             note_paths: vec![provenance_path.clone()],
             notes: vec![ImportedNote {
                 path: provenance_path.clone(),
-                content: "# Provenance\n\n- source_path: /Sources/raw/run-conv/run-conv.md\n\nMarch 15, 2024\n".to_string(),
+                content: "# Provenance\n\n- source_path: /Sources/raw/beam/run-conv.md\n\nMarch 15, 2024\n".to_string(),
                 note_type: "provenance".to_string(),
             }],
         };
@@ -741,7 +741,7 @@ mod tests {
                 Node {
                     path: provenance_path.clone(),
                     kind: vfs_types::NodeKind::File,
-                    content: "# Provenance\n\n- source_path: /Sources/raw/run-conv/run-conv.md\n\nMarch 15, 2024\n".to_string(),
+                    content: "# Provenance\n\n- source_path: /Sources/raw/beam/run-conv.md\n\nMarch 15, 2024\n".to_string(),
                     created_at: 0,
                     updated_at: 0,
                     etag: "etag".to_string(),

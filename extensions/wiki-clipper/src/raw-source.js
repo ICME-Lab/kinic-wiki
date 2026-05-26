@@ -1,12 +1,13 @@
 // Where: extensions/wiki-clipper/src/raw-source.js
 // What: Convert captured conversations into canonical raw source nodes.
-// Why: The canister expects source evidence under /Sources/raw/<id>/<id>.md.
+// Why: Raw source evidence is grouped by provider under /Sources/raw/<provider>/<id>.md.
 export function buildRawSource(capture, now = new Date()) {
   if (!capture.messages || capture.messages.length === 0) {
     throw new Error("no conversation messages found");
   }
   const sourceId = sourceIdForCapture(capture, now);
-  const path = `/Sources/raw/${sourceId}/${sourceId}.md`;
+  const provider = slug(capture.provider || "conversation");
+  const path = `/Sources/raw/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
   const metadata = {
     provider: capture.provider,
     source_url: capture.url,
@@ -34,6 +35,15 @@ function sourceIdForCapture(capture, now) {
   const date = now.toISOString().slice(0, 10).replace(/-/g, "");
   const fingerprint = hashText(`${capture.url}\n${capture.conversationTitle}`);
   return `${provider}-${date}-${title}-${fingerprint}`.slice(0, 96);
+}
+
+function sourceFileStemForCapture(capture, sourceId) {
+  const conversationId = conversationIdFromUrl(capture.url);
+  if ((capture.provider === "chatgpt" || capture.provider === "claude") && conversationId) {
+    return slug(conversationId);
+  }
+  const provider = slug(capture.provider || "conversation");
+  return sourceId.startsWith(`${provider}-`) ? sourceId.slice(provider.length + 1) : sourceId;
 }
 
 function conversationIdFromUrl(value) {

@@ -169,9 +169,10 @@ assert.match(ingestTriggerRoute, /chrome-extension:\/\/moebdnadaffhlddnhifmmdoec
 assert.match(ingestTriggerRoute, /access-control-allow-origin/);
 assert.match(ingestTriggerRoute, /authorization: `Bearer \$\{token\}`/);
 assert.match(sourceRunRoute, /\/run/);
-assert.match(sourceRunRoute, /checkUrlIngestTriggerSession/);
-assert.match(sourceRunRoute, /sourcePath must use \/Sources\/raw\/<id>\/<id>\.md/);
-assert.match(sourceRunRoute, /requestPath must be a URL ingest request path/);
+assert.match(sourceRunRoute, /checkSourceRunSession/);
+assert.match(sourceRunRoute, /sourceEtag is required/);
+assert.match(sourceRunRoute, /sourcePath must use \/Sources\/raw\/<provider>\/<id>\.md/);
+assert.doesNotMatch(sourceRunRoute, /checkQueryAnswerSession/);
 assert.match(sourceRunRoute, /authorization: `Bearer \$\{token\}`/);
 assert.match(sourceRunRoute, /chrome-extension:\/\/moebdnadaffhlddnhifmmdoecifhcbdi/);
 assert.match(dashboardClient, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);

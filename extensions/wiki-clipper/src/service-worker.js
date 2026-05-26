@@ -159,7 +159,8 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       target: "offscreen",
       type: "trigger-source-generation",
       sourcePath: saveResponse.result.path,
-      url,
+      sourceEtag: saveResponse.result.etag,
+      sessionNonce: saveResponse.result.sourceRunSessionNonce,
       config
     });
     const result = {
@@ -222,11 +223,35 @@ async function saveSource(capture, overrideConfig, sender) {
     }
     throw new Error(message);
   }
+  let triggerResponse;
+  try {
+    triggerResponse = await offscreenBridge({
+      target: "offscreen",
+      type: "trigger-source-generation",
+      sourcePath: result.result.path,
+      sourceEtag: result.result.etag,
+      sessionNonce: result.result.sourceRunSessionNonce,
+      config
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "UNAUTHENTICATED") {
+      await openSettingsOnce();
+    }
+    triggerResponse = { ok: false, error: message };
+  }
+  const generationQueued = Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false);
   return {
     path: result.result.path,
     sourceId: result.result.sourceId,
     created: result.result.created,
-    etag: result.result.etag
+    etag: result.result.etag,
+    generationQueued,
+    generationError: generationQueued
+      ? null
+      : triggerResponse?.ok
+        ? triggerResponse.result?.triggerError || "generation queue failed"
+        : triggerResponse?.error || "generation queue failed"
   };
 }
 

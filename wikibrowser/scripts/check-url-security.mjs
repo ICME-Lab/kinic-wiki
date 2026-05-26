@@ -103,7 +103,7 @@ await withEnv(
     triggerRouteModule.setUrlIngestTriggerDepsForTest();
 
     const invalidSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/one/two.md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/web-abc/web-abc.md" })
     );
     assert.equal(invalidSourcePath.status, 400);
 
@@ -117,15 +117,10 @@ await withEnv(
     );
     assert.equal(missingSourceSessionNonce.status, 400);
 
-    const invalidSourceRequestPath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { requestPath: "/Sources/raw/web-abc/web-abc.md" })
+    const missingSourceEtag = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourceEtag: "" })
     );
-    assert.equal(invalidSourceRequestPath.status, 400);
-
-    const nestedSourceRequestPath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { requestPath: "/Sources/ingest-requests/nested/source-run.md" })
-    );
-    assert.equal(nestedSourceRequestPath.status, 400);
+    assert.equal(missingSourceEtag.status, 400);
 
     const sourcePreflight = sourceRunRouteModule.OPTIONS(sourceRunRequest("chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"));
     assert.equal(sourcePreflight.status, 204);
@@ -148,7 +143,8 @@ await withEnv(
         assert.equal(canisterId, "aaaaa-aa");
         assert.deepEqual(input, {
           databaseId: "db_1",
-          requestPath: "/Sources/ingest-requests/source-run.md",
+          sourcePath: "/Sources/raw/web/abc.md",
+          sourceEtag: "etag-source",
           sessionNonce: "session-1"
         });
       }
@@ -159,7 +155,7 @@ await withEnv(
       assert.equal(init?.method, "POST");
       assert.deepEqual(JSON.parse(init?.body), {
         databaseId: "db_1",
-        sourcePath: "/Sources/raw/web-abc/web-abc.md",
+        sourcePath: "/Sources/raw/web/abc.md",
         dryRun: false
       });
       return Response.json({ queued: true }, { status: 202 });
@@ -169,7 +165,9 @@ await withEnv(
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
     });
     sourceRunRouteModule.setSourceRunDepsForTest();
-    assert.match(readFileSync(new URL("../app/api/source/run/route.ts", import.meta.url), "utf8"), /checkUrlIngestTriggerSession/);
+    const sourceRunRoute = readFileSync(new URL("../app/api/source/run/route.ts", import.meta.url), "utf8");
+    assert.match(sourceRunRoute, /checkSourceRunSession/);
+    assert.doesNotMatch(sourceRunRoute, /checkQueryAnswerSession/);
   }
 );
 
@@ -342,8 +340,8 @@ function sourceRunRequest(origin, overrides = {}) {
     body: JSON.stringify({
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
-      sourcePath: "/Sources/raw/web-abc/web-abc.md",
-      requestPath: "/Sources/ingest-requests/source-run.md",
+      sourcePath: "/Sources/raw/web/abc.md",
+      sourceEtag: "etag-source",
       sessionNonce: "session-1",
       ...overrides
     })

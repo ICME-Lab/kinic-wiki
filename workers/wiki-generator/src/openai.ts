@@ -60,7 +60,7 @@ export function parseDraftResponse(body: unknown): WikiDraft {
 export function parseDraftText(text: string): WikiDraft {
   const parsed = JSON.parse(text);
   if (!isWikiDraft(parsed)) {
-    throw new Error("generated wiki draft does not match schema");
+    throw new Error("generated wiki page does not match schema");
   }
   return parsed;
 }

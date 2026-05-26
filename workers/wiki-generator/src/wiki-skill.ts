@@ -1,5 +1,5 @@
 // Where: workers/wiki-generator/src/wiki-skill.ts
-// What: Versioned core wiki-generation rules for worker drafts.
+// What: Versioned core wiki-generation rules for worker pages.
 // Why: URL ingest should follow wiki semantics without depending on Skill Registry packages.
 export const WIKI_SKILL_VERSION = 1;
 
@@ -13,13 +13,13 @@ const WIKI_RULES = [
   "Use Summary, Key Facts, Decisions, Open Questions, Follow-ups, and Provenance only when supported.",
   "Every generated item must cite the provided source_path.",
   "Do not invent follow-ups or decisions.",
-  "Keep the draft concise enough for human review."
+  "Keep the generated page concise enough for human review."
 ];
 
 export function buildWikiDraftSystemPrompt(): string {
   return [
     `You are using Kinic Wiki Core Skill v${WIKI_SKILL_VERSION}.`,
-    "Generate one review-ready wiki draft from raw source material.",
+    "Generate one review-ready wiki page from raw source material.",
     ...WIKI_RULES.map((rule) => `- ${rule}`)
   ].join("\n");
 }

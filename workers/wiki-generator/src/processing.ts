@@ -4,7 +4,7 @@
 import { loadConfig } from "./config.js";
 import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
 import { generateDraft, validateDraftSources } from "./openai.js";
-import { ensureTargetCanBeWritten, renderDraftMarkdown, slugForDraft } from "./render.js";
+import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { validateCanonicalSourcePath } from "./source-path.js";
 import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
@@ -64,7 +64,7 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
   await markProcessing(env.DB, message);
   try {
     const generated = await generateFromSource(env, vfs, config, message.databaseId, source);
-    await writeGeneratedDraft(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
+    await writeGeneratedPage(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
     await markCompleted(env.DB, message, generated.targetPath);
     if (message.requestPath) {
       await markIngestRequestCompleted(vfs, message.databaseId, message.requestPath, source.path, generated.targetPath);
@@ -129,14 +129,14 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
   return null;
 }
 
-async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, source: WikiNode): Promise<GeneratedDraft> {
+async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, source: WikiNode): Promise<GeneratedPage> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
   const draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
   validateDraftSources(draft, source.path);
-  const targetPath = `${config.targetRoot}/${slugForDraft(draft)}.md`;
+  const targetPath = `${config.targetRoot}/${slugForGeneratedPage(draft)}.md`;
   return {
     targetPath,
-    content: renderDraftMarkdown(draft, source, contextHits),
+    content: renderGeneratedMarkdown(draft, source, contextHits),
     contextHits
   };
 }
@@ -158,7 +158,7 @@ async function readRequiredSource(vfs: VfsClient, databaseId: string, sourcePath
   return source;
 }
 
-async function writeGeneratedDraft(vfs: VfsClient, databaseId: string, targetPath: string, content: string, sourcePath: string): Promise<void> {
+async function writeGeneratedPage(vfs: VfsClient, databaseId: string, targetPath: string, content: string, sourcePath: string): Promise<void> {
   const existing = await vfs.readNode(databaseId, targetPath);
   ensureTargetCanBeWritten(existing?.content ?? null, targetPath, sourcePath);
   await ensureParentFolders(vfs, databaseId, targetPath);
@@ -167,7 +167,7 @@ async function writeGeneratedDraft(vfs: VfsClient, databaseId: string, targetPat
     path: targetPath,
     kind: "file",
     content,
-    metadataJson: JSON.stringify({ generated_by: "wiki-generator", source_path: sourcePath, state: "Draft" }),
+    metadataJson: JSON.stringify({ generated_by: "wiki-generator", source_path: sourcePath }),
     expectedEtag: existing?.etag ?? null
   });
 }
@@ -226,7 +226,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-type GeneratedDraft = {
+type GeneratedPage = {
   targetPath: string;
   content: string;
   contextHits: SearchNodeHit[];

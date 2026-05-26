@@ -15,8 +15,9 @@ test("buildWebRawSource emits canonical browser DOM source", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/raw\/web-[a-f0-9]{16}\/web-[a-f0-9]{16}\.md$/);
-  assert.equal(raw.path.split("/").at(-2), raw.path.split("/").at(-1)?.replace(".md", ""));
+  assert.match(raw.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.equal(raw.path.split("/").at(-2), "web");
+  assert.equal(raw.sourceId, `web-${raw.path.split("/").at(-1)?.replace(".md", "")}`);
   assert.match(raw.content, /kind: kinic\.raw_web_source/);
   assert.match(raw.content, /schema_version: 1/);
   assert.match(raw.content, /capture_method: browser_dom/);

@@ -77,8 +77,8 @@ Those `/backend-api/*` and `claude.ai/api/.../chat_conversations/*` endpoints ar
 Raw sources are saved as:
 
 ```text
-/Sources/raw/chatgpt-<conversationId>/chatgpt-<conversationId>.md
-/Sources/raw/claude-<conversationId>/claude-<conversationId>.md
+/Sources/raw/chatgpt/<conversationId>.md
+/Sources/raw/claude/<conversationId>.md
 ```
 
 ## URL Ingest
@@ -102,7 +102,7 @@ Confirm that `/Sources/raw/...` or `/Sources/ingest-requests/...` is created in 
 ChatGPT/Claude export only writes raw evidence. Generate wiki pages from the CLI:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/chatgpt-<conversationId>/chatgpt-<conversationId>.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/chatgpt/<conversationId>.md
 ```
 
 This command creates a wiki scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.
