@@ -42,7 +42,7 @@
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*"]
     }
   ],
-  "permissions": ["storage", "activeTab", "offscreen", "contextMenus"],
+  "permissions": ["storage", "activeTab", "scripting", "offscreen", "contextMenus"],
   "host_permissions": [
     "https://wiki.kinic.xyz/*",
     "https://id.ai/*",

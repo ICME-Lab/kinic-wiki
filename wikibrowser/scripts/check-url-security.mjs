@@ -5,6 +5,7 @@ import ts from "typescript";
 const wikiBrowser = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
 const documentPane = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const triggerRouteModule = await importTs("../app/api/url-ingest/trigger/route.ts");
+const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
 
 assert.doesNotMatch(wikiBrowser, /onLogin=\{login\}[\s\S]{0,140}<TopBar/);
@@ -17,6 +18,10 @@ await withEnv({}, async () => {
   const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
   assert.equal(response.status, 503);
   assert.match(await response.text(), /KINIC_WIKI_GENERATOR_URL is not configured/);
+
+  const sourceRun = await sourceRunRouteModule.POST(sourceRunRequest("https://wiki.kinic.xyz"));
+  assert.equal(sourceRun.status, 503);
+  assert.match(await sourceRun.text(), /KINIC_WIKI_GENERATOR_URL is not configured/);
 });
 
 await withEnv(
@@ -96,6 +101,75 @@ await withEnv(
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
     });
     triggerRouteModule.setUrlIngestTriggerDepsForTest();
+
+    const invalidSourcePath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/one/two.md" })
+    );
+    assert.equal(invalidSourcePath.status, 400);
+
+    const traversalSourcePath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/../...md" })
+    );
+    assert.equal(traversalSourcePath.status, 400);
+
+    const missingSourceSessionNonce = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sessionNonce: "" })
+    );
+    assert.equal(missingSourceSessionNonce.status, 400);
+
+    const invalidSourceRequestPath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { requestPath: "/Sources/raw/web-abc/web-abc.md" })
+    );
+    assert.equal(invalidSourceRequestPath.status, 400);
+
+    const nestedSourceRequestPath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { requestPath: "/Sources/ingest-requests/nested/source-run.md" })
+    );
+    assert.equal(nestedSourceRequestPath.status, 400);
+
+    const sourcePreflight = sourceRunRouteModule.OPTIONS(sourceRunRequest("chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"));
+    assert.equal(sourcePreflight.status, 204);
+    assert.equal(sourcePreflight.headers.get("access-control-allow-origin"), "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi");
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async () => {
+        throw new Error("denied");
+      }
+    });
+    await withMockFetch(async () => {
+      throw new Error("worker should not be called");
+    }, async () => {
+      const response = await sourceRunRouteModule.POST(sourceRunRequest("https://wiki.kinic.xyz"));
+      assert.equal(response.status, 403);
+    });
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async (canisterId, input) => {
+        assert.equal(canisterId, "aaaaa-aa");
+        assert.deepEqual(input, {
+          databaseId: "db_1",
+          requestPath: "/Sources/ingest-requests/source-run.md",
+          sessionNonce: "session-1"
+        });
+      }
+    });
+    await withMockFetch(async (input, init) => {
+      assert.equal(inputUrl(input), "https://worker.example/run");
+      assert.equal(init?.headers?.authorization, "Bearer secret-token");
+      assert.equal(init?.method, "POST");
+      assert.deepEqual(JSON.parse(init?.body), {
+        databaseId: "db_1",
+        sourcePath: "/Sources/raw/web-abc/web-abc.md",
+        dryRun: false
+      });
+      return Response.json({ queued: true }, { status: 202 });
+    }, async () => {
+      const response = await sourceRunRouteModule.POST(sourceRunRequest("https://wiki.kinic.xyz"));
+      assert.equal(response.status, 202);
+      assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
+    });
+    sourceRunRouteModule.setSourceRunDepsForTest();
+    assert.match(readFileSync(new URL("../app/api/source/run/route.ts", import.meta.url), "utf8"), /checkUrlIngestTriggerSession/);
   }
 );
 
@@ -255,6 +329,21 @@ function triggerRequest(origin, overrides = {}) {
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
       requestPath: "/Sources/ingest-requests/1.md",
+      sessionNonce: "session-1",
+      ...overrides
+    })
+  });
+}
+
+function sourceRunRequest(origin, overrides = {}) {
+  return new Request("https://local.test/api/source/run", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin },
+    body: JSON.stringify({
+      canisterId: "aaaaa-aa",
+      databaseId: "db_1",
+      sourcePath: "/Sources/raw/web-abc/web-abc.md",
+      requestPath: "/Sources/ingest-requests/source-run.md",
       sessionNonce: "session-1",
       ...overrides
     })

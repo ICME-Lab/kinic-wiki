@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/url-ingest-request.js
 // What: Build URL ingest request VFS nodes and generator trigger payloads.
-// Why: Toolbar clicks should queue the same request shape as Wiki Browser.
+// Why: Toolbar URL ingest should queue the same request shape as Wiki Browser.
 
 export const DEFAULT_CANISTER_ID = "xis3j-paaaa-aaaai-axumq-cai";
 export const DEFAULT_IC_HOST = "https://icp0.io";
@@ -35,6 +35,43 @@ export function buildUrlIngestRequest({ url, requestedBy, now = new Date(), uuid
         ""
       ].join("\n"),
       metadataJson: JSON.stringify({ request_type: "url_ingest", url: normalizedUrl }),
+      expectedEtag: []
+    }
+  };
+}
+
+export function buildSourceRunRequest({ url, requestedBy, sourcePath, now = new Date(), uuid = crypto.randomUUID() }) {
+  const normalizedUrl = normalizedHttpUrl(url);
+  if (typeof sourcePath !== "string" || !sourcePath) {
+    throw new Error("source path is required");
+  }
+  const requestedAt = now.toISOString();
+  const requestId = `${now.getTime()}-${uuid}`;
+  const requestPath = `/Sources/ingest-requests/${requestId}.md`;
+  return {
+    requestPath,
+    writeRequest: {
+      path: requestPath,
+      kind: { File: null },
+      content: [
+        "---",
+        "kind: kinic.url_ingest_request",
+        "schema_version: 1",
+        "status: source_written",
+        `url: ${JSON.stringify(normalizedUrl)}`,
+        `requested_by: ${JSON.stringify(requestedBy)}`,
+        `requested_at: ${JSON.stringify(requestedAt)}`,
+        "claimed_at: null",
+        `source_path: ${JSON.stringify(sourcePath)}`,
+        "target_path: null",
+        "finished_at: null",
+        "error: null",
+        "---",
+        "",
+        "# Source Generation Request",
+        ""
+      ].join("\n"),
+      metadataJson: JSON.stringify({ request_type: "source_run", url: normalizedUrl, source_path: sourcePath }),
       expectedEtag: []
     }
   };

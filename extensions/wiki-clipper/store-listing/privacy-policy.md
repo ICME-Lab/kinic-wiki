@@ -4,7 +4,7 @@ Public URL: `https://kinic.io/privacy-policy`
 
 Before Chrome Web Store submission, verify that the public URL contains the Wiki Clipper-specific behavior described below. The generic Kinic privacy policy is not enough for this extension listing unless it explicitly covers ChatGPT/Claude export, active-tab URL ingest, Internet Identity auth, and selected database storage.
 
-Kinic Wiki Clipper saves user-selected web page URLs and ChatGPT/Claude conversations into a Kinic Wiki database. The extension requires the user to authenticate with Internet Identity and choose a writable database before writing data.
+Kinic Wiki Clipper saves user-selected web page URLs and ChatGPT/Claude conversations into a Kinic Wiki database. The extension requires the user to authenticate with Internet Identity and choose or explicitly create a writable database before writing data.
 
 ## Data processed
 

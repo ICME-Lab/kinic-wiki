@@ -22,6 +22,8 @@ const expectedTypes = {
       deleted_at_ms: "opt int64"
     }
   },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -55,6 +57,7 @@ const expectedTypes = {
 
 const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
+  create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
@@ -161,6 +164,7 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
+  if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_13") return "ResultDatabases";
   if (normalized === "Result_15") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultNode";
@@ -195,6 +199,7 @@ function splitActorInputs(value) {
 function actorResultName(okShape) {
   const normalized = normalizeActorShape(okShape);
   if (normalized === "null") return "ResultUnit";
+  if (normalized === "CreateDatabaseResult") return "ResultCreateDatabase";
   if (normalized === "Vec(DatabaseSummary)") return "ResultDatabases";
   if (normalized === "MkdirNodeResult") return "ResultMkdirNode";
   if (normalized === "opt Node") return "ResultNode";

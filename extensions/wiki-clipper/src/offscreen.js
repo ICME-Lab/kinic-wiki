@@ -1,11 +1,12 @@
 // Where: extensions/wiki-clipper/src/offscreen.js
-// What: DOM-backed authenticated URL ingest worker for the MV3 extension.
+// What: DOM-backed authenticated URL/source ingest worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
-import { buildUrlIngestRequest } from "./url-ingest-request.js";
-import { createVfsActor as defaultCreateVfsActor } from "./vfs-actor.js";
+import { buildSourceRunRequest, buildUrlIngestRequest } from "./url-ingest-request.js";
+import { createVfsActor as defaultCreateVfsActor, normalizeWritableDatabases } from "./vfs-actor.js";
 
 const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
+const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
 const TRIGGER_SESSION_TTL_MS = 30 * 60 * 1000;
 const TRIGGER_SESSION_REFRESH_MS = 2 * 60 * 1000;
 
@@ -22,9 +23,13 @@ if (globalThis.chrome?.runtime?.onMessage) {
         ? queueUrlIngest(message.tab, message.config)
         : message?.type === "save-raw-source"
           ? saveRawSource(message.rawSource, message.config)
-          : message?.type === "auth-status"
-            ? authStatus()
-            : null;
+          : message?.type === "trigger-source-generation"
+            ? triggerSourceGeneration(message.config, message.sourcePath, message.url)
+            : message?.type === "auth-status"
+              ? authStatus()
+              : message?.type === "list-writable-databases"
+                ? listWritableDatabases(message.config)
+                : null;
     if (!task) return false;
     task.then(
       (result) => sendResponse({ ok: true, result }),
@@ -97,6 +102,39 @@ export async function saveRawSource(rawSource, config) {
   };
 }
 
+export async function triggerSourceGeneration(config, sourcePath, url) {
+  if (!config?.canisterId) throw new Error("canister id is required");
+  if (!config?.databaseId) throw new Error("database id is required");
+  if (typeof sourcePath !== "string" || !sourcePath) throw new Error("source path is required");
+  if (typeof url !== "string" || !url) throw new Error("source url is required");
+  const snapshot = await authenticatedSnapshot();
+  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
+  const request = buildSourceRunRequest({
+    url,
+    requestedBy: snapshot.principal,
+    sourcePath
+  });
+  await ensureParentFolders(actor, config.databaseId, request.writeRequest.path);
+  const result = await actor.write_node({
+    database_id: config.databaseId,
+    path: request.writeRequest.path,
+    kind: request.writeRequest.kind,
+    content: request.writeRequest.content,
+    metadata_json: request.writeRequest.metadataJson,
+    expected_etag: request.writeRequest.expectedEtag
+  });
+  if ("Err" in result) throw new Error(result.Err);
+  const trigger = await triggerSourceRun(config.canisterId, config.databaseId, sourcePath, request.requestPath, session);
+  return {
+    sourcePath,
+    requestPath: request.requestPath,
+    principal: snapshot.principal,
+    triggered: trigger.ok,
+    triggerError: trigger.error
+  };
+}
+
 async function ensureParentFolders(actor, databaseId, path) {
   const segments = path.split("/").filter(Boolean);
   let current = "";
@@ -115,6 +153,15 @@ export async function authStatus() {
   };
 }
 
+export async function listWritableDatabases(config) {
+  if (!config?.canisterId) throw new Error("canister id is required");
+  const snapshot = await authenticatedSnapshot();
+  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  const result = await actor.list_databases();
+  if ("Err" in result) throw new Error(result.Err);
+  return normalizeWritableDatabases(result.Ok);
+}
+
 export function setOffscreenDepsForTest(deps = {}) {
   authSnapshotFactory = deps.authSnapshot || defaultAuthSnapshot;
   vfsActorFactory = deps.createVfsActor || defaultCreateVfsActor;
@@ -131,9 +178,13 @@ async function authenticatedSnapshot() {
 }
 
 async function ensureTriggerSession(actor, databaseId, principal) {
+  return ensureSession(triggerSessionCache, (request) => actor.authorize_url_ingest_trigger_session(request), databaseId, principal);
+}
+
+async function ensureSession(cache, authorize, databaseId, principal) {
   const key = `${databaseId}:${principal}`;
   const now = Date.now();
-  const cached = triggerSessionCache.get(key);
+  const cached = cache.get(key);
   if (cached && cached.expiresAtMs - now > TRIGGER_SESSION_REFRESH_MS) {
     return cached.sessionNonce;
   }
@@ -141,24 +192,23 @@ async function ensureTriggerSession(actor, databaseId, principal) {
     return cached.promise;
   }
   const sessionNonce = crypto.randomUUID();
-  const promise = actor
-    .authorize_url_ingest_trigger_session({
-      database_id: databaseId,
-      session_nonce: sessionNonce
-    })
+  const promise = authorize({
+    database_id: databaseId,
+    session_nonce: sessionNonce
+  })
     .then((result) => {
       if ("Err" in result) throw new Error(result.Err);
-      triggerSessionCache.set(key, {
+      cache.set(key, {
         sessionNonce,
         expiresAtMs: now + TRIGGER_SESSION_TTL_MS
       });
       return sessionNonce;
     })
     .catch((error) => {
-      triggerSessionCache.delete(key);
+      cache.delete(key);
       throw error;
     });
-  triggerSessionCache.set(key, {
+  cache.set(key, {
     sessionNonce,
     expiresAtMs: now,
     promise
@@ -172,6 +222,22 @@ async function triggerUrlIngest(canisterId, databaseId, requestPath, sessionNonc
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ canisterId, databaseId, requestPath, sessionNonce })
+    });
+    if (!response.ok) {
+      return { ok: false, error: `worker trigger failed: HTTP ${response.status}` };
+    }
+    return { ok: true, error: null };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "worker trigger failed" };
+  }
+}
+
+async function triggerSourceRun(canisterId, databaseId, sourcePath, requestPath, sessionNonce) {
+  try {
+    const response = await fetchFactory(SOURCE_RUN_TRIGGER_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ canisterId, databaseId, sourcePath, requestPath, sessionNonce })
     });
     if (!response.ok) {
       return { ok: false, error: `worker trigger failed: HTTP ${response.status}` };

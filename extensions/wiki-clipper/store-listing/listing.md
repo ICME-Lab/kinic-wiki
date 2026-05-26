@@ -13,7 +13,7 @@ Core features:
 - Queue the active web page URL for Kinic Wiki ingest.
 - Export recent ChatGPT and Claude conversations as raw source files.
 - Authenticate with Internet Identity before writing.
-- Select only writable Kinic Wiki databases from extension settings.
+- Select or explicitly create a writable Kinic Wiki database from extension settings.
 
 Data is written to the configured Kinic Wiki canister and `wiki.kinic.xyz` ingest endpoint. The extension does not sell data, serve ads, or use data for unrelated analytics.
 

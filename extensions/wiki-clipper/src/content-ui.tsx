@@ -12,6 +12,7 @@ import {
 } from "./current-tab-export.js";
 import { DEFAULT_EXPORT_LIMIT, normalizeExportLimit } from "./history-links.js";
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./url-ingest-request.js";
+import { databaseOptionLabel } from "../popup/popup-state.js";
 
 const ROOT_ID = "kinic-wiki-clipper-root";
 const DEFAULT_DATABASE_ID = "";
@@ -23,6 +24,8 @@ const panelOpen = signal(false);
 const logs = signal([]);
 const phase = signal("idle");
 const progress = signal({ total: 0, done: 0, ok: 0, failed: 0 });
+const databases = signal([]);
+const databaseStatus = signal("loading");
 const hasDatabaseConfig = computed(() => config.value.databaseId.trim().length > 0);
 const canExport = computed(() => status.value !== "exporting" && hasDatabaseConfig.value);
 const exportProvider = computed(() => providerFromLocation(location) || "chatgpt");
@@ -74,6 +77,20 @@ function Modal() {
       </header>
       <section class="settings">
         <div class="export-block">
+          <label class="database-field">
+            <span>Database</span>
+            <select value={config.value.databaseId} disabled={status.value === "exporting" || databases.value.length === 0} onChange={selectDatabase}>
+              {databaseOptions()}
+            </select>
+          </label>
+          {databaseStatus.value === "error" ? (
+            <div class="setup-row">
+              <p>Login and select a writable database.</p>
+              <button type="button" onClick={openSettings}>
+                Open settings
+              </button>
+            </div>
+          ) : null}
           <strong>Export the recent chats</strong>
           {status.value === "exporting" ? (
             <p class="export-warning">Export is running. You can keep using this tab, but do not close it until it finishes.</p>
@@ -93,6 +110,8 @@ function Modal() {
                 inputMode="numeric"
                 value={countText.value}
                 onInput={(event) => (countText.value = event.currentTarget.value)}
+                onFocus={(event) => event.currentTarget.select()}
+                onMouseUp={(event) => event.preventDefault()}
                 onBlur={() => (countText.value = String(normalizeExportLimit(countText.value)))}
               />
               <button type="button" disabled={!canExport.value} onClick={startExport}>
@@ -177,9 +196,59 @@ async function loadConfig() {
   try {
     const response = await send({ type: "load-config" });
     config.value = configWithDefaults(response.config);
+    await refreshDatabases();
   } catch (nextError) {
     error.value = messageForError(nextError);
   }
+}
+
+async function refreshDatabases() {
+  try {
+    databaseStatus.value = "loading";
+    const response = await send({ type: "list-writable-databases" });
+    databases.value = response.result || [];
+    databaseStatus.value = databases.value.length > 0 ? "ready" : "empty";
+    if (databases.value.length > 0 && !databases.value.some((database) => database.databaseId === config.value.databaseId)) {
+      await saveDatabase(databases.value[0].databaseId);
+    }
+  } catch {
+    databases.value = [];
+    databaseStatus.value = "error";
+  }
+}
+
+async function selectDatabase(event) {
+  await saveDatabase(event.currentTarget.value);
+}
+
+async function saveDatabase(databaseId) {
+  await send({ type: "save-config", config: { databaseId } });
+  config.value = { ...config.value, databaseId };
+}
+
+function databaseOptions() {
+  if (databases.value.length === 0) {
+    return <option value="">No writable databases</option>;
+  }
+  const counts = databaseNameCounts(databases.value);
+  return databases.value.map((database) => (
+    <option key={database.databaseId} value={database.databaseId} title={database.databaseId}>
+      {databaseOptionLabel(database, counts.get(databaseNameKey(database.name)) || 1)}
+    </option>
+  ));
+}
+
+function databaseNameCounts(values) {
+  const counts = new Map();
+  for (const database of values) {
+    const key = databaseNameKey(database.name);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function databaseNameKey(name) {
+  return String(name || "").trim().toLowerCase();
 }
 
 function configWithDefaults(value) {
@@ -272,9 +341,9 @@ const styles = `
 .close:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);color:var(--kinic-white);transform:translateY(-3px)}
 .close:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
 .settings{margin:12px;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-paper);padding:16px}
-input{border:1px solid var(--kinic-mid-line);border-radius:12px;background:var(--kinic-white);color:var(--kinic-ink);padding:9px 12px;font:inherit}
-input:focus{border-color:var(--kinic-hot-pink);outline:2px solid var(--kinic-soft-pink);outline-offset:1px}
-.export-block{display:grid;gap:10px}.export-block strong{font-size:15px}.export-warning{margin:0;color:#d5691b;font-weight:750}.setup-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--kinic-pale-pink);border-radius:16px;padding:12px 14px;background:var(--kinic-soft-pink)}.setup-row p{margin:0;color:var(--kinic-hot-pink);font-weight:800}.export-box{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--kinic-line);border-radius:16px;padding:16px;background:var(--kinic-white)}.export-box p{max-width:430px;margin:0;color:var(--kinic-body);font-weight:600}.export-control{display:flex;align-items:center;gap:8px;border:1px solid var(--kinic-mid-line);border-radius:16px;padding:5px;background:var(--kinic-white)}.export-control input{width:58px;border:0;background:transparent;text-align:center;font-weight:800}.export-control button,.setup-row button,.logs button{border:1px solid var(--kinic-ink);border-radius:16px;padding:9px 14px;background:var(--kinic-ink);color:var(--kinic-white);font-weight:800;box-shadow:none;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
+input,select{border:1px solid var(--kinic-mid-line);border-radius:12px;background:var(--kinic-white);color:var(--kinic-ink);padding:9px 12px;font:inherit}
+input:focus,select:focus{border-color:var(--kinic-hot-pink);outline:2px solid var(--kinic-soft-pink);outline-offset:1px}
+.export-block{display:grid;gap:10px}.export-block strong{font-size:15px}.database-field{display:grid;gap:6px;color:var(--kinic-ink);font-weight:800}.database-field span{font-size:12px}.database-field select{width:100%;font-weight:650}.export-warning{margin:0;color:#d5691b;font-weight:750}.setup-row{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--kinic-pale-pink);border-radius:16px;padding:12px 14px;background:var(--kinic-soft-pink)}.setup-row p{margin:0;color:var(--kinic-hot-pink);font-weight:800}.export-box{display:flex;align-items:center;justify-content:space-between;gap:18px;border:1px solid var(--kinic-line);border-radius:16px;padding:16px;background:var(--kinic-white)}.export-box p{max-width:430px;margin:0;color:var(--kinic-body);font-weight:600}.export-control{display:flex;align-items:center;gap:8px;border:1px solid var(--kinic-mid-line);border-radius:16px;padding:5px;background:var(--kinic-white)}.export-control input{width:58px;border:0;background:transparent;text-align:center;font-weight:800}.export-control button,.setup-row button,.logs button{border:1px solid var(--kinic-ink);border-radius:16px;padding:9px 14px;background:var(--kinic-ink);color:var(--kinic-white);font-weight:800;box-shadow:none;transition:background .3s ease,border-color .3s ease,color .3s ease,transform .3s ease}
 .export-control button:hover,.setup-row button:hover,.logs button:hover{border-color:var(--kinic-hot-pink);background:var(--kinic-hot-pink);transform:translateY(-3px)}
 .export-control button:focus-visible,.setup-row button:focus-visible,.logs button:focus-visible{outline:2px solid var(--kinic-soft-pink);outline-offset:2px}
 button:disabled{opacity:.55;cursor:not-allowed}.logs{margin:12px;border:1px solid var(--kinic-line);border-radius:16px;background:var(--kinic-white);padding:14px 18px}.logs h2{margin:0 0 12px;font-size:16px}.filter{border:1px solid var(--kinic-pale-pink);border-radius:999px;background:var(--kinic-soft-pink);color:var(--kinic-hot-pink);padding:8px;text-align:center;font-weight:800}.status{min-height:20px;margin:10px 0;color:var(--kinic-body)}.status.error{color:var(--kinic-error)}.cancel{margin:0 0 10px;border:1px solid var(--kinic-line);border-radius:16px;padding:8px 12px;background:var(--kinic-white);color:var(--kinic-ink);font-weight:800;box-shadow:0 4px 10px #14142b0a}.log-list{display:grid;gap:12px;max-height:240px;overflow:auto}.log{display:grid;grid-template-columns:42px 1fr;gap:12px;border:1px solid var(--kinic-line);border-radius:16px;padding:14px;background:var(--kinic-paper)}.log-icon{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--kinic-success-soft);color:var(--kinic-success);font-weight:900}.log.error .log-icon{background:var(--kinic-error-soft);color:var(--kinic-error)}.log-meta{display:flex;justify-content:space-between;color:var(--kinic-body);font-size:12px}.log p{margin:6px 0 0;color:var(--kinic-ink);font-weight:650}

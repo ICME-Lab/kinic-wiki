@@ -29,7 +29,7 @@ test("processExportTargets records out-of-order worker completions without losin
           states.push(next);
         },
         async send() {
-          return { result: { path: "/Sources/raw/chatgpt-test/chatgpt-test.md", created: true } };
+          return { result: { path: "/Sources/raw/chatgpt-test/chatgpt-test.md", created: true, generationQueued: true, generationError: null } };
         }
       },
       2
@@ -70,7 +70,7 @@ test("processExportTargets serializes state writes that would otherwise lose pro
           if (message.capture.url.endsWith("/one")) {
             throw new Error("write failed");
           }
-          return { result: { path: "/Sources/raw/chatgpt-two/chatgpt-two.md", created: true } };
+          return { result: { path: "/Sources/raw/chatgpt-two/chatgpt-two.md", created: true, generationQueued: true, generationError: null } };
         }
       },
       2

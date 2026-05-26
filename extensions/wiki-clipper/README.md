@@ -39,7 +39,7 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 ## Flow
 
 1. Open a ChatGPT or Claude conversation tab.
-2. Select a database from extension settings.
+2. Select a database from extension settings, or create one there if none exists.
 3. Use the page-level `Kinic Memory` button.
 4. Enter the number of recent chats to export. The default is `10`.
 5. Export to `/Sources/raw/<source_id>/<source_id>.md`.
@@ -50,7 +50,7 @@ Clicking the extension toolbar icon queues the active `http` / `https` tab URL a
 
 Required settings:
 
-- `Database`: loaded from writable hot databases for the logged-in Internet Identity principal
+- `Database`: loaded from writable hot databases for the logged-in Internet Identity principal. If none exists, create one explicitly from settings.
 
 The active-tab flow writes `/Sources/ingest-requests/<request-id>.md` as a VFS `file`, then asks WikiBrowser to trigger the generator Worker with its server-side token.
 
@@ -66,7 +66,7 @@ The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edite
 
 - Canister ID is fixed to `xis3j-paaaa-aaaai-axumq-cai`.
 - IC host is fixed to `https://icp0.io`.
-- Database ID is selected and saved automatically from writable hot databases. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
+- Database ID is selected and saved automatically from writable hot databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
 - Mainnet hosts require explicit confirmation before export.
 - ChatGPT/Claude raw-source export and URL ingest writes use the logged-in Internet Identity principal and require writer access for that principal.

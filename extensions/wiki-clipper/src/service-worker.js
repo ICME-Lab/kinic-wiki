@@ -8,6 +8,7 @@ import {
   URL_INGEST_STATUS_KEY,
   normalizedHttpUrl
 } from "./url-ingest-request.js";
+import { buildWebRawSource, collectWebPageSnapshot } from "./web-source.js";
 
 const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
@@ -92,6 +93,9 @@ export async function handleMessage(message, sender) {
   if (message?.type === "auth-status") {
     return { ok: true, result: await authStatus() };
   }
+  if (message?.type === "list-writable-databases") {
+    return { ok: true, result: await listWritableDatabases() };
+  }
   if (message?.type === "open-settings") {
     await openSettingsOnce();
     return { ok: true };
@@ -134,15 +138,16 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       await deps.setBadge("BUSY", "#5f6368");
       return { ok: false, error: status.message };
     }
+    const rawSource = await deps.captureTabSource(tab, url);
     await deps.ensureOffscreen();
-    const response = await deps.sendOffscreen({
+    const saveResponse = await deps.sendOffscreen({
       target: "offscreen",
-      type: "queue-url-ingest",
-      tab: { url, title: tab?.title || "" },
+      type: "save-raw-source",
+      rawSource,
       config
     });
-    if (!response?.ok) {
-      const error = response?.error || "URL ingest failed";
+    if (!saveResponse?.ok) {
+      const error = saveResponse?.error || "source save failed";
       await deps.writeStatus(errorStatus(error, url));
       await deps.setBadge("ERR", "#b42318");
       if (error === "UNAUTHENTICATED") {
@@ -150,14 +155,30 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       }
       return { ok: false, error };
     }
-    const status = successStatus(response.result);
+    const triggerResponse = await deps.sendOffscreen({
+      target: "offscreen",
+      type: "trigger-source-generation",
+      sourcePath: saveResponse.result.path,
+      url,
+      config
+    });
+    const result = {
+      url,
+      title: tab?.title || "",
+      sourcePath: saveResponse.result.path,
+      sourceEtag: saveResponse.result.etag,
+      sourceCreated: saveResponse.result.created,
+      generationQueued: Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false),
+      generationError: triggerResponse?.ok ? triggerResponse.result?.triggerError || null : triggerResponse?.error || "generation queue failed"
+    };
+    const status = sourceCaptureStatus(result);
     await deps.writeStatus(status);
-    if (response.result?.triggered === false) {
-      await deps.setBadge("ERR", "#b42318");
-      return { ok: false, result: response.result, error: response.result.triggerError || "worker trigger failed" };
+    if (!result.generationQueued) {
+      await deps.setBadge("SRC", "#5f6368");
+      return { ok: true, result };
     }
     await deps.setBadge("OK", "#137333");
-    return { ok: true, result: response.result };
+    return { ok: true, result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await deps.writeStatus(errorStatus(message, tab?.url || ""));
@@ -237,6 +258,21 @@ async function authStatus() {
   return result;
 }
 
+async function listWritableDatabases() {
+  const response = await offscreenBridge({
+    target: "offscreen",
+    type: "list-writable-databases",
+    config: withFixedRuntimeConfig(await loadConfig())
+  });
+  if (!response?.ok) {
+    if (response?.error === "UNAUTHENTICATED") {
+      await openSettingsOnce();
+    }
+    throw new Error(response?.error || "database list failed");
+  }
+  return response.result || [];
+}
+
 async function readSessionValue(key) {
   requireSessionKey(key);
   const values = await chrome.storage.session.get(key);
@@ -267,16 +303,16 @@ async function writeLatestUrlIngestStatus(status) {
   await chrome.storage.session.set({ [URL_INGEST_STATUS_KEY]: JSON.stringify(status) });
 }
 
-function successStatus(result) {
-  const triggered = result?.triggered !== false;
+function sourceCaptureStatus(result) {
+  const queued = result?.generationQueued === true;
   return {
-    status: triggered ? "ok" : "error",
+    status: queued ? "ok" : "source_saved",
     url: result?.url || "",
     title: result?.title || "",
-    requestPath: result?.requestPath || "",
-    message: triggered
-      ? "URL ingest queued and started."
-      : `Queued, trigger failed: ${result?.triggerError || "worker trigger failed"}`,
+    sourcePath: result?.sourcePath || "",
+    message: queued
+      ? "Source saved. Generation queued."
+      : `Source saved. Generation queue failed: ${result?.generationError || "worker trigger failed"}`,
     updatedAt: new Date().toISOString()
   };
 }
@@ -317,8 +353,24 @@ function defaultActionDeps() {
     setBadge: setActionBadge,
     openSettings: openSettingsOnce,
     reserveUrlIngest,
-    releaseUrlIngest
+    releaseUrlIngest,
+    captureTabSource
   };
+}
+
+async function captureTabSource(tab, url) {
+  if (!tab?.id) {
+    throw new Error("active tab id is required");
+  }
+  if (!globalThis.chrome?.scripting?.executeScript) {
+    throw new Error("page capture is unavailable");
+  }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: collectWebPageSnapshot
+  });
+  const snapshot = results?.[0]?.result;
+  return buildWebRawSource({ ...snapshot, url });
 }
 
 async function createSettingsContextMenu() {

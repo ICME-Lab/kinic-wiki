@@ -217,7 +217,7 @@ test("exportTarget saves immediately after fetching a valid conversation", async
     { canisterId: "canister", host: "http://127.0.0.1:8001" },
     async (message) => {
       calls.push(["save", message.capture.conversationTitle]);
-      return { result: { path: "/Sources/raw/chatgpt-abc/chatgpt-abc.md", created: true } };
+      return { result: { path: "/Sources/raw/chatgpt-abc/chatgpt-abc.md", created: true, generationQueued: true, generationError: null } };
     },
     chatGptFetch(async (url) => {
       calls.push(["fetch", target.id]);
@@ -266,11 +266,17 @@ test("advanceState records direct-api success and errors in order", () => {
   });
   state = { ...state, progress: { total: 2, done: 0, ok: 0, failed: 0 } };
 
-  state = advanceState(state, { ok: true, title: "One", provider: "ChatGPT", captureMethod: "direct api", created: true });
-  state = advanceState(state, { ok: false, title: "Two", url: "https://chatgpt.com/c/2", error: "empty" });
+  state = advanceState(state, { ok: true, title: "One", provider: "chatgpt", captureMethod: "direct api", created: true });
+  state = advanceState(state, {
+    ok: false,
+    title: "Two",
+    provider: "chatgpt",
+    error: "save failed"
+  });
 
   assert.deepEqual(state.progress, { total: 2, done: 2, ok: 1, failed: 1 });
   assert.equal(state.logs[0].kind, "error");
+  assert.match(state.logs[0].message, /Failed: Two - save failed/);
   assert.match(state.logs[1].message, /via direct api/);
 });
 
@@ -515,6 +521,7 @@ test("save-source delegates raw source write with database_id", async () => {
     assert.equal(calls[0].type, "save-raw-source");
     assert.equal(calls[0].config.databaseId, "team_wiki");
     assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt-abc/chatgpt-abc.md");
+    assert.equal(calls.length, 1);
   } finally {
     setOffscreenBridgeForTest(null);
     restore();

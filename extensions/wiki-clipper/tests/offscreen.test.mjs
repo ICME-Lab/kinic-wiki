@@ -3,7 +3,7 @@
 // Why: Service workers delegate II-backed writes to offscreen documents.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { authStatus, queueUrlIngest, saveRawSource, setOffscreenDepsForTest } from "../src/offscreen.js";
+import { authStatus, listWritableDatabases, queueUrlIngest, saveRawSource, setOffscreenDepsForTest, triggerSourceGeneration } from "../src/offscreen.js";
 
 test("queueUrlIngest writes request and triggers via wiki route", async () => {
   const calls = [];
@@ -215,6 +215,55 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   }
 });
 
+test("triggerSourceGeneration authorizes session and calls source run route", async () => {
+  const calls = [];
+  const fetchCalls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    fetch: async (url, init) => {
+      fetchCalls.push([url, init]);
+      return Response.json({ accepted: true }, { status: 202 });
+    },
+    createVfsActor: async () => ({
+      async authorize_url_ingest_trigger_session(request) {
+        calls.push(["session", request.database_id, request.session_nonce]);
+        return { Ok: null };
+      },
+      async mkdir_node(request) {
+        calls.push(["mkdir", request.database_id, request.path]);
+        return { Ok: { created: true, path: request.path } };
+      },
+      async write_node(request) {
+        calls.push(["write", request.database_id, request.path, request.kind]);
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
+      }
+    })
+  });
+  try {
+    const result = await triggerSourceGeneration(config(), "/Sources/raw/web-abc/web-abc.md", "https://example.com/");
+
+    assert.equal(result.triggered, true);
+    assert.equal(result.sourcePath, "/Sources/raw/web-abc/web-abc.md");
+    assert.match(result.requestPath, /^\/Sources\/ingest-requests\/.+\.md$/);
+    assert.equal(calls[0][0], "session");
+    assert.deepEqual(calls[1], ["mkdir", "team-db", "/Sources"]);
+    assert.deepEqual(calls[2], ["mkdir", "team-db", "/Sources/ingest-requests"]);
+    assert.equal(calls[3][0], "write");
+    assert.equal(calls[3][1], "team-db");
+    assert.equal(calls[3][2], result.requestPath);
+    assert.equal(fetchCalls[0][0], "https://wiki.kinic.xyz/api/source/run");
+    assert.deepEqual(JSON.parse(fetchCalls[0][1].body), {
+      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      databaseId: "team-db",
+      sourcePath: "/Sources/raw/web-abc/web-abc.md",
+      requestPath: result.requestPath,
+      sessionNonce: calls[0][2]
+    });
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("authStatus returns principal without identity", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { secret: "identity" }, principal: "principal-1" })
@@ -224,6 +273,36 @@ test("authStatus returns principal without identity", async () => {
 
     assert.deepEqual(result, { isAuthenticated: true, principal: "principal-1" });
     assert.equal("identity" in result, false);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("listWritableDatabases returns hot writable database summaries", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async list_databases() {
+        return {
+          Ok: [
+            rawDatabase("team-db", "Team Wiki", "Writer", "Hot"),
+            rawDatabase("reader-db", "Read Wiki", "Reader", "Hot"),
+            rawDatabase("old-db", "Old Wiki", "Owner", "Archived")
+          ]
+        };
+      }
+    })
+  });
+  try {
+    assert.deepEqual(await listWritableDatabases(config()), [
+      {
+        databaseId: "team-db",
+        name: "Team Wiki",
+        role: "Writer",
+        status: "Hot",
+        logicalSizeBytes: "0"
+      }
+    ]);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -243,5 +322,17 @@ function config() {
     canisterId: "xis3j-paaaa-aaaai-axumq-cai",
     databaseId: "team-db",
     host: "https://icp0.io"
+  };
+}
+
+function rawDatabase(databaseId, name, role, status) {
+  return {
+    database_id: databaseId,
+    name,
+    role: { [role]: null },
+    status: { [status]: null },
+    logical_size_bytes: 0n,
+    archived_at_ms: [],
+    deleted_at_ms: []
   };
 }

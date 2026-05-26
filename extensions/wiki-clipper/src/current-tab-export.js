@@ -420,15 +420,21 @@ function hydrate(callbacks, state) {
 }
 
 function logFromEvent(event) {
+  const message = logMessageFromEvent(event);
   return {
     id: globalThis.crypto?.randomUUID?.() || `${event.title || event.url}-${Date.now()}`,
     kind: event.ok ? "success" : "error",
     provider: event.provider ? providerLabel(event.provider) : "ChatGPT",
     time: "just now",
-    message: event.ok
-      ? `Memory: ${event.title || event.path} via ${event.captureMethod || "unknown"} (${event.created ? "Created" : "Updated"})`
-      : `Failed: ${event.title || event.url} - ${event.error}`
+    message
   };
+}
+
+function logMessageFromEvent(event) {
+  if (event.ok) {
+    return `Memory: ${event.title || event.path} via ${event.captureMethod || "unknown"} (${event.created ? "Created" : "Updated"})`;
+  }
+  return `Failed: ${event.title || event.url} - ${event.error}`;
 }
 
 export function providerFromLocation(loc = location) {

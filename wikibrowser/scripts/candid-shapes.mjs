@@ -296,6 +296,7 @@ export const expectedMethods = {
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
+  delete_database: { input: ["text"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
   rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
