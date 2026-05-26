@@ -702,13 +702,6 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     assert_eq!(written.write.node.kind, vfs_types::NodeKind::Source);
     assert_eq!(written.session_nonce, "session-1");
 
-    service
-        .check_source_run_session(
-            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
-            102,
-        )
-        .expect("source run session should check");
-
     let wrong_path = service
         .check_source_run_session(
             source_run_session_check_request(
@@ -731,12 +724,37 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     assert!(wrong_etag.contains("missing or expired"));
 
     service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
+            102,
+        )
+        .expect("source run session should check");
+    service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
+            102,
+        )
+        .expect("source run session should allow retry within ttl");
+
+    let revoke_session = service
+        .write_source_for_generation(
+            "writer",
+            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            103,
+        )
+        .expect("writer should authorize second session");
+    service
         .revoke_database_access("alpha", "owner", "writer")
         .expect("writer revoke should succeed");
     let revoked = service
         .check_source_run_session(
-            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
-            103,
+            source_run_session_check_request(
+                "alpha",
+                "/Sources/raw/web/def.md",
+                &revoke_session.write.node.etag,
+                "session-2",
+            ),
+            104,
         )
         .expect_err("revoked writer should fail even before ttl");
     assert!(revoked.contains("principal has no access"));

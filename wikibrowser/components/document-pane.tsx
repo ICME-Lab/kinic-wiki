@@ -796,5 +796,5 @@ function LoadingBlock() {
 }
 
 function isVfsNotFound(nodeError: string | null, childrenError: string | null): boolean {
-  return Boolean(nodeError?.startsWith("node not found:") && childrenError?.startsWith("path not found:"));
+  return Boolean(nodeError?.includes("node not found:") && childrenError?.includes("path not found:"));
 }

@@ -21,7 +21,7 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<source_id>/<source_id>.md`.
+- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Default to answer-only behavior.
 - Read the minimum note set needed to support the answer.
