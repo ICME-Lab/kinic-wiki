@@ -1964,28 +1964,7 @@ fn run_index_migrations(conn: &mut Connection) -> Result<(), String> {
     }
     if !migration_applied(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        tx.execute_batch(
-            "CREATE TABLE source_run_sessions (
-               database_id TEXT NOT NULL,
-               source_path TEXT NOT NULL,
-               source_etag TEXT NOT NULL,
-               session_nonce TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               expires_at_ms INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               refreshed_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, session_nonce),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX source_run_sessions_expiry_idx
-               ON source_run_sessions(expires_at_ms);",
-        )
-        .map_err(|error| error.to_string())?;
-        tx.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-            params![INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS],
-        )
-        .map_err(|error| error.to_string())?;
+        apply_source_run_sessions_index_migration(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
     }
     if !migration_applied(conn, INDEX_SCHEMA_VERSION_RESTORE_SESSIONS)? {
@@ -2035,6 +2014,9 @@ fn run_index_migrations_in_tx(conn: &Transaction<'_>) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING)? {
             apply_database_name_index_migration(conn)?;
+        }
+        if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
+            apply_source_run_sessions_index_migration(conn)?;
         }
         validate_wasm_index_schema(conn)?;
         for &version in INDEX_SCHEMA_VERSIONS {
@@ -2194,6 +2176,32 @@ fn apply_database_name_index_migration(conn: &Transaction<'_>) -> Result<(), Str
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
         params![INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn apply_source_run_sessions_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE source_run_sessions (
+           database_id TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           source_etag TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX source_run_sessions_expiry_idx
+           ON source_run_sessions(expires_at_ms);",
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS],
     )
     .map_err(|error| error.to_string())?;
     Ok(())

@@ -45,6 +45,61 @@ test("manual source run rejects etag mismatch without queueing", async () => {
   assert.equal(queue.messages.length, 0);
 });
 
+test("manual dry run uses Japanese target path for Japanese generated slug", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> =>
+    Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              title: "日本語記事",
+              slug: "日本語記事",
+              labels: {
+                summary: "概要",
+                key_facts: "主要事実",
+                decisions: "決定事項",
+                open_questions: "未解決事項",
+                follow_ups: "フォローアップ",
+                related_context: "関連コンテキスト",
+                provenance: "来歴",
+                none: "なし"
+              },
+              summary: "日本語の要約",
+              key_facts: [{ text: "本文は日本語で保持する。", source_path: "/Sources/raw/web/abc123.md" }],
+              decisions: [],
+              open_questions: [],
+              follow_ups: []
+            })
+          }
+        }
+      ]
+    });
+  try {
+    const queue = new TestQueue();
+    const vfs = new TestVfsClient();
+    vfs.existingSource = {
+      ...sourceNode("etag-current"),
+      path: "/Sources/raw/web/abc123.md",
+      content: "# 日本語記事\n\nこれは日本語の記事です。"
+    };
+
+    const response = await runManual(testEnv(queue), {
+      databaseId: "db_1",
+      sourcePath: "/Sources/raw/web/abc123.md",
+      sourceEtag: "etag-current",
+      dryRun: true
+    }, { vfs });
+
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { targetPath?: string; content?: string };
+    assert.equal(body.targetPath, "/Wiki/conversations/日本語記事.md");
+    assert.match(body.content ?? "", /## 概要/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("manual source run input requires source etag", () => {
   assert.equal(parseManualRunInput({ databaseId: "db_1", sourcePath: "/Sources/raw/web/abc.md" }), "sourceEtag is required");
 });

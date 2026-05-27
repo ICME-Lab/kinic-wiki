@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
 import { generateDraft, validateDraftSources } from "./openai.js";
 import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
-import { validateCanonicalSourcePath } from "./source-path.js";
+import { sourceIdFromPath, validateCanonicalSourcePath } from "./source-path.js";
 import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiNode, WorkerConfig } from "./types.js";
@@ -142,7 +142,7 @@ async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: Worke
   const contextHits = await loadContext(vfs, databaseId, source, config);
   const draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
   validateDraftSources(draft, source.path);
-  const targetPath = `${config.targetRoot}/${slugForGeneratedPage(draft)}.md`;
+  const targetPath = `${config.targetRoot}/${slugForGeneratedPage(draft, sourceIdFromPath(source.path, config.sourcePrefix))}.md`;
   return {
     targetPath,
     content: renderGeneratedMarkdown(draft, source, contextHits),

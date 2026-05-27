@@ -85,13 +85,30 @@ function wikiDraftSchema(): object {
       source_path: { type: "string" }
     }
   };
+  const label = { type: "string", minLength: 1 };
+  const labels = {
+    type: "object",
+    additionalProperties: false,
+    required: ["summary", "key_facts", "decisions", "open_questions", "follow_ups", "related_context", "provenance", "none"],
+    properties: {
+      summary: label,
+      key_facts: label,
+      decisions: label,
+      open_questions: label,
+      follow_ups: label,
+      related_context: label,
+      provenance: label,
+      none: label
+    }
+  };
   return {
     type: "object",
     additionalProperties: false,
-    required: ["title", "slug", "summary", "key_facts", "decisions", "open_questions", "follow_ups"],
+    required: ["title", "slug", "labels", "summary", "key_facts", "decisions", "open_questions", "follow_ups"],
     properties: {
       title: { type: "string" },
       slug: { type: "string" },
+      labels,
       summary: { type: "string" },
       key_facts: { type: "array", items: item },
       decisions: { type: "array", items: item },
@@ -143,12 +160,31 @@ function isWikiDraft(value: unknown): value is WikiDraft {
   return (
     typeof value.title === "string" &&
     typeof value.slug === "string" &&
+    isWikiDraftLabels(value.labels) &&
     typeof value.summary === "string" &&
     isDraftItemArray(value.key_facts) &&
     isDraftItemArray(value.decisions) &&
     isDraftItemArray(value.open_questions) &&
     isDraftItemArray(value.follow_ups)
   );
+}
+
+function isWikiDraftLabels(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  return (
+    isSingleLineLabel(value.summary) &&
+    isSingleLineLabel(value.key_facts) &&
+    isSingleLineLabel(value.decisions) &&
+    isSingleLineLabel(value.open_questions) &&
+    isSingleLineLabel(value.follow_ups) &&
+    isSingleLineLabel(value.related_context) &&
+    isSingleLineLabel(value.provenance) &&
+    isSingleLineLabel(value.none)
+  );
+}
+
+function isSingleLineLabel(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !/[\r\n]/.test(value);
 }
 
 function isDraftItemArray(value: unknown): value is WikiDraftItem[] {
