@@ -472,14 +472,13 @@ fn source_from_metadata(
 }
 
 fn merge_source_metadata(source: &mut DocsSource, metadata: &DocsMetadata) {
-    if source.title == source.source_id {
-        if let Some(title) = metadata
+    if source.title == source.source_id
+        && let Some(title) = metadata
             .title
             .clone()
             .filter(|value| !value.trim().is_empty())
-        {
-            source.title = title;
-        }
+    {
+        source.title = title;
     }
     if source.citation.is_none() {
         source.citation = metadata.citation.clone();
