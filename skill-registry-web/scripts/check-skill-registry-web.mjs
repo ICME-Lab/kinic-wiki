@@ -7,6 +7,9 @@ const panels = readFileSync(new URL("../app/skills/skill-registry-panels.tsx", i
 const details = readFileSync(new URL("../lib/skill-registry-details.ts", import.meta.url), "utf8");
 const diff = readFileSync(new URL("../lib/skill-registry-diff.ts", import.meta.url), "utf8");
 const operations = readFileSync(new URL("../lib/skill-registry-operations.ts", import.meta.url), "utf8");
+const types = readFileSync(new URL("../lib/types.ts", import.meta.url), "utf8");
+const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
+const vfsIdl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 assert.equal(packageJson.name, "kinic-skill-registry-web");
@@ -30,6 +33,12 @@ assert.match(diff, /permission_gate/);
 assert.match(diff, /proposal\.metricsPath/);
 assert.equal((diff.match(/proposal\.metricsPath/g) ?? []).length, 2);
 assert.match(operations, /kinic.skill_evolution_proposal_status/);
+assert.match(types, /DatabaseStatus = "active" \| "restoring" \| "archiving" \| "archived" \| "deleted"/);
+assert.match(vfsIdl, /Hot: idl\.Null/);
+assert.match(vfsIdl, /Active: idl\.Null/);
+assert.match(vfsClient, /function normalizeDatabaseStatus/);
+assert.match(vfsClient, /"Active" in status \|\| "Hot" in status/);
+assert.doesNotMatch(vfsClient, /: "hot"/);
 assert.doesNotMatch(client, /from ["']..\/..\/..\/wikibrowser/);
 assert.doesNotMatch(panels, /from ["']..\/..\/..\/wikibrowser/);
 

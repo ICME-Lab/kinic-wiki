@@ -1,4 +1,8 @@
+// Where: dashboard billing state helpers.
+// What: maps canister billing data into display state and deposit links.
+// Why: deposit amount is selected on the deposit screen, not encoded in dashboard URLs.
 import type { BillingConfig, DatabaseSummary } from "@/lib/types";
+import { formatTokenAmountFromE8s } from "@/lib/token-amount";
 
 export type DatabaseBillingState = "active" | "low-balance" | "suspended" | "unknown";
 
@@ -8,7 +12,6 @@ export type DatabaseBillingView = {
   summary: string;
   balanceE8s: bigint;
   minUpdateBalanceE8s: bigint;
-  depositAmountE8s: bigint;
   configAvailable: boolean;
   depositAvailable: boolean;
   billable: boolean;
@@ -22,10 +25,9 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
     return {
       state: "unknown",
       label: "Billing unavailable",
-      summary: `Balance ${balance.toString()} e8s / minimum unavailable`,
+      summary: "-",
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
-      depositAmountE8s: 0n,
       configAvailable: false,
       depositAvailable: false,
       billable: false,
@@ -36,10 +38,9 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
     return {
       state: "suspended",
       label: "Suspended",
-      summary: `Suspended / ${balance.toString()} e8s`,
+      summary: `Suspended / ${formatTokenAmountFromE8s(balance)}`,
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
-      depositAmountE8s: depositAmount(balance, minimum, true),
       configAvailable: true,
       depositAvailable: true,
       billable: false,
@@ -50,10 +51,9 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
     return {
       state: "low-balance",
       label: "Low balance",
-      summary: `Low balance / ${balance.toString()} e8s`,
+      summary: `Low balance / ${formatTokenAmountFromE8s(balance)}`,
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
-      depositAmountE8s: depositAmount(balance, minimum, false),
       configAvailable: true,
       depositAvailable: true,
       billable: false,
@@ -63,10 +63,9 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
   return {
     state: "active",
     label: "Active",
-    summary: `Active / ${balance.toString()} e8s`,
+    summary: `Active / ${formatTokenAmountFromE8s(balance)}`,
     balanceE8s: balance,
     minUpdateBalanceE8s: minimum,
-    depositAmountE8s: 1n,
     configAvailable: true,
     depositAvailable: true,
     billable: true,
@@ -83,18 +82,10 @@ export function databaseBillingDisabledReason(database: DatabaseSummary | null, 
   return databaseBillingView(database, config).reason;
 }
 
-export function databaseDepositHref(canisterId: string, database: DatabaseSummary, config: BillingConfig): string {
-  const view = databaseBillingView(database, config);
+export function databaseDepositHref(database: DatabaseSummary): string {
   const params = new URLSearchParams();
-  params.set("canisterId", canisterId);
   params.set("databaseId", database.databaseId);
-  params.set("amountE8s", view.depositAmountE8s.toString());
   return `/deposit?${params.toString()}`;
-}
-
-function depositAmount(balance: bigint, minimum: bigint, suspended: boolean): bigint {
-  const amount = balance < minimum ? minimum - balance : suspended ? minimum : 1n;
-  return amount > 0n ? amount : 1n;
 }
 
 function parseOptionalE8s(value: string | null | undefined): bigint {

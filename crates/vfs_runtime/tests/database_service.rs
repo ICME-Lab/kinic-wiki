@@ -48,7 +48,7 @@ fn index_migration_adds_billing_to_existing_database_index() {
            db_file_name TEXT NOT NULL,
            mount_id INTEGER NOT NULL,
            active_mount_id INTEGER,
-           status TEXT NOT NULL DEFAULT 'hot',
+           status TEXT NOT NULL DEFAULT 'active',
            schema_version TEXT NOT NULL,
            logical_size_bytes INTEGER NOT NULL DEFAULT 0,
            snapshot_hash BLOB,
@@ -62,7 +62,7 @@ fn index_migration_adds_billing_to_existing_database_index() {
            (database_id, name, db_file_name, mount_id, active_mount_id, status,
             schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
          VALUES
-           ('db_existing', 'Existing', 'db_existing.sqlite3', 11, 11, 'hot',
+           ('db_existing', 'Existing', 'db_existing.sqlite3', 11, 11, 'active',
             'vfs_store:current', 0, 1, 1);",
     )
     .expect("existing index schema should create");
@@ -1283,7 +1283,7 @@ fn database_create_returns_generated_id_and_name() {
     );
     assert!(database_ledger_kinds(&root, &result.database_id).is_empty());
     let row = database_index_row(&root, &result.database_id);
-    assert_eq!(row.0, "hot");
+    assert_eq!(row.0, "active");
     assert_eq!(row.1, Some(11));
     assert!(row.2 > 0);
     assert_eq!(row.3, None);
@@ -1305,7 +1305,7 @@ fn old_index_schema_migrates_database_name_from_id() {
            db_file_name TEXT NOT NULL,
            mount_id INTEGER NOT NULL,
            active_mount_id INTEGER,
-           status TEXT NOT NULL DEFAULT 'hot',
+           status TEXT NOT NULL DEFAULT 'active',
            schema_version TEXT NOT NULL,
            logical_size_bytes INTEGER NOT NULL DEFAULT 0,
            snapshot_hash BLOB,
@@ -1407,7 +1407,7 @@ fn old_index_schema_migrates_database_name_from_id() {
          INSERT INTO databases
            (database_id, db_file_name, mount_id, active_mount_id, status, schema_version,
             logical_size_bytes, created_at_ms, updated_at_ms)
-         VALUES ('alpha', 'alpha.sqlite3', 11, 11, 'hot', 'vfs_store:current', 0, 1, 1);
+         VALUES ('alpha', 'alpha.sqlite3', 11, 11, 'active', 'vfs_store:current', 0, 1, 1);
          INSERT INTO database_members (database_id, principal, role, created_at_ms)
          VALUES ('alpha', 'owner', 'owner', 1);",
     )
@@ -1434,6 +1434,35 @@ fn old_index_schema_migrates_database_name_from_id() {
         .expect("database name migration should be idempotent");
     assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
+        1
+    );
+}
+
+#[test]
+fn active_status_migration_rewrites_legacy_hot_rows() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("legacy_active", "owner", 1)
+        .expect("database should create");
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "UPDATE databases SET status = 'hot' WHERE database_id = 'legacy_active'",
+        params![],
+    )
+    .expect("legacy status should write");
+    conn.execute(
+        "DELETE FROM schema_migrations WHERE version = 'database_index:016_active_status'",
+        params![],
+    )
+    .expect("active status marker should delete");
+
+    service
+        .run_index_migrations()
+        .expect("active status migration should run");
+
+    assert_eq!(database_index_row(&root, "legacy_active").0, "active");
+    assert_eq!(
+        schema_migration_count(&root, "database_index:016_active_status"),
         1
     );
 }
@@ -1957,7 +1986,7 @@ fn database_rename_requires_owner() {
         .expect("summaries should load");
     assert_eq!(summaries[0].name, "Owner rename");
     let row = database_index_row(&root, "alpha");
-    assert_eq!(row.0, "hot");
+    assert_eq!(row.0, "active");
 }
 
 #[test]
@@ -2105,7 +2134,7 @@ fn lists_database_summaries_for_caller_memberships_only() {
     assert_eq!(owner_a_summaries.len(), 1);
     assert_eq!(owner_a_summaries[0].database_id, "alpha");
     assert_eq!(owner_a_summaries[0].role, DatabaseRole::Owner);
-    assert_eq!(owner_a_summaries[0].status, DatabaseStatus::Hot);
+    assert_eq!(owner_a_summaries[0].status, DatabaseStatus::Active);
 
     let owner_b_summaries = service
         .list_database_summaries_for_caller("owner_b")
@@ -2272,7 +2301,7 @@ fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
         .into_iter()
         .find(|info| info.database_id == "alpha")
         .expect("alpha info should exist");
-    assert_eq!(alpha_info.status, DatabaseStatus::Hot);
+    assert_eq!(alpha_info.status, DatabaseStatus::Active);
     assert!(alpha_info.logical_size_bytes > 0);
 
     service
@@ -2333,7 +2362,7 @@ fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
         .delete_database("remove_error", "owner", 4)
         .expect_err("non-NotFound remove error should fail");
     assert!(!error.is_empty());
-    assert_eq!(database_index_row(&root, "remove_error").0, "hot");
+    assert_eq!(database_index_row(&root, "remove_error").0, "active");
 }
 
 #[test]
@@ -2417,7 +2446,7 @@ fn archives_and_restores_database_bytes() {
     assert!(
         service
             .read_database_archive_chunk("alpha", "owner", 0, 17)
-            .expect_err("hot DB should reject archive chunk reads")
+            .expect_err("active DB should reject archive chunk reads")
             .contains("database")
     );
     let archive = service
@@ -2618,7 +2647,7 @@ fn archives_and_restores_database_bytes() {
         .into_iter()
         .find(|info| info.database_id == "alpha")
         .expect("alpha info should exist");
-    assert_eq!(info.status, DatabaseStatus::Hot);
+    assert_eq!(info.status, DatabaseStatus::Active);
     assert_eq!(info.snapshot_hash, Some(snapshot_hash));
     assert_eq!(info.archived_at_ms, None);
     assert_eq!(info.deleted_at_ms, None);
@@ -2688,7 +2717,7 @@ fn restored_mount_id_is_not_reused_after_rearchive() {
 }
 
 #[test]
-fn cancel_database_archive_returns_archiving_database_to_hot() {
+fn cancel_database_archive_returns_archiving_database_to_active() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2721,7 +2750,7 @@ fn cancel_database_archive_returns_archiving_database_to_hot() {
         .expect("archive cancel should succeed");
     assert_eq!(canceled.database_id, "alpha");
     let after = database_index_row(&root, "alpha");
-    assert_eq!(after.0, "hot");
+    assert_eq!(after.0, "active");
     assert_eq!(after.1, before.1);
 
     service
@@ -2782,7 +2811,7 @@ fn cancel_database_archive_after_hash_mismatch_keeps_mount_id() {
         .cancel_database_archive("alpha", "owner", 4)
         .expect("archive cancel should succeed after mismatch");
     let after = database_index_row(&root, "alpha");
-    assert_eq!(after.0, "hot");
+    assert_eq!(after.0, "active");
     assert_eq!(after.1, before.1);
 }
 
@@ -2790,13 +2819,13 @@ fn cancel_database_archive_after_hash_mismatch_keeps_mount_id() {
 fn cancel_database_archive_rejects_invalid_statuses_and_non_owner() {
     let service = service();
     service
-        .create_database("hot_db", "owner", 1)
-        .expect("hot_db should create");
+        .create_database("active_db", "owner", 1)
+        .expect("active_db should create");
     assert!(
         service
-            .cancel_database_archive("hot_db", "owner", 2)
-            .expect_err("hot cancel should fail")
-            .contains("database is hot")
+            .cancel_database_archive("active_db", "owner", 2)
+            .expect_err("active cancel should fail")
+            .contains("database is active")
     );
 
     service
@@ -3260,12 +3289,12 @@ fn cancel_database_restore_returns_deleted_database_and_removes_partial_state() 
 fn cancel_database_restore_rejects_invalid_statuses_and_non_owner() {
     let service = service();
     service
-        .create_database("hot_db", "owner", 1)
-        .expect("hot database should create");
-    let hot = service
-        .cancel_database_restore("hot_db", "owner", 2)
-        .expect_err("hot database should reject restore cancel");
-    assert!(hot.contains("database is hot"));
+        .create_database("active_db", "owner", 1)
+        .expect("active database should create");
+    let active = service
+        .cancel_database_restore("active_db", "owner", 2)
+        .expect_err("active database should reject restore cancel");
+    assert!(active.contains("database is active"));
 
     service
         .create_database("archived_db", "owner", 3)

@@ -1,3 +1,6 @@
+// Where: /deposit route.
+// What: passes the configured canister and target database into the client.
+// Why: amount is entered on the page, and canister selection must not come from URL input.
 import type { Metadata } from "next";
 import { DepositClient } from "./deposit-client";
 
@@ -12,8 +15,7 @@ export default async function DepositPage({ searchParams }: { searchParams: Page
   const params = await searchParams;
   return (
     <DepositClient
-      amountE8s={first(params.amount_e8s ?? params.amountE8s)}
-      canisterId={first(params.canister_id ?? params.canisterId) || process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID || ""}
+      canisterId={process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID || ""}
       databaseId={first(params.database_id ?? params.databaseId)}
     />
   );

@@ -9,7 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", fields: { Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -79,6 +79,10 @@ const expectedTypes = {
   WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
+const actorExpectedTypes = {
+  ...expectedTypes,
+  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } }
+};
 
 const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
@@ -98,7 +102,7 @@ const actorMethods = parseActorMethods(actor);
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   assert.deepEqual(canonicalTypeShape(didTypes[name]), shape, `vfs.did type drift: ${name}`);
-  assert.deepEqual(actorTypes[name], shape, `extension IDL type drift: ${name}`);
+  assert.deepEqual(actorTypes[name], actorExpectedTypes[name], `extension IDL type drift: ${name}`);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {
@@ -147,7 +151,7 @@ function parseDidMethods(source) {
 
 function parseActorTypes(source) {
   const result = {};
-  for (const [name, shape] of Object.entries(expectedTypes)) {
+  for (const [name, shape] of Object.entries(actorExpectedTypes)) {
     const initializer = source.match(new RegExp(`const\\s+${name}\\s*=\\s*idl\\.(Record|Variant)\\(\\{([^]*?)\\}\\);`, "m"));
     assert.ok(initializer, `extension IDL type missing: ${name}`);
     const kind = initializer[1] === "Record" ? "record" : "variant";

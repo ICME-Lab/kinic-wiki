@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
+import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -13,10 +14,14 @@ const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
+const browserExpectedTypes = {
+  ...expectedTypes,
+  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } }
+};
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
-  compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], shape);
+  compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], browserExpectedTypes[name] ?? shape);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {
@@ -28,6 +33,15 @@ for (const name of Object.keys(idlMethods)) {
   if (!(name in expectedMethods)) {
     failures.push(`unexpected wikibrowser IDL method: ${name}`);
   }
+}
+
+try {
+  const generated = generateVfsIdlFromDid(did);
+  if (idl !== generated) {
+    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node scripts/generate-vfs-idl.mjs");
+  }
+} catch (error) {
+  failures.push(error instanceof Error ? error.message : String(error));
 }
 
 if (failures.length > 0) {
@@ -161,6 +175,7 @@ function normalizeIdlShape(value) {
     .replace(/^Nat$/, "nat")
     .replace(/^Float32$/, "float32")
     .replace(/^Bool$/, "bool")
+    .replace(/^Principal$/, "principal")
     .replace(/^Null$/, "null")
     .replace(/^Opt\((.+)\)$/, (_, inner) => `opt ${normalizeIdlShape(inner)}`)
     .replace(/^Vec\((.+)\)$/, (_, inner) => `vec ${normalizeIdlShape(inner)}`);

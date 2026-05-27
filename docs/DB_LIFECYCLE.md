@@ -29,19 +29,19 @@ The index DB also stores an internal `usage_events` ledger for update calls.
 
 The billing index schema is a breaking initial schema. Existing index DBs with an older `schema_migrations` value are rejected with `fresh index required`; operators must install against a fresh index instead of relying on automatic migration.
 
-Hot, archiving, or restoring DBs consume one active user DB slot. Archived and deleted DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database.
+Active, archiving, or restoring DBs consume one active user DB slot. Archived and deleted DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database.
 
 ## Status
 
 Databases move through five statuses:
 
-- `hot`: mounted and usable for VFS read/write/search/list
+- `active`: mounted and usable for VFS read/write/search/list
 - `archiving`: mounted for chunk export, VFS operations rejected until finalize succeeds
 - `archived`: not mounted, active mount released, snapshot metadata retained
 - `deleted`: not mounted, active mount released, not restorable unless an external archive was taken first
 - `restoring`: mounted for chunk import, VFS operations rejected until finalize succeeds
 
-Only `hot` DBs are available to normal VFS APIs.
+Only `active` DBs are available to normal VFS APIs.
 
 ## Size Tracking
 
@@ -143,7 +143,7 @@ Archive is a low-level snapshot byte export flow:
 The canister does not persist archive bytes. The caller owns external storage and retry behavior.
 
 `snapshot_hash` must be the 32-byte SHA-256 digest of the exported SQLite bytes.
-If hash verification fails, the DB stays `archiving`; the caller can reread bytes and retry finalize or call `cancel_database_archive(database_id)` to return the DB to `hot`.
+If hash verification fails, the DB stays `archiving`; the caller can reread bytes and retry finalize or call `cancel_database_archive(database_id)` to return the DB to `active`.
 `cancel_database_archive` is owner-only and only valid while the DB is `archiving`.
 Archive reads reject chunks larger than 1 MiB.
 Finalize computes the digest by reading the whole SQLite file in one update. Large DBs can increase instruction and cycle cost; a future archive flow can move this to incremental chunk hashing.
@@ -154,9 +154,9 @@ Restore is a low-level snapshot byte import flow:
 
 1. `begin_database_restore(database_id, snapshot_hash, size_bytes)` moves an archived or deleted DB to `restoring` and allocates a new slot.
 2. `write_database_restore_chunk(database_id, offset, bytes)` writes imported bytes.
-3. `finalize_database_restore(database_id)` checks file size and SHA-256 digest, runs DB migrations, and returns the DB to `hot`.
+3. `finalize_database_restore(database_id)` checks file size and SHA-256 digest, runs DB migrations, and returns the DB to `active`.
 
-Restore can only begin from `archived` or `deleted`. It cannot begin from `hot` or while already `restoring`.
+Restore can only begin from `archived` or `deleted`. It cannot begin from `active` or while already `restoring`.
 If the canister cannot mount the newly allocated DB file during begin, the DB rolls back to its previous `archived` or `deleted` state. The failed mount ID remains in mount history and is not reused.
 
 If finalize fails because the file size is wrong, the DB stays `restoring`. The caller can write missing bytes and retry finalize.

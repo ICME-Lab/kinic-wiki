@@ -165,13 +165,13 @@ test("list-writable-databases delegates to offscreen with fixed runtime config",
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    return { ok: true, result: [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Hot" }] };
+    return { ok: true, result: [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Active" }] };
   });
   try {
     const response = await handleMessage({ type: "list-writable-databases" }, null);
 
     assert.equal(response.ok, true);
-    assert.deepEqual(response.result, [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Hot" }]);
+    assert.deepEqual(response.result, [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Active" }]);
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].type, "list-writable-databases");
     assert.equal(calls[0].config.databaseId, "team-db");

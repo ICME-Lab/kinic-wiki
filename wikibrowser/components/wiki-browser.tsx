@@ -1418,7 +1418,7 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
       databaseId,
       name: databaseId,
       role: "reader",
-      status: "hot",
+      status: "active",
       logicalSizeBytes: "0",
       billingBalanceE8s: "0",
       billingSuspendedAtMs: null,

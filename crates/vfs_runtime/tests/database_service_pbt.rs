@@ -251,7 +251,7 @@ fn apply_operation(
             model.database_e8s -= charge;
         }
         RuntimeOp::ArchiveFinalize => {
-            if model.status == DatabaseStatus::Hot {
+            if model.status == DatabaseStatus::Active {
                 let (bytes, hash, size) = database_bytes(root, service, database_id);
                 model.status = DatabaseStatus::Archived;
                 model.archive_bytes = Some(bytes);
@@ -307,7 +307,7 @@ fn apply_operation(
                 service
                     .finalize_database_restore(database_id, OWNER, step + 2)
                     .expect("restore should finalize");
-                model.status = DatabaseStatus::Hot;
+                model.status = DatabaseStatus::Active;
             } else if !matches!(
                 model.status,
                 DatabaseStatus::Archived | DatabaseStatus::Deleted
@@ -321,8 +321,8 @@ fn apply_operation(
         }
         RuntimeOp::Delete => {
             let result = service.delete_database(database_id, OWNER, step);
-            if model.status == DatabaseStatus::Hot {
-                result.expect("hot database should delete");
+            if model.status == DatabaseStatus::Active {
+                result.expect("active database should delete");
                 model.status = DatabaseStatus::Deleted;
             } else {
                 assert!(result.is_err());
@@ -350,7 +350,7 @@ proptest! {
         let database_id = create_seeded_database(service);
         let mut model = Model {
             database_e8s: INITIAL_DATABASE_E8S,
-            status: DatabaseStatus::Hot,
+            status: DatabaseStatus::Active,
             archive_bytes: None,
             archive_hash: None,
             archive_size: None,

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Settings, Share2 } from "lucide-react";
+import { BookOpen, Settings, Share2, Wallet } from "lucide-react";
+import type { ReactNode } from "react";
 import { databaseBillingView, databaseDepositHref } from "@/lib/billing-state";
 import type { BillingConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
@@ -57,7 +58,6 @@ export function AuthControls({
 
 export function DatabaseBody({
   billingConfig,
-  canisterId,
   loading,
   myDatabases,
   principal,
@@ -65,7 +65,6 @@ export function DatabaseBody({
   publicDatabases
 }: {
   billingConfig: BillingConfig | null;
-  canisterId: string;
   loading: boolean;
   myDatabases: DatabaseRow[];
   principal: string | null;
@@ -74,12 +73,12 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection billingConfig={billingConfig} canisterId={canisterId} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection billingConfig={billingConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection billingConfig={billingConfig} canisterId={canisterId} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection billingConfig={billingConfig} canisterId={canisterId} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection billingConfig={billingConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection billingConfig={billingConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -112,7 +111,6 @@ export function OfficialKinicWikiPanel() {
 
 function DatabaseSection({
   billingConfig,
-  canisterId,
   description,
   emptyMessage,
   mode,
@@ -122,7 +120,6 @@ function DatabaseSection({
   title
 }: {
   billingConfig: BillingConfig | null;
-  canisterId: string;
   description: string;
   emptyMessage: string;
   mode: "member" | "public";
@@ -131,20 +128,12 @@ function DatabaseSection({
   showTitle?: boolean;
   title: string;
 }) {
-  if (publicError && mode === "public") {
-    return (
-      <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
-        {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
-        {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
-        <p className="mt-2 text-sm text-muted">{publicError}</p>
-      </section>
-    );
-  }
   if (rows.length === 0) {
     return (
       <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
         {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
+        {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
         <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
       </section>
     );
@@ -155,11 +144,13 @@ function DatabaseSection({
         <div className="border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
           <p className="mt-1 text-xs leading-5 text-muted">{description}</p>
+          {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
         </div>
       ) : null}
+      {!showTitle && publicError && mode === "public" ? <p className="px-4 pt-4 text-sm text-muted">{publicError}</p> : null}
       <div className="grid gap-3 p-3 sm:hidden">
         {rows.map((database) => (
-          <DatabaseMobileCard key={database.databaseId} billingConfig={billingConfig} canisterId={canisterId} database={database} mode={mode} />
+          <DatabaseMobileCard key={database.databaseId} billingConfig={billingConfig} database={database} mode={mode} />
         ))}
       </div>
       <div className="hidden overflow-x-auto sm:block">
@@ -195,15 +186,9 @@ function DatabaseSection({
                 <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
-                    {isRoutableDatabaseId(database.databaseId) ? (
-                      <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-                        Open
-                      </Link>
-                    ) : <span className="text-muted">-</span>}
+                    {isRoutableDatabaseId(database.databaseId) ? <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : <span className="text-muted">-</span>}
                     {mode === "member" && database.publicReadable && isRoutableDatabaseId(database.databaseId) ? (
-                      <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
-                        Open public
-                      </Link>
+                      <DatabaseActionLink href={openPublicDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open public" />
                     ) : null}
                   </div>
                 </td>
@@ -214,18 +199,14 @@ function DatabaseSection({
                       <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
                         Registry
                       </Link>
-                      {billingConfig && database.status !== "deleted" ? (
-                        <Link className="text-accent no-underline hover:underline" href={databaseDepositHref(canisterId, database, billingConfig)}>
-                          Deposit
-                        </Link>
+                      {database.status !== "deleted" ? (
+                        <DatabaseActionLink href={databaseDepositHref(database)} icon={<Wallet aria-hidden size={14} />} label="Deposit" />
                       ) : null}
                     </div>
                   </td>
                 ) : null}
                 <td className="px-4 py-3">
-                  <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
-                    Access
-                  </Link>
+                  <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Access" />
                 </td>
               </tr>
             ))}
@@ -236,7 +217,7 @@ function DatabaseSection({
   );
 }
 
-function DatabaseMobileCard({ billingConfig, canisterId, database, mode }: { billingConfig: BillingConfig | null; canisterId: string; database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseMobileCard({ billingConfig, database, mode }: { billingConfig: BillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -253,29 +234,21 @@ function DatabaseMobileCard({ billingConfig, canisterId, database, mode }: { bil
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
         {isRoutableDatabaseId(database.databaseId) ? (
-          <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-            Open
-          </Link>
+          <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" />
         ) : null}
         {mode === "member" && database.publicReadable && isRoutableDatabaseId(database.databaseId) ? (
-          <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
-            Open public
-          </Link>
+          <DatabaseActionLink href={openPublicDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open public" />
         ) : null}
         {mode === "member" ? (
           <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
             Registry
           </Link>
         ) : null}
-        {mode === "member" && billingConfig && database.status !== "deleted" ? (
-          <Link className="text-accent no-underline hover:underline" href={databaseDepositHref(canisterId, database, billingConfig)}>
-            Deposit
-          </Link>
+        {mode === "member" && database.status !== "deleted" ? (
+          <DatabaseActionLink href={databaseDepositHref(database)} icon={<Wallet aria-hidden size={14} />} label="Deposit" />
         ) : null}
         {database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : null}
-        <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
-          Access
-        </Link>
+        <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Access" />
       </div>
     </article>
   );
@@ -283,16 +256,32 @@ function DatabaseMobileCard({ billingConfig, canisterId, database, mode }: { bil
 
 function ShareDatabaseLink({ database }: { database: DatabaseRow }) {
   return (
-    <a
-      aria-label={`Share ${database.name} on X`}
-      className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"
+    <DatabaseActionLink
+      external
+      ariaLabel={`Share ${database.name} on X`}
       href={xShareDatabaseHref({ databaseId: database.databaseId, databaseName: database.name })}
-      rel="noreferrer"
-      target="_blank"
-    >
-      <Share2 aria-hidden size={14} />
-      <span>Share</span>
-    </a>
+      icon={<Share2 aria-hidden size={14} />}
+      label="Share"
+    />
+  );
+}
+
+function DatabaseActionLink({ ariaLabel, external = false, href, icon, label }: { ariaLabel?: string; external?: boolean; href: string; icon: ReactNode; label: string }) {
+  const className =
+    "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
+  if (external) {
+    return (
+      <a aria-label={ariaLabel} className={className} href={href} rel="noreferrer" target="_blank">
+        {icon}
+        <span>{label}</span>
+      </a>
+    );
+  }
+  return (
+    <Link aria-label={ariaLabel} className={className} href={href}>
+      {icon}
+      <span>{label}</span>
+    </Link>
   );
 }
 

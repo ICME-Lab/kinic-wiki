@@ -57,6 +57,7 @@ const INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX: &str =
     "database_index:014_billing_ledger_block_index";
 const INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS: &str =
     "database_index:015_billing_pending_ledger_details";
+const INDEX_SCHEMA_VERSION_ACTIVE_STATUS: &str = "database_index:016_active_status";
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
@@ -448,7 +449,7 @@ impl VfsService {
             "INSERT INTO databases
              (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
               logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?4, 'hot', ?5, 0, ?6, ?6)",
+             VALUES (?1, ?2, ?3, ?4, ?4, 'active', ?5, 0, ?6, ?6)",
             params![
                 database_id,
                 name,
@@ -1489,7 +1490,7 @@ impl VfsService {
         self.write_index(|conn| {
             conn.execute(
                 "UPDATE databases
-             SET status = 'hot',
+             SET status = 'active',
                  updated_at_ms = ?2
              WHERE database_id = ?1",
                 params![database_id, now],
@@ -1704,7 +1705,7 @@ impl VfsService {
             .map_err(|error| error.to_string())?;
             tx.execute(
                 "UPDATE databases
-             SET status = 'hot',
+             SET status = 'active',
                  logical_size_bytes = ?2,
                  restore_size_bytes = NULL,
                  updated_at_ms = ?3
@@ -2446,7 +2447,7 @@ impl VfsService {
     fn database_meta_allowing_restoring(&self, database_id: &str) -> Result<DatabaseMeta, String> {
         self.database_meta_with_statuses(
             database_id,
-            &[DatabaseStatus::Hot, DatabaseStatus::Restoring],
+            &[DatabaseStatus::Active, DatabaseStatus::Restoring],
         )
     }
 
@@ -2787,6 +2788,9 @@ fn run_index_migrations(conn: &mut Connection, config: &BillingConfig) -> Result
         if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS)? {
             apply_billing_pending_ledger_details_index_migration(&tx)?;
         }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
+            apply_active_status_index_migration(&tx)?;
+        }
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2858,7 +2862,7 @@ fn run_index_migrations_for_upgrade(
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")?
         && migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)?
     {
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS)? {
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
             return Ok(());
         }
         let tx = conn.transaction().map_err(|error| error.to_string())?;
@@ -2870,6 +2874,9 @@ fn run_index_migrations_for_upgrade(
         }
         if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS)? {
             apply_billing_pending_ledger_details_index_migration(&tx)?;
+        }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
+            apply_active_status_index_migration(&tx)?;
         }
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
@@ -3075,6 +3082,7 @@ fn run_index_migrations_for_upgrade(
     apply_billing_pending_index_migration(&tx)?;
     apply_billing_ledger_block_index_migration(&tx)?;
     apply_billing_pending_ledger_details_index_migration(&tx)?;
+    apply_active_status_index_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())
 }
 
@@ -3098,6 +3106,7 @@ fn run_index_migrations_in_tx(
             apply_billing_pending_index_migration(conn)?;
             apply_billing_ledger_block_index_migration(conn)?;
             apply_billing_pending_ledger_details_index_migration(conn)?;
+            apply_active_status_index_migration(conn)?;
         }
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
             apply_billing_pending_index_migration(conn)?;
@@ -3108,6 +3117,9 @@ fn run_index_migrations_in_tx(
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS)?
         {
             apply_billing_pending_ledger_details_index_migration(conn)?;
+        }
+        if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
+            apply_active_status_index_migration(conn)?;
         }
         validate_wasm_index_schema(conn)?;
         for &version in INDEX_SCHEMA_VERSIONS {
@@ -3150,7 +3162,7 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&BillingConfig>,
 ) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS)? {
+        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
             validate_wasm_index_schema(conn)?;
             for &version in INDEX_SCHEMA_VERSIONS {
                 if !wasm_index_migration_exists(conn, version)? {
@@ -3174,6 +3186,9 @@ fn run_index_migrations_in_tx_for_upgrade(
                 INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
             )? {
                 apply_billing_pending_ledger_details_index_migration(conn)?;
+            }
+            if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
+                apply_active_status_index_migration(conn)?;
             }
             validate_wasm_index_schema(conn)?;
             return Ok(());
@@ -3336,6 +3351,20 @@ fn apply_billing_pending_ledger_details_index_migration(
     Ok(())
 }
 
+fn apply_active_status_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute(
+        "UPDATE databases SET status = 'active' WHERE status = 'hot'",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_ACTIVE_STATUS],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE databases (
@@ -3344,7 +3373,7 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
            db_file_name TEXT NOT NULL,
            mount_id INTEGER NOT NULL,
            active_mount_id INTEGER,
-           status TEXT NOT NULL DEFAULT 'hot',
+           status TEXT NOT NULL DEFAULT 'active',
            schema_version TEXT NOT NULL,
            logical_size_bytes INTEGER NOT NULL DEFAULT 0,
            snapshot_hash BLOB,
@@ -3590,6 +3619,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_BILLING_PENDING,
     INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
     INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
+    INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4835,7 +4865,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
         .optional()
     {
         Ok(Some(status))
-            if status == "hot"
+            if status == "active"
                 || status == "archived"
                 || status == "archiving"
                 || status == "restoring"
@@ -4848,7 +4878,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
 }
 
 fn load_database(conn: &Connection, database_id: &str) -> Result<Option<DatabaseMeta>, String> {
-    load_database_with_statuses(conn, database_id, &[DatabaseStatus::Hot])
+    load_database_with_statuses(conn, database_id, &[DatabaseStatus::Active])
 }
 
 fn load_database_status(conn: &Connection, database_id: &str) -> Result<DatabaseStatus, String> {
@@ -4882,7 +4912,7 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
         "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
-         WHERE status IN ('hot', 'archiving', 'restoring') AND active_mount_id IS NOT NULL
+         WHERE status IN ('active', 'archiving', 'restoring') AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
     )
     .map_err(|error| error.to_string())?;
@@ -4955,7 +4985,7 @@ fn map_database_meta_with_statuses(
     row: &crate::sqlite::Row<'_>,
     statuses: &[DatabaseStatus],
 ) -> crate::sqlite::Result<DatabaseMeta> {
-    let status: String = crate::sqlite::row_get(row, 6).unwrap_or_else(|_| "hot".to_string());
+    let status: String = crate::sqlite::row_get(row, 6).unwrap_or_else(|_| "active".to_string());
     let status = status_from_db(&status)?;
     if !statuses.contains(&status) {
         return Err(crate::sqlite::query_returned_no_rows());
@@ -5014,7 +5044,7 @@ fn role_to_db(role: DatabaseRole) -> &'static str {
 
 fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
     match status {
-        "hot" => Ok(DatabaseStatus::Hot),
+        "active" => Ok(DatabaseStatus::Active),
         "archiving" => Ok(DatabaseStatus::Archiving),
         "archived" => Ok(DatabaseStatus::Archived),
         "deleted" => Ok(DatabaseStatus::Deleted),
@@ -5025,7 +5055,7 @@ fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
 
 fn status_to_db(status: DatabaseStatus) -> &'static str {
     match status {
-        DatabaseStatus::Hot => "hot",
+        DatabaseStatus::Active => "active",
         DatabaseStatus::Archiving => "archiving",
         DatabaseStatus::Archived => "archived",
         DatabaseStatus::Deleted => "deleted",
@@ -5096,7 +5126,7 @@ mod tests {
                db_file_name TEXT NOT NULL,
                mount_id INTEGER NOT NULL,
                active_mount_id INTEGER,
-               status TEXT NOT NULL DEFAULT 'hot',
+               status TEXT NOT NULL DEFAULT 'active',
                schema_version TEXT NOT NULL,
                logical_size_bytes INTEGER NOT NULL DEFAULT 0,
                snapshot_hash BLOB,

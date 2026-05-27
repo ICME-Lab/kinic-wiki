@@ -75,7 +75,7 @@ impl VfsApi for MockClient {
         Ok(vec![DatabaseSummary {
             database_id: "default".to_string(),
             name: "Default".to_string(),
-            status: DatabaseStatus::Hot,
+            status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 0,
             billing_balance_e8s: Some(10),

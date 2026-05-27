@@ -274,7 +274,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
 
-        {database ? <SummaryPanel billingConfig={billingConfig} canisterId={canisterId} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
+        {database ? <SummaryPanel billingConfig={billingConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
           canManage ? (

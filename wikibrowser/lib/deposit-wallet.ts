@@ -31,7 +31,7 @@ type OisyCallResult = {
 };
 
 type PlugWallet = {
-  requestConnect: (input: { whitelist: string[]; host?: string }) => Promise<boolean>;
+  requestConnect: (input?: { whitelist?: string[]; host?: string }) => Promise<boolean>;
   createActor: (input: { canisterId: string; interfaceFactory: unknown }) => Promise<PlugVfsActor | PlugLedgerActor>;
   agent?: { getPrincipal: () => Promise<Principal> };
 };
@@ -78,6 +78,15 @@ type OisyCanisterCaller = {
   call: (input: { params: { canisterId: string; sender: string; method: string; arg: string }; options?: { timeoutInMilliseconds?: number } }) => Promise<OisyCallResult>;
 };
 
+export type ConnectedOisyWallet = {
+  wallet: IcrcWallet;
+  owner: string;
+};
+
+export type ConnectedPlugWallet = {
+  principal: string;
+};
+
 declare global {
   interface Window {
     ic?: {
@@ -91,13 +100,7 @@ const CALL_TIMEOUT_MS = 120_000;
 const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
-export async function depositWithOisy(request: DepositRequest): Promise<DepositResult> {
-  assertConfiguredDepositCanister(request.canisterId);
-  const config = await getBillingConfig(request.canisterId);
-  await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
-  const transferFeeE8s = await getLedgerTransferFee(config.kinicLedgerCanisterId);
-  const approvedAllowanceE8s = allowanceForTopUp(request.amountE8s, transferFeeE8s);
-  const expiresAt = approveExpiresAt();
+export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
   const wallet = await IcrcWallet.connect({
     url: process.env.NEXT_PUBLIC_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
     host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
@@ -106,29 +109,52 @@ export async function depositWithOisy(request: DepositRequest): Promise<DepositR
     const accounts = await wallet.accounts();
     const account = accounts[0];
     if (!account) throw new Error("OISY account not found");
-    const currentAllowance = await getLedgerAllowance(config.kinicLedgerCanisterId, account.owner, request.canisterId);
-    const approveBlockIndex = await wallet.approve({
-      owner: account.owner,
-      ledgerCanisterId: config.kinicLedgerCanisterId,
-      params: approveParams(request.canisterId, approvedAllowanceE8s, currentAllowance, expiresAt),
-      options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
-    });
-    const topUp = await topUpAfterApprove(() => oisyCallTopUp(wallet, account.owner, request), expiresAt);
-    return {
-      provider: "oisy",
-      approveBlockIndex: approveBlockIndex.toString(),
-      approvedAllowanceE8s: approvedAllowanceE8s.toString(),
-      creditedAmountE8s: request.amountE8s.toString(),
-      transferFeeE8s: transferFeeE8s.toString(),
-      topUpBlockIndex: topUp.blockIndex,
-      balanceE8s: topUp.balanceE8s
-    };
-  } finally {
+    return { wallet, owner: account.owner };
+  } catch (cause) {
     await wallet.disconnect();
+    throw cause;
   }
 }
 
-export async function depositWithPlug(request: DepositRequest): Promise<DepositResult> {
+export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
+  const plug = window.ic?.plug;
+  if (!plug) throw new Error("Plug wallet extension not found");
+  const connected = await plug.requestConnect({
+    host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
+  });
+  if (!connected) throw new Error("Plug connection rejected");
+  const principal = await plug.agent?.getPrincipal();
+  if (!principal) throw new Error("Plug principal is not available");
+  return { principal: principal.toText() };
+}
+
+export async function depositWithOisy(request: DepositRequest, connection: ConnectedOisyWallet): Promise<DepositResult> {
+  assertConfiguredDepositCanister(request.canisterId);
+  const config = await getBillingConfig(request.canisterId);
+  await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
+  const transferFeeE8s = await getLedgerTransferFee(config.kinicLedgerCanisterId);
+  const approvedAllowanceE8s = allowanceForTopUp(request.amountE8s, transferFeeE8s);
+  const expiresAt = approveExpiresAt();
+  const currentAllowance = await getLedgerAllowance(config.kinicLedgerCanisterId, connection.owner, request.canisterId);
+  const approveBlockIndex = await connection.wallet.approve({
+    owner: connection.owner,
+    ledgerCanisterId: config.kinicLedgerCanisterId,
+    params: approveParams(request.canisterId, approvedAllowanceE8s, currentAllowance, expiresAt),
+    options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
+  });
+  const topUp = await topUpAfterApprove(() => oisyCallTopUp(connection.wallet, connection.owner, request), expiresAt);
+  return {
+    provider: "oisy",
+    approveBlockIndex: approveBlockIndex.toString(),
+    approvedAllowanceE8s: approvedAllowanceE8s.toString(),
+    creditedAmountE8s: request.amountE8s.toString(),
+    transferFeeE8s: transferFeeE8s.toString(),
+    topUpBlockIndex: topUp.blockIndex,
+    balanceE8s: topUp.balanceE8s
+  };
+}
+
+export async function depositWithPlug(request: DepositRequest, connection: ConnectedPlugWallet): Promise<DepositResult> {
   assertConfiguredDepositCanister(request.canisterId);
   const config = await getBillingConfig(request.canisterId);
   await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
@@ -141,6 +167,7 @@ export async function depositWithPlug(request: DepositRequest): Promise<DepositR
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
+  if (principal.toText() !== connection.principal) throw new Error("Plug principal changed; connect Plug again");
   const ledgerActor = await plug.createActor({
     canisterId: config.kinicLedgerCanisterId,
     interfaceFactory: ledgerIdlFactory

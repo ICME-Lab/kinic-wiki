@@ -1588,7 +1588,7 @@ mod tests {
         DatabaseSummary {
             database_id: database_id.to_string(),
             name: database_id.to_string(),
-            status: DatabaseStatus::Hot,
+            status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 42,
             billing_balance_e8s: balance_e8s,
@@ -1790,7 +1790,7 @@ mod tests {
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
-                status: DatabaseStatus::Hot,
+                status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
                 billing_balance_e8s: Some(10_000),

@@ -8,7 +8,7 @@ import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
 import { idlFactory } from "@/lib/vfs-idl";
-import type { ChildNode, DatabaseMember, DatabaseRole, DatabaseSummary, NodeEntryKind, NodeKind, RecentNode, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
+import type { ChildNode, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary, NodeEntryKind, NodeKind, RecentNode, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
 type Variant = Record<string, null>;
@@ -177,11 +177,20 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     databaseId: raw.database_id,
     name: raw.name,
     role: normalizeDatabaseRole(raw.role),
-    status: "Deleted" in raw.status ? "deleted" : "Archived" in raw.status ? "archived" : "Archiving" in raw.status ? "archiving" : "Restoring" in raw.status ? "restoring" : "hot",
+    status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
+}
+
+function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
+  if ("Active" in status || "Hot" in status) return "active";
+  if ("Restoring" in status) return "restoring";
+  if ("Archiving" in status) return "archiving";
+  if ("Archived" in status) return "archived";
+  if ("Deleted" in status) return "deleted";
+  throw new ApiError(`Unknown database status variant: ${Object.keys(status).join(",")}`, 502);
 }
 
 function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {

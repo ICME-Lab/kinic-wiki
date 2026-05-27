@@ -26,8 +26,8 @@ pub struct DatabaseMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseStatus {
-    #[serde(alias = "Hot")]
-    Hot,
+    #[serde(alias = "Active")]
+    Active,
     #[serde(alias = "Archiving")]
     Archiving,
     #[serde(alias = "Archived")]

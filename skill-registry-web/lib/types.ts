@@ -90,7 +90,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "hot" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "active" | "restoring" | "archiving" | "archived" | "deleted";
 
 export type DatabaseSummary = {
   databaseId: string;

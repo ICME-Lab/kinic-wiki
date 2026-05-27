@@ -61,7 +61,7 @@ export default function HomePage() {
         setBillingConfig(billingResult.status === "fulfilled" ? billingResult.value : null);
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
-        setWarning(listWarning(publicResult, memberResult));
+        setWarning(listWarning(memberResult));
         setLoadState("ready");
       } catch (cause) {
         if (!isCurrentRefresh()) return;
@@ -223,7 +223,7 @@ export default function HomePage() {
                 </button>
               </div>
             </section>
-            <DatabaseBody billingConfig={billingConfig} canisterId={canisterId} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody billingConfig={billingConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </>
         ) : (
           <section className="rounded-lg border border-line bg-paper shadow-sm">
@@ -233,7 +233,7 @@ export default function HomePage() {
                 <p className="mt-1 text-sm leading-6 text-muted">Public databases open without login. Login with Internet Identity to show My databases linked to your principal.</p>
               </div>
             </div>
-            <DatabaseBody billingConfig={billingConfig} canisterId={canisterId} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody billingConfig={billingConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </section>
         )}
       </section>
@@ -253,7 +253,7 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   return [...rows.values()].sort((left, right) => left.databaseId.localeCompare(right.databaseId));
 }
 
-function listWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
+function listWarning(memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;
 }

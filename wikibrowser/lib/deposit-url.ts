@@ -1,31 +1,34 @@
-export type DepositQuery = {
+// Where: deposit page URL and amount validation.
+// What: validates the target database from URL state and parses user-entered KINIC amounts.
+// Why: deposit amount is UI state, not a query parameter contract.
+export type DepositTarget = {
   databaseId: string;
-  amountE8s: bigint;
 };
 
 const MAX_U64 = 18_446_744_073_709_551_615n;
+const E8S_PER_KINIC = 100_000_000n;
 
-export function parseDepositQuery(input: URLSearchParams): DepositQuery | string {
+export function parseDepositTarget(input: URLSearchParams): DepositTarget | string {
   const databaseId = input.get("database_id") ?? input.get("databaseId") ?? "";
-  const amountText = input.get("amount_e8s") ?? input.get("amountE8s") ?? "";
   if (!databaseId.trim()) return "database_id is required";
   if (!/^[a-zA-Z0-9_-]+$/.test(databaseId)) return "database_id contains unsupported characters";
-  const amount = parseE8s(amountText);
-  if (typeof amount === "string") return amount;
-  return { databaseId, amountE8s: amount };
+  return { databaseId };
 }
 
-export function parseE8s(value: string): bigint | string {
-  if (!/^[0-9]+$/.test(value)) return "amount_e8s must be an integer";
-  const amount = BigInt(value);
-  if (amount <= 0n) return "amount_e8s must be positive";
-  if (amount > MAX_U64) return "amount_e8s must be <= u64::MAX";
+export function parseDepositAmountInput(value: string): bigint | string {
+  const trimmed = value.trim();
+  const match = /^([0-9]+)(?:\.([0-9]{1,8}))?$/.exec(trimmed);
+  if (!match) return "KINIC amount must be a decimal with up to 8 fractional digits";
+  const whole = BigInt(match[1]);
+  const fractional = BigInt((match[2] ?? "").padEnd(8, "0"));
+  const amount = whole * E8S_PER_KINIC + fractional;
+  if (amount <= 0n) return "KINIC amount must be positive";
+  if (amount > MAX_U64) return "KINIC amount must be <= u64::MAX";
   return amount;
 }
 
-export function depositQueryString(input: DepositQuery): string {
+export function depositQueryString(input: DepositTarget): string {
   const params = new URLSearchParams();
   params.set("database_id", input.databaseId);
-  params.set("amount_e8s", input.amountE8s.toString());
   return params.toString();
 }

@@ -56,7 +56,7 @@ Open settings from `chrome://extensions` → Kinic Wiki Clipper → `Extension o
 
 Use these extension settings:
 
-- `Database`: select a writable hot database for the logged-in Internet Identity principal
+- `Database`: select a writable active database for the logged-in Internet Identity principal
 
 The extension fixes canister ID to `xis3j-paaaa-aaaai-axumq-cai` and IC host to `https://icp0.io`. If no writable database exists, enter a name in settings and click `Create`. The extension never creates a database automatically. Mainnet writes require explicit confirmation before ChatGPT/Claude raw export.
 

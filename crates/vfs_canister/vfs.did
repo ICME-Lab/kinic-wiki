@@ -92,7 +92,13 @@ type DatabaseRestoreChunkRequest = record {
   bytes : blob;
 };
 type DatabaseRole = variant { Reader; Writer; Owner };
-type DatabaseStatus = variant { Hot; Restoring; Archiving; Archived; Deleted };
+type DatabaseStatus = variant {
+  Active;
+  Restoring;
+  Archiving;
+  Archived;
+  Deleted;
+};
 type DatabaseSummary = record {
   status : DatabaseStatus;
   name : text;

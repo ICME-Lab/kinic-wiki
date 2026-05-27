@@ -387,7 +387,7 @@ proptest! {
                 .expect("archive should cancel");
             service
                 .delete_database(&database_id, OWNER, 23)
-                .expect("hot database should delete");
+                .expect("active database should delete");
             assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Deleted);
         } else {
             service
@@ -439,7 +439,7 @@ proptest! {
             _ => bytes.len().saturating_sub(1),
         };
         finalize_restore_from_bytes(service, &database_id, &bytes, hash, size, split, 50);
-        assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Hot);
+        assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Active);
         let restored = service
             .read_node(&database_id, OWNER, "/Wiki/restore-pbt.md")
             .expect("restored node should read")
@@ -469,16 +469,16 @@ proptest! {
                 }
                 MountOp::Delete { slot } => {
                     if let Some(database_id) = slots[slot].take()
-                        && status_and_mount(service, &database_id).0 == DatabaseStatus::Hot
+                        && status_and_mount(service, &database_id).0 == DatabaseStatus::Active
                     {
                         service
                             .delete_database(&database_id, OWNER, now)
-                            .expect("hot slot database should delete");
+                            .expect("active slot database should delete");
                     }
                 }
                 MountOp::ArchiveRestore { slot } => {
                     if let Some(database_id) = slots[slot].as_ref()
-                        && status_and_mount(service, database_id).0 == DatabaseStatus::Hot
+                        && status_and_mount(service, database_id).0 == DatabaseStatus::Active
                     {
                         let (bytes, hash, size) = read_archive(service, database_id, now);
                         service

@@ -132,27 +132,29 @@ test("create database name validation trims and rejects empty names", () => {
   assert.throws(() => validateCreateDatabaseName("  "), /Database name is required/);
 });
 
-test("database dropdown options include only hot owner and writer databases", () => {
+test("database dropdown options include only active owner and writer databases", () => {
   const databases = normalizeWritableDatabases([
-    rawDatabase("owner-db", "Owner", "Hot", 20_000n),
-    rawDatabase("writer-db", "Writer", "Hot", 20_000n),
-    rawDatabase("reader-db", "Reader", "Hot", 20_000n),
+    rawDatabase("owner-db", "Owner", "Active", 20_000n),
+    rawDatabase("legacy-owner-db", "Owner", "Hot", 20_000n),
+    rawDatabase("writer-db", "Writer", "Active", 20_000n),
+    rawDatabase("reader-db", "Reader", "Active", 20_000n),
     rawDatabase("archived-db", "Owner", "Archived", 20_000n)
   ], { minUpdateBalanceE8s: "10000" });
   assert.deepEqual(
     databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.billable]),
     [
-      ["owner-db", "owner-db name", "Owner", "Hot", true],
-      ["writer-db", "writer-db name", "Writer", "Hot", true]
+      ["owner-db", "owner-db name", "Owner", "Active", true],
+      ["legacy-owner-db", "legacy-owner-db name", "Owner", "Active", true],
+      ["writer-db", "writer-db name", "Writer", "Active", true]
     ]
   );
 });
 
 test("database dropdown keeps billing-disabled writer databases with reasons", () => {
   const databases = normalizeWritableDatabases([
-    rawDatabase("active-db", "Owner", "Hot", 20_000n),
-    rawDatabase("low-db", "Writer", "Hot", 9_999n),
-    rawDatabase("suspended-db", "Writer", "Hot", 20_000n, 1n)
+    rawDatabase("active-db", "Owner", "Active", 20_000n),
+    rawDatabase("low-db", "Writer", "Active", 9_999n),
+    rawDatabase("suspended-db", "Writer", "Active", 20_000n, 1n)
   ], { minUpdateBalanceE8s: "10000" });
   assert.deepEqual(
     databases.map((database) => [database.databaseId, database.billable, database.billingReason]),
@@ -166,7 +168,7 @@ test("database dropdown keeps billing-disabled writer databases with reasons", (
 
 test("database dropdown disables writer databases when billing config is unavailable", () => {
   const databases = normalizeWritableDatabases([
-    rawDatabase("owner-db", "Owner", "Hot", 20_000n)
+    rawDatabase("owner-db", "Owner", "Active", 20_000n)
   ]);
   assert.deepEqual(
     databases.map((database) => [database.databaseId, database.billable, database.billingReason]),
@@ -175,12 +177,12 @@ test("database dropdown disables writer databases when billing config is unavail
 });
 
 test("database dropdown labels prefer names and disambiguate duplicates", () => {
-  assert.equal(databaseOptionLabel(rawDatabase("team-db-1", "Writer", "Hot", "Team Wiki")), "Team Wiki (Writer)");
+  assert.equal(databaseOptionLabel(rawDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
   assert.equal(
-    databaseOptionLabel(rawDatabase("team-db-2-long-id", "Owner", "Hot", "Team Wiki"), 2),
+    databaseOptionLabel(rawDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
     "Team Wiki (Owner, team-db-2-...)"
   );
-  assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Hot", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
 });
 
 test("preferred created database is kept when database list query is stale", () => {
@@ -189,11 +191,11 @@ test("preferred created database is kept when database list query is stale", () 
       databaseId: "db_created",
       name: "Created Wiki",
       role: "Owner",
-      status: "Hot",
+      status: "Active",
       logicalSizeBytes: "0"
     }
   ]);
-  const databases = normalizeWritableDatabases([rawDatabase("db_created", "Owner", "Hot", "Created Wiki")]);
+  const databases = normalizeWritableDatabases([rawDatabase("db_created", "Owner", "Active", "Created Wiki")]);
   assert.equal(mergePreferredDatabase(databases, { databaseId: "db_created", name: "Created Wiki" }), databases);
 });
 

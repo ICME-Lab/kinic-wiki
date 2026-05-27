@@ -18,6 +18,7 @@ function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
     Hot: idl.Null,
+    Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
     Archived: idl.Null,
@@ -141,7 +142,7 @@ export async function requireDatabaseBillable(actor, databaseId) {
 
 export function normalizeWritableDatabases(rawDatabases, billingConfig = null) {
   return rawDatabases.map(normalizeDatabaseSummary).filter((database) => {
-    return database.status === "Hot" && (database.role === "Owner" || database.role === "Writer");
+    return database.status === "Active" && (database.role === "Owner" || database.role === "Writer");
   }).map((database) => {
     const reason = databaseBillingDisabledReason(database, billingConfig);
     return {
@@ -164,11 +165,16 @@ function normalizeDatabaseSummary(raw) {
     databaseId: raw.database_id,
     name: String(raw.name || ""),
     role: variantKey(raw.role),
-    status: variantKey(raw.status),
+    status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
     billingBalanceE8s: raw.billing_balance_e8s?.[0]?.toString?.() ?? "0",
     billingSuspendedAtMs: raw.billing_suspended_at_ms?.[0]?.toString?.() ?? null
   };
+}
+
+function normalizeDatabaseStatus(status) {
+  const key = variantKey(status);
+  return key === "Hot" ? "Active" : key;
 }
 
 export async function getBillingConfigOrNull(actor) {

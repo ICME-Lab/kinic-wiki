@@ -158,7 +158,7 @@ Writes, database grants, archive operations, private Skill Registry writes, and 
 ## Archive and Restore
 
 Archive exports one database as SQLite snapshot bytes and then finalizes the database into `archived` status.
-Restore imports that snapshot into an `archived` or `deleted` database and returns it to `hot`.
+Restore imports that snapshot into an `archived` or `deleted` database and returns it to `active`.
 The canister verifies the SHA-256 digest during both flows.
 
 ```bash

@@ -427,7 +427,7 @@ export async function listDatabasesAuthenticated(canisterId: string, identity: I
     if ("Err" in result) {
       throw new Error(result.Err);
     }
-    return result.Ok.map(normalizeDatabaseSummary);
+    return result.Ok.map((raw) => normalizeDatabaseSummary(raw));
   });
 }
 
@@ -438,7 +438,7 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
     if ("Err" in result) {
       throw new Error(result.Err);
     }
-    return result.Ok.map(normalizeDatabaseSummary);
+    return result.Ok.map((raw) => normalizeDatabaseSummary(raw));
   });
 }
 
@@ -1027,6 +1027,12 @@ function rawSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest):
 }
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
+  if ("Active" in status) {
+    return "active";
+  }
+  if ("Hot" in status) {
+    return "active";
+  }
   if ("Restoring" in status) {
     return "restoring";
   }
@@ -1039,7 +1045,7 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   if ("Deleted" in status) {
     return "deleted";
   }
-  return "hot";
+  throw new ApiError(`Unknown database status variant: ${Object.keys(status).join(",")}`, 502);
 }
 
 function isLocalHost(host: string): boolean {

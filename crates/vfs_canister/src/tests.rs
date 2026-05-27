@@ -1250,7 +1250,7 @@ fn canister_list_databases_returns_caller_membership_summaries() {
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].database_id, "default");
     assert_eq!(summaries[0].role, DatabaseRole::Owner);
-    assert_eq!(summaries[0].status, DatabaseStatus::Hot);
+    assert_eq!(summaries[0].status, DatabaseStatus::Active);
 }
 
 #[test]
@@ -2436,7 +2436,7 @@ fn database_archive_restore_entrypoints_restore_search_and_links() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Hot);
+    assert_eq!(info.status, DatabaseStatus::Active);
     assert_eq!(info.role, DatabaseRole::Owner);
 }
 
@@ -2489,7 +2489,7 @@ fn begin_database_restore_rolls_back_when_mount_fails() {
 }
 
 #[test]
-fn cancel_database_archive_entrypoint_returns_database_to_hot() {
+fn cancel_database_archive_entrypoint_returns_database_to_active() {
     install_test_service();
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
@@ -2530,7 +2530,7 @@ fn cancel_database_archive_entrypoint_returns_database_to_hot() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Hot);
+    assert_eq!(info.status, DatabaseStatus::Active);
     assert_eq!(info.role, DatabaseRole::Owner);
 }
 

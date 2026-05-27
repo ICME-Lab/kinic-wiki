@@ -201,7 +201,7 @@ async fn run_create_restore_smoke(
     {
         return Err(anyhow!("archived database unexpectedly allowed read_node"));
     }
-    assert_isolation_database_still_hot(client, &isolation_database_id).await?;
+    assert_isolation_database_still_active(client, &isolation_database_id).await?;
 
     client
         .begin_database_restore(&database_id, snapshot_hash.clone(), archive.size_bytes)
@@ -290,7 +290,7 @@ async fn ensure_parent_folders(
 
 async fn verify_smoke_state(client: &CanisterVfsClient, state: &SmokeState) -> Result<()> {
     assert_primary_database_restored(client, state).await?;
-    assert_isolation_database_still_hot(client, &state.isolation_database_id).await?;
+    assert_isolation_database_still_active(client, &state.isolation_database_id).await?;
     assert_database_isolation(client, &state.database_id, &state.isolation_database_id).await
 }
 
@@ -351,8 +351,8 @@ async fn assert_primary_database_restored(
         .find(|info| info.database_id == state.database_id)
         .ok_or_else(|| anyhow!("smoke database info missing"))?;
     ensure(
-        info.status == DatabaseStatus::Hot,
-        "smoke database should be hot",
+        info.status == DatabaseStatus::Active,
+        "smoke database should be active",
     )?;
     Ok(())
 }
@@ -407,7 +407,7 @@ async fn assert_database_isolation(
     Ok(())
 }
 
-async fn assert_isolation_database_still_hot(
+async fn assert_isolation_database_still_active(
     client: &CanisterVfsClient,
     isolation_database_id: &str,
 ) -> Result<()> {
@@ -439,8 +439,8 @@ async fn assert_isolation_database_still_hot(
         .find(|info| info.database_id == isolation_database_id)
         .ok_or_else(|| anyhow!("isolation database info missing"))?;
     ensure(
-        info.status == DatabaseStatus::Hot,
-        "isolation DB should remain hot while primary archived",
+        info.status == DatabaseStatus::Active,
+        "isolation DB should remain active while primary archived",
     )?;
     Ok(())
 }

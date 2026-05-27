@@ -332,15 +332,15 @@ test("authStatus returns principal without identity", async () => {
   }
 });
 
-test("listWritableDatabases returns hot writable database summaries", async () => {
+test("listWritableDatabases returns active writable database summaries", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
       async list_databases() {
         return {
           Ok: [
-            rawDatabase("team-db", "Team Wiki", "Writer", "Hot"),
-            rawDatabase("reader-db", "Read Wiki", "Reader", "Hot"),
+            rawDatabase("team-db", "Team Wiki", "Writer", "Active"),
+            rawDatabase("reader-db", "Read Wiki", "Reader", "Active"),
             rawDatabase("old-db", "Old Wiki", "Owner", "Archived")
           ]
         };
@@ -365,7 +365,7 @@ test("listWritableDatabases returns hot writable database summaries", async () =
         databaseId: "team-db",
         name: "Team Wiki",
         role: "Writer",
-        status: "Hot",
+        status: "Active",
         logicalSizeBytes: "0",
         billingBalanceE8s: "20000",
         billingSuspendedAtMs: null,
@@ -404,7 +404,7 @@ function billableActorMethods({ databaseId = "team-db", balanceE8s = 20_000n, su
             database_id: databaseId,
             name: "Team DB",
             role: { Writer: null },
-            status: { Hot: null },
+            status: { Active: null },
             logical_size_bytes: 0n,
             billing_balance_e8s: [balanceE8s],
             billing_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],

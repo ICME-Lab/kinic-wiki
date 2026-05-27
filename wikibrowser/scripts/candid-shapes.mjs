@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -30,6 +30,10 @@ export const expectedTypes = {
   BillingTransferResult: {
     kind: "record",
     fields: { block_index: "nat64", balance_e8s: "nat64" }
+  },
+  BillingAccount: {
+    kind: "record",
+    fields: { owner: "principal", subaccount: "opt blob" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
@@ -302,6 +306,10 @@ export const expectedTypes = {
   ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
+  ResultOpsAnswerSessionCheck: {
+    kind: "variant",
+    cases: { Ok: "OpsAnswerSessionCheckResult", Err: "text" }
+  },
   ResultWriteSourceForGeneration: {
     kind: "variant",
     cases: { Ok: "WriteSourceForGenerationResult", Err: "text" }
