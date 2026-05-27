@@ -26,25 +26,29 @@ use ic_sqlite_vfs::{Db, DbHandle};
 use ic_stable_structures::DefaultMemoryImpl;
 #[cfg(target_arch = "wasm32")]
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
-use vfs_runtime::{DatabaseMeta, RequiredRole, UsageEvent, VfsService};
+use vfs_runtime::{
+    BillingPendingLedgerDetailsInput, DatabaseMeta, DatabaseTopUpWithLedgerDetails,
+    DatabaseWithdrawWithLedgerDetails, RequiredRole, UsageEvent, VfsService,
+};
 use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, BillingTransferResult,
     CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage,
-    DatabaseBillingPendingOperationPage, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
-    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
+    DatabaseBillingPendingOperation, DatabaseBillingPendingOperationPage, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
+    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -100,7 +104,7 @@ enum LedgerTransferFromOutcome {
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Debug, CandidType, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize)]
 struct IcrcAccount {
     owner: Principal,
     subaccount: Option<Vec<u8>>,
@@ -127,6 +131,48 @@ struct TransferFromArg {
     fee: Option<Nat>,
     memo: Option<Vec<u8>>,
     created_at_time: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct GetTransactionsRequest {
+    start: Nat,
+    length: Nat,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetTransactionsResponse {
+    transactions: Vec<LedgerTransaction>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LedgerTransaction {
+    kind: String,
+    transfer: Option<LedgerTransfer>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LedgerTransfer {
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    spender: Option<IcrcAccount>,
+}
+
+#[derive(Clone, Debug)]
+struct ExpectedLedgerTransfer {
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time_ns: u64,
 }
 
 #[allow(dead_code)]
@@ -283,7 +329,7 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
 #[update]
 fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_role_metered_update(
+    with_role_unmetered_update(
         "rename_database",
         Some(database_id),
         RequiredRole::Owner,
@@ -299,7 +345,7 @@ fn grant_database_access(
     principal: String,
     role: DatabaseRole,
 ) -> Result<(), String> {
-    with_role_metered_update(
+    with_role_unmetered_update(
         "grant_database_access",
         Some(database_id.clone()),
         RequiredRole::Owner,
@@ -314,7 +360,7 @@ fn grant_database_access(
 
 #[update]
 fn revoke_database_access(database_id: String, principal: String) -> Result<(), String> {
-    with_role_metered_update(
+    with_role_unmetered_update(
         "revoke_database_access",
         Some(database_id.clone()),
         RequiredRole::Owner,
@@ -353,12 +399,44 @@ async fn top_up_database(
     let caller = caller_text();
     let now = now_millis();
     let config = with_service(|service| service.billing_config())?;
-    let operation_id = with_service(|service| {
-        service.begin_database_top_up(&database_id, &caller, amount_e8s, now)
-    })?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    match ledger_transfer_from(ledger, caller_principal(), amount_e8s, operation_id).await {
+    let fee_e8s = ledger_fee(ledger).await?;
+    let ledger_created_at_time_ns = now_nanos();
+    let canister_owner = canister_principal().to_text();
+    let operation_id = with_service(|service| {
+        service.begin_database_top_up_with_ledger_details(DatabaseTopUpWithLedgerDetails {
+            database_id: &database_id,
+            caller: &caller,
+            amount_e8s,
+            ledger: BillingPendingLedgerDetailsInput {
+                from_owner: &caller,
+                from_subaccount: None,
+                to_owner: &canister_owner,
+                to_subaccount: None,
+                ledger_fee_e8s: fee_e8s,
+                ledger_created_at_time_ns,
+            },
+            now,
+        })
+    })?;
+    match ledger_transfer_from(
+        ledger,
+        IcrcAccount {
+            owner: caller_principal(),
+            subaccount: None,
+        },
+        IcrcAccount {
+            owner: canister_principal(),
+            subaccount: None,
+        },
+        amount_e8s,
+        fee_e8s,
+        operation_id,
+        ledger_created_at_time_ns,
+    )
+    .await
+    {
         LedgerTransferFromOutcome::Completed(block_index) => {
             let balance = with_service(|service| {
                 service.credit_database_top_up(
@@ -410,10 +488,37 @@ async fn withdraw_database_balance(
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let fee_e8s = ledger_fee(ledger).await?;
+    let ledger_created_at_time_ns = now_nanos();
+    let from_owner = canister_principal().to_text();
+    let to_owner = to.owner.to_text();
     let operation_id = with_service(|service| {
-        service.begin_database_withdraw(&database_id, &caller, amount_e8s, fee_e8s, now)
+        service.begin_database_withdraw_with_ledger_details(DatabaseWithdrawWithLedgerDetails {
+            database_id: &database_id,
+            caller: &caller,
+            amount_e8s,
+            fee_e8s,
+            ledger: BillingPendingLedgerDetailsInput {
+                from_owner: &from_owner,
+                from_subaccount: None,
+                to_owner: &to_owner,
+                to_subaccount: to.subaccount.as_deref(),
+                ledger_fee_e8s: fee_e8s,
+                ledger_created_at_time_ns,
+            },
+            now,
+        })
     })?;
-    match ledger_transfer(ledger, to, amount_e8s, fee_e8s, operation_id).await {
+    match ledger_transfer(
+        ledger,
+        None,
+        to,
+        amount_e8s,
+        fee_e8s,
+        operation_id,
+        ledger_created_at_time_ns,
+    )
+    .await
+    {
         LedgerTransferOutcome::Completed(block_index) => {
             let balance = with_service(|service| {
                 service.complete_database_withdraw(
@@ -485,13 +590,25 @@ fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResu
 }
 
 #[update]
-fn repair_database_top_up_complete(
+async fn repair_database_top_up_complete(
     database_id: String,
     operation_id: u64,
     ledger_block_index: u64,
 ) -> Result<BillingTransferResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
+    let config = with_service(|service| service.billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let operation = with_service(|service| {
+        service.get_database_billing_pending_operation_for_repair(
+            &database_id,
+            operation_id,
+            &caller,
+        )
+    })?;
+    let expected = expected_top_up_transfer(&operation)?;
+    validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
     let balance = with_service(|service| {
         service.repair_database_top_up_complete(
             &database_id,
@@ -508,6 +625,57 @@ fn repair_database_top_up_complete(
 }
 
 #[update]
+async fn repair_database_top_up_retry(
+    database_id: String,
+    operation_id: u64,
+) -> Result<BillingTransferResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let config = with_service(|service| service.billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let operation = with_service(|service| {
+        service.get_database_billing_pending_operation_for_repair(
+            &database_id,
+            operation_id,
+            &caller,
+        )
+    })?;
+    let expected = expected_top_up_transfer(&operation)?;
+    match ledger_transfer_from(
+        ledger,
+        expected.from,
+        expected.to,
+        expected.amount_e8s,
+        expected.fee_e8s,
+        operation_id,
+        expected.created_at_time_ns,
+    )
+    .await
+    {
+        LedgerTransferFromOutcome::Completed(block_index) => {
+            let balance = with_service(|service| {
+                service.repair_database_top_up_complete(
+                    &database_id,
+                    operation_id,
+                    block_index,
+                    &caller,
+                    now_millis(),
+                )
+            })?;
+            Ok(BillingTransferResult {
+                block_index,
+                balance_e8s: balance,
+            })
+        }
+        LedgerTransferFromOutcome::LedgerErr(error)
+        | LedgerTransferFromOutcome::Ambiguous(error) => {
+            Err(format!("top-up retry still pending: {error}"))
+        }
+    }
+}
+
+#[update]
 fn repair_database_top_up_cancel(database_id: String, operation_id: u64) -> Result<(), String> {
     require_authenticated_caller()?;
     let caller = caller_text();
@@ -517,13 +685,25 @@ fn repair_database_top_up_cancel(database_id: String, operation_id: u64) -> Resu
 }
 
 #[update]
-fn repair_database_withdraw_complete(
+async fn repair_database_withdraw_complete(
     database_id: String,
     operation_id: u64,
     ledger_block_index: u64,
 ) -> Result<BillingTransferResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
+    let config = with_service(|service| service.billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let operation = with_service(|service| {
+        service.get_database_billing_pending_operation_for_repair(
+            &database_id,
+            operation_id,
+            &caller,
+        )
+    })?;
+    let expected = expected_withdraw_transfer(&operation)?;
+    validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
     let balance = with_service(|service| {
         service.repair_database_withdraw_complete(
             &database_id,
@@ -537,6 +717,59 @@ fn repair_database_withdraw_complete(
         block_index: ledger_block_index,
         balance_e8s: balance,
     })
+}
+
+#[update]
+async fn repair_database_withdraw_retry(
+    database_id: String,
+    operation_id: u64,
+) -> Result<BillingTransferResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let config = with_service(|service| service.billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let operation = with_service(|service| {
+        service.get_database_billing_pending_operation_for_repair(
+            &database_id,
+            operation_id,
+            &caller,
+        )
+    })?;
+    let expected = expected_withdraw_transfer(&operation)?;
+    match ledger_transfer(
+        ledger,
+        expected.from.subaccount,
+        BillingAccount {
+            owner: expected.to.owner,
+            subaccount: expected.to.subaccount,
+        },
+        expected.amount_e8s,
+        expected.fee_e8s,
+        operation_id,
+        expected.created_at_time_ns,
+    )
+    .await
+    {
+        LedgerTransferOutcome::Completed(block_index) => {
+            let balance = with_service(|service| {
+                service.repair_database_withdraw_complete(
+                    &database_id,
+                    operation_id,
+                    block_index,
+                    &caller,
+                    now_millis(),
+                )
+            })?;
+            Ok(BillingTransferResult {
+                block_index,
+                balance_e8s: balance,
+            })
+        }
+        LedgerTransferOutcome::LedgerErr(error) | LedgerTransferOutcome::Ambiguous(error) => {
+            Err(format!("withdraw retry still pending: {error}"))
+        }
+    }
 }
 
 #[update]
@@ -573,7 +806,7 @@ fn update_billing_config(payload: Vec<u8>) -> Result<(), String> {
 
 #[update]
 fn delete_database(database_id: String) -> Result<(), String> {
-    with_role_metered_update(
+    with_role_unmetered_update(
         "delete_database",
         Some(database_id.clone()),
         RequiredRole::Owner,
@@ -1050,6 +1283,7 @@ thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_LEDGER_TRANSFER_OUTCOME: RefCell<Option<LedgerTransferOutcome>> = const { RefCell::new(None) };
     static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
+    static TEST_LEDGER_TRANSACTIONS: RefCell<Vec<(u64, LedgerTransaction)>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
 }
@@ -1070,6 +1304,20 @@ fn set_next_ledger_transfer_outcome_for_test(outcome: LedgerTransferOutcome) {
 fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOutcome) {
     TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|slot| {
         slot.replace(Some(outcome));
+    });
+}
+
+#[cfg(test)]
+fn set_ledger_transaction_for_test(block_index: u64, transaction: LedgerTransaction) {
+    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().push((block_index, transaction));
+    });
+}
+
+#[cfg(test)]
+fn clear_ledger_transactions_for_test() {
+    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().clear();
     });
 }
 
@@ -1205,6 +1453,154 @@ fn cycle_balance() -> u128 {
     }
 }
 
+fn now_nanos() -> u64 {
+    #[cfg(test)]
+    {
+        1_700_000_000_000_000_000
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::time()
+    }
+}
+
+fn expected_top_up_transfer(
+    operation: &DatabaseBillingPendingOperation,
+) -> Result<ExpectedLedgerTransfer, String> {
+    if operation.kind != "top_up" {
+        return Err("pending billing operation kind mismatch".to_string());
+    }
+    expected_ledger_transfer(operation, "top_up")
+}
+
+fn expected_withdraw_transfer(
+    operation: &DatabaseBillingPendingOperation,
+) -> Result<ExpectedLedgerTransfer, String> {
+    if operation.kind != "withdraw" {
+        return Err("pending billing operation kind mismatch".to_string());
+    }
+    expected_ledger_transfer(operation, "withdraw")
+}
+
+fn expected_ledger_transfer(
+    operation: &DatabaseBillingPendingOperation,
+    memo_kind: &str,
+) -> Result<ExpectedLedgerTransfer, String> {
+    let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
+    let to_owner = pending_principal(operation.to_owner.as_deref(), "to_owner")?;
+    let amount_e8s = pending_i64_to_u64(operation.amount_e8s, "amount_e8s")?;
+    let fee_e8s = pending_i64_to_u64(
+        operation
+            .ledger_fee_e8s
+            .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())?,
+        "ledger_fee_e8s",
+    )?;
+    let created_at_time_ns = pending_i64_to_u64(
+        operation
+            .ledger_created_at_time_ns
+            .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())?,
+        "ledger_created_at_time_ns",
+    )?;
+    Ok(ExpectedLedgerTransfer {
+        from: IcrcAccount {
+            owner: from_owner,
+            subaccount: operation.from_subaccount.clone(),
+        },
+        to: IcrcAccount {
+            owner: to_owner,
+            subaccount: operation.to_subaccount.clone(),
+        },
+        amount_e8s,
+        fee_e8s,
+        memo: billing_operation_memo(memo_kind, operation.operation_id),
+        created_at_time_ns,
+    })
+}
+
+fn pending_principal(value: Option<&str>, field: &str) -> Result<Principal, String> {
+    let value = value.ok_or_else(|| format!("pending operation missing {field}"))?;
+    Principal::from_text(value).map_err(|error| format!("invalid pending {field}: {error}"))
+}
+
+fn pending_i64_to_u64(value: i64, field: &str) -> Result<u64, String> {
+    u64::try_from(value).map_err(|_| format!("pending operation {field} is negative"))
+}
+
+async fn validate_ledger_transfer_block(
+    ledger: Principal,
+    block_index: u64,
+    expected: ExpectedLedgerTransfer,
+) -> Result<(), String> {
+    let transaction = ledger_transaction(ledger, block_index).await?;
+    if transaction.kind != "transfer" {
+        return Err(format!(
+            "ledger transaction kind mismatch: {}",
+            transaction.kind
+        ));
+    }
+    let transfer = transaction
+        .transfer
+        .ok_or_else(|| "ledger transaction missing transfer".to_string())?;
+    if transfer.from != expected.from {
+        return Err("ledger transaction from account mismatch".to_string());
+    }
+    if transfer.to != expected.to {
+        return Err("ledger transaction to account mismatch".to_string());
+    }
+    if nat_to_u64(&transfer.amount)? != expected.amount_e8s {
+        return Err("ledger transaction amount mismatch".to_string());
+    }
+    let fee = transfer
+        .fee
+        .as_ref()
+        .ok_or_else(|| "ledger transaction missing fee".to_string())?;
+    if nat_to_u64(fee)? != expected.fee_e8s {
+        return Err("ledger transaction fee mismatch".to_string());
+    }
+    if transfer.memo.as_deref() != Some(expected.memo.as_slice()) {
+        return Err("ledger transaction memo mismatch".to_string());
+    }
+    if transfer.created_at_time != Some(expected.created_at_time_ns) {
+        return Err("ledger transaction created_at_time mismatch".to_string());
+    }
+    Ok(())
+}
+
+async fn ledger_transaction(
+    ledger: Principal,
+    block_index: u64,
+) -> Result<LedgerTransaction, String> {
+    #[cfg(test)]
+    {
+        let _ = ledger;
+        TEST_LEDGER_TRANSACTIONS.with(|slot| {
+            slot.borrow()
+                .iter()
+                .find(|(index, _)| *index == block_index)
+                .map(|(_, transaction)| transaction.clone())
+                .ok_or_else(|| format!("test ledger transaction not found: {block_index}"))
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let response = Call::bounded_wait(ledger, "get_transactions")
+            .with_arg(GetTransactionsRequest {
+                start: Nat::from(block_index),
+                length: Nat::from(1_u64),
+            })
+            .await
+            .map_err(|error| format!("get_transactions call failed: {error:?}"))?;
+        let response: GetTransactionsResponse = response
+            .candid()
+            .map_err(|error| format!("get_transactions decode failed: {error}"))?;
+        response
+            .transactions
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("ledger transaction not found: {block_index}"))
+    }
+}
+
 async fn ledger_fee(ledger: Principal) -> Result<u64, String> {
     #[cfg(test)]
     {
@@ -1224,14 +1620,17 @@ async fn ledger_fee(ledger: Principal) -> Result<u64, String> {
 
 async fn ledger_transfer_from(
     ledger: Principal,
-    from_owner: Principal,
+    from: IcrcAccount,
+    to: IcrcAccount,
     amount_e8s: u64,
+    fee_e8s: u64,
     operation_id: u64,
+    created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
     let memo = billing_operation_memo("top_up", operation_id);
     #[cfg(test)]
     {
-        let _ = (ledger, from_owner, amount_e8s);
+        let _ = (ledger, from, to, amount_e8s, fee_e8s, created_at_time_ns);
         record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
             outcome
@@ -1242,24 +1641,14 @@ async fn ledger_transfer_from(
     }
     #[cfg(not(test))]
     {
-        let fee = match ledger_fee(ledger).await {
-            Ok(fee) => fee,
-            Err(error) => return LedgerTransferFromOutcome::LedgerErr(error),
-        };
         let arg = TransferFromArg {
             spender_subaccount: None,
-            from: IcrcAccount {
-                owner: from_owner,
-                subaccount: None,
-            },
-            to: IcrcAccount {
-                owner: canister_principal(),
-                subaccount: None,
-            },
+            from,
+            to,
             amount: Nat::from(amount_e8s),
-            fee: Some(Nat::from(fee)),
+            fee: Some(Nat::from(fee_e8s)),
             memo: Some(memo),
-            created_at_time: Some(ic_cdk::api::time()),
+            created_at_time: Some(created_at_time_ns),
         };
         let response = Call::bounded_wait(ledger, "icrc2_transfer_from")
             .with_arg(arg)
@@ -1293,15 +1682,24 @@ async fn ledger_transfer_from(
 
 async fn ledger_transfer(
     ledger: Principal,
+    from_subaccount: Option<Vec<u8>>,
     to: BillingAccount,
     amount_e8s: u64,
     fee_e8s: u64,
     operation_id: u64,
+    created_at_time_ns: u64,
 ) -> LedgerTransferOutcome {
     let memo = billing_operation_memo("withdraw", operation_id);
     #[cfg(test)]
     {
-        let _ = (ledger, to, amount_e8s, fee_e8s);
+        let _ = (
+            ledger,
+            from_subaccount,
+            to,
+            amount_e8s,
+            fee_e8s,
+            created_at_time_ns,
+        );
         record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_OUTCOME.with(|outcome| {
             outcome
@@ -1313,7 +1711,7 @@ async fn ledger_transfer(
     #[cfg(not(test))]
     {
         let arg = TransferArg {
-            from_subaccount: None,
+            from_subaccount,
             to: IcrcAccount {
                 owner: to.owner,
                 subaccount: to.subaccount,
@@ -1321,7 +1719,7 @@ async fn ledger_transfer(
             amount: Nat::from(amount_e8s),
             fee: Some(Nat::from(fee_e8s)),
             memo: Some(memo),
-            created_at_time: Some(ic_cdk::api::time()),
+            created_at_time: Some(created_at_time_ns),
         };
         let response = Call::bounded_wait(ledger, "icrc1_transfer")
             .with_arg(arg)
@@ -1447,6 +1845,30 @@ where
             service.require_database_role(database_id, caller, required_role)
         },
         f,
+    )
+}
+
+fn with_role_unmetered_update<T, F>(
+    method: &str,
+    database_id: Option<String>,
+    required_role: RequiredRole,
+    f: F,
+) -> Result<T, String>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+{
+    let authorization_database_id = database_id.clone();
+    with_usage_derived_database_id(
+        method,
+        database_id,
+        |service, caller, now| {
+            let database_id = authorization_database_id
+                .as_deref()
+                .ok_or_else(|| "database_id is required for role check".to_string())?;
+            service.require_database_role(database_id, caller, required_role)?;
+            f(service, caller, now)
+        },
+        |_| None,
     )
 }
 

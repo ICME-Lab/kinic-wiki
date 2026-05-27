@@ -101,7 +101,7 @@ If the ledger fee query fails, `billing config` fails without printing a partial
 `database withdraw <database-id> <e8s> --to-principal <principal> [--to-subaccount-hex <hex>]` transfers DB balance to an external ICRC account and requires the DB owner identity.
 `database billing-history <database-id> [--json]` lists DB billing ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and SNS governance see full details.
 `database billing-pending <database-id> [--json]` lists pending billing operations. DB owner and SNS governance can read it.
-`database repair-*` commands resolve ambiguous pending operations and are accepted only from the configured SNS governance principal.
+`database repair-*` commands resolve ambiguous pending operations and are accepted only from the configured SNS governance principal. Use cancel/reverse repair only when governance has verified that the original ledger transfer did not execute.
 `database list` prints databases attached to the caller principal, including DB billing balance and suspension time.
 Successful DB updates consume DB balance. Browser write surfaces disable writes when the DB is suspended, below `min_update_balance_e8s`, or billing config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB balance changes.
 

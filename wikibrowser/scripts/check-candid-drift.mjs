@@ -150,19 +150,21 @@ function findStatementEnd(source, start) {
 }
 
 function normalizeIdlShape(value) {
-  return value
+  const normalized = value
     .trim()
     .replace(/^idl\./, "")
     .replace(/^Text$/, "text")
     .replace(/^Int64$/, "int64")
     .replace(/^Nat64$/, "nat64")
     .replace(/^Nat32$/, "nat32")
+    .replace(/^Nat8$/, "nat8")
     .replace(/^Nat$/, "nat")
     .replace(/^Float32$/, "float32")
     .replace(/^Bool$/, "bool")
     .replace(/^Null$/, "null")
     .replace(/^Opt\((.+)\)$/, (_, inner) => `opt ${normalizeIdlShape(inner)}`)
     .replace(/^Vec\((.+)\)$/, (_, inner) => `vec ${normalizeIdlShape(inner)}`);
+  return normalizeBlobAlias(normalized);
 }
 
 function splitIdlInputs(value) {
@@ -178,7 +180,13 @@ function splitShapes(value) {
 }
 
 function normalizeShape(value) {
-  return value.trim().replace(/\s+/g, " ");
+  return normalizeBlobAlias(value.trim().replace(/\s+/g, " "));
+}
+
+function normalizeBlobAlias(value) {
+  if (value === "vec nat8") return "blob";
+  if (value === "opt vec nat8") return "opt blob";
+  return value;
 }
 
 function normalizeResultAlias(value) {

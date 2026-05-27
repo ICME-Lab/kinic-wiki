@@ -1843,21 +1843,22 @@ fn governance_repairs_pending_top_up_operations() {
         .repair_database_top_up_complete("complete", complete, 77, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
         .expect("governance should complete top-up");
     assert_eq!(balance, 500);
-    service
+    let cancel_error = service
         .repair_database_top_up_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
-        .expect("governance should cancel top-up");
+        .expect_err("ambiguous top-up cancel should reject");
+    assert!(cancel_error.contains("requires verified complete or retry"));
 
     assert_eq!(database_billing_balance(&root, "complete"), 500);
     assert_eq!(database_billing_balance(&root, "cancel"), 0);
     assert_eq!(database_pending_operation_count(&root, "complete"), 0);
-    assert_eq!(database_pending_operation_count(&root, "cancel"), 0);
+    assert_eq!(database_pending_operation_count(&root, "cancel"), 1);
     assert_eq!(
         database_ledger_kinds(&root, "complete"),
         vec!["top_up_ambiguous", "top_up_repair_complete"]
     );
     assert_eq!(
         database_ledger_kinds(&root, "cancel"),
-        vec!["top_up_ambiguous", "top_up_repair_cancel"]
+        vec!["top_up_ambiguous"]
     );
     let entries = service
         .list_database_billing_entries("complete", "owner", None, 10)
@@ -1902,16 +1903,16 @@ fn governance_repairs_pending_withdraw_operations() {
             5,
         )
         .expect("governance should complete withdraw");
-    let reversed_balance = service
+    let reverse_error = service
         .repair_database_withdraw_reverse("reverse", reverse, "rrkah-fqaaa-aaaaa-aaaaq-cai", 5)
-        .expect("governance should reverse withdraw");
+        .expect_err("ambiguous withdraw reverse should reject");
+    assert!(reverse_error.contains("requires verified complete or retry"));
 
     assert_eq!(complete_balance, 890);
-    assert_eq!(reversed_balance, 1_000);
     assert_eq!(database_billing_balance(&root, "complete"), 890);
-    assert_eq!(database_billing_balance(&root, "reverse"), 1_000);
+    assert_eq!(database_billing_balance(&root, "reverse"), 890);
     assert_eq!(database_pending_operation_count(&root, "complete"), 0);
-    assert_eq!(database_pending_operation_count(&root, "reverse"), 0);
+    assert_eq!(database_pending_operation_count(&root, "reverse"), 1);
     assert_eq!(
         database_ledger_kinds(&root, "complete"),
         vec![
@@ -1928,8 +1929,7 @@ fn governance_repairs_pending_withdraw_operations() {
             "top_up",
             "withdraw_pending",
             "withdraw_fee_pending",
-            "withdraw_ambiguous",
-            "withdraw_repair_reverse"
+            "withdraw_ambiguous"
         ]
     );
 }
@@ -2177,18 +2177,6 @@ fn rejects_database_creation_after_mount_capacity() {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
 
     for mount_id in 11..32767 {
-        conn.execute(
-            "INSERT INTO databases
-             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
-              logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?1, ?2, ?3, ?3, 'hot', 'vfs_store:current', 0, 1, 1)",
-            params![
-                format!("reserved_{mount_id}"),
-                format!("reserved_{mount_id}.sqlite3"),
-                i64::from(mount_id)
-            ],
-        )
-        .expect("reserved mount_id should insert");
         conn.execute(
             "INSERT INTO database_mount_history
              (database_id, mount_id, reason, created_at_ms)

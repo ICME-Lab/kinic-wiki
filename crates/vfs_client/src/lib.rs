@@ -111,6 +111,15 @@ pub trait VfsApi: Sync {
             "repair_database_top_up_cancel is not implemented by this client"
         ))
     }
+    async fn repair_database_top_up_retry(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+    ) -> Result<BillingTransferResult> {
+        Err(anyhow!(
+            "repair_database_top_up_retry is not implemented by this client"
+        ))
+    }
     async fn repair_database_withdraw_complete(
         &self,
         _database_id: &str,
@@ -119,6 +128,15 @@ pub trait VfsApi: Sync {
     ) -> Result<BillingTransferResult> {
         Err(anyhow!(
             "repair_database_withdraw_complete is not implemented by this client"
+        ))
+    }
+    async fn repair_database_withdraw_retry(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+    ) -> Result<BillingTransferResult> {
+        Err(anyhow!(
+            "repair_database_withdraw_retry is not implemented by this client"
         ))
     }
     async fn repair_database_withdraw_reverse(
@@ -621,6 +639,21 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
+    async fn repair_database_top_up_retry(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> = self
+            .update2(
+                "repair_database_top_up_retry",
+                &database_id.to_string(),
+                &operation_id,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn repair_database_withdraw_complete(
         &self,
         database_id: &str,
@@ -633,6 +666,21 @@ impl VfsApi for CanisterVfsClient {
                 &database_id.to_string(),
                 &operation_id,
                 &ledger_block_index,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_withdraw_retry(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<BillingTransferResult> {
+        let result: Result<BillingTransferResult, String> = self
+            .update2(
+                "repair_database_withdraw_retry",
+                &database_id.to_string(),
+                &operation_id,
             )
             .await?;
         result.map_err(|error| anyhow!(error))

@@ -70,11 +70,17 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     next_cursor: idl.Opt(idl.Nat64)
   });
   const DatabaseBillingPendingOperation = idl.Record({
+    to_owner: idl.Opt(idl.Text),
+    to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
+    from_owner: idl.Opt(idl.Text),
     kind: idl.Text,
     fee_e8s: idl.Int64,
     operation_id: idl.Nat64,
+    from_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
     created_at_ms: idl.Int64,
     amount_e8s: idl.Int64,
+    ledger_fee_e8s: idl.Opt(idl.Int64),
+    ledger_created_at_time_ns: idl.Opt(idl.Int64),
     database_id: idl.Text,
     caller: idl.Text
   });
@@ -334,7 +340,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     recent_nodes: idl.Func([RecentNodesRequest], [ResultRecent], ["query"]),
     repair_database_top_up_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
     repair_database_top_up_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultBillingTransfer], []),
+    repair_database_top_up_retry: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
     repair_database_withdraw_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultBillingTransfer], []),
+    repair_database_withdraw_retry: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
     repair_database_withdraw_reverse: idl.Func([idl.Text, idl.Nat64], [ResultNat64], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),

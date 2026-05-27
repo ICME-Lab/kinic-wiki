@@ -314,11 +314,25 @@ pub enum DatabaseCommand {
         database_id: String,
         operation_id: u64,
     },
+    #[command(
+        about = "Governance repair: retry a pending database top-up with original ledger args"
+    )]
+    RepairTopUpRetry {
+        database_id: String,
+        operation_id: u64,
+    },
     #[command(about = "Governance repair: complete a pending database withdraw")]
     RepairWithdrawComplete {
         database_id: String,
         operation_id: u64,
         block_index: u64,
+    },
+    #[command(
+        about = "Governance repair: retry a pending database withdraw with original ledger args"
+    )]
+    RepairWithdrawRetry {
+        database_id: String,
+        operation_id: u64,
     },
     #[command(about = "Governance repair: reverse a pending database withdraw")]
     RepairWithdrawReverse {

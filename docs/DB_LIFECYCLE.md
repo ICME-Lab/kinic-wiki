@@ -104,16 +104,18 @@ URL ingest and query-answer sessions can expire after issuance if the DB becomes
 
 Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented.
 
-If DB top-up or withdraw receives an explicit ledger error, top-up is cancelled and withdraw debit is reversed. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `top_up_ambiguous` or `withdraw_ambiguous`.
+If DB top-up or withdraw receives an explicit ledger error, top-up is cancelled and withdraw debit is reversed. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `top_up_ambiguous` or `withdraw_ambiguous`. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so repair can validate or retry the exact transfer.
 
 Pending operations block DB delete until SNS governance resolves them with a repair API:
 
 - `repair_database_top_up_complete(database_id, operation_id, ledger_block_index)`
+- `repair_database_top_up_retry(database_id, operation_id)`
 - `repair_database_top_up_cancel(database_id, operation_id)`
 - `repair_database_withdraw_complete(database_id, operation_id, ledger_block_index)`
+- `repair_database_withdraw_retry(database_id, operation_id)`
 - `repair_database_withdraw_reverse(database_id, operation_id)`
 
-DB owner and SNS governance can inspect pending operations. Repair updates are governance-only.
+Complete repair checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB balance. Retry repair resends the original transfer arguments; duplicate ledger responses complete with the original block index. Cancel and reverse repair are governance-only escape hatches for cases where governance has verified that the original ledger transfer did not execute. DB owner and SNS governance can inspect pending operations. Repair updates are governance-only.
 
 ## Delete
 

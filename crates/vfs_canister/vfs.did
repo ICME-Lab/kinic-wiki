@@ -62,11 +62,17 @@ type DatabaseBillingEntryPage = record {
   next_cursor : opt nat64;
 };
 type DatabaseBillingPendingOperation = record {
+  to_owner : opt text;
+  to_subaccount : opt blob;
+  from_owner : opt text;
   kind : text;
   fee_e8s : int64;
   operation_id : nat64;
+  from_subaccount : opt blob;
   created_at_ms : int64;
   amount_e8s : int64;
+  ledger_fee_e8s : opt int64;
+  ledger_created_at_time_ns : opt int64;
   database_id : text;
   caller : text;
 };
@@ -485,7 +491,9 @@ service : (BillingConfig) -> {
   rename_database : (RenameDatabaseRequest) -> (Result_1);
   repair_database_top_up_cancel : (text, nat64) -> (Result_1);
   repair_database_top_up_complete : (text, nat64, nat64) -> (Result_26);
+  repair_database_top_up_retry : (text, nat64) -> (Result_26);
   repair_database_withdraw_complete : (text, nat64, nat64) -> (Result_26);
+  repair_database_withdraw_retry : (text, nat64) -> (Result_26);
   repair_database_withdraw_reverse : (text, nat64) -> (Result_27);
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_28) query;

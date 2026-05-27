@@ -126,6 +126,12 @@ pub struct DatabaseBillingPendingOperation {
     pub caller: String,
     pub amount_e8s: i64,
     pub fee_e8s: i64,
+    pub from_owner: Option<String>,
+    pub from_subaccount: Option<Vec<u8>>,
+    pub to_owner: Option<String>,
+    pub to_subaccount: Option<Vec<u8>>,
+    pub ledger_fee_e8s: Option<i64>,
+    pub ledger_created_at_time_ns: Option<i64>,
     pub created_at_ms: i64,
 }
 

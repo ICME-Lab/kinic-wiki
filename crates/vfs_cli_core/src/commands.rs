@@ -751,13 +751,23 @@ async fn run_database_command(
             } else {
                 for operation in page.entries {
                     println!(
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                         operation.operation_id,
                         operation.database_id,
                         operation.kind,
                         operation.caller,
                         operation.amount_e8s,
                         operation.fee_e8s,
+                        operation.from_owner.unwrap_or_else(|| "-".to_string()),
+                        operation.to_owner.unwrap_or_else(|| "-".to_string()),
+                        operation
+                            .ledger_fee_e8s
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        operation
+                            .ledger_created_at_time_ns
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
                         operation.created_at_ms
                     );
                 }
@@ -785,6 +795,18 @@ async fn run_database_command(
                 .await?;
             println!("{database_id}\t{operation_id}");
         }
+        DatabaseCommand::RepairTopUpRetry {
+            database_id,
+            operation_id,
+        } => {
+            let result = client
+                .repair_database_top_up_retry(&database_id, operation_id)
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}",
+                result.block_index, result.balance_e8s
+            );
+        }
         DatabaseCommand::RepairWithdrawComplete {
             database_id,
             operation_id,
@@ -792,6 +814,18 @@ async fn run_database_command(
         } => {
             let result = client
                 .repair_database_withdraw_complete(&database_id, operation_id, block_index)
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}",
+                result.block_index, result.balance_e8s
+            );
+        }
+        DatabaseCommand::RepairWithdrawRetry {
+            database_id,
+            operation_id,
+        } => {
+            let result = client
+                .repair_database_withdraw_retry(&database_id, operation_id)
                 .await?;
             println!(
                 "{database_id}\t{operation_id}\t{}\t{}",
@@ -1654,6 +1688,12 @@ mod tests {
                     caller: "caller".to_string(),
                     amount_e8s: 500_000,
                     fee_e8s: 0,
+                    from_owner: Some("caller".to_string()),
+                    from_subaccount: None,
+                    to_owner: Some("canister".to_string()),
+                    to_subaccount: None,
+                    ledger_fee_e8s: Some(10),
+                    ledger_created_at_time_ns: Some(1_700_000_000_000_000_000),
                     created_at_ms: 1,
                 }],
                 next_cursor: None,

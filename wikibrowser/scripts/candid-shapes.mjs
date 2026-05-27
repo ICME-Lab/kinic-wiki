@@ -69,11 +69,17 @@ export const expectedTypes = {
   DatabaseBillingPendingOperation: {
     kind: "record",
     fields: {
+      to_owner: "opt text",
+      to_subaccount: "opt blob",
+      from_owner: "opt text",
       kind: "text",
       fee_e8s: "int64",
       operation_id: "nat64",
+      from_subaccount: "opt blob",
       created_at_ms: "int64",
       amount_e8s: "int64",
+      ledger_fee_e8s: "opt int64",
+      ledger_created_at_time_ns: "opt int64",
       database_id: "text",
       caller: "text"
     }
@@ -420,7 +426,9 @@ export const expectedMethods = {
   recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
   repair_database_top_up_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
   repair_database_top_up_complete: { input: ["text", "nat64", "nat64"], output: "ResultBillingTransfer", mode: "update" },
+  repair_database_top_up_retry: { input: ["text", "nat64"], output: "ResultBillingTransfer", mode: "update" },
   repair_database_withdraw_complete: { input: ["text", "nat64", "nat64"], output: "ResultBillingTransfer", mode: "update" },
+  repair_database_withdraw_retry: { input: ["text", "nat64"], output: "ResultBillingTransfer", mode: "update" },
   repair_database_withdraw_reverse: { input: ["text", "nat64"], output: "ResultNat64", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },

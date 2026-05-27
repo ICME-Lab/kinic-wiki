@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
-    AppendNodeRequest, BillingAccount, BillingConfig, CreateDatabaseRequest,
+    AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, CreateDatabaseRequest,
     DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus, DeleteNodeRequest, EditNodeRequest,
     ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, ListChildrenRequest, ListNodesRequest,
@@ -20,18 +20,22 @@ use vfs_types::{
 };
 
 use super::{
-    LedgerTransferFromOutcome, LedgerTransferOutcome, SERVICE, TransferError, TransferFromError,
-    append_node, begin_database_archive, begin_database_restore, cancel_database_archive,
-    check_database_billable, clear_last_ledger_memo_for_test, create_database, delete_node,
-    edit_node, export_snapshot, fail_next_mount_database_file_for_test, fetch_updates,
-    finalize_database_archive, finalize_database_restore, glob_nodes, grant_database_access,
-    graph_links, graph_neighborhood, incoming_links, last_ledger_memo_for_test, list_children,
-    list_database_billing_entries, list_database_billing_pending_operations, list_database_members,
-    list_databases, list_nodes, memory_manifest, mkdir_node, move_node, multi_edit_node,
-    outgoing_links, parse_upgrade_billing_config_arg, preview_database_top_up, query_context,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context, recent_nodes,
-    rename_database, repair_database_top_up_complete, revoke_database_access, search_node_paths,
-    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    IcrcAccount, LedgerTransaction, LedgerTransfer, LedgerTransferFromOutcome,
+    LedgerTransferOutcome, SERVICE, TransferError, TransferFromError, append_node,
+    begin_database_archive, begin_database_restore, cancel_database_archive,
+    check_database_billable, clear_last_ledger_memo_for_test, clear_ledger_transactions_for_test,
+    create_database, delete_node, edit_node, export_snapshot,
+    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
+    finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
+    incoming_links, last_ledger_memo_for_test, list_children, list_database_billing_entries,
+    list_database_billing_pending_operations, list_database_members, list_databases, list_nodes,
+    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
+    parse_upgrade_billing_config_arg, preview_database_top_up, query_context, query_index_sql_json,
+    read_database_archive_chunk, read_node, read_node_context, recent_nodes, rename_database,
+    repair_database_top_up_cancel, repair_database_top_up_complete, repair_database_top_up_retry,
+    repair_database_withdraw_complete, repair_database_withdraw_retry,
+    repair_database_withdraw_reverse, revoke_database_access, search_node_paths, search_nodes,
+    set_ledger_transaction_for_test, set_next_ledger_transfer_from_outcome_for_test,
     set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test, source_evidence,
     status, top_up_database, transfer_error_outcome, transfer_from_error_outcome,
     withdraw_database_balance, write_database_restore_chunk, write_node, write_nodes,
@@ -44,6 +48,7 @@ fn install_test_service() {
     service
         .run_index_migrations()
         .expect("index migrations should run");
+    clear_ledger_transactions_for_test();
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
@@ -70,6 +75,7 @@ fn install_empty_test_service() {
     service
         .run_index_migrations()
         .expect("index migrations should run");
+    clear_ledger_transactions_for_test();
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -81,6 +87,86 @@ fn block_on_ready<T>(future: impl Future<Output = T>) -> T {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("test future unexpectedly pending"),
     }
+}
+
+fn ledger_transfer_transaction(
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time: u64,
+) -> LedgerTransaction {
+    LedgerTransaction {
+        kind: "transfer".to_string(),
+        transfer: Some(LedgerTransfer {
+            from,
+            to,
+            amount: Nat::from(amount_e8s),
+            fee: Some(Nat::from(fee_e8s)),
+            memo: Some(memo),
+            created_at_time: Some(created_at_time),
+            spender: None,
+        }),
+    }
+}
+
+fn pending_top_up_transaction(
+    operation: &vfs_types::DatabaseBillingPendingOperation,
+) -> LedgerTransaction {
+    ledger_transfer_transaction(
+        IcrcAccount {
+            owner: Principal::from_text(operation.from_owner.as_ref().expect("from owner"))
+                .expect("from owner should parse"),
+            subaccount: operation.from_subaccount.clone(),
+        },
+        IcrcAccount {
+            owner: Principal::from_text(operation.to_owner.as_ref().expect("to owner"))
+                .expect("to owner should parse"),
+            subaccount: operation.to_subaccount.clone(),
+        },
+        operation.amount_e8s.try_into().expect("amount should fit"),
+        operation
+            .ledger_fee_e8s
+            .expect("ledger fee")
+            .try_into()
+            .expect("fee should fit"),
+        format!("kinic:vfs:top_up:{}", operation.operation_id).into_bytes(),
+        operation
+            .ledger_created_at_time_ns
+            .expect("ledger created_at")
+            .try_into()
+            .expect("created_at should fit"),
+    )
+}
+
+fn pending_withdraw_transaction(
+    operation: &vfs_types::DatabaseBillingPendingOperation,
+) -> LedgerTransaction {
+    ledger_transfer_transaction(
+        IcrcAccount {
+            owner: Principal::from_text(operation.from_owner.as_ref().expect("from owner"))
+                .expect("from owner should parse"),
+            subaccount: operation.from_subaccount.clone(),
+        },
+        IcrcAccount {
+            owner: Principal::from_text(operation.to_owner.as_ref().expect("to owner"))
+                .expect("to owner should parse"),
+            subaccount: operation.to_subaccount.clone(),
+        },
+        operation.amount_e8s.try_into().expect("amount should fit"),
+        operation
+            .ledger_fee_e8s
+            .expect("ledger fee")
+            .try_into()
+            .expect("fee should fit"),
+        format!("kinic:vfs:withdraw:{}", operation.operation_id).into_bytes(),
+        operation
+            .ledger_created_at_time_ns
+            .expect("ledger created_at")
+            .try_into()
+            .expect("created_at should fit"),
+    )
 }
 
 fn explicit_billing_config() -> BillingConfig {
@@ -435,8 +521,12 @@ fn governance_can_repair_ambiguous_top_up() {
         assert_eq!(pending.len(), 1);
         operation_id = pending[0].operation_id;
 
-        let error = repair_database_top_up_complete(database_id.clone(), operation_id, 77)
-            .expect_err("owner repair should reject");
+        let error = block_on_ready(repair_database_top_up_complete(
+            database_id.clone(),
+            operation_id,
+            77,
+        ))
+        .expect_err("owner repair should reject");
         assert!(error.contains("caller is not SNS governance"));
     }
 
@@ -446,8 +536,13 @@ fn governance_can_repair_ambiguous_top_up() {
             .expect("governance should list pending operations")
             .entries;
         assert_eq!(pending.len(), 1);
-        let result = repair_database_top_up_complete(database_id.clone(), operation_id, 77)
-            .expect("governance should repair top-up");
+        set_ledger_transaction_for_test(77, pending_top_up_transaction(&pending[0]));
+        let result = block_on_ready(repair_database_top_up_complete(
+            database_id.clone(),
+            operation_id,
+            77,
+        ))
+        .expect("governance should repair top-up");
         assert_eq!(result.block_index, 77);
         assert_eq!(result.balance_e8s, 500);
     }
@@ -463,6 +558,133 @@ fn governance_can_repair_ambiguous_top_up() {
     assert_eq!(entries[0].kind, "top_up_ambiguous");
     assert_eq!(entries[1].kind, "top_up_repair_complete");
     assert_eq!(entries[1].ledger_block_index, Some(77));
+}
+
+#[test]
+fn repair_top_up_complete_rejects_mismatched_ledger_block() {
+    install_empty_test_service();
+    let operation_id;
+    let database_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Repair mismatch".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+            "icrc2_transfer_from decode failed".to_string(),
+        ));
+        let _ = block_on_ready(top_up_database(database_id.clone(), 500))
+            .expect_err("ambiguous top-up should stay pending");
+        operation_id = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("pending should load")
+            .entries[0]
+            .operation_id;
+    }
+
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    let mut transaction = pending_top_up_transaction(&pending[0]);
+    transaction.transfer.as_mut().expect("transfer").amount = Nat::from(499_u64);
+    set_ledger_transaction_for_test(78, transaction);
+
+    let error = block_on_ready(repair_database_top_up_complete(
+        database_id.clone(),
+        operation_id,
+        78,
+    ))
+    .expect_err("mismatched block should reject");
+    assert!(error.contains("amount mismatch"));
+    let pending = list_database_billing_pending_operations(database_id, None, 10)
+        .expect("pending should remain")
+        .entries;
+    assert_eq!(pending.len(), 1);
+}
+
+#[test]
+fn repair_top_up_retry_uses_original_ledger_args() {
+    install_empty_test_service();
+    let operation_id;
+    let database_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Retry top-up".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+            "icrc2_transfer_from decode failed".to_string(),
+        ));
+        let _ = block_on_ready(top_up_database(database_id.clone(), 500))
+            .expect_err("ambiguous top-up should stay pending");
+        operation_id = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("pending should load")
+            .entries[0]
+            .operation_id;
+    }
+
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(79));
+    let result = block_on_ready(repair_database_top_up_retry(
+        database_id.clone(),
+        operation_id,
+    ))
+    .expect("retry should complete");
+    assert_eq!(result.block_index, 79);
+    assert_eq!(result.balance_e8s, 500);
+    let memo = last_ledger_memo_for_test().expect("retry should send memo");
+    assert!(String::from_utf8_lossy(&memo).starts_with("kinic:vfs:top_up:"));
+    let pending = list_database_billing_pending_operations(database_id, None, 10)
+        .expect("pending should load")
+        .entries;
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn repair_top_up_cancel_rejects_ambiguous_operation() {
+    install_empty_test_service();
+    let operation_id;
+    let database_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Cancel top-up".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+            "icrc2_transfer_from call failed".to_string(),
+        ));
+        let _ = block_on_ready(top_up_database(database_id.clone(), 500))
+            .expect_err("ambiguous top-up should stay pending");
+        operation_id = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("pending should load")
+            .entries[0]
+            .operation_id;
+    }
+
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let error = repair_database_top_up_cancel(database_id.clone(), operation_id)
+        .expect_err("ambiguous top-up cancel should reject");
+    assert!(error.contains("requires verified complete or retry"));
+    let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+    let entries = list_database_billing_entries(database_id, None, 10)
+        .expect("ledger should load")
+        .entries;
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec!["top_up_ambiguous"]
+    );
 }
 
 #[test]
@@ -667,6 +889,187 @@ fn withdraw_database_balance_records_ambiguous_transfer() {
     assert_eq!(entries[3].balance_after_e8s, 590);
 }
 
+#[test]
+fn withdraw_ambiguous_persists_destination_for_repair() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Withdraw destination".to_string(),
+    })
+    .expect("database should create");
+    fund_database(&database.database_id, 1_000, 43);
+    let to = BillingAccount {
+        owner: Principal::management_canister(),
+        subaccount: Some(vec![7; 32]),
+    };
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+        "icrc1_transfer decode failed".to_string(),
+    ));
+
+    let _ = block_on_ready(withdraw_database_balance(
+        database.database_id.clone(),
+        400,
+        to.clone(),
+    ))
+    .expect_err("ambiguous transfer should stay pending");
+
+    let pending = list_database_billing_pending_operations(database.database_id, None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].to_owner, Some(to.owner.to_text()));
+    assert_eq!(pending[0].to_subaccount, to.subaccount);
+    assert_eq!(pending[0].ledger_fee_e8s, Some(10));
+    assert_eq!(
+        pending[0].ledger_created_at_time_ns,
+        Some(1_700_000_000_000_000_000)
+    );
+}
+
+#[test]
+fn governance_can_repair_ambiguous_withdraw_with_verified_block() {
+    install_empty_test_service();
+    let operation_id;
+    let database_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Repair withdraw".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        fund_database(&database_id, 1_000, 43);
+        set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+            "icrc1_transfer decode failed".to_string(),
+        ));
+        let _ = block_on_ready(withdraw_database_balance(
+            database_id.clone(),
+            400,
+            test_billing_account(),
+        ))
+        .expect_err("ambiguous withdraw should stay pending");
+        operation_id = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("pending should load")
+            .entries[0]
+            .operation_id;
+    }
+
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    set_ledger_transaction_for_test(80, pending_withdraw_transaction(&pending[0]));
+    let result = block_on_ready(repair_database_withdraw_complete(
+        database_id.clone(),
+        operation_id,
+        80,
+    ))
+    .expect("governance should repair withdraw");
+    assert_eq!(result.block_index, 80);
+    assert_eq!(result.balance_e8s, 590);
+    let pending = list_database_billing_pending_operations(database_id, None, 10)
+        .expect("pending should load")
+        .entries;
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn repair_withdraw_retry_keeps_pending_on_ledger_error() {
+    install_empty_test_service();
+    let operation_id;
+    let database_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Retry withdraw".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        fund_database(&database_id, 1_000, 43);
+        set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+            "icrc1_transfer decode failed".to_string(),
+        ));
+        let _ = block_on_ready(withdraw_database_balance(
+            database_id.clone(),
+            400,
+            test_billing_account(),
+        ))
+        .expect_err("ambiguous withdraw should stay pending");
+        operation_id = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("pending should load")
+            .entries[0]
+            .operation_id;
+    }
+
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::LedgerErr(
+        "icrc1_transfer failed: TemporarilyUnavailable".to_string(),
+    ));
+    let error = block_on_ready(repair_database_withdraw_retry(
+        database_id.clone(),
+        operation_id,
+    ))
+    .expect_err("retry error should keep pending");
+    assert!(error.contains("withdraw retry still pending"));
+    let pending = list_database_billing_pending_operations(database_id, None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+}
+
+#[test]
+fn repair_withdraw_reverse_rejects_ambiguous_operation() {
+    install_empty_test_service();
+    let operation_id;
+    let database_id;
+    {
+        let _owner = AuthenticatedCallerGuard::install();
+        let database = create_database(CreateDatabaseRequest {
+            name: "Reverse withdraw".to_string(),
+        })
+        .expect("database should create");
+        database_id = database.database_id;
+        fund_database(&database_id, 1_000, 44);
+        set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+            "icrc1_transfer call failed".to_string(),
+        ));
+        let _ = block_on_ready(withdraw_database_balance(
+            database_id.clone(),
+            400,
+            test_billing_account(),
+        ))
+        .expect_err("ambiguous withdraw should stay pending");
+        operation_id = list_database_billing_pending_operations(database_id.clone(), None, 10)
+            .expect("pending should load")
+            .entries[0]
+            .operation_id;
+    }
+
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let error = repair_database_withdraw_reverse(database_id.clone(), operation_id)
+        .expect_err("ambiguous withdraw reverse should reject");
+    assert!(error.contains("requires verified complete or retry"));
+    let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+    let entries = list_database_billing_entries(database_id, None, 10)
+        .expect("ledger should load")
+        .entries;
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.kind.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "top_up",
+            "withdraw_pending",
+            "withdraw_fee_pending",
+            "withdraw_ambiguous"
+        ]
+    );
+}
+
 fn usage_event_count() -> u64 {
     SERVICE.with(|slot| {
         slot.borrow()
@@ -733,6 +1136,52 @@ fn install_suspended_default_service() {
             )
         })
         .expect("default database should become suspended");
+    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+}
+
+fn install_low_balance_default_service() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("index migrations should run");
+    service
+        .create_database("default", "2vxsx-fae", 1_700_000_000_000)
+        .expect("default database should create");
+    service
+        .begin_database_top_up("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .and_then(|operation_id| {
+            service.credit_database_top_up(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+                1,
+                1_700_000_000_001,
+            )
+        })
+        .expect("default database should start funded");
+    service
+        .grant_database_access(
+            "default",
+            "2vxsx-fae",
+            &test_governance_principal().to_text(),
+            DatabaseRole::Writer,
+            1_700_000_000_002,
+        )
+        .expect("writer should be granted before low-balance config");
+    service
+        .update_billing_config(
+            BillingConfigUpdate {
+                rate_numerator_e8s: 200,
+                rate_denominator_cycles: 1_000_000,
+                fixed_update_fee_e8s: 100,
+                min_update_balance_e8s: 2_000_000,
+            },
+            &test_governance_principal().to_text(),
+        )
+        .expect("minimum balance should update");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -942,6 +1391,28 @@ fn suspended_database_rejects_metered_mutations() {
     assert!(batch.contains("database billing is suspended"));
     assert!(mkdir.contains("database billing is suspended"));
     assert!(cancel.contains("database billing is suspended"));
+}
+
+#[test]
+fn suspended_database_allows_owner_management_operations() {
+    install_suspended_default_service();
+
+    rename_database(RenameDatabaseRequest {
+        database_id: "default".to_string(),
+        name: "Suspended rename".to_string(),
+    })
+    .expect("suspended database owner should rename");
+    super::delete_database("default".to_string()).expect("suspended database owner should delete");
+}
+
+#[test]
+fn low_balance_database_allows_owner_revoke_and_delete() {
+    install_low_balance_default_service();
+
+    revoke_database_access("default".to_string(), test_governance_principal().to_text())
+        .expect("low-balance database owner should revoke");
+    super::delete_database("default".to_string())
+        .expect("low-balance database owner should delete");
 }
 
 #[test]
