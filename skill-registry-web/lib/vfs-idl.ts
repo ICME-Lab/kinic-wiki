@@ -8,6 +8,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
     Hot: idl.Null,
+    Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,

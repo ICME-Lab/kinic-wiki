@@ -35,8 +35,8 @@ use vfs_types::{
     CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage,
     DatabaseBillingPendingOperation, DatabaseBillingPendingOperationPage, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
@@ -303,20 +303,7 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
         "create_database",
         None,
         |service, caller, now| {
-            let meta = service.reserve_generated_database_for_mount(&request.name, caller, now)?;
-            if let Err(error) = mount_database_file(&meta) {
-                let cleanup_error = service
-                    .discard_database_reservation(&meta.database_id)
-                    .err();
-                return Err(database_create_error(error, cleanup_error));
-            }
-            if let Err(error) = service.run_database_migrations(&meta.database_id) {
-                unmount_database_file(&meta.db_file_name);
-                let cleanup_error = service
-                    .discard_database_reservation(&meta.database_id)
-                    .err();
-                return Err(database_create_error(error, cleanup_error));
-            }
+            let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
             Ok(CreateDatabaseResult {
                 database_id: meta.database_id,
                 name: meta.name,
@@ -404,7 +391,7 @@ async fn top_up_database(
     let fee_e8s = ledger_fee(ledger).await?;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
-    let operation_id = with_service(|service| {
+    let operation_id = match with_service(|service| {
         service.begin_database_top_up_with_ledger_details(DatabaseTopUpWithLedgerDetails {
             database_id: &database_id,
             caller: &caller,
@@ -419,7 +406,10 @@ async fn top_up_database(
             },
             now,
         })
-    })?;
+    }) {
+        Ok(operation_id) => operation_id,
+        Err(error) => return Err(error),
+    };
     match ledger_transfer_from(
         ledger,
         IcrcAccount {
@@ -438,6 +428,7 @@ async fn top_up_database(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
+            activate_pending_database_after_ledger_success(&database_id, now)?;
             let balance = with_service(|service| {
                 service.credit_database_top_up(
                     operation_id,
@@ -609,13 +600,15 @@ async fn repair_database_top_up_complete(
     })?;
     let expected = expected_top_up_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
+    let now = now_millis();
+    activate_pending_database_after_ledger_success(&database_id, now)?;
     let balance = with_service(|service| {
         service.repair_database_top_up_complete(
             &database_id,
             operation_id,
             ledger_block_index,
             &caller,
-            now_millis(),
+            now,
         )
     })?;
     Ok(BillingTransferResult {
@@ -654,13 +647,15 @@ async fn repair_database_top_up_retry(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
+            let now = now_millis();
+            activate_pending_database_after_ledger_success(&database_id, now)?;
             let balance = with_service(|service| {
                 service.repair_database_top_up_complete(
                     &database_id,
                     operation_id,
                     block_index,
                     &caller,
-                    now_millis(),
+                    now,
                 )
             })?;
             Ok(BillingTransferResult {
@@ -673,6 +668,26 @@ async fn repair_database_top_up_retry(
             Err(format!("top-up retry still pending: {error}"))
         }
     }
+}
+
+fn activate_pending_database_after_ledger_success(
+    database_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    let activation =
+        with_service(|service| service.activate_pending_database_for_top_up(database_id, now))?;
+    if let Some(meta) = &activation {
+        if let Err(error) = mount_database_file(meta) {
+            return Err(database_create_error(error, None));
+        }
+        if let Err(error) =
+            with_service(|service| service.run_pending_database_migrations(database_id))
+        {
+            unmount_database_file(&meta.db_file_name);
+            return Err(database_create_error(error, None));
+        }
+    }
+    Ok(())
 }
 
 #[update]
@@ -805,20 +820,21 @@ fn update_billing_config(payload: Vec<u8>) -> Result<(), String> {
 }
 
 #[update]
-fn delete_database(database_id: String) -> Result<(), String> {
+fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
     with_role_unmetered_update(
         "delete_database",
         Some(database_id.clone()),
         RequiredRole::Owner,
         |service, caller, now| {
-            let meta = service.list_databases().and_then(|databases| {
-                databases
-                    .into_iter()
-                    .find(|meta| meta.database_id == database_id)
-                    .ok_or_else(|| format!("database not found: {database_id}"))
-            })?;
-            service.delete_database(&database_id, caller, now)?;
-            unmount_database_file(&meta.db_file_name);
+            let meta = service
+                .list_databases()?
+                .into_iter()
+                .find(|meta| meta.database_id == database_id);
+            service.delete_database(request, caller, now)?;
+            if let Some(meta) = meta {
+                unmount_database_file(&meta.db_file_name);
+            }
             Ok(())
         },
     )

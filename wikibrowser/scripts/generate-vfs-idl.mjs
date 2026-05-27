@@ -14,6 +14,7 @@ const browserExpectedTypes = {
     kind: "variant",
     cases: {
       Hot: "null",
+      Pending: "null",
       Active: "null",
       Restoring: "null",
       Archiving: "null",
@@ -34,6 +35,7 @@ const typeOrder = [
   "CreateDatabaseRequest",
   "CreateDatabaseResult",
   "RenameDatabaseRequest",
+  "DeleteDatabaseRequest",
   "DatabaseMember",
   "DatabaseBillingEntry",
   "DatabaseBillingEntryPage",

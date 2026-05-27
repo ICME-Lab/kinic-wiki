@@ -111,7 +111,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "active" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
 
 export type DatabaseSummary = {
   databaseId: string;
@@ -123,6 +123,12 @@ export type DatabaseSummary = {
   billingSuspendedAtMs: string | null;
   archivedAtMs: string | null;
   deletedAtMs: string | null;
+};
+
+export type DeleteDatabaseRequest = {
+  databaseId: string;
+  expectedBillingBalanceE8s: string;
+  allowBalanceWriteoff: boolean;
 };
 
 export type BillingConfig = {
@@ -143,6 +149,15 @@ export type DatabaseMember = {
   databaseId: string;
   principal: string;
   role: DatabaseRole;
+  createdAtMs: string;
+};
+
+export type DatabaseBillingPendingOperation = {
+  operationId: string;
+  databaseId: string;
+  kind: string;
+  amountE8s: string;
+  feeE8s: string;
   createdAtMs: string;
 };
 

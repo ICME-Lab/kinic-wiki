@@ -10,6 +10,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
     Hot: idl.Null,
+    Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
@@ -40,6 +41,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
+  const DeleteDatabaseRequest = idl.Record({
+    expected_billing_balance_e8s: idl.Nat64,
+    database_id: idl.Text,
+    allow_balance_writeoff: idl.Bool
+  });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
     role: DatabaseRole,
@@ -284,7 +290,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
-    delete_database: idl.Func([idl.Text], [ResultUnit], []),
+    delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_billing_config: idl.Func([], [ResultBillingConfig], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),

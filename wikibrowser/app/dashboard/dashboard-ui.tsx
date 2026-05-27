@@ -80,13 +80,15 @@ export function SummaryPanel({
 }
 
 export function OwnerPanel(props: {
+  billingBalanceE8s: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
   databaseName: string;
   members: DatabaseMember[];
+  pendingOperationCount: number;
   principal: string;
-  onDelete: () => Promise<string | null>;
+  onDelete: (allowBalanceWriteoff: boolean) => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
   onRename: (name: string) => void;
   onRevoke: (principalText: string) => void;
@@ -239,7 +241,15 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
-      <DatabaseDangerZone busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
+      <DatabaseDangerZone
+        billingBalanceE8s={props.billingBalanceE8s}
+        busy={props.busy}
+        busyAction={props.busyAction}
+        databaseId={props.databaseId}
+        databaseName={props.databaseName}
+        pendingOperationCount={props.pendingOperationCount}
+        onDelete={props.onDelete}
+      />
     </section>
   );
 }
@@ -370,6 +380,7 @@ function SummaryActionLink({ ariaLabel, external = false, href, icon, label }: {
 function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): string {
   if (!status) return "-";
   const labels: Record<DatabaseSummary["status"], string> = {
+    pending: "Pending",
     archived: "Archived",
     archiving: "Archiving",
     deleted: "Deleted",

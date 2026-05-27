@@ -18,6 +18,7 @@ function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
     Hot: idl.Null,
+    Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
@@ -193,6 +194,7 @@ function databaseBillingDisabledReason(database, config) {
   const balance = parseE8s(database.billingBalanceE8s);
   const minimum = parseE8s(config?.minUpdateBalanceE8s);
   if (!config) return "Billing config unavailable.";
+  if (database.status === "Pending") return "Database activation is pending until its first top-up completes.";
   if (database.billingSuspendedAtMs) return "Database billing is suspended.";
   if (balance < minimum) return "Database balance is below the minimum update balance.";
   return null;

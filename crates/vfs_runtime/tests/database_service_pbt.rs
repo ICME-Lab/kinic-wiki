@@ -8,7 +8,7 @@ use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
 use vfs_runtime::{DEFAULT_FIXED_UPDATE_FEE_E8S, VfsService};
-use vfs_types::DatabaseStatus;
+use vfs_types::{DatabaseStatus, DeleteDatabaseRequest};
 
 const OWNER: &str = "owner";
 const INITIAL_DATABASE_E8S: u64 = 1_000_000;
@@ -90,6 +90,14 @@ fn create_seeded_database(service: &VfsService) -> String {
     )
     .expect("database seed should credit");
     meta.database_id
+}
+
+fn delete_request(database_id: &str, expected_billing_balance_e8s: u64) -> DeleteDatabaseRequest {
+    DeleteDatabaseRequest {
+        database_id: database_id.to_string(),
+        expected_billing_balance_e8s,
+        allow_balance_writeoff: expected_billing_balance_e8s > 0,
+    }
 }
 
 fn credit_database(
@@ -320,10 +328,15 @@ fn apply_operation(
             }
         }
         RuntimeOp::Delete => {
-            let result = service.delete_database(database_id, OWNER, step);
+            let result = service.delete_database(
+                delete_request(database_id, model.database_e8s),
+                OWNER,
+                step,
+            );
             if model.status == DatabaseStatus::Active {
                 result.expect("active database should delete");
                 model.status = DatabaseStatus::Deleted;
+                model.database_e8s = 0;
             } else {
                 assert!(result.is_err());
             }

@@ -69,6 +69,7 @@ assert.match(client, /DB credited amount/);
 assert.match(client, /approved allowance/);
 assert.doesNotMatch(client, /Wallet approval uses the DB credit amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
+assert.match(client, /Any authenticated wallet can fund this database/);
 assert.match(client, /Only database owners can withdraw KINIC from the database balance/);
 assert.doesNotMatch(client, /deposit canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.match(url, /KINIC amount must be a decimal with up to 8 fractional digits/);

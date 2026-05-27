@@ -11,10 +11,11 @@ use vfs_runtime::{
     MAX_RESTORE_CHUNK_BYTES, USAGE_EVENTS_RETENTION_LIMIT, UsageEvent, VfsService,
 };
 use vfs_types::{
-    AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteNodeRequest, MkdirNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
+    AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest,
+    MkdirNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -29,6 +30,18 @@ fn service_with_root() -> (VfsService, PathBuf) {
         .run_index_migrations()
         .expect("index migrations should run");
     (service, root)
+}
+
+fn delete_request(
+    database_id: &str,
+    expected_billing_balance_e8s: u64,
+    allow_balance_writeoff: bool,
+) -> DeleteDatabaseRequest {
+    DeleteDatabaseRequest {
+        database_id: database_id.to_string(),
+        expected_billing_balance_e8s,
+        allow_balance_writeoff,
+    }
 }
 
 #[test]
@@ -343,6 +356,16 @@ fn mount_history_row(root: &std::path::Path, mount_id: u16) -> (String, String) 
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
     .expect("mount history row should exist")
+}
+
+fn mount_history_count(root: &std::path::Path) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM database_mount_history",
+        params![],
+        |row| row.get(0),
+    )
+    .expect("mount history count should load")
 }
 
 fn url_ingest_session_request(
@@ -1290,6 +1313,139 @@ fn database_create_returns_generated_id_and_name() {
 }
 
 #[test]
+fn pending_database_creation_defers_mount_slot_until_top_up_activation() {
+    let (service, root) = service_with_root();
+
+    let pending = service
+        .reserve_pending_generated_database(" Pending ", "owner", 1)
+        .expect("pending database should create");
+
+    assert!(pending.database_id.starts_with("db_"));
+    assert_eq!(pending.name, "Pending");
+    assert_eq!(database_member_count(&root, &pending.database_id), 2);
+    assert_eq!(database_billing_balance(&root, &pending.database_id), 0);
+    assert_eq!(
+        database_billing_suspended_at(&root, &pending.database_id),
+        Some(1)
+    );
+    assert_eq!(mount_history_count(&root), 0);
+    assert_eq!(
+        database_index_row(&root, &pending.database_id),
+        ("pending".to_string(), None, 0, None)
+    );
+    assert!(
+        service
+            .read_node(&pending.database_id, "owner", "/Wiki/a.md")
+            .expect_err("pending DB should reject VFS reads")
+            .contains("database is pending")
+    );
+    service
+        .validate_database_top_up(&pending.database_id, "2vxsx-fae", 500)
+        .expect("anonymous preview should accept pending DB top-up");
+
+    let operation_id = service
+        .begin_database_top_up(&pending.database_id, "payer", 1_000_000, 2)
+        .expect("top-up should begin");
+    assert_eq!(mount_history_count(&root), 0);
+    assert_eq!(
+        database_index_row(&root, &pending.database_id),
+        ("pending".to_string(), None, 0, None)
+    );
+    let meta = service
+        .activate_pending_database_for_top_up(&pending.database_id, 2)
+        .expect("pending activation should prepare")
+        .expect("pending activation should allocate mount");
+    assert_eq!(meta.mount_id, 11);
+    service
+        .run_pending_database_migrations(&pending.database_id)
+        .expect("pending migrations should run");
+    let balance = service
+        .credit_database_top_up(
+            operation_id,
+            &pending.database_id,
+            "payer",
+            1_000_000,
+            42,
+            4,
+        )
+        .expect("top-up should activate and credit");
+
+    assert_eq!(balance, 1_000_000);
+    let row = database_index_row(&root, &pending.database_id);
+    assert_eq!(row.0, "active");
+    assert_eq!(row.1, Some(11));
+    assert!(row.2 > 0);
+    assert_eq!(
+        mount_history_row(&root, 11),
+        (pending.database_id.clone(), "activate".to_string())
+    );
+}
+
+#[test]
+fn pending_database_top_up_cancel_does_not_allocate_mount_slot() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("Cancel", "owner", 1)
+        .expect("pending database should create");
+
+    let operation_id = service
+        .begin_database_top_up(&pending.database_id, "payer", 500, 3)
+        .expect("top-up should begin");
+    service
+        .cancel_database_top_up(operation_id, &pending.database_id, "payer", 500)
+        .expect("ledger reject cancel should delete operation");
+
+    assert_eq!(mount_history_count(&root), 0);
+    assert_eq!(
+        database_index_row(&root, &pending.database_id),
+        ("pending".to_string(), None, 0, None)
+    );
+    let active = service
+        .create_database("active", "owner", 5)
+        .expect("active database should use first mount");
+    assert_eq!(active.mount_id, 11);
+}
+
+#[test]
+fn pending_database_top_up_cancel_rejects_after_activation_started() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("Started", "owner", 1)
+        .expect("pending database should create");
+    let operation_id = service
+        .begin_database_top_up(&pending.database_id, "payer", 500, 2)
+        .expect("top-up should begin");
+    service
+        .mark_database_top_up_ambiguous(operation_id, &pending.database_id, "payer", 500, 3)
+        .expect("top-up ambiguity should record");
+    let meta = service
+        .activate_pending_database_for_top_up(&pending.database_id, 4)
+        .expect("pending activation should prepare")
+        .expect("activation should allocate mount");
+    assert_eq!(meta.mount_id, 11);
+
+    let error = service
+        .repair_database_top_up_cancel(
+            &pending.database_id,
+            operation_id,
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            5,
+        )
+        .expect_err("started activation should require complete repair");
+
+    assert!(error.contains("complete top-up repair"));
+    assert_eq!(
+        database_pending_operation_count(&root, &pending.database_id),
+        1
+    );
+    assert_eq!(mount_history_count(&root), 1);
+    assert_eq!(
+        database_index_row(&root, &pending.database_id),
+        ("pending".to_string(), Some(11), 0, None)
+    );
+}
+
+#[test]
 fn old_index_schema_migrates_database_name_from_id() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
@@ -1673,7 +1829,7 @@ fn pending_database_top_up_blocks_delete_until_resolved() {
 
     for database_id in ["complete", "cancel", "ambiguous"] {
         let error = service
-            .delete_database(database_id, "owner", 3)
+            .delete_database(delete_request(database_id, 0, false), "owner", 3)
             .expect_err("pending top-up should block delete");
         assert!(error.contains("pending billing operation"));
         assert_eq!(database_pending_operation_count(&root, database_id), 1);
@@ -1692,12 +1848,20 @@ fn pending_database_top_up_blocks_delete_until_resolved() {
     for database_id in ["complete", "cancel"] {
         assert_eq!(database_pending_operation_count(&root, database_id), 0);
         service
-            .delete_database(database_id, "owner", 5)
+            .delete_database(
+                delete_request(
+                    database_id,
+                    if database_id == "complete" { 500 } else { 0 },
+                    true,
+                ),
+                "owner",
+                5,
+            )
             .expect("resolved top-up should allow delete");
     }
     assert_eq!(database_pending_operation_count(&root, "ambiguous"), 1);
     let error = service
-        .delete_database("ambiguous", "owner", 5)
+        .delete_database(delete_request("ambiguous", 500, true), "owner", 5)
         .expect_err("ambiguous top-up should keep delete blocked");
     assert!(error.contains("pending billing operation"));
 }
@@ -1723,7 +1887,7 @@ fn pending_database_withdraw_blocks_delete_until_resolved() {
 
     for database_id in ["complete", "reverse", "ambiguous"] {
         let error = service
-            .delete_database(database_id, "owner", 4)
+            .delete_database(delete_request(database_id, 890, true), "owner", 4)
             .expect_err("pending withdraw should block delete");
         assert!(error.contains("pending billing operation"));
         assert_eq!(database_pending_operation_count(&root, database_id), 1);
@@ -1742,14 +1906,74 @@ fn pending_database_withdraw_blocks_delete_until_resolved() {
     for database_id in ["complete", "reverse"] {
         assert_eq!(database_pending_operation_count(&root, database_id), 0);
         service
-            .delete_database(database_id, "owner", 6)
+            .delete_database(
+                delete_request(
+                    database_id,
+                    if database_id == "complete" {
+                        890
+                    } else {
+                        1_000
+                    },
+                    true,
+                ),
+                "owner",
+                6,
+            )
             .expect("resolved withdraw should allow delete");
     }
     assert_eq!(database_pending_operation_count(&root, "ambiguous"), 1);
     let error = service
-        .delete_database("ambiguous", "owner", 6)
+        .delete_database(delete_request("ambiguous", 890, true), "owner", 6)
         .expect_err("ambiguous withdraw should keep delete blocked");
     assert!(error.contains("pending billing operation"));
+}
+
+#[test]
+fn delete_database_requires_expected_balance_and_writeoff_consent() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("dust", "owner", 1)
+        .expect("database should create");
+    credit_database(&service, "dust", "owner", 999, 1, 2);
+
+    let mismatch = service
+        .delete_database(delete_request("dust", 998, true), "owner", 3)
+        .expect_err("stale balance should reject");
+    assert!(mismatch.contains("billing balance changed"));
+    assert_eq!(database_billing_balance(&root, "dust"), 999);
+
+    let no_consent = service
+        .delete_database(delete_request("dust", 999, false), "owner", 4)
+        .expect_err("dust without consent should reject");
+    assert!(no_consent.contains("confirm balance writeoff"));
+    assert_eq!(database_billing_balance(&root, "dust"), 999);
+
+    service
+        .delete_database(delete_request("dust", 999, true), "owner", 5)
+        .expect("dust writeoff should allow delete");
+    assert_eq!(database_billing_balance(&root, "dust"), 0);
+    assert_eq!(
+        database_ledger_kinds(&root, "dust"),
+        vec!["top_up", "delete_balance_writeoff"]
+    );
+    assert_eq!(database_index_row(&root, "dust").0, "deleted");
+}
+
+#[test]
+fn delete_database_rejects_withdrawable_balance() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("funded", "owner", 1)
+        .expect("database should create");
+    credit_database(&service, "funded", "owner", 100_000_000, 1, 2);
+
+    let error = service
+        .delete_database(delete_request("funded", 100_000_000, true), "owner", 3)
+        .expect_err("withdrawable balance should reject");
+
+    assert!(error.contains("withdraw before delete"));
+    assert_eq!(database_billing_balance(&root, "funded"), 100_000_000);
+    assert_eq!(database_index_row(&root, "funded").0, "active");
 }
 
 #[test]
@@ -1872,15 +2096,14 @@ fn governance_repairs_pending_top_up_operations() {
         .repair_database_top_up_complete("complete", complete, 77, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
         .expect("governance should complete top-up");
     assert_eq!(balance, 500);
-    let cancel_error = service
+    service
         .repair_database_top_up_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
-        .expect_err("ambiguous top-up cancel should reject");
-    assert!(cancel_error.contains("requires verified complete or retry"));
+        .expect("governance should cancel ambiguous top-up after verification");
 
     assert_eq!(database_billing_balance(&root, "complete"), 500);
     assert_eq!(database_billing_balance(&root, "cancel"), 0);
     assert_eq!(database_pending_operation_count(&root, "complete"), 0);
-    assert_eq!(database_pending_operation_count(&root, "cancel"), 1);
+    assert_eq!(database_pending_operation_count(&root, "cancel"), 0);
     assert_eq!(
         database_ledger_kinds(&root, "complete"),
         vec!["top_up_ambiguous", "top_up_repair_complete"]
@@ -2305,7 +2528,7 @@ fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
     assert!(alpha_info.logical_size_bytes > 0);
 
     service
-        .delete_database("alpha", "owner", 3)
+        .delete_database(delete_request("alpha", 0, false), "owner", 3)
         .expect("delete should succeed");
     assert_restore_size(&root, "alpha", None);
     assert!(
@@ -2344,7 +2567,7 @@ fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
         .db_file_name;
     std::fs::remove_file(&missing_file).expect("database file should delete");
     service
-        .delete_database("missing_file", "owner", 2)
+        .delete_database(delete_request("missing_file", 0, false), "owner", 2)
         .expect("missing file should not block delete");
     assert_eq!(database_index_row(&root, "missing_file").0, "deleted");
 
@@ -2359,7 +2582,7 @@ fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
     .expect("db file path should update");
 
     let error = service
-        .delete_database("remove_error", "owner", 4)
+        .delete_database(delete_request("remove_error", 0, false), "owner", 4)
         .expect_err("non-NotFound remove error should fail");
     assert!(!error.is_empty());
     assert_eq!(database_index_row(&root, "remove_error").0, "active");
@@ -2896,7 +3119,7 @@ fn cancel_database_archive_rejects_invalid_statuses_and_non_owner() {
         .create_database("deleted_db", "owner", 12)
         .expect("deleted_db should create");
     service
-        .delete_database("deleted_db", "owner", 13)
+        .delete_database(delete_request("deleted_db", 0, false), "owner", 13)
         .expect("delete should succeed");
     assert!(
         service
@@ -3260,7 +3483,7 @@ fn cancel_database_restore_returns_deleted_database_and_removes_partial_state() 
         .cancel_database_archive("alpha", "owner", 4)
         .expect("archive should cancel");
     service
-        .delete_database("alpha", "owner", 5)
+        .delete_database(delete_request("alpha", 0, false), "owner", 5)
         .expect("delete should succeed");
 
     service

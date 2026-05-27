@@ -14,16 +14,16 @@ use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingTransferResult, CanisterHealth,
     ChildNode, CreateDatabaseRequest, CreateDatabaseResult, DatabaseArchiveChunk,
     DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseBillingPendingOperationPage,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryManifest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -181,7 +181,7 @@ pub trait VfsApi: Sync {
     async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
         Err(anyhow!("list_databases is not implemented by this client"))
     }
-    async fn delete_database(&self, _database_id: &str) -> Result<()> {
+    async fn delete_database(&self, _request: DeleteDatabaseRequest) -> Result<()> {
         Err(anyhow!("delete_database is not implemented by this client"))
     }
     async fn begin_database_archive(&self, _database_id: &str) -> Result<DatabaseArchiveInfo> {
@@ -761,10 +761,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn delete_database(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("delete_database", &database_id.to_string())
-            .await?;
+    async fn delete_database(&self, request: DeleteDatabaseRequest) -> Result<()> {
+        let result: Result<(), String> = self.update("delete_database", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

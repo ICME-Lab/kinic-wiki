@@ -38,7 +38,7 @@ export function CreateDatabaseDialog({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
-            <p className="mt-2 text-sm leading-6 text-muted">A generated database ID will be used for routes and access.</p>
+            <p className="mt-2 text-sm leading-6 text-muted">A generated database ID will be used for routes and access. The database activates after its first deposit.</p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
             <X aria-hidden size={16} />

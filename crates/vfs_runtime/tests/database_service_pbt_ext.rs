@@ -13,7 +13,7 @@ use vfs_runtime::{
     DEFAULT_FIXED_UPDATE_FEE_E8S, DEFAULT_MIN_UPDATE_BALANCE_E8S, DEFAULT_RATE_DENOMINATOR_CYCLES,
     DEFAULT_RATE_NUMERATOR_E8S, VfsService,
 };
-use vfs_types::{DatabaseStatus, NodeKind, WriteNodeRequest};
+use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
 const DEPOSIT_E8S: u64 = 1_000_000;
@@ -78,6 +78,14 @@ fn create_billed_database(service: &VfsService, name: &str, now: i64) -> String 
     )
     .expect("database seed should credit");
     database_id
+}
+
+fn delete_request(database_id: &str, expected_billing_balance_e8s: u64) -> DeleteDatabaseRequest {
+    DeleteDatabaseRequest {
+        database_id: database_id.to_string(),
+        expected_billing_balance_e8s,
+        allow_balance_writeoff: expected_billing_balance_e8s > 0,
+    }
 }
 
 fn credit_database(
@@ -386,7 +394,7 @@ proptest! {
                 .cancel_database_archive(&database_id, OWNER, 22)
                 .expect("archive should cancel");
             service
-                .delete_database(&database_id, OWNER, 23)
+                .delete_database(delete_request(&database_id, DEPOSIT_E8S), OWNER, 23)
                 .expect("active database should delete");
             assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Deleted);
         } else {
@@ -472,7 +480,7 @@ proptest! {
                         && status_and_mount(service, &database_id).0 == DatabaseStatus::Active
                     {
                         service
-                            .delete_database(&database_id, OWNER, now)
+                            .delete_database(delete_request(&database_id, 0), OWNER, now)
                             .expect("active slot database should delete");
                     }
                 }

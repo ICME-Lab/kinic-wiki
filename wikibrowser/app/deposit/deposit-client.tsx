@@ -136,7 +136,7 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
           </label>
         </section>
 
-        <Notice tone="warning" text="Only database owners can withdraw KINIC from the database balance." />
+        <Notice tone="warning" text="Any authenticated wallet can fund this database. Only database owners can withdraw KINIC from the database balance." />
 
         <div className="grid gap-3">
           <div className="grid gap-3 sm:grid-cols-2">

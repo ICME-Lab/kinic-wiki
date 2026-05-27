@@ -9,6 +9,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 IDS_FILE="${REPO_ROOT}/.icp/cache/mappings/local-wiki.ids.json"
 REPLICA_HOST="${REPLICA_HOST:-http://127.0.0.1:8001}"
+KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-73mez-iiaaa-aaaaq-aaasq-cai}"
+SMOKE_TOP_UP_E8S="${SMOKE_TOP_UP_E8S:-100000000}"
+SMOKE_TOP_UP_COUNT="${SMOKE_TOP_UP_COUNT:-3}"
+SMOKE_BILLING_ALLOWANCE_E8S="${SMOKE_BILLING_ALLOWANCE_E8S:-400000000}"
+
+current_identity_principal() {
+  icp identity principal
+}
+
+validate_unsigned_integer() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "${name} must be an unsigned integer" >&2
+    exit 1
+  fi
+}
 
 resolve_canister_id() {
   if [[ -n "${VFS_CANISTER_ID:-}" ]]; then
@@ -44,7 +61,38 @@ canister_has_module() {
     '
 }
 
+approve_billing_allowance() {
+  local canister_id="$1"
+  echo "checking KINIC ledger ${KINIC_LEDGER_CANISTER_ID}" >&2
+  if ! icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc1_fee '()' --query -e local-wiki -o candid >/dev/null; then
+    echo "KINIC local ledger is unavailable. Install an ICRC ledger at KINIC_LEDGER_CANISTER_ID=${KINIC_LEDGER_CANISTER_ID} and fund the current identity before running this smoke." >&2
+    exit 1
+  fi
+
+  echo "approving ${SMOKE_BILLING_ALLOWANCE_E8S} e8s for wiki canister ${canister_id}" >&2
+  local approve_result
+  if ! approve_result="$(icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc2_approve \
+    "(record { spender = record { owner = principal \"${canister_id}\"; subaccount = null }; amount = ${SMOKE_BILLING_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
+    -e local-wiki -o candid)"; then
+    echo "KINIC approve failed. Ensure the current identity has enough local KINIC balance for ${SMOKE_TOP_UP_COUNT} top-ups plus ledger fees." >&2
+    exit 1
+  fi
+  if [[ "${approve_result}" == *"Err"* ]]; then
+    echo "KINIC approve returned an error: ${approve_result}" >&2
+    echo "Ensure the current identity has enough local KINIC balance for ${SMOKE_TOP_UP_COUNT} top-ups plus ledger fees." >&2
+    exit 1
+  fi
+}
+
 cd "${REPO_ROOT}"
+validate_unsigned_integer SMOKE_TOP_UP_E8S
+validate_unsigned_integer SMOKE_TOP_UP_COUNT
+validate_unsigned_integer SMOKE_BILLING_ALLOWANCE_E8S
+if [[ -z "${SNS_GOVERNANCE_ID:-}" ]]; then
+  export SNS_GOVERNANCE_ID="$(current_identity_principal)"
+fi
+export KINIC_LEDGER_CANISTER_ID
+export SMOKE_TOP_UP_E8S
 
 if ! CANISTER_ID="$(resolve_canister_id)"; then
   echo "local wiki canister id not found; deploying wiki to local-wiki environment" >&2
@@ -61,6 +109,7 @@ CANISTER_ID="$(resolve_canister_id)"
 
 export CANISTER_ID
 export REPLICA_HOST
+approve_billing_allowance "${CANISTER_ID}"
 
 echo "running local canister archive/restore smoke against ${CANISTER_ID} at ${REPLICA_HOST}" >&2
 TMP_DIR="$(mktemp -d)"
@@ -83,6 +132,7 @@ CLI_DB_NAME="${CLI_DB_NAME:-Archive smoke CLI}"
 CLI_DB="$(cd "$CLI_WORKSPACE" && "${VFS[@]}" database create "$CLI_DB_NAME")"
 (
   cd "$CLI_WORKSPACE"
+  "${VFS[@]}" database top-up "$CLI_DB" "$SMOKE_TOP_UP_E8S"
   "${VFS[@]}" --database-id "$CLI_DB" write-node --path /Wiki/smoke.md --input "$INPUT_FILE"
   "${VFS[@]}" database archive-export "$CLI_DB" --output "$ARCHIVE_FILE" --chunk-size 65536 --json
   "${VFS[@]}" database archive-restore "$CLI_DB" --input "$ARCHIVE_FILE" --chunk-size 65536 --json

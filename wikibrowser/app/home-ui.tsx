@@ -162,7 +162,6 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Logical size</th>
               <th className="px-4 py-3 font-medium">Billing</th>
-              <th className="px-4 py-3 font-medium">Archive</th>
               <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
               {mode === "member" ? <th className="px-4 py-3 font-medium">Skills</th> : null}
@@ -183,7 +182,6 @@ function DatabaseSection({
                 <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
                 <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
                 <td className="px-4 py-3 text-ink">{databaseBillingView(database, billingConfig).summary}</td>
-                <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
                     {isRoutableDatabaseId(database.databaseId) ? <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : <span className="text-muted">-</span>}
@@ -230,7 +228,6 @@ function DatabaseMobileCard({ billingConfig, database, mode }: { billingConfig: 
         <DatabaseCardMeta label="Status" value={database.status} />
         <DatabaseCardMeta label="Logical size" value={formatBytes(database.logicalSizeBytes)} />
         <DatabaseCardMeta label="Billing" value={databaseBillingView(database, billingConfig).summary} />
-        <DatabaseCardMeta label="Archive" value={databaseMarker(database)} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
         {isRoutableDatabaseId(database.databaseId) ? (
@@ -324,12 +321,6 @@ function formatBytes(value: string): string {
   return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
-function databaseMarker(database: DatabaseSummary): string {
-  if (database.deletedAtMs) return `Deleted ${formatTimestamp(database.deletedAtMs)}`;
-  if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
-  return "-";
-}
-
 function openDatabaseHref(database: DatabaseRow): string {
   const base = `/${encodeURIComponent(database.databaseId)}/Wiki`;
   return !database.member && database.publicReadable ? `${base}?read=anonymous` : base;
@@ -337,9 +328,4 @@ function openDatabaseHref(database: DatabaseRow): string {
 
 function openPublicDatabaseHref(database: DatabaseRow): string {
   return publicDatabasePath(database.databaseId);
-}
-
-function formatTimestamp(value: string): string {
-  const milliseconds = Number(value);
-  return Number.isFinite(milliseconds) ? new Date(milliseconds).toLocaleString() : value;
 }

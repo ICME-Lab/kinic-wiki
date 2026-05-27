@@ -10,13 +10,14 @@ use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
     AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, CreateDatabaseRequest,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus, DeleteNodeRequest, EditNodeRequest,
-    ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, ListChildrenRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, RecentNodesRequest,
-    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
+    DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
+    QueryContextRequest, RecentNodesRequest, RenameDatabaseRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -66,6 +67,32 @@ fn install_test_service() {
         })
         .expect("default database should be billable");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+}
+
+fn delete_database_request(
+    database_id: &str,
+    expected_billing_balance_e8s: u64,
+    allow_balance_writeoff: bool,
+) -> DeleteDatabaseRequest {
+    DeleteDatabaseRequest {
+        database_id: database_id.to_string(),
+        expected_billing_balance_e8s,
+        allow_balance_writeoff,
+    }
+}
+
+fn database_status_and_mount(database_id: &str) -> (DatabaseStatus, Option<u16>) {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .list_database_infos()
+            .expect("database infos should load")
+            .into_iter()
+            .find(|info| info.database_id == database_id)
+            .map(|info| (info.status, info.mount_id))
+            .expect("database info should exist")
+    })
 }
 
 fn install_empty_test_service() {
@@ -272,23 +299,29 @@ fn index_sql_json_requires_text_json_first_column() {
 fn fund_database(database_id: &str, amount_e8s: u64, ledger_block_index: u64) {
     let principal = Principal::management_canister().to_text();
     SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
+        let service = slot.borrow();
+        let service = service.as_ref().expect("service should be installed");
+        let operation_id = service
             .begin_database_top_up(database_id, &principal, amount_e8s, 1_700_000_000_000)
-            .and_then(|operation_id| {
-                slot.borrow()
-                    .as_ref()
-                    .expect("service should be installed")
-                    .credit_database_top_up(
-                        operation_id,
-                        database_id,
-                        &principal,
-                        amount_e8s,
-                        ledger_block_index,
-                        1_700_000_000_000,
-                    )
-            })
+            .expect("database top-up should begin");
+        if service
+            .activate_pending_database_for_top_up(database_id, 1_700_000_000_000)
+            .expect("pending database activation should prepare")
+            .is_some()
+        {
+            service
+                .run_pending_database_migrations(database_id)
+                .expect("pending database migrations should run");
+        }
+        service
+            .credit_database_top_up(
+                operation_id,
+                database_id,
+                &principal,
+                amount_e8s,
+                ledger_block_index,
+                1_700_000_000_000,
+            )
             .expect("database should be funded");
     });
 }
@@ -401,7 +434,11 @@ fn top_up_database_credits_completed_transfer_from() {
 
     assert_eq!(result.block_index, 42);
     assert_eq!(result.balance_e8s, 500);
-    let entries = list_database_billing_entries(database.database_id, None, 10)
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+    let entries = list_database_billing_entries(database.database_id.clone(), None, 10)
         .expect("database ledger should load")
         .entries;
     assert_eq!(entries.len(), 1);
@@ -463,7 +500,11 @@ fn top_up_database_leaves_balance_on_ledger_reject() {
         .expect_err("ledger reject should not credit database");
 
     assert!(error.contains("InsufficientAllowance"));
-    let entries = list_database_billing_entries(database.database_id, None, 10)
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    let entries = list_database_billing_entries(database.database_id.clone(), None, 10)
         .expect("database ledger should load")
         .entries;
     assert!(entries.is_empty());
@@ -485,7 +526,7 @@ fn top_up_database_records_ambiguous_transfer_from() {
         .expect_err("ambiguous transfer-from should return pending error");
 
     assert!(error.contains("top-up pending; manual repair required"));
-    let entries = list_database_billing_entries(database.database_id, None, 10)
+    let entries = list_database_billing_entries(database.database_id.clone(), None, 10)
         .expect("database ledger should load")
         .entries;
     assert_eq!(entries.len(), 1);
@@ -494,6 +535,56 @@ fn top_up_database_records_ambiguous_transfer_from() {
     assert_eq!(entries[0].balance_after_e8s, 0);
     assert_eq!(entries[0].usage_event_id, None);
     assert_eq!(entries[0].ledger_block_index, None);
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+}
+
+#[test]
+fn top_up_database_mount_failure_keeps_pending_operation_for_repair() {
+    install_empty_test_service();
+    let _owner = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Mount retry".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+    fail_next_mount_database_file_for_test();
+
+    let error = block_on_ready(top_up_database(database.database_id.clone(), 500))
+        .expect_err("mount failure after ledger success should keep repair path");
+
+    assert!(error.contains("test mount failure"));
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, Some(11))
+    );
+    let pending = list_database_billing_pending_operations(database.database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+    assert!(
+        list_database_billing_entries(database.database_id.clone(), None, 10)
+            .expect("ledger should load")
+            .entries
+            .is_empty()
+    );
+
+    set_ledger_transaction_for_test(42, pending_top_up_transaction(&pending[0]));
+    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let result = block_on_ready(repair_database_top_up_complete(
+        database.database_id.clone(),
+        pending[0].operation_id,
+        42,
+    ))
+    .expect("repair complete should retry mount and credit");
+
+    assert_eq!(result.balance_e8s, 500);
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
 }
 
 #[test]
@@ -545,6 +636,10 @@ fn governance_can_repair_ambiguous_top_up() {
         .expect("governance should repair top-up");
         assert_eq!(result.block_index, 77);
         assert_eq!(result.balance_e8s, 500);
+        assert_eq!(
+            database_status_and_mount(&database_id).0,
+            DatabaseStatus::Active
+        );
     }
 
     let _owner = AuthenticatedCallerGuard::install();
@@ -645,7 +740,7 @@ fn repair_top_up_retry_uses_original_ledger_args() {
 }
 
 #[test]
-fn repair_top_up_cancel_rejects_ambiguous_operation() {
+fn repair_top_up_cancel_removes_ambiguous_operation() {
     install_empty_test_service();
     let operation_id;
     let database_id;
@@ -668,13 +763,16 @@ fn repair_top_up_cancel_rejects_ambiguous_operation() {
     }
 
     let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
-    let error = repair_database_top_up_cancel(database_id.clone(), operation_id)
-        .expect_err("ambiguous top-up cancel should reject");
-    assert!(error.contains("requires verified complete or retry"));
+    repair_database_top_up_cancel(database_id.clone(), operation_id)
+        .expect("governance should cancel ambiguous top-up after verification");
+    assert_eq!(
+        database_status_and_mount(&database_id),
+        (DatabaseStatus::Pending, None)
+    );
     let pending = list_database_billing_pending_operations(database_id.clone(), None, 10)
         .expect("pending should load")
         .entries;
-    assert_eq!(pending.len(), 1);
+    assert!(pending.is_empty());
     let entries = list_database_billing_entries(database_id, None, 10)
         .expect("ledger should load")
         .entries;
@@ -742,7 +840,12 @@ fn top_up_database_rejects_unknown_and_deleted_database() {
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 44);
-    super::delete_database(database.database_id.clone()).expect("owner should delete");
+    super::delete_database(delete_database_request(
+        &database.database_id,
+        1_000_000,
+        true,
+    ))
+    .expect("owner should delete");
 
     let deleted = block_on_ready(top_up_database(database.database_id, 500))
         .expect_err("deleted database should reject");
@@ -1254,6 +1357,17 @@ fn canister_list_databases_returns_caller_membership_summaries() {
 }
 
 #[test]
+fn canister_list_databases_hides_deleted_databases() {
+    install_test_service();
+
+    super::delete_database(delete_database_request("default", 1_000_000, true))
+        .expect("owner should delete");
+    let summaries = list_databases().expect("database summaries should load");
+
+    assert!(summaries.is_empty());
+}
+
+#[test]
 fn update_entrypoints_record_usage_events() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
@@ -1402,7 +1516,8 @@ fn suspended_database_allows_owner_management_operations() {
         name: "Suspended rename".to_string(),
     })
     .expect("suspended database owner should rename");
-    super::delete_database("default".to_string()).expect("suspended database owner should delete");
+    super::delete_database(delete_database_request("default", 1, true))
+        .expect("suspended database owner should delete");
 }
 
 #[test]
@@ -1411,7 +1526,7 @@ fn low_balance_database_allows_owner_revoke_and_delete() {
 
     revoke_database_access("default".to_string(), test_governance_principal().to_text())
         .expect("low-balance database owner should revoke");
-    super::delete_database("default".to_string())
+    super::delete_database(delete_database_request("default", 1_000_000, true))
         .expect("low-balance database owner should delete");
 }
 
@@ -1560,6 +1675,22 @@ fn create_database_records_usage_and_returns_result() {
         vec![Some(result.database_id.clone())]
     );
 
+    let summaries = list_databases().expect("database summaries should load");
+    let summary = summaries
+        .iter()
+        .find(|summary| summary.database_id == result.database_id)
+        .expect("created database summary should exist");
+    assert_eq!(summary.status, DatabaseStatus::Pending);
+    let pending_read = list_children(ListChildrenRequest {
+        database_id: result.database_id.clone(),
+        path: "/Wiki".to_string(),
+    })
+    .expect_err("pending DB should reject reads");
+    assert!(pending_read.contains("database is pending"));
+
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+    block_on_ready(top_up_database(result.database_id.clone(), 1_000_000))
+        .expect("top-up should activate database");
     let status = status(result.database_id.clone());
     assert_eq!(status.file_count, 0);
     assert_eq!(status.source_count, 0);
@@ -1567,7 +1698,7 @@ fn create_database_records_usage_and_returns_result() {
         database_id: result.database_id,
         path: "/Wiki".to_string(),
     })
-    .expect("generated database should list");
+    .expect("activated database should list");
     assert!(children.is_empty());
 }
 

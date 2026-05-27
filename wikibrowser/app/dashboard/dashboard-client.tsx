@@ -12,6 +12,7 @@ import {
   deleteDatabaseAuthenticated,
   getBillingConfig,
   grantDatabaseAccessAuthenticated,
+  listDatabaseBillingPendingOperationsAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
@@ -32,6 +33,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
   const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
+  const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -58,6 +60,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setDatabases([]);
         setBillingConfig(null);
         setMembers([]);
+        setPendingOperationCount(0);
         setError(null);
         setWarning(null);
         setMemberError(null);
@@ -90,6 +93,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setDatabases(nextDatabases);
         setBillingConfig(billingResult.status === "fulfilled" ? billingResult.value : null);
         setMembers([]);
+        setPendingOperationCount(0);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
         }
@@ -104,6 +108,14 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
           } catch (cause) {
             if (!isCurrentRefresh()) return;
             setMemberError(errorMessage(cause));
+          }
+          try {
+            const pendingOperations = await listDatabaseBillingPendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
+            if (!isCurrentRefresh()) return;
+            setPendingOperationCount(pendingOperations.length);
+          } catch {
+            if (!isCurrentRefresh()) return;
+            setPendingOperationCount(0);
           }
         } else if (nextDatabase?.publicReadable) {
           try {
@@ -171,6 +183,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setDatabases([]);
     setBillingConfig(null);
     setMembers([]);
+    setPendingOperationCount(0);
     setError(null);
     setWarning(null);
     setMemberError(null);
@@ -234,13 +247,18 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
-  async function deleteDatabase(): Promise<string | null> {
+  async function deleteDatabase(allowBalanceWriteoff: boolean): Promise<string | null> {
     if (!authClient || !databaseId) return "Login with Internet Identity to delete database.";
+    if (!database) return "Database summary unavailable.";
     setBusy(true);
     setBusyAction({ kind: "delete" });
     setActionMessage(null);
     try {
-      await deleteDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId);
+      await deleteDatabaseAuthenticated(canisterId, authClient.getIdentity(), {
+        databaseId,
+        expectedBillingBalanceE8s: database.billingBalanceE8s,
+        allowBalanceWriteoff
+      });
       router.replace("/dashboard");
       return null;
     } catch (cause) {
@@ -278,7 +296,20 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
         {database ? (
           canManage ? (
-            <OwnerPanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} members={members} principal={principal ?? "anonymous"} onDelete={deleteDatabase} onGrant={grantAccess} onRename={renameDatabase} onRevoke={revokeAccess} />
+            <OwnerPanel
+              billingBalanceE8s={database.billingBalanceE8s}
+              busy={busy}
+              busyAction={busyAction}
+              databaseId={databaseId}
+              databaseName={database.name}
+              members={members}
+              pendingOperationCount={pendingOperationCount}
+              principal={principal ?? "anonymous"}
+              onDelete={deleteDatabase}
+              onGrant={grantAccess}
+              onRename={renameDatabase}
+              onRevoke={revokeAccess}
+            />
           ) : database.publicReadable ? (
             <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />
           ) : principal ? (

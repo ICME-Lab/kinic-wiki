@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -38,6 +38,14 @@ export const expectedTypes = {
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
+  DeleteDatabaseRequest: {
+    kind: "record",
+    fields: {
+      expected_billing_balance_e8s: "nat64",
+      database_id: "text",
+      allow_balance_writeoff: "bool"
+    }
+  },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -410,7 +418,7 @@ export const expectedMethods = {
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
-  delete_database: { input: ["text"], output: "ResultUnit", mode: "update" },
+  delete_database: { input: ["DeleteDatabaseRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   get_billing_config: { input: [], output: "ResultBillingConfig", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },

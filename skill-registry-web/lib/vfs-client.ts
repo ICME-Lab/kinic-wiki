@@ -186,6 +186,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   if ("Active" in status || "Hot" in status) return "active";
+  if ("Pending" in status) return "pending";
   if ("Restoring" in status) return "restoring";
   if ("Archiving" in status) return "archiving";
   if ("Archived" in status) return "archived";

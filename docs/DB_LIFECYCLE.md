@@ -29,12 +29,13 @@ The index DB also stores an internal `usage_events` ledger for update calls.
 
 The billing index schema is a breaking initial schema. Existing index DBs with an older `schema_migrations` value are rejected with `fresh index required`; operators must install against a fresh index instead of relying on automatic migration.
 
-Active, archiving, or restoring DBs consume one active user DB slot. Archived and deleted DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database.
+Pending DBs have index metadata and billing accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived and deleted DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful top-up activates it.
 
 ## Status
 
-Databases move through five statuses:
+Databases move through six statuses:
 
+- `pending`: metadata reserved, no mounted SQLite DB yet, only top-up and owner management are available
 - `active`: mounted and usable for VFS read/write/search/list
 - `archiving`: mounted for chunk export, VFS operations rejected until finalize succeeds
 - `archived`: not mounted, active mount released, snapshot metadata retained
@@ -65,14 +66,14 @@ KINIC billing uses one internal DB-scoped balance:
 
 - database balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB balance. A zero-balance DB remains billing-suspended until funded.
+DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB balance without allocating a stable-memory mount ID. The DB remains `pending` and billing-suspended until its first successful top-up activates the mounted SQLite DB.
 
 External ledger calls are limited to DB top-up and DB withdraw:
 
 - `top_up_database(database_id, amount_e8s)` pulls from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and credits that DB balance; the approved allowance must cover `amount_e8s + icrc1_fee`
 - `withdraw_database_balance(database_id, amount_e8s, to)` debits that DB balance and sends through ICRC-1 `icrc1_transfer`
 
-Any authenticated caller can top up an existing non-deleted DB that still has an owner. The payer is recorded in the DB ledger entry. Only the DB owner can withdraw. Once the ledger call starts, completion, reversal, or ambiguous recording resolves the started operation even if membership changes during the await.
+Any authenticated caller can top up an existing non-deleted DB that still has an owner, including callers with no DB role. `preview_database_top_up` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer billing history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Only the DB owner can withdraw. Once the ledger call starts, completion, reversal, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
 
 Successful DB update calls are charged after execution. The charge is:
 
@@ -88,15 +89,15 @@ Billing history redacts payer/caller principals for reader and writer callers. D
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_billing_config` with a Candid-encoded `BillingConfigUpdate` blob. `validate_update_billing_config` performs the same validation without changing state.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. By default it injects fixed local ledger canister ID `73mez-iiaaa-aaaaq-aaasq-cai`; `SNS_GOVERNANCE_ID` must be set explicitly. The script does not create the ledger canister. Local top-up tests that hit the external ledger require an ICRC ledger already installed at that ID.
+`scripts/local/deploy_wiki.sh` carries local development init args. By default it injects fixed local ledger canister ID `73mez-iiaaa-aaaaq-aaasq-cai`; if `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The script does not create the ledger canister. Local top-up tests that hit the external ledger require an ICRC ledger already installed at that ID and enough local KINIC balance on the current identity.
 
 Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
 
 Normal operator flow:
 
-1. Owner creates a DB with `create_database(display_name)`.
+1. Owner creates a pending DB with `create_database(display_name)`.
 2. Payer previews the DB top-up, then approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
-3. Payer calls `top_up_database(database_id, amount_e8s)`.
+3. Payer calls `top_up_database(database_id, amount_e8s)`. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance credit both complete.
 4. Successful DB updates consume DB balance.
 5. Owner can withdraw DB balance to an external KINIC account with `withdraw_database_balance(database_id, amount_e8s, to)`.
 
@@ -119,7 +120,7 @@ Complete repair checks the ledger transaction at `ledger_block_index` against th
 
 ## Delete
 
-`delete_database` is owner-only.
+`delete_database(DeleteDatabaseRequest)` is owner-only.
 
 Delete is a soft delete in the index:
 
@@ -128,8 +129,15 @@ Delete is a soft delete in the index:
 - logical size is set to `0`
 - the stable-memory mount ID is not reused by another DB in v1
 
+Delete requires no pending billing operations. The request carries the balance shown to the caller:
+
+- `expected_billing_balance_e8s` must match the current DB balance
+- balances of `100_000_000` e8s or more are rejected; withdraw before deleting
+- balances below `100_000_000` e8s can be written off only when `allow_balance_writeoff` is true
+- writeoff records a `delete_balance_writeoff` ledger entry and sets the DB balance to zero
+
 Delete is treated as irreversible. If recovery is required, archive first and store the exported bytes outside the canister.
-Deleted DBs remain listed for billing visibility. DB top-up is rejected after delete, but owner-only DB balance withdraw remains available.
+Deleted DBs are omitted from normal `list_databases` results. DB top-up and DB balance withdraw are not part of the deleted-DB flow; withdraw or write off the remaining balance before delete.
 
 ## Archive
 

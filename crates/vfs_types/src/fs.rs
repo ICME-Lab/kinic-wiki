@@ -26,6 +26,8 @@ pub struct DatabaseMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseStatus {
+    #[serde(alias = "Pending")]
+    Pending,
     #[serde(alias = "Active")]
     Active,
     #[serde(alias = "Archiving")]
@@ -163,6 +165,13 @@ pub struct CreateDatabaseResult {
 pub struct RenameDatabaseRequest {
     pub database_id: String,
     pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DeleteDatabaseRequest {
+    pub database_id: String,
+    pub expected_billing_balance_e8s: u64,
+    pub allow_balance_writeoff: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

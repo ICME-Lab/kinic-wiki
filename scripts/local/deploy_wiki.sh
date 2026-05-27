@@ -19,6 +19,14 @@ case "${ICP_ENVIRONMENT}" in
     ;;
 esac
 
+current_identity_principal() {
+  icp identity principal
+}
+
+if [[ -z "${SNS_GOVERNANCE_ID}" ]]; then
+  SNS_GOVERNANCE_ID="$(current_identity_principal)"
+fi
+
 require_principal_env() {
   local name="$1"
   local value="${!name:-}"

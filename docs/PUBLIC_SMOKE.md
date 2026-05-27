@@ -4,6 +4,8 @@ Use this flow before publishing a Browser build with CLI setup instructions. The
 
 ## Local Canister
 
+The local billing smoke expects an ICRC ledger installed at `KINIC_LEDGER_CANISTER_ID` and enough local KINIC balance on the current `icp identity` for DB top-ups plus ledger fees. `scripts/local/deploy_wiki.sh` defaults `SNS_GOVERNANCE_ID` to `icp identity principal` when it is not set.
+
 ```bash
 icp network start -d -e local-wiki
 ICP_ENVIRONMENT=local-wiki bash scripts/local/deploy_wiki.sh
@@ -19,11 +21,16 @@ Create a database, write one file, and grant anonymous reader access for Browser
 CANISTER_ID=<local-wiki-canister-id>
 REPLICA_HOST=http://127.0.0.1:8001
 DB_NAME="${DB_NAME:-Public Smoke}"
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" database create "$DB_NAME")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" database create "$DB_NAME")"
+icp canister call "${KINIC_LEDGER_CANISTER_ID:-73mez-iiaaa-aaaaq-aaasq-cai}" icrc2_approve \
+  "(record { spender = record { owner = principal \"${CANISTER_ID}\"; subaccount = null }; amount = 200000000 : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
+  -e local-wiki -o candid
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" \
+  database top-up "$DB_ID" 100000000
 printf '# Public Smoke\n\nalpha browser smoke\n' > /tmp/llm-wiki-smoke.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" --database-id "$DB_ID" \
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" --database-id "$DB_ID" \
   write-node --path /Wiki/smoke.md --input /tmp/llm-wiki-smoke.md
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" \
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" \
   database grant "$DB_ID" 2vxsx-fae reader
 ```
 
@@ -53,6 +60,7 @@ CANISTER_ID=<local-wiki-canister-id> scripts/smoke/local_canister_archive_restor
 
 That script runs the dedicated Rust archive/restore smoke and then verifies the public CLI commands:
 
+- `database top-up`
 - `database archive-export`
 - `database archive-restore`
 - `read-node`

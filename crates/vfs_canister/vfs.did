@@ -98,6 +98,7 @@ type DatabaseStatus = variant {
   Archiving;
   Archived;
   Deleted;
+  Pending;
 };
 type DatabaseSummary = record {
   status : DatabaseStatus;
@@ -109,6 +110,11 @@ type DatabaseSummary = record {
   archived_at_ms : opt int64;
   billing_balance_e8s : opt nat64;
   deleted_at_ms : opt int64;
+};
+type DeleteDatabaseRequest = record {
+  allow_balance_writeoff : bool;
+  expected_billing_balance_e8s : nat64;
+  database_id : text;
 };
 type DeleteNodeRequest = record {
   path : text;
@@ -460,7 +466,7 @@ service : (BillingConfig) -> {
       Result_1,
     ) query;
   create_database : (CreateDatabaseRequest) -> (Result_4);
-  delete_database : (text) -> (Result_1);
+  delete_database : (DeleteDatabaseRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_5);
   edit_node : (EditNodeRequest) -> (Result_6);
   export_snapshot : (ExportSnapshotRequest) -> (Result_7) query;

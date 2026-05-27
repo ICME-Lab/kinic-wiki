@@ -21,9 +21,9 @@ use vfs_types::{
     AppendNodeRequest, BillingConfig, BillingConfigUpdate, ChildNode, DatabaseArchiveInfo,
     DatabaseBillingEntry, DatabaseBillingEntryPage, DatabaseBillingPendingOperation,
     DatabaseBillingPendingOperationPage, DatabaseInfo, DatabaseMember, DatabaseRole,
-    DatabaseStatus, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
+    EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
+    FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
     ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
@@ -58,6 +58,7 @@ const INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX: &str =
 const INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS: &str =
     "database_index:015_billing_pending_ledger_details";
 const INDEX_SCHEMA_VERSION_ACTIVE_STATUS: &str = "database_index:016_active_status";
+const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
@@ -76,6 +77,7 @@ pub const DEFAULT_RATE_NUMERATOR_E8S: u64 = 200;
 pub const DEFAULT_RATE_DENOMINATOR_CYCLES: u64 = 1_000_000;
 pub const DEFAULT_FIXED_UPDATE_FEE_E8S: u64 = 100;
 pub const DEFAULT_MIN_UPDATE_BALANCE_E8S: u64 = 10_000;
+pub const DELETE_BALANCE_WRITEOFF_LIMIT_E8S: u64 = 100_000_000;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -392,6 +394,29 @@ impl VfsService {
         self.reserve_generated_database(name, caller, now)
     }
 
+    pub fn reserve_pending_generated_database(
+        &self,
+        name: &str,
+        caller: &str,
+        now: i64,
+    ) -> Result<DatabaseMeta, String> {
+        let name = normalize_database_name(name)?;
+        self.write_index(|tx| {
+            let mut selected_database_id = None;
+            for attempt in 0_u32..100 {
+                let database_id =
+                    generated_database_id(caller, now, PENDING_DATABASE_MOUNT_ID, attempt);
+                if !database_exists(tx, &database_id)? {
+                    selected_database_id = Some(database_id);
+                    break;
+                }
+            }
+            let database_id = selected_database_id
+                .ok_or_else(|| "failed to generate unique database id".to_string())?;
+            self.insert_pending_database_reservation(tx, &database_id, &name, caller, now)
+        })
+    }
+
     fn reserve_generated_database(
         &self,
         name: &str,
@@ -489,6 +514,46 @@ impl VfsService {
         })
     }
 
+    fn insert_pending_database_reservation(
+        &self,
+        tx: &Transaction<'_>,
+        database_id: &str,
+        name: &str,
+        caller: &str,
+        now: i64,
+    ) -> Result<DatabaseMeta, String> {
+        tx.execute(
+            "INSERT INTO databases
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
+              logical_size_bytes, created_at_ms, updated_at_ms)
+             VALUES (?1, ?2, '', ?3, NULL, 'pending', ?4, 0, ?5, ?5)",
+            params![
+                database_id,
+                name,
+                i64::from(PENDING_DATABASE_MOUNT_ID),
+                DATABASE_SCHEMA_VERSION,
+                now
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        insert_initial_database_members(tx, database_id, caller, now)?;
+        tx.execute(
+            "INSERT INTO database_billing_accounts
+             (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
+             VALUES (?1, 0, ?2, ?2, ?2)",
+            params![database_id, now],
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(DatabaseMeta {
+            database_id: database_id.to_string(),
+            name: name.to_string(),
+            db_file_name: String::new(),
+            mount_id: PENDING_DATABASE_MOUNT_ID,
+            schema_version: DATABASE_SCHEMA_VERSION.to_string(),
+            logical_size_bytes: 0,
+        })
+    }
+
     pub fn discard_database_reservation(&self, database_id: &str) -> Result<(), String> {
         let db_file_name = self.write_index(|tx| {
             let db_file_name: Option<String> = tx
@@ -548,6 +613,38 @@ impl VfsService {
             return Err(error.to_string());
         }
         Ok(())
+    }
+
+    pub fn activate_pending_database_for_top_up(
+        &self,
+        database_id: &str,
+        now: i64,
+    ) -> Result<Option<DatabaseMeta>, String> {
+        self.write_index(|tx| {
+            let status = load_database_status(tx, database_id)?;
+            if status != DatabaseStatus::Pending {
+                return Ok(None);
+            }
+            let existing =
+                load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])?;
+            if existing.is_some() {
+                return Ok(existing);
+            }
+            let mount_id = allocate_mount_id(tx)?;
+            let db_file_name = self.database_file_name(database_id, mount_id)?;
+            record_mount_history(tx, database_id, mount_id, "activate", now)?;
+            tx.execute(
+                "UPDATE databases
+                 SET db_file_name = ?2,
+                     mount_id = ?3,
+                     active_mount_id = ?3,
+                     updated_at_ms = ?4
+                 WHERE database_id = ?1 AND status = 'pending'",
+                params![database_id, db_file_name, i64::from(mount_id), now],
+            )
+            .map_err(|error| error.to_string())?;
+            load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])
+        })
     }
 
     pub fn validate_database_top_up(
@@ -651,6 +748,7 @@ impl VfsService {
             if status == DatabaseStatus::Deleted {
                 return Err(format!("database is deleted: {database_id}"));
             }
+            complete_pending_database_activation(tx, database_id, now)?;
             let db_balance = database_balance_for_update(tx, database_id, now)?;
             let next_database = checked_balance_add(db_balance, amount)?;
             update_database_billing_balance(tx, database_id, next_database, &config, now)?;
@@ -1129,6 +1227,7 @@ impl VfsService {
             if status == DatabaseStatus::Deleted {
                 return Err(format!("database is deleted: {database_id}"));
             }
+            complete_pending_database_activation(tx, database_id, now)?;
             let balance = database_balance_for_update(tx, database_id, now)?;
             let next = checked_balance_add(balance, operation.amount_e8s)?;
             update_database_billing_balance(tx, database_id, next, &config, now)?;
@@ -1168,11 +1267,22 @@ impl VfsService {
             if status == DatabaseStatus::Deleted {
                 return Err(format!("database is deleted: {database_id}"));
             }
+            let active_mount_id: Option<i64> = tx
+                .query_row(
+                    "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+                    params![database_id],
+                    |row| crate::sqlite::row_get(row, 0),
+                )
+                .map_err(|error| error.to_string())?;
+            if status == DatabaseStatus::Pending && active_mount_id.is_some() {
+                return Err(
+                    "pending database activation already started; complete top-up repair"
+                        .to_string(),
+                );
+            }
+            delete_pending_billing_operation(tx, operation_id)?;
             let _ = now;
-            Err(
-                "ambiguous top-up repair requires verified complete or retry with original ledger arguments"
-                    .to_string(),
-            )
+            Ok(())
         })
     }
 
@@ -1331,30 +1441,105 @@ impl VfsService {
 
     pub fn run_database_migrations(&self, database_id: &str) -> Result<(), String> {
         let meta = self.database_meta(database_id)?;
+        self.run_database_migrations_for_meta(database_id, &meta)
+    }
+
+    pub fn run_pending_database_migrations(&self, database_id: &str) -> Result<(), String> {
+        let meta = self.database_meta_with_statuses(database_id, &[DatabaseStatus::Pending])?;
+        self.run_database_migrations_for_meta(database_id, &meta)
+    }
+
+    fn run_database_migrations_for_meta(
+        &self,
+        database_id: &str,
+        meta: &DatabaseMeta,
+    ) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(parent) = Path::new(&meta.db_file_name).parent() {
             create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        let result = self.database_store(&meta)?.run_fs_migrations();
+        let result = self.database_store(meta)?.run_fs_migrations();
         if result.is_ok() {
             self.refresh_logical_size(database_id)?;
         }
         result
     }
 
-    pub fn delete_database(&self, database_id: &str, caller: &str, now: i64) -> Result<(), String> {
+    pub fn delete_database(
+        &self,
+        request: DeleteDatabaseRequest,
+        caller: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        let database_id = request.database_id.as_str();
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         self.require_no_pending_billing_operations(database_id)?;
-        let meta = self.database_meta(database_id)?;
+        let status = self.read_index(|conn| load_database_status(conn, database_id))?;
+        if !matches!(status, DatabaseStatus::Pending | DatabaseStatus::Active) {
+            return Err(format!(
+                "database is {}: {database_id}",
+                status_to_db(status)
+            ));
+        }
+        let config = self.billing_config()?;
+        let balance: i64 = self.read_index(|conn| {
+            conn.query_row(
+                "SELECT balance_e8s FROM database_billing_accounts WHERE database_id = ?1",
+                params![database_id],
+                |row| crate::sqlite::row_get(row, 0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("database billing account not found: {database_id}"))
+        })?;
+        let expected_balance = amount_to_i64(request.expected_billing_balance_e8s)?;
+        if balance != expected_balance {
+            return Err(format!(
+                "database billing balance changed: expected {}, found {}",
+                request.expected_billing_balance_e8s,
+                balance.max(0)
+            ));
+        }
+        let writeoff_limit = amount_to_i64(DELETE_BALANCE_WRITEOFF_LIMIT_E8S)?;
+        if balance >= writeoff_limit {
+            return Err("database has withdrawable balance; withdraw before delete".to_string());
+        }
+        if balance > 0 && !request.allow_balance_writeoff {
+            return Err(
+                "database has remaining balance; confirm balance writeoff before delete"
+                    .to_string(),
+            );
+        }
+        let meta = self.database_meta(database_id).ok();
         #[cfg(target_arch = "wasm32")]
         let _ = &meta;
         #[cfg(not(target_arch = "wasm32"))]
-        if let Err(error) = remove_file(&meta.db_file_name)
+        if let Some(meta) = &meta
+            && let Err(error) = remove_file(&meta.db_file_name)
             && error.kind() != std::io::ErrorKind::NotFound
         {
             return Err(error.to_string());
         }
         self.write_index(|conn| {
+            if balance > 0 {
+                update_database_billing_balance(conn, database_id, 0, &config, now)?;
+                insert_database_ledger(
+                    conn,
+                    DatabaseLedgerInsert {
+                        database_id,
+                        kind: "delete_balance_writeoff",
+                        amount_e8s: -balance,
+                        balance_after_e8s: 0,
+                        caller,
+                        method: Some("delete_database"),
+                        cycles_delta: None,
+                        config: None,
+                        usage_event_id: None,
+                        ledger_block_index: None,
+                        now,
+                    },
+                )?;
+            }
             conn.execute(
                 "UPDATE databases
              SET status = 'deleted',
@@ -2447,7 +2632,11 @@ impl VfsService {
     fn database_meta_allowing_restoring(&self, database_id: &str) -> Result<DatabaseMeta, String> {
         self.database_meta_with_statuses(
             database_id,
-            &[DatabaseStatus::Active, DatabaseStatus::Restoring],
+            &[
+                DatabaseStatus::Pending,
+                DatabaseStatus::Active,
+                DatabaseStatus::Restoring,
+            ],
         )
     }
 
@@ -3960,8 +4149,43 @@ fn validate_database_top_up_for_conn(
             |row| crate::sqlite::row_get(row, 0),
         )
         .map_err(|error| error.to_string())?;
+    if status == DatabaseStatus::Pending && pending_top_up > 0 {
+        return Err(format!("database activation is pending: {database_id}"));
+    }
     let reserved = checked_balance_add(balance, pending_top_up)?;
     checked_balance_add(reserved, amount)?;
+    Ok(())
+}
+
+fn complete_pending_database_activation(
+    conn: &Connection,
+    database_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    let status = load_database_status(conn, database_id)?;
+    if status != DatabaseStatus::Pending {
+        return Ok(());
+    }
+    let active_mount_id: Option<i64> = conn
+        .query_row(
+            "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+            params![database_id],
+            |row| crate::sqlite::row_get(row, 0),
+        )
+        .map_err(|error| error.to_string())?;
+    if active_mount_id.is_none() {
+        return Err(format!(
+            "pending database has no activation mount: {database_id}"
+        ));
+    }
+    conn.execute(
+        "UPDATE databases
+         SET status = 'active',
+             updated_at_ms = ?2
+         WHERE database_id = ?1 AND status = 'pending'",
+        params![database_id, now],
+    )
+    .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -4866,6 +5090,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
     {
         Ok(Some(status))
             if status == "active"
+                || status == "pending"
                 || status == "archived"
                 || status == "archiving"
                 || status == "restoring"
@@ -4912,7 +5137,7 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
         "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
-         WHERE status IN ('active', 'archiving', 'restoring') AND active_mount_id IS NOT NULL
+         WHERE status IN ('pending', 'active', 'archiving', 'restoring') AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
     )
     .map_err(|error| error.to_string())?;
@@ -4959,7 +5184,7 @@ fn load_database_summaries_for_caller(
          FROM databases d
          INNER JOIN database_members m ON m.database_id = d.database_id
          LEFT JOIN database_billing_accounts b ON b.database_id = d.database_id
-         WHERE m.principal = ?1
+         WHERE m.principal = ?1 AND d.status != 'deleted'
          ORDER BY d.database_id ASC",
         )
         .map_err(|error| error.to_string())?;
@@ -5044,6 +5269,7 @@ fn role_to_db(role: DatabaseRole) -> &'static str {
 
 fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
     match status {
+        "pending" => Ok(DatabaseStatus::Pending),
         "active" => Ok(DatabaseStatus::Active),
         "archiving" => Ok(DatabaseStatus::Archiving),
         "archived" => Ok(DatabaseStatus::Archived),
@@ -5055,6 +5281,7 @@ fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
 
 fn status_to_db(status: DatabaseStatus) -> &'static str {
     match status {
+        DatabaseStatus::Pending => "pending",
         DatabaseStatus::Active => "active",
         DatabaseStatus::Archiving => "archiving",
         DatabaseStatus::Archived => "archived",

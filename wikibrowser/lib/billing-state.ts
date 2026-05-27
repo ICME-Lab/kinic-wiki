@@ -34,6 +34,19 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
       reason: "Billing config unavailable."
     };
   }
+  if (database.status === "pending") {
+    return {
+      state: "suspended",
+      label: "Pending",
+      summary: `Pending / ${formatTokenAmountFromE8s(balance)}`,
+      balanceE8s: balance,
+      minUpdateBalanceE8s: minimum,
+      configAvailable: true,
+      depositAvailable: true,
+      billable: false,
+      reason: "Database activation is pending until its first top-up completes."
+    };
+  }
   if (database.billingSuspendedAtMs) {
     return {
       state: "suspended",
