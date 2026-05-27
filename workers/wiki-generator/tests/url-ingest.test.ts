@@ -126,10 +126,10 @@ test("queued URL ingest truncates extracted source text only at source write", a
   }, "<html><head><title>Large</title></head><body>Alpha beta gamma delta</body></html>");
 
   assert.ok(vfs.lastSourceWrite);
-  assert.match(vfs.lastSourceWrite.content, /truncated: "true"/);
-  assert.match(vfs.lastSourceWrite.content, /original_chars: "28"/);
-  assert.match(vfs.lastSourceWrite.content, /saved_chars: "11"/);
-  assert.match(vfs.lastSourceWrite.content, /fetched_truncated: "false"/);
+  assert.match(vfs.lastSourceWrite.content, /truncated: true/);
+  assert.match(vfs.lastSourceWrite.content, /original_chars: 28/);
+  assert.match(vfs.lastSourceWrite.content, /saved_chars: 11/);
+  assert.match(vfs.lastSourceWrite.content, /fetched_truncated: false/);
   assert.match(vfs.lastSourceWrite.content, /Large Alpha/);
   assert.doesNotMatch(vfs.lastSourceWrite.content, /gamma/);
   assert.deepEqual(JSON.parse(vfs.lastSourceWrite.metadataJson), {
@@ -155,10 +155,10 @@ test("queued URL ingest records fetch truncation separately from source truncati
   }, "alpha beta gamma");
 
   assert.ok(vfs.lastSourceWrite);
-  assert.match(vfs.lastSourceWrite.content, /truncated: "false"/);
-  assert.match(vfs.lastSourceWrite.content, /fetched_truncated: "true"/);
-  assert.match(vfs.lastSourceWrite.content, /fetched_bytes: "12"/);
-  assert.match(vfs.lastSourceWrite.content, /max_fetched_bytes: "12"/);
+  assert.match(vfs.lastSourceWrite.content, /truncated: false/);
+  assert.match(vfs.lastSourceWrite.content, /fetched_truncated: true/);
+  assert.match(vfs.lastSourceWrite.content, /fetched_bytes: 12/);
+  assert.match(vfs.lastSourceWrite.content, /max_fetched_bytes: 12/);
   assert.match(vfs.lastSourceWrite.content, /alpha beta g/);
   assert.deepEqual(JSON.parse(vfs.lastSourceWrite.metadataJson), {
     source_type: "url",

@@ -11,20 +11,27 @@ import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
-export async function runManual(env: RuntimeEnv, input: ManualRunInput): Promise<Response> {
+export type ManualRunContext = {
+  vfs: VfsClient;
+};
+
+export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
   const config = loadConfig(env);
   validateCanonicalSourcePath(input.sourcePath, config.sourcePrefix);
-  const vfs = await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM);
+  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, input.databaseId, input.sourcePath);
+  if (source.etag !== input.sourceEtag) {
+    return jsonResponse({ error: "source etag mismatch", sourcePath: input.sourcePath }, 409);
+  }
 
   if (!input.dryRun) {
     const enqueued = await enqueueSourceJob(env, {
       kind: "source",
       databaseId: input.databaseId,
       sourcePath: input.sourcePath,
-      sourceEtag: source.etag
+      sourceEtag: input.sourceEtag
     });
-    return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: source.etag }, 202);
+    return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: input.sourceEtag }, 202);
   }
 
   const generated = await generateFromSource(env, vfs, config, input.databaseId, source);
@@ -90,14 +97,16 @@ export async function bestEffortAppendWorkerLog(vfs: VfsClient, databaseId: stri
 }
 
 export function parseManualRunInput(value: unknown): ManualRunInput | string {
-  if (!isObject(value)) return "body must include databaseId and sourcePath";
+  if (!isObject(value)) return "body must include databaseId, sourcePath, and sourceEtag";
   const databaseId = value.databaseId;
   const sourcePath = value.sourcePath;
+  const sourceEtag = value.sourceEtag;
   const dryRun = value.dryRun;
   if (typeof databaseId !== "string" || databaseId.length === 0) return "databaseId is required";
   if (typeof sourcePath !== "string" || sourcePath.length === 0) return "sourcePath is required";
+  if (typeof sourceEtag !== "string" || sourceEtag.length === 0) return "sourceEtag is required";
   if (dryRun !== undefined && typeof dryRun !== "boolean") return "dryRun must be a boolean";
-  return { databaseId, sourcePath, dryRun: dryRun ?? false };
+  return { databaseId, sourcePath, sourceEtag, dryRun: dryRun ?? false };
 }
 
 export function parseQueueMessage(value: unknown): QueueMessage | null {

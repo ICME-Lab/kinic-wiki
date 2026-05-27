@@ -11,7 +11,7 @@ Set `DEEPSEEK_API_KEY` as a Cloudflare secret. `KINIC_WIKI_WORKER_TOKEN` protect
 
 The worker processes explicit `/Sources/ingest-requests` `kinic.url_ingest_request` nodes.
 Those request nodes are VFS `file` nodes and act as request audit logs: they record `requested_by`, `requested_at`, `claimed_at`, `status`, `source_path`, `target_path`, `finished_at`, and `error`.
-The fetched raw web evidence written to `/Sources/raw/<provider>/<id>.md` remains a VFS `source` node.
+The fetched raw web evidence written to `/Sources/raw/<provider>/<id>.md` remains a VFS `source` node. Legacy one-segment raw source paths are not accepted by the worker; migrate them explicitly before regeneration or purge operations.
 Raw web sources keep URL provenance only. Request/source correspondence is tracked from the request node's `source_path`, not by writing `request_path` back into the raw source.
 Trusted servers trigger a single request with bearer-authenticated `POST /url-ingest`:
 

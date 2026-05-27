@@ -170,12 +170,12 @@ async function writeFetchedSource(
       title,
       content_type: fetched.contentType,
       captured_at: capturedAt,
-      truncated: sourceText.truncated ? "true" : "false",
-      original_chars: String(sourceText.originalChars),
-      saved_chars: String(sourceText.savedChars),
-      fetched_truncated: fetched.fetchedTruncated ? "true" : "false",
-      fetched_bytes: String(fetched.fetchedBytes),
-      max_fetched_bytes: String(fetched.maxFetchedBytes)
+      truncated: sourceText.truncated,
+      original_chars: sourceText.originalChars,
+      saved_chars: sourceText.savedChars,
+      fetched_truncated: fetched.fetchedTruncated,
+      fetched_bytes: fetched.fetchedBytes,
+      max_fetched_bytes: fetched.maxFetchedBytes
     },
     [`# ${title}`, "", `Source URL: ${fetched.finalUrl}`, "", sourceText.text].join("\n")
   );

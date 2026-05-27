@@ -156,6 +156,7 @@ await withEnv(
       assert.deepEqual(JSON.parse(init?.body), {
         databaseId: "db_1",
         sourcePath: "/Sources/raw/web/abc.md",
+        sourceEtag: "etag-source",
         dryRun: false
       });
       return Response.json({ queued: true }, { status: 202 });
@@ -163,6 +164,12 @@ await withEnv(
       const response = await sourceRunRouteModule.POST(sourceRunRequest("https://wiki.kinic.xyz"));
       assert.equal(response.status, 202);
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
+    });
+
+    await withMockFetch(async () => Response.json({ error: "source etag mismatch" }, { status: 409 }), async () => {
+      const response = await sourceRunRouteModule.POST(sourceRunRequest("https://wiki.kinic.xyz"));
+      assert.equal(response.status, 409);
+      assert.match(await response.text(), /source etag mismatch/);
     });
     sourceRunRouteModule.setSourceRunDepsForTest();
     const sourceRunRoute = readFileSync(new URL("../app/api/source/run/route.ts", import.meta.url), "utf8");

@@ -79,8 +79,9 @@ export async function POST(request: Request): Promise<Response> {
         authorization: `Bearer ${token}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({ databaseId: input.databaseId, sourcePath: input.sourcePath, dryRun: false })
+      body: JSON.stringify({ databaseId: input.databaseId, sourcePath: input.sourcePath, sourceEtag: input.sourceEtag, dryRun: false })
     });
+    if (response.status === 409) return jsonError("source etag mismatch", 409, origin);
     if (!response.ok) return jsonError(`worker trigger failed: HTTP ${response.status}`, 502, origin);
     return Response.json({ accepted: true }, { status: 202, headers: corsHeaders(origin) });
   } catch {

@@ -85,6 +85,7 @@ export type QueueMessage = SourceQueueMessage | UrlIngestQueueMessage;
 export type ManualRunInput = {
   databaseId: string;
   sourcePath: string;
+  sourceEtag: string;
   dryRun: boolean;
 };
 
