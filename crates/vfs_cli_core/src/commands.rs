@@ -18,7 +18,7 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, RecentNodesRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
