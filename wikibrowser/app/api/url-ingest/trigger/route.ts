@@ -15,7 +15,8 @@ const ALLOWED_ORIGINS = new Set([
   "https://wiki.kinic.xyz",
   "https://kinic.xyz",
   "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj",
-  "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci"
+  "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci",
+  "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"
 ]);
 
 let checkSession: CheckSession = defaultCheckSession;

@@ -4,9 +4,10 @@
 This document covers wiki/database operator operations: connection, database management, node reads and writes, search, links, and archive/restore.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
-The canister also exposes read-only Agent Memory API methods such as `memory_manifest`, `query_context`, and `source_evidence`.
+The canister also exposes read-only Agent Memory API methods such as `memory_manifest`, `query_context`, and `source_evidence`; see [`AGENT_MEMORY_API.md`](AGENT_MEMORY_API.md).
 Those are direct canister/client methods, not CLI commands in this document.
 Use the CLI commands below for shell workflows against the remote VFS.
+For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
 
 ## Build
 
@@ -63,7 +64,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- status
 
 Resolution priority is CLI flag, env, `.kinic/config.toml`, user config, then host default. Use `database unlink` to remove the workspace DB link.
 
-## Identity Mode
+## Database Setup
 
 `--identity-mode auto` is the default. Mutating and owner commands always use the selected `icp identity`. Read-only DB commands first check anonymous access; if the selected identity is a DB member, the command still uses identity. Public DB reads use anonymous only when the selected identity is not a member.
 
@@ -229,13 +230,45 @@ Common read and write commands:
 - `read-node --path /Wiki/file.md`
 - `read-node-context --path /Wiki/file.md --link-limit 20 --json`
 - `list-children --path /Wiki --json`
+- `list-nodes --prefix /Wiki --recursive --json`
 - `write-node --path /Wiki/file.md --input file.md`
+- `write-nodes --input nodes.json --json`
 - `append-node --path /Wiki/file.md --input append.md`
 - `edit-node --path /Wiki/file.md --old-text before --new-text after`
 - `delete-node --path /Wiki/file.md`
+- `delete-tree --path /Wiki/obsolete-scope --json`
 - `move-node --from-path /Wiki/a.md --to-path /Wiki/b.md`
 - `glob-nodes "**/*.md" --path /Wiki --json`
 - `recent-nodes 20 --path /Wiki --json`
+
+Use `list-children` for one-level tree views and UI-style navigation.
+Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.
+Use `write-nodes` for one atomic batch write when the full node bodies are already prepared:
+
+```json
+[
+  {
+    "path": "/Wiki/a.md",
+    "kind": "file",
+    "content": "body",
+    "metadata_json": "{}",
+    "expected_etag": "optional-etag"
+  }
+]
+```
+
+`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes must use canonical source paths such as `/Sources/raw/<provider>/<id>.md`; legacy one-segment raw source paths are rejected and must be migrated explicitly before regeneration or purge operations.
+`delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
+
+Maintenance and database lifecycle operations live in their own command groups:
+
+- `rebuild-index`
+- `rebuild-scope-index`
+- `status`
+- `database archive-export`
+- `database archive-restore`
+- `database archive-cancel`
+- `database restore-cancel`
 
 ## Link Graph
 

@@ -41,9 +41,10 @@ use vfs_types::{
     NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
     OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -51,7 +52,7 @@ const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
 #[cfg(not(target_arch = "wasm32"))]
 const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
-const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci"]}"#;
+const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
@@ -729,6 +730,19 @@ fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
 }
 
 #[update]
+fn write_source_for_generation(
+    request: WriteSourceForGenerationRequest,
+) -> Result<WriteSourceForGenerationResult, String> {
+    let database_id = request.database_id.clone();
+    with_role_metered_update(
+        "write_source_for_generation",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.write_source_for_generation(caller, request, now),
+    )
+}
+
+#[update]
 fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
     let database_id = request.database_id.clone();
     with_role_metered_update(
@@ -780,6 +794,11 @@ fn check_ops_answer_session(
     request: OpsAnswerSessionCheckRequest,
 ) -> Result<OpsAnswerSessionCheckResult, String> {
     with_service(|service| service.check_ops_answer_session(request, now_millis()))
+}
+
+#[query]
+fn check_source_run_session(request: SourceRunSessionCheckRequest) -> Result<(), String> {
+    with_service(|service| service.check_source_run_session(request, now_millis()))
 }
 
 #[update]

@@ -202,6 +202,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     metadata_json: idl.Text,
     database_id: idl.Text
   });
+  const WriteSourceForGenerationRequest = idl.Record({
+    content: idl.Text,
+    path: idl.Text,
+    session_nonce: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    metadata_json: idl.Text,
+    database_id: idl.Text
+  });
   const DeleteNodeRequest = idl.Record({
     path: idl.Text,
     expected_etag: idl.Opt(idl.Text),
@@ -234,6 +242,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     session_nonce: idl.Text
   });
   const OpsAnswerSessionCheckResult = idl.Record({ principal: idl.Text });
+  const SourceRunSessionCheckRequest = idl.Record({
+    database_id: idl.Text,
+    source_path: idl.Text,
+    source_etag: idl.Text,
+    session_nonce: idl.Text
+  });
   const SearchNodePathsRequest = idl.Record({
     database_id: idl.Text,
     query_text: idl.Text,
@@ -276,6 +290,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
+  const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
+  const ResultWriteSourceForGeneration = idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text });
   const DeleteNodeResult = idl.Record({ path: idl.Text });
   const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: idl.Text });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
@@ -292,8 +308,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     canister_health: idl.Func([], [CanisterHealth], ["query"]),
     check_database_billable: idl.Func([idl.Text], [ResultUnit], ["query"]),
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
+    check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
+    delete_database: idl.Func([idl.Text], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_billing_config: idl.Func([], [ResultBillingConfig], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
@@ -325,6 +343,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     top_up_database: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
     withdraw_database_balance: idl.Func([idl.Text, idl.Nat64, BillingAccount], [ResultBillingTransfer], []),
-    write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], [])
+    write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
+    write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [ResultWriteSourceForGeneration], [])
   });
 };

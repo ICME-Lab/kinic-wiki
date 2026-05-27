@@ -9,6 +9,7 @@ use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, anyhow};
 use candid::Principal;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
@@ -17,7 +18,7 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, RecentNodesRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -146,6 +147,28 @@ pub async fn run_vfs_command(
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 println!("{}", result.node.etag);
+            }
+        }
+        VfsCommand::WriteNodes { input, json } => {
+            let nodes = read_write_nodes_file(&input)?;
+            for node in &nodes {
+                validate_source_path_for_write(&node.path, node.kind.clone())?;
+            }
+            let results = client
+                .write_nodes(WriteNodesRequest {
+                    database_id: database_id.to_string(),
+                    nodes,
+                })
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&results)?);
+            } else {
+                for result in results {
+                    println!(
+                        "{}\t{}\t{}",
+                        result.node.path, result.node.etag, result.created
+                    );
+                }
             }
         }
         VfsCommand::AppendNode {
@@ -1368,6 +1391,61 @@ fn read_multi_edit_file(path: &std::path::Path) -> Result<Vec<MultiEdit>> {
     serde_json::from_str(&content).map_err(Into::into)
 }
 
+fn read_write_nodes_file(path: &std::path::Path) -> Result<Vec<WriteNodeItem>> {
+    let content = fs::read_to_string(path)?;
+    let nodes: Vec<WriteNodeInputItem> = serde_json::from_str(&content)?;
+    if nodes.is_empty() {
+        return Err(anyhow!("write-nodes input must contain at least one node"));
+    }
+    Ok(nodes
+        .into_iter()
+        .map(WriteNodeInputItem::into_item)
+        .collect())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WriteNodeInputItem {
+    path: String,
+    kind: WriteNodeInputKind,
+    content: String,
+    #[serde(default = "default_metadata_json")]
+    metadata_json: String,
+    expected_etag: Option<String>,
+}
+
+impl WriteNodeInputItem {
+    fn into_item(self) -> WriteNodeItem {
+        WriteNodeItem {
+            path: self.path,
+            kind: self.kind.into_node_kind(),
+            content: self.content,
+            metadata_json: self.metadata_json,
+            expected_etag: self.expected_etag,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WriteNodeInputKind {
+    File,
+    Source,
+}
+
+impl WriteNodeInputKind {
+    fn into_node_kind(self) -> NodeKind {
+        match self {
+            Self::File => NodeKind::File,
+            Self::Source => NodeKind::Source,
+        }
+    }
+}
+
+fn default_metadata_json() -> String {
+    "{}".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{command_requires_billable_database, run_vfs_command};
@@ -1404,6 +1482,7 @@ mod tests {
         ledger_fee_queries: Mutex<Vec<String>>,
         fail_ledger_fee_query: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
+        write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
         child_lists: Mutex<Vec<ListChildrenRequest>>,
         contexts: Mutex<Vec<NodeContextRequest>>,
@@ -1815,6 +1894,22 @@ mod tests {
                 created: true,
             })
         }
+        async fn write_nodes(&self, request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>> {
+            self.write_batches.lock().unwrap().push(request.clone());
+            Ok(request
+                .nodes
+                .into_iter()
+                .map(|node| WriteNodeResult {
+                    node: NodeMutationAck {
+                        path: node.path,
+                        kind: node.kind,
+                        updated_at: 0,
+                        etag: "etag".to_string(),
+                    },
+                    created: true,
+                })
+                .collect())
+        }
         async fn append_node(&self, _request: AppendNodeRequest) -> Result<WriteNodeResult> {
             unreachable!()
         }
@@ -2078,6 +2173,141 @@ mod tests {
                 amount_e8s: 1,
             },
         }));
+    }
+
+    #[tokio::test]
+    async fn write_nodes_dispatches_one_batch() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("nodes.json");
+        std::fs::write(
+            &input,
+            r#"[
+  {"path": "/Wiki/a.md", "kind": "file", "content": "alpha"},
+  {"path": "/Sources/raw/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
+]"#,
+        )
+        .expect("input should write");
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNodes { input, json: true },
+        )
+        .await
+        .expect("batch write should succeed");
+
+        let batches = client.write_batches.lock().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].database_id, "alpha");
+        assert_eq!(batches[0].nodes.len(), 2);
+        assert_eq!(batches[0].nodes[0].metadata_json, "{}");
+        assert_eq!(batches[0].nodes[1].kind, NodeKind::Source);
+        assert_eq!(
+            batches[0].nodes[1].expected_etag.as_deref(),
+            Some("etag-source")
+        );
+    }
+
+    #[tokio::test]
+    async fn write_nodes_rejects_invalid_source_path() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("nodes.json");
+        std::fs::write(
+            &input,
+            r#"[{"path": "/Wiki/source.md", "kind": "source", "content": "source"}]"#,
+        )
+        .expect("input should write");
+        let client = MockClient::default();
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNodes { input, json: true },
+        )
+        .await
+        .expect_err("invalid source path should fail");
+
+        assert!(error.to_string().contains("source path must stay under"));
+        assert!(client.write_batches.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_nodes_rejects_empty_input() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("nodes.json");
+        std::fs::write(&input, "[]").expect("input should write");
+        let client = MockClient::default();
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNodes { input, json: true },
+        )
+        .await
+        .expect_err("empty input should fail");
+
+        assert!(error.to_string().contains("at least one node"));
+        assert!(client.write_batches.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_nodes_rejects_invalid_json() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("nodes.json");
+        std::fs::write(&input, "{").expect("input should write");
+        let client = MockClient::default();
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNodes { input, json: true },
+        )
+        .await
+        .expect_err("invalid json should fail");
+
+        assert!(!error.to_string().is_empty());
+        assert!(client.write_batches.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_nodes_rejects_unknown_fields() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("nodes.json");
+        std::fs::write(
+            &input,
+            r#"[{"path": "/Wiki/a.md", "kind": "file", "content": "alpha", "expected_etga": "etag"}]"#,
+        )
+        .expect("input should write");
+        let client = MockClient::default();
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNodes { input, json: true },
+        )
+        .await
+        .expect_err("unknown field should fail");
+
+        assert!(error.to_string().contains("unknown field"));
+        assert!(client.write_batches.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn write_nodes_rejects_folder_kind() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("nodes.json");
+        std::fs::write(
+            &input,
+            r#"[{"path": "/Wiki/folder", "kind": "folder", "content": ""}]"#,
+        )
+        .expect("input should write");
+        let client = MockClient::default();
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNodes { input, json: true },
+        )
+        .await
+        .expect_err("folder kind should fail");
+
+        assert!(error.to_string().contains("unknown variant"));
+        assert!(client.write_batches.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

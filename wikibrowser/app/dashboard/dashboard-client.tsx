@@ -2,11 +2,14 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { BusyAction } from "./access-control";
 import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { BillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
+  deleteDatabaseAuthenticated,
   getBillingConfig,
   grantDatabaseAccessAuthenticated,
   listDatabaseMembersAuthenticated,
@@ -18,11 +21,11 @@ import {
 } from "@/lib/vfs-client";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
-type BusyAction = { kind: "grant"; principalText: string; role: DatabaseRole } | { kind: "revoke"; principalText: string } | { kind: "rename" };
 type DatabaseAccessSummary = DatabaseSummary & { publicReadable: boolean };
 
 export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const router = useRouter();
   const refreshSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
@@ -67,10 +70,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setMemberError(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [publicResult, memberResult, billingConfigResult] = await Promise.allSettled([
+        const [billingResult, publicResult, memberResult] = await Promise.allSettled([
+          getBillingConfig(canisterId),
           listDatabasesPublic(canisterId),
-          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([]),
-          getBillingConfig(canisterId)
+          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
         if (publicResult.status === "rejected" && !identity) {
           throw new Error(errorMessage(publicResult.reason));
@@ -85,13 +88,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         const nextDatabase = nextDatabases.find((item) => item.databaseId === nextDatabaseId) ?? null;
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
-        setBillingConfig(billingConfigResult.status === "fulfilled" ? billingConfigResult.value : null);
+        setBillingConfig(billingResult.status === "fulfilled" ? billingResult.value : null);
         setMembers([]);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
-        }
-        if (billingConfigResult.status === "rejected") {
-          setWarning(`Billing config unavailable: ${errorMessage(billingConfigResult.reason)}`);
         }
         if (memberResult.status === "rejected") {
           setMemberError(`Member database list unavailable: ${errorMessage(memberResult.reason)}`);
@@ -168,8 +168,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     refreshSeqRef.current += 1;
     await authClient.logout();
     setPrincipal(null);
-    setBillingConfig(null);
     setDatabases([]);
+    setBillingConfig(null);
     setMembers([]);
     setError(null);
     setWarning(null);
@@ -234,6 +234,23 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
+  async function deleteDatabase(): Promise<string | null> {
+    if (!authClient || !databaseId) return "Login with Internet Identity to delete database.";
+    setBusy(true);
+    setBusyAction({ kind: "delete" });
+    setActionMessage(null);
+    try {
+      await deleteDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId);
+      router.replace("/dashboard");
+      return null;
+    } catch (cause) {
+      const message = errorMessage(cause);
+      setBusy(false);
+      setBusyAction(null);
+      return message;
+    }
+  }
+
   return (
     <main className="min-h-screen px-6 py-8">
       <section className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -261,7 +278,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
         {database ? (
           canManage ? (
-            <OwnerPanel busy={busy} busyAction={busyAction} databaseName={database.name} members={members} principal={principal ?? "anonymous"} onGrant={grantAccess} onRename={renameDatabase} onRevoke={revokeAccess} />
+            <OwnerPanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} members={members} principal={principal ?? "anonymous"} onDelete={deleteDatabase} onGrant={grantAccess} onRename={renameDatabase} onRevoke={revokeAccess} />
           ) : database.publicReadable ? (
             <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />
           ) : principal ? (

@@ -13,7 +13,8 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteNodeRequest, MkdirNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -379,6 +380,35 @@ fn ops_answer_session_check_request(
 ) -> OpsAnswerSessionCheckRequest {
     OpsAnswerSessionCheckRequest {
         database_id: database_id.to_string(),
+        session_nonce: session_nonce.to_string(),
+    }
+}
+
+fn source_run_session_check_request(
+    database_id: &str,
+    source_path: &str,
+    source_etag: &str,
+    session_nonce: &str,
+) -> SourceRunSessionCheckRequest {
+    SourceRunSessionCheckRequest {
+        database_id: database_id.to_string(),
+        source_path: source_path.to_string(),
+        source_etag: source_etag.to_string(),
+        session_nonce: session_nonce.to_string(),
+    }
+}
+
+fn write_source_for_generation_request(
+    database_id: &str,
+    path: &str,
+    session_nonce: &str,
+) -> WriteSourceForGenerationRequest {
+    WriteSourceForGenerationRequest {
+        database_id: database_id.to_string(),
+        path: path.to_string(),
+        content: "raw source".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
         session_nonce: session_nonce.to_string(),
     }
 }
@@ -909,6 +939,136 @@ fn url_ingest_trigger_session_check_allows_generating_status() {
             101,
         )
         .expect("generating request should remain session-checkable");
+}
+
+#[test]
+fn source_for_generation_writes_source_and_authorizes_bound_session() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
+        .expect("writer grant should succeed");
+    service
+        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
+        .expect("reader grant should succeed");
+    let path = "/Sources/raw/web/abc.md";
+    ensure_parent_folders(&service, "owner", "alpha", path, 4);
+
+    let reader = service
+        .write_source_for_generation(
+            "reader",
+            write_source_for_generation_request("alpha", path, "session-reader"),
+            100,
+        )
+        .expect_err("reader should not write source for generation");
+    assert!(reader.contains("lacks required database role"));
+
+    let written = service
+        .write_source_for_generation(
+            "writer",
+            write_source_for_generation_request("alpha", path, "session-1"),
+            101,
+        )
+        .expect("writer should write source and authorize session");
+    assert_eq!(written.write.node.path, path);
+    assert_eq!(written.write.node.kind, vfs_types::NodeKind::Source);
+    assert_eq!(written.session_nonce, "session-1");
+
+    let wrong_path = service
+        .check_source_run_session(
+            source_run_session_check_request(
+                "alpha",
+                "/Sources/raw/other/other.md",
+                &written.write.node.etag,
+                "session-1",
+            ),
+            102,
+        )
+        .expect_err("session should be bound to source path");
+    assert!(wrong_path.contains("missing or expired"));
+
+    let wrong_etag = service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, "etag-other", "session-1"),
+            102,
+        )
+        .expect_err("session should be bound to source etag");
+    assert!(wrong_etag.contains("missing or expired"));
+
+    service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
+            102,
+        )
+        .expect("source run session should check");
+    service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
+            102,
+        )
+        .expect("source run session should allow retry within ttl");
+
+    let revoke_session = service
+        .write_source_for_generation(
+            "writer",
+            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            103,
+        )
+        .expect("writer should authorize second session");
+    service
+        .revoke_database_access("alpha", "owner", "writer")
+        .expect("writer revoke should succeed");
+    let revoked = service
+        .check_source_run_session(
+            source_run_session_check_request(
+                "alpha",
+                "/Sources/raw/web/def.md",
+                &revoke_session.write.node.etag,
+                "session-2",
+            ),
+            104,
+        )
+        .expect_err("revoked writer should fail even before ttl");
+    assert!(revoked.contains("principal has no access"));
+}
+
+#[test]
+fn source_for_generation_requires_default_llm_writer() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let path = "/Sources/raw/web/abc.md";
+    ensure_parent_folders(&service, "owner", "alpha", path, 2);
+    let written = service
+        .write_source_for_generation(
+            "owner",
+            write_source_for_generation_request("alpha", path, "session-1"),
+            100,
+        )
+        .expect("default LLM writer should allow source run session");
+
+    service
+        .revoke_database_access("alpha", "owner", DEFAULT_LLM_WRITER_PRINCIPAL)
+        .expect("owner should revoke LLM writer");
+    let check = service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
+            101,
+        )
+        .expect_err("revoked LLM writer should fail session check");
+    assert!(check.contains("LLM writer principal lacks writer access"));
+
+    let write = service
+        .write_source_for_generation(
+            "owner",
+            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            102,
+        )
+        .expect_err("revoked LLM writer should fail source write authorization");
+    assert!(write.contains("LLM writer principal lacks writer access"));
 }
 
 #[test]

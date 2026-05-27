@@ -7,12 +7,21 @@ export function validateCanonicalSourcePath(path: string, prefix: string): void 
     throw new Error(`sourcePath must be under ${prefix}`);
   }
   const parts = path.slice(boundary.length).split("/");
-  if (parts.length !== 2 || !parts[0] || parts[1] !== `${parts[0]}.md`) {
-    throw new Error(`sourcePath must use ${prefix}/<id>/<id>.md`);
+  if (parts.length !== 2 || !isSafeProviderSegment(parts[0]) || !isSafeMarkdownFile(parts[1])) {
+    throw new Error(`sourcePath must use ${prefix}/<provider>/<id>.md`);
   }
 }
 
 export function sourceIdFromPath(path: string, prefix: string): string {
   validateCanonicalSourcePath(path, prefix);
-  return path.slice(`${prefix}/`.length).split("/")[0] ?? "";
+  const [provider, fileName] = path.slice(`${prefix}/`.length).split("/");
+  return `${provider}-${fileName?.slice(0, -".md".length)}`;
+}
+
+function isSafeProviderSegment(value: string | undefined): boolean {
+  return /^[a-z][a-z0-9]{0,31}$/.test(value ?? "");
+}
+
+function isSafeMarkdownFile(value: string | undefined): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(value ?? "");
 }

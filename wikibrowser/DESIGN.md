@@ -1,5 +1,7 @@
 # Wiki Canister Browser Design
 
+Historical MVP design note. The current WikiBrowser also includes authenticated database creation, access management, Markdown editing, URL ingest, and dashboard workflows. Treat this file as design background unless it is explicitly refreshed.
+
 ## Product Positioning
 
 Create a read-only Wiki Canister Browser UI.
@@ -40,4 +42,3 @@ The product is not a database admin UI. It should feel like a lightweight knowle
 - Recent nodes
 - Lint warnings panel
 - Provenance jump from Wiki note to `/Sources/raw`
-

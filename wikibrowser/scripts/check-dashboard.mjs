@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
 const dashboardClient = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
+const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
 const dashboardIndex = readFileSync(new URL("../app/dashboard/page.tsx", import.meta.url), "utf8");
 const dashboardRoute = readFileSync(new URL("../app/dashboard/[databaseId]/page.tsx", import.meta.url), "utf8");
 const dashboardUi = readFileSync(new URL("../app/dashboard/dashboard-ui.tsx", import.meta.url), "utf8");
 const dashboardActionButton = readFileSync(new URL("../app/dashboard/action-button.tsx", import.meta.url), "utf8");
 const dashboardAccessControl = readFileSync(new URL("../app/dashboard/access-control.ts", import.meta.url), "utf8");
+const dashboardDangerZone = readFileSync(new URL("../app/dashboard/database-danger-zone.tsx", import.meta.url), "utf8");
 const dashboardMemberTable = readFileSync(new URL("../app/dashboard/member-table.tsx", import.meta.url), "utf8");
+const vfsIdl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
 const createDatabaseDialog = readFileSync(new URL("../app/create-database-dialog.tsx", import.meta.url), "utf8");
 const cliPage = readFileSync(new URL("../app/cli/page.tsx", import.meta.url), "utf8");
 const cliGuideBlock = readFileSync(new URL("../app/cli/cli-guide-block.tsx", import.meta.url), "utf8");
@@ -18,6 +21,7 @@ const wikiLayout = readFileSync(new URL("../app/[databaseId]/layout.tsx", import
 const canisterEntrypoint = readFileSync(new URL("../../crates/vfs_canister/src/lib.rs", import.meta.url), "utf8");
 const ingestPanel = readFileSync(new URL("../components/ingest-panel.tsx", import.meta.url), "utf8");
 const ingestTriggerRoute = readFileSync(new URL("../app/api/url-ingest/trigger/route.ts", import.meta.url), "utf8");
+const sourceRunRoute = readFileSync(new URL("../app/api/source/run/route.ts", import.meta.url), "utf8");
 const nextConfig = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const urlIngest = readFileSync(new URL("../lib/url-ingest.ts", import.meta.url), "utf8");
@@ -27,6 +31,13 @@ const wranglerConfig = readFileSync(new URL("../wrangler.jsonc", import.meta.url
 
 assert.match(homeUi, /href=\{`\/dashboard\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
 assert.match(homePage, /href="\/cli"/);
+assert.match(rootReadme, /db_kva4v2twg6jv/);
+assert.match(rootReadme, /https:\/\/wiki\.kinic\.xyz\/db_kva4v2twg6jv\/Wiki\?read=anonymous/);
+assert.match(rootReadme, /Why Kinic Wiki/);
+assert.match(rootReadme, /Vector databases/);
+assert.match(rootReadme, /Chrome extension/);
+assert.match(rootReadme, /\/Wiki\/\.\.\./);
+assert.match(rootReadme, /\/Sources\/raw\/\.\.\./);
 assert.match(cliPage, /npm install -g kinic-vfs-cli/);
 assert.match(cliPage, /VFS_DATABASE_ID=<database-id>/);
 assert.match(cliPage, /--expected-etag <etag>/);
@@ -46,9 +57,12 @@ assert.doesNotMatch(dashboardClient, /useSearchParams/);
 assert.doesNotMatch(dashboardClient, /usePathname/);
 
 assert.match(wikiLayout, /<WikiBrowser \/>/);
+assert.match(wikiLayout, /isReservedDatabaseRouteSlug/);
+assert.match(wikiLayout, /notFound\(\)/);
 for (const origin of [
   "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj",
-  "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci"
+  "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci",
+  "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"
 ]) {
   assert.match(canisterEntrypoint, new RegExp(origin.replaceAll("/", "\\/")));
 }
@@ -94,6 +108,8 @@ assert.match(homePage, /publicResult\.status === "rejected" \? `Public database 
 assert.doesNotMatch(homePage, /if \(publicResult\.status === "rejected"\) return `Public database list unavailable/);
 assert.match(homePage, /myDatabases = databases\.filter\(\(database\) => database\.member\)/);
 assert.match(homePage, /publicDatabases = databases\.filter\(\(database\) => !database\.member && database\.publicReadable\)/);
+assert.match(homePage, /Database dashboard/);
+assert.match(homePage, /<OfficialKinicWikiPanel \/>/);
 assert.match(homePage, /const \[createDialogOpen, setCreateDialogOpen\] = useState\(false\);/);
 assert.match(homePage, /const \[newDatabaseName, setNewDatabaseName\] = useState\(""\);/);
 assert.match(homePage, /const databaseNameInput = newDatabaseName\.trim\(\);/);
@@ -109,6 +125,12 @@ assert.match(createDatabaseDialog, /A generated database ID will be used for rou
 assert.match(homePage, /member: false, publicReadable: true/);
 assert.match(homePage, /member: true, publicReadable: publicIds\.has\(database\.databaseId\)/);
 assert.match(homeUi, /member: boolean/);
+assert.match(homeUi, /OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv"/);
+assert.match(homeUi, /OFFICIAL_KINIC_WIKI_DATABASE_NAME = "Official Kinic Wiki"/);
+assert.match(homeUi, /A canister-backed file-system wiki for agent memory: structured paths, raw sources, links, search, and safe edits\./);
+assert.match(homeUi, /Use the Chrome extension to capture ChatGPT conversations and active web pages into the same database\./);
+assert.match(homeUi, /publicDatabasePath\(OFFICIAL_KINIC_WIKI_DATABASE_ID\)/);
+assert.match(homeUi, /\/dashboard\/\$\{encodeURIComponent\(OFFICIAL_KINIC_WIKI_DATABASE_ID\)\}/);
 assert.match(homeUi, /My databases/);
 assert.match(homeUi, /Public databases/);
 assert.match(homeUi, /No databases are linked to this principal\./);
@@ -147,8 +169,16 @@ assert.match(urlIngest, /\/api\/url-ingest\/trigger/);
 assert.match(ingestTriggerRoute, /KINIC_WIKI_GENERATOR_URL/);
 assert.match(ingestTriggerRoute, /KINIC_WIKI_WORKER_TOKEN/);
 assert.match(ingestTriggerRoute, /chrome-extension:\/\/jcfniiflikojmbfnaoamlbbddlikchaj/);
+assert.match(ingestTriggerRoute, /chrome-extension:\/\/moebdnadaffhlddnhifmmdoecifhcbdi/);
 assert.match(ingestTriggerRoute, /access-control-allow-origin/);
 assert.match(ingestTriggerRoute, /authorization: `Bearer \$\{token\}`/);
+assert.match(sourceRunRoute, /\/run/);
+assert.match(sourceRunRoute, /checkSourceRunSession/);
+assert.match(sourceRunRoute, /sourceEtag is required/);
+assert.match(sourceRunRoute, /sourcePath must use \/Sources\/raw\/<provider>\/<id>\.md/);
+assert.doesNotMatch(sourceRunRoute, /checkQueryAnswerSession/);
+assert.match(sourceRunRoute, /authorization: `Bearer \$\{token\}`/);
+assert.match(sourceRunRoute, /chrome-extension:\/\/moebdnadaffhlddnhifmmdoecifhcbdi/);
 assert.match(dashboardClient, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.match(dashboardClient, /listDatabasesPublic/);
 assert.match(dashboardClient, /mergeDatabaseRows/);
@@ -159,6 +189,25 @@ assert.match(dashboardClient, /Select a database to manage/);
 assert.match(dashboardClient, /Open Database dashboard/);
 assert.doesNotMatch(dashboardClient, /Database id is missing\./);
 assert.match(dashboardClient, /<SummaryPanel billingConfig=\{billingConfig\} canisterId=\{canisterId\} database=\{database\} databaseId=\{databaseId\} principal=\{principal \?\? "anonymous"\} publicReadable=\{database\.publicReadable\} \/>/);
+assert.match(dashboardClient, /deleteDatabaseAuthenticated/);
+assert.match(dashboardClient, /router\.replace\("\/dashboard"\)/);
+assert.match(dashboardClient, /setBusyAction\(\{ kind: "delete" \}\)/);
+assert.match(dashboardClient, /return message;/);
+assert.match(dashboardClient, /onDelete=\{deleteDatabase\}/);
+assert.match(dashboardAccessControl, /\| \{ kind: "delete" \}/);
+assert.match(dashboardUi, /<DatabaseDangerZone/);
+assert.match(dashboardDangerZone, /export function DatabaseDangerZone/);
+assert.match(dashboardDangerZone, /ConfirmDeleteDatabaseDialog/);
+assert.match(dashboardDangerZone, /const \[deleteError, setDeleteError\] = useState<string \| null>\(null\);/);
+assert.match(dashboardDangerZone, /setDeleteError\(null\);/);
+assert.match(dashboardDangerZone, /if \(error\) setDeleteError\(error\);/);
+assert.match(dashboardDangerZone, /deleteError: string \| null;/);
+assert.match(dashboardDangerZone, /role="alert"/);
+assert.match(dashboardDangerZone, /This action is irreversible\. Archive first if recovery is required\./);
+assert.match(dashboardDangerZone, /Type database ID to confirm/);
+assert.match(dashboardDangerZone, /typedDatabaseId === props\.databaseId/);
+assert.match(dashboardDangerZone, /disabled=\{props\.busy \|\| !deleteConfirmed\}/);
+assert.match(vfsIdl, /delete_database: idl\.Func\(\[idl\.Text\], \[ResultUnit\], \[\]\)/);
 assert.doesNotMatch(homePage, /process\.env\.KINIC_WIKI_CANISTER_ID/);
 assert.doesNotMatch(dashboardClient, /process\.env\.KINIC_WIKI_CANISTER_ID/);
 
@@ -170,6 +219,8 @@ assert.match(dashboardUi, /Revoke owner access/);
 assert.match(dashboardUi, /ConfirmAclDialog/);
 assert.match(dashboardUi, /This will grant \$\{role\} access to principal/);
 assert.match(dashboardUi, /ActionButton/);
+assert.match(dashboardUi, /isRoutableDatabaseId/);
+assert.match(dashboardUi, /Reserved route/);
 assert.match(dashboardUi, /xShareDatabaseHref/);
 assert.match(dashboardUi, /Share2/);
 assert.match(dashboardUi, /loadingLabel="Granting\.\.\."/);

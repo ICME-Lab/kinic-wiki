@@ -6,6 +6,8 @@ export type FrontmatterDocument = {
   body: string;
 };
 
+type FrontmatterValue = string | number | boolean | null;
+
 export function parseFrontmatter(content: string): FrontmatterDocument | null {
   if (!content.startsWith("---\n")) return null;
   const rest = content.slice(4);
@@ -23,7 +25,7 @@ export function parseFrontmatter(content: string): FrontmatterDocument | null {
   };
 }
 
-export function renderFrontmatter(fields: Record<string, string | null>, body: string): string {
+export function renderFrontmatter(fields: Record<string, FrontmatterValue>, body: string): string {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${formatScalar(value)}`);
   return `---\n${lines.join("\n")}\n---\n\n${body.trimStart()}`;
 }
@@ -36,6 +38,9 @@ function parseScalar(value: string): string | null {
   return value;
 }
 
-function formatScalar(value: string | null): string {
-  return value === null ? "null" : JSON.stringify(value);
+function formatScalar(value: FrontmatterValue): string {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return JSON.stringify(String(value));
 }

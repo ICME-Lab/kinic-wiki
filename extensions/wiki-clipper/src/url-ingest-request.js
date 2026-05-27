@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/url-ingest-request.js
-// What: Build URL ingest request VFS nodes and generator trigger payloads.
-// Why: Toolbar clicks should queue the same request shape as Wiki Browser.
+// What: Build URL ingest request VFS nodes and normalize trigger input URLs.
+// Why: Toolbar URL ingest should queue the same request shape as Wiki Browser.
 
 export const DEFAULT_CANISTER_ID = "xis3j-paaaa-aaaai-axumq-cai";
 export const DEFAULT_IC_HOST = "https://icp0.io";

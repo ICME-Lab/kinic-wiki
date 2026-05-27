@@ -23,15 +23,15 @@ test("rejects unsupported platforms with cargo fallback", () => {
 });
 
 test("builds release asset URLs from package version and platform", () => {
-  const asset = releaseAsset("0.1.2", "macos-arm64");
-  assert.equal(asset.file, "kinic-vfs-cli-v0.1.2-macos-arm64.tar.gz");
+  const asset = releaseAsset("0.1.3", "macos-arm64");
+  assert.equal(asset.file, "kinic-vfs-cli-v0.1.3-macos-arm64.tar.gz");
   assert.equal(
     asset.tarUrl,
-    "https://github.com/ICME-Lab/kinic-wiki/releases/download/v0.1.2/kinic-vfs-cli-v0.1.2-macos-arm64.tar.gz",
+    "https://github.com/ICME-Lab/kinic-wiki/releases/download/v0.1.3/kinic-vfs-cli-v0.1.3-macos-arm64.tar.gz",
   );
   assert.equal(
     asset.shaUrl,
-    "https://github.com/ICME-Lab/kinic-wiki/releases/download/v0.1.2/kinic-vfs-cli-v0.1.2-macos-arm64.sha256",
+    "https://github.com/ICME-Lab/kinic-wiki/releases/download/v0.1.3/kinic-vfs-cli-v0.1.3-macos-arm64.sha256",
   );
 });
 
@@ -41,13 +41,13 @@ test("release version script checks Cargo and npm parity", () => {
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout.trim(), "v0.1.2");
+  assert.equal(result.stdout.trim(), "v0.1.3");
 });
 
 test("npm publish guard only allows the matching tag", () => {
   assert.notEqual(runPublishGuard({ GITHUB_REF_TYPE: "branch", GITHUB_REF_NAME: "feature" }).status, 0);
   assert.notEqual(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.1.1" }).status, 0);
-  assert.equal(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.1.2" }).status, 0);
+  assert.equal(runPublishGuard({ GITHUB_REF_TYPE: "tag", GITHUB_REF_NAME: "v0.1.3" }).status, 0);
 });
 
 test("parses sha256 checksum text", () => {

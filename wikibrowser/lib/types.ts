@@ -25,6 +25,27 @@ export type WriteNodeResult = {
   node: RecentNode;
 };
 
+export type WriteSourceForGenerationRequest = {
+  databaseId: string;
+  path: string;
+  content: string;
+  metadataJson: string;
+  expectedEtag: string | null;
+  sessionNonce: string;
+};
+
+export type WriteSourceForGenerationResult = {
+  write: WriteNodeResult;
+  sessionNonce: string;
+};
+
+export type SourceRunSessionCheckRequest = {
+  databaseId: string;
+  sourcePath: string;
+  sourceEtag: string;
+  sessionNonce: string;
+};
+
 export type DeleteNodeRequest = {
   databaseId: string;
   path: string;

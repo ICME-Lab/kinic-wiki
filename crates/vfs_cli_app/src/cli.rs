@@ -122,6 +122,13 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Write or replace multiple nodes atomically from a JSON array")]
+    WriteNodes {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(
         about = "Append content to one node; use --expected-etag after read-node for safe edits"
     )]
@@ -686,6 +693,7 @@ impl Command {
             | Self::RebuildScopeIndex { .. }
             | Self::GenerateConversationWiki { .. }
             | Self::WriteNode { .. }
+            | Self::WriteNodes { .. }
             | Self::AppendNode { .. }
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
@@ -740,6 +748,7 @@ impl Command {
             | Self::RebuildScopeIndex { .. }
             | Self::GenerateConversationWiki { .. }
             | Self::WriteNode { .. }
+            | Self::WriteNodes { .. }
             | Self::AppendNode { .. }
             | Self::EditNode { .. }
             | Self::DeleteNode { .. }
@@ -808,6 +817,10 @@ impl Command {
                 input: input.clone(),
                 metadata_json: metadata_json.clone(),
                 expected_etag: expected_etag.clone(),
+                json: *json,
+            }),
+            Self::WriteNodes { input, json } => Some(VfsCommand::WriteNodes {
+                input: input.clone(),
                 json: *json,
             }),
             Self::AppendNode {
@@ -980,6 +993,7 @@ mod tests {
         SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
+    use vfs_cli::cli::VfsCommand;
 
     #[test]
     fn main_cli_help_does_not_list_beam_bench() {
@@ -1391,6 +1405,16 @@ mod tests {
         assert!(write.command.requires_identity());
         assert!(!write.command.probes_anonymous_database_read());
 
+        let batch_write = Cli::parse_from([
+            "kinic-vfs-cli",
+            "write-nodes",
+            "--input",
+            "nodes.json",
+            "--json",
+        ]);
+        assert!(batch_write.command.requires_identity());
+        assert!(!batch_write.command.probes_anonymous_database_read());
+
         let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
@@ -1607,6 +1631,28 @@ mod tests {
             panic!("expected write-node command");
         };
         assert_eq!(kind, NodeKindArg::Source);
+    }
+
+    #[test]
+    fn main_cli_parses_write_nodes() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "write-nodes",
+            "--input",
+            "nodes.json",
+            "--json",
+        ]);
+        let Command::WriteNodes { input, json } = &cli.command else {
+            panic!("expected write-nodes command");
+        };
+        assert_eq!(input.to_string_lossy(), "nodes.json");
+        assert!(*json);
+
+        let Some(VfsCommand::WriteNodes { input, json }) = cli.command.as_vfs_command() else {
+            panic!("expected VFS write-nodes command");
+        };
+        assert_eq!(input.to_string_lossy(), "nodes.json");
+        assert!(json);
     }
 
     #[test]

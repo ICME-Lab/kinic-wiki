@@ -9,7 +9,7 @@ Use this skill when the user wants to:
 
 - inspect wiki health
 - look for isolated or duplicated pages
-- check whether `index.md` is stale
+- check whether `/Wiki/index.md` is stale
 - review missing links, weak structure, or outdated organization
 - decide what to fix next without auto-applying changes
 
@@ -22,6 +22,9 @@ Do not use this skill for:
 
 Core rules:
 
+- Treat the canister wiki as the source of truth.
+- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<provider>/<id>.md`.
+- Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Default to report-only behavior.
 - Do not silently fix pages.
 - Prefer concrete findings over vague style commentary.
@@ -29,10 +32,6 @@ Core rules:
 - Check note-role boundary violations as well as missing pages.
 - Treat exact-value drift in `facts.md` as a real canonicality problem, not a style nit.
 - Treat `WIKI_CANONICALITY.md` as the schema authority.
-- For day-to-day usage boundaries, follow [../../../docs/internal/KINIC_WIKI_OPERATIONS.md](../../../docs/internal/KINIC_WIKI_OPERATIONS.md).
+- For current note roles and boundaries, follow [../../docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md).
 
 Read [lint.md](lint.md) before doing substantive Kinic Wiki lint work.
-
-Read this reference when needed:
-
-- shared repo rules: [../references/shared-rules.md](../references/shared-rules.md)

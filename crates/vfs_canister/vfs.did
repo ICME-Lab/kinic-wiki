@@ -337,6 +337,7 @@ type Result_28 = variant { Ok : vec SearchNodeHit; Err : text };
 type Result_29 = variant { Ok : SourceEvidence; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
 type Result_30 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_31 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_6 = variant { Ok : EditNodeResult; Err : text };
@@ -381,6 +382,12 @@ type SourceEvidenceRef = record {
   raw_href : text;
 };
 type SourceEvidenceRequest = record { node_path : text; database_id : text };
+type SourceRunSessionCheckRequest = record {
+  session_nonce : text;
+  source_etag : text;
+  source_path : text;
+  database_id : text;
+};
 type Status = record { source_count : nat64; file_count : nat64 };
 type UrlIngestTriggerSessionCheckRequest = record {
   request_path : text;
@@ -411,6 +418,18 @@ type WriteNodesRequest = record {
   nodes : vec WriteNodeItem;
   database_id : text;
 };
+type WriteSourceForGenerationRequest = record {
+  content : text;
+  path : text;
+  session_nonce : text;
+  expected_etag : opt text;
+  metadata_json : text;
+  database_id : text;
+};
+type WriteSourceForGenerationResult = record {
+  session_nonce : text;
+  write : WriteNodeResult;
+};
 service : (BillingConfig) -> {
   append_node : (AppendNodeRequest) -> (Result);
   authorize_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_1);
@@ -424,6 +443,7 @@ service : (BillingConfig) -> {
   canister_health : () -> (CanisterHealth) query;
   check_database_billable : (text) -> (Result_1) query;
   check_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_3) query;
+  check_source_run_session : (SourceRunSessionCheckRequest) -> (Result_1) query;
   check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
       Result_1,
     ) query;
@@ -479,4 +499,7 @@ service : (BillingConfig) -> {
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
   write_nodes : (WriteNodesRequest) -> (Result_30);
+  write_source_for_generation : (WriteSourceForGenerationRequest) -> (
+      Result_31,
+    );
 }

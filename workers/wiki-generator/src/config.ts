@@ -9,7 +9,8 @@ const DEFAULT_TARGET_ROOT = "/Wiki/conversations";
 const DEFAULT_SOURCE_PREFIX = "/Sources/raw";
 const DEFAULT_CONTEXT_PREFIX = "/Wiki";
 const DEFAULT_MAX_RAW_CHARS = 120_000;
-const DEFAULT_MAX_FETCHED_BYTES = 1_000_000;
+const DEFAULT_MAX_FETCHED_BYTES = 5_000_000;
+const DEFAULT_MAX_SOURCE_CHARS = 300_000;
 const DEFAULT_CONTEXT_HITS = 8;
 const DEFAULT_MAX_OUTPUT_TOKENS = 6_000;
 
@@ -24,6 +25,7 @@ export function loadConfig(env: RuntimeEnv): WorkerConfig {
     contextPrefix: env.KINIC_WIKI_WORKER_CONTEXT_PREFIX || DEFAULT_CONTEXT_PREFIX,
     maxRawChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_RAW_CHARS, DEFAULT_MAX_RAW_CHARS),
     maxFetchedBytes: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_FETCHED_BYTES, DEFAULT_MAX_FETCHED_BYTES),
+    maxSourceChars: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_SOURCE_CHARS, DEFAULT_MAX_SOURCE_CHARS),
     maxContextHits: parsePositiveInt(env.KINIC_WIKI_WORKER_CONTEXT_HITS, DEFAULT_CONTEXT_HITS),
     maxOutputTokens: parsePositiveInt(env.KINIC_WIKI_WORKER_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   };

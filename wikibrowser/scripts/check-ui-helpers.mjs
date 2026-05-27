@@ -12,7 +12,7 @@ const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-section
 const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
 const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
-const { publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
+const { isReservedDatabaseRouteSlug, isRoutableDatabaseId, publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
 const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx", import.meta.url), "utf8");
@@ -113,8 +113,12 @@ assert.match(databaseLayoutSource, /databasePreviewTitle/);
 assert.match(databaseLayoutSource, /opengraph-image/);
 assert.match(databaseLayoutSource, /twitter-image/);
 assert.match(databaseOpenGraphImageSource, /Kinic Wiki database/);
+assert.match(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug/);
+assert.match(databaseOpenGraphImageSource, /notFound\(\)/);
 assert.match(databaseOpenGraphImageSource, /preview\.databaseName/);
 assert.match(databaseTwitterImageSource, /Kinic Wiki database/);
+assert.match(databaseTwitterImageSource, /isReservedDatabaseRouteSlug/);
+assert.match(databaseTwitterImageSource, /notFound\(\)/);
 assert.match(databaseTwitterImageSource, /preview\.databaseName/);
 assert.match(databasePreviewSource, /databasePreviewTitle/);
 assert.match(databasePreviewSource, /databasePreviewDescription/);
@@ -346,8 +350,15 @@ assert.notEqual(
 );
 assert.notEqual(searchRequestKey("aaaaa-aa", "alpha", "path", "budget"), searchRequestKey("aaaaa-aa", "alpha", "path", "budget", "aaaaa-aa"));
 assert.equal(publicDatabasePath("alpha/db"), "/alpha%2Fdb/Wiki?read=anonymous");
+assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db_kva4v2twg6jv/Wiki?read=anonymous");
 assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/alpha%20db/Wiki?read=anonymous");
 assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/alpha%20db/Wiki?read=anonymous");
+assert.equal(isReservedDatabaseRouteSlug("cli"), true);
+assert.equal(isReservedDatabaseRouteSlug("CLI"), true);
+assert.equal(isReservedDatabaseRouteSlug("db_cli"), false);
+assert.equal(isRoutableDatabaseId("db_xuwmtks27uik"), true);
+assert.equal(isRoutableDatabaseId("dashboard"), false);
+assert.throws(() => publicDatabasePath("cli"), /reserved database route slug: cli/);
 assert.equal(
   xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
   "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Falpha%2520db%2FWiki%3Fread%3Danonymous"

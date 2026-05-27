@@ -20,13 +20,20 @@ test("buildRawSource emits canonical source path and metadata", () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.equal(raw.path, "/Sources/raw/chatgpt-abc/chatgpt-abc.md");
+  assert.equal(raw.path, "/Sources/raw/chatgpt/abc.md");
   assert.match(raw.content, /# Raw Conversation Source/);
   assert.match(raw.content, /- message_count: 2/);
+  assert.match(raw.content, /- truncated: false/);
+  assert.match(raw.content, /- original_chars: 73/);
+  assert.match(raw.content, /- saved_chars: 73/);
   assert.match(raw.content, /### Turn 0001/);
-  assert.equal(JSON.parse(raw.metadataJson).provider, "chatgpt");
-  assert.equal(JSON.parse(raw.metadataJson).conversation_id, "abc");
-  assert.equal(JSON.parse(raw.metadataJson).message_count, 2);
+  const metadata = JSON.parse(raw.metadataJson);
+  assert.equal(metadata.provider, "chatgpt");
+  assert.equal(metadata.conversation_id, "abc");
+  assert.equal(metadata.message_count, 2);
+  assert.equal(metadata.truncated, false);
+  assert.equal(metadata.original_chars, 73);
+  assert.equal(metadata.saved_chars, 73);
 });
 
 test("buildRawSource keeps the same path for the same ChatGPT conversation", () => {
@@ -46,6 +53,19 @@ test("buildRawSource keeps the same path for the same ChatGPT conversation", () 
   });
 
   assert.equal(first.path, second.path);
+});
+
+test("buildRawSource keeps a stable path for Claude conversations", () => {
+  const raw = buildRawSource({
+    provider: "claude",
+    conversationTitle: "Claude Project",
+    url: "https://claude.ai/chat/claude-abc",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.equal(raw.path, "/Sources/raw/claude/claude-abc.md");
+  assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 
 test("buildRawSource rejects empty captures", () => {
@@ -76,4 +96,26 @@ test("buildRawSource escapes one-line markdown metadata values", () => {
   assert.equal(metadata.message_count, 1);
   assert.match(raw.content, /- conversation_title: "Title\\n- message_count: 999/);
   assert.doesNotMatch(raw.content, /\n- conversation_title: Title\n- message_count: 999/);
+});
+
+test("buildRawSource truncates oversized conversation source text", () => {
+  const raw = buildRawSource({
+    provider: "chatgpt",
+    conversationTitle: "Large",
+    url: "https://chatgpt.com/c/large",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [
+      { role: "user", content: "a".repeat(180_000) },
+      { role: "assistant", content: `${"b".repeat(180_000)}SHOULD_NOT_BE_SAVED` }
+    ]
+  });
+
+  const metadata = JSON.parse(raw.metadataJson);
+  assert.equal(metadata.truncated, true);
+  assert.equal(metadata.original_chars > 300_000, true);
+  assert.equal(metadata.saved_chars, 300_000);
+  assert.match(raw.content, /- truncated: true/);
+  assert.match(raw.content, /- original_chars: [3-9][0-9]{5}/);
+  assert.match(raw.content, /- saved_chars: 300000/);
+  assert.doesNotMatch(raw.content, /SHOULD_NOT_BE_SAVED/);
 });

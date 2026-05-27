@@ -3,12 +3,22 @@
 // Why: Toolbar click runs without UI, but setup/login need a visible extension page.
 import { authSnapshot, loginWithInternetIdentity, logoutInternetIdentity } from "../src/auth-client.js";
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "../src/url-ingest-request.js";
-import { listWritableDatabases } from "../src/vfs-actor.js";
+import { createDatabase, listWritableDatabases } from "../src/vfs-actor.js";
+import {
+  DEFAULT_DATABASE_NAME,
+  databaseOptionLabel,
+  mergePreferredDatabase,
+  shouldShowCreateDatabaseForm,
+  validateCreateDatabaseName
+} from "./popup-state.js";
 
 const principalText = document.querySelector("#principal");
 const loginButton = document.querySelector("#login");
 const logoutButton = document.querySelector("#logout");
 const databaseSelect = document.querySelector("#database-id");
+const createDatabaseForm = document.querySelector("#create-database-form");
+const databaseNameInput = document.querySelector("#database-name");
+const createDatabaseButton = document.querySelector("#create-database");
 const statusText = document.querySelector("#status");
 const latestStatusText = document.querySelector("#latest-status");
 const DEFAULT_DATABASE_ID = process.env.KINIC_CAPTURE_DATABASE_ID || "";
@@ -42,6 +52,34 @@ databaseSelect.addEventListener("change", async () => {
   }
 });
 
+createDatabaseForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  createDatabaseButton.disabled = true;
+  try {
+    const name = validateCreateDatabaseName(databaseNameInput.value);
+    const snapshot = await authSnapshot();
+    if (!snapshot.isAuthenticated || !snapshot.identity) {
+      throw new Error("Login to create a database.");
+    }
+    statusText.textContent = "Creating database...";
+    const created = await createDatabase(
+      {
+        canisterId: DEFAULT_CANISTER_ID,
+        host: DEFAULT_IC_HOST,
+        identity: snapshot.identity
+      },
+      name
+    );
+    await saveDatabaseSelection(created.databaseId);
+    await refreshAuthAndDatabases(created);
+    statusText.textContent = "Database created";
+  } catch (error) {
+    statusText.textContent = error instanceof Error ? error.message : String(error);
+  } finally {
+    createDatabaseButton.disabled = false;
+  }
+});
+
 load();
 
 async function load() {
@@ -66,23 +104,31 @@ async function saveDatabaseSelection(databaseId) {
   statusText.textContent = databaseId ? "Database selected" : "No writable hot databases found.";
 }
 
-async function refreshAuthAndDatabases() {
+async function refreshAuthAndDatabases(preferredDatabase = null) {
   const snapshot = await authSnapshot();
   principalText.textContent = snapshot.isAuthenticated ? snapshot.principal : "Not logged in";
   loginButton.disabled = snapshot.isAuthenticated;
   logoutButton.disabled = !snapshot.isAuthenticated;
   if (!snapshot.isAuthenticated) {
+    setCreateDatabaseFormVisible(false);
     renderDatabaseOptions([], "", "Login to load writable databases.");
     return;
   }
   const response = await send({ type: "load-config" });
-  const databases = await listWritableDatabases({
+  const databases = mergePreferredDatabase(await listWritableDatabases({
     canisterId: DEFAULT_CANISTER_ID,
     host: DEFAULT_IC_HOST,
     identity: snapshot.identity
-  });
+  }), preferredDatabase);
   const storedDatabaseId = response.config?.databaseId || "";
-  const selectedDatabaseId = renderDatabaseOptions(databases, storedDatabaseId || DEFAULT_DATABASE_ID);
+  const preferredDatabaseId = preferredDatabase?.databaseId || "";
+  const selectedDatabaseId = renderDatabaseOptions(databases, preferredDatabaseId || storedDatabaseId || DEFAULT_DATABASE_ID);
+  setCreateDatabaseFormVisible(
+    shouldShowCreateDatabaseForm({
+      isAuthenticated: snapshot.isAuthenticated,
+      writableDatabaseCount: databases.length
+    })
+  );
   if (!selectedDatabaseId) {
     await saveDatabaseSelection("");
     return;
@@ -104,13 +150,14 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     databaseSelect.disabled = true;
     return "";
   }
+  const nameCounts = databaseNameCounts(databases);
   for (const database of databases) {
     const option = document.createElement("option");
     option.value = database.databaseId;
+    const label = databaseOptionLabel(database, nameCounts.get(databaseNameKey(database.name)) || 1);
     option.disabled = !database.billable;
-    option.textContent = database.billable
-      ? `${database.name || database.databaseId} (${database.role})`
-      : `${database.name || database.databaseId} (${database.role}) - ${database.billingReason}`;
+    option.textContent = database.billable ? label : `${label} - ${database.billingReason}`;
+    option.title = database.databaseId;
     databaseSelect.append(option);
   }
   const selectable = databases.filter((database) => database.billable);
@@ -124,6 +171,26 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     : selectable[0].databaseId;
   databaseSelect.disabled = false;
   return databaseSelect.value;
+}
+
+function databaseNameCounts(databases) {
+  const counts = new Map();
+  for (const database of databases) {
+    const key = databaseNameKey(database.name);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function databaseNameKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function setCreateDatabaseFormVisible(visible) {
+  createDatabaseForm.hidden = !visible;
+  if (visible && !databaseNameInput.value.trim()) {
+    databaseNameInput.value = DEFAULT_DATABASE_NAME;
+  }
 }
 
 async function refreshLatestStatus() {

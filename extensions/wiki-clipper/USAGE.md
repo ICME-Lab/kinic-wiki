@@ -1,12 +1,12 @@
 # Kinic Wiki Clipper Usage
 
-Usage guide for exporting recent ChatGPT conversations and active-tab URLs into the mainnet Kinic Wiki canister.
+Usage guide for exporting recent ChatGPT/Claude conversations and active-tab URLs into the mainnet Kinic Wiki canister.
 
-ChatGPT raw-source export and URL ingest use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude raw-source export and URL ingest use Internet Identity and require writer access for the selected database.
 
 ## Prerequisites
 
-- Chrome is logged in to ChatGPT.
+- Chrome is logged in to ChatGPT or Claude.
 - This extension is loaded as an unpacked extension.
 
 ## Build
@@ -46,7 +46,9 @@ The release package excludes source files, tests, `node_modules`, and local `.en
 4. Select `extensions/wiki-clipper`.
 
 Do not use `Pack extension` for local testing. `Pack extension` is for producing a `.crx` package and reusing a private key.
-The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci`.
+The extension has a fixed manifest key, so local unpacked installs use `chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj`. Internet Identity derives principals from `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io`; that canister also accepts the old local ID `chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci` and the additional Chrome extension origin `chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi`.
+
+Normal local testing does not require changing extension IDs. Treat the old local ID and additional Chrome extension origin as allowlist/debug notes only.
 
 ## Configure
 
@@ -56,26 +58,27 @@ Use these extension settings:
 
 - `Database`: select a writable hot database for the logged-in Internet Identity principal
 
-The extension fixes canister ID to `xis3j-paaaa-aaaai-axumq-cai` and IC host to `https://icp0.io`. The database must already exist. Mainnet writes require explicit confirmation before ChatGPT raw export.
+The extension fixes canister ID to `xis3j-paaaa-aaaai-axumq-cai` and IC host to `https://icp0.io`. If no writable database exists, enter a name in settings and click `Create`. The extension never creates a database automatically. Mainnet writes require explicit confirmation before ChatGPT/Claude raw export.
 
 Login with Internet Identity from the extension settings page and select a writable database before clicking the toolbar icon. The selected database is saved automatically. The logged-in principal must have writer access to the selected database.
 
 ## Export
 
-1. Open `https://chatgpt.com`.
+1. Open `https://chatgpt.com` or `https://claude.ai`.
 2. Click the page-level `Kinic Memory` button.
 3. Set the recent chat count. The default is `10`.
 4. Click `Export`.
 5. Watch `Logs` for success or error entries.
 
-The extension fetches ChatGPT conversation data directly from ChatGPT backend API endpoints in the current tab session. It does not navigate the page, open background tabs, use DOM fallback, or use a fetch interceptor.
+The extension fetches ChatGPT conversation data from ChatGPT backend API endpoints and Claude conversation data from Claude private API endpoints in the current tab session. It does not open background tabs, use DOM message fallback, or use a fetch interceptor.
 
-Those `/backend-api/*` endpoints are private ChatGPT internals. If ChatGPT changes the response shape, export can fail or omit messages.
+Those `/backend-api/*` and `claude.ai/api/.../chat_conversations/*` endpoints are private provider internals. If a provider changes the response shape, export can fail or omit messages.
 
 Raw sources are saved as:
 
 ```text
-/Sources/raw/chatgpt-<conversationId>/chatgpt-<conversationId>.md
+/Sources/raw/chatgpt/<conversationId>.md
+/Sources/raw/claude/<conversationId>.md
 ```
 
 ## URL Ingest
@@ -96,16 +99,16 @@ Confirm that `/Sources/raw/...` or `/Sources/ingest-requests/...` is created in 
 
 ## Generate Wiki Pages
 
-ChatGPT export only writes raw evidence. Generate wiki pages from the CLI:
+ChatGPT/Claude export only writes raw evidence. Generate wiki pages from the CLI:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/chatgpt-<conversationId>/chatgpt-<conversationId>.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/raw/chatgpt/<conversationId>.md
 ```
 
 This command creates a wiki scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.
 
 ## Known Limits
 
-- ChatGPT backend API shape can change.
+- ChatGPT and Claude private API shapes can change.
 - Stopping an export can allow up to 2 in-flight conversations to finish saving.
-- ChatGPT raw-source export and URL ingest writes require writer access for the logged-in Internet Identity principal.
+- ChatGPT/Claude raw-source export and URL ingest writes require writer access for the logged-in Internet Identity principal.

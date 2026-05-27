@@ -28,11 +28,14 @@ import type {
   QueryAnswerSessionRequest,
   RecentNode,
   SearchNodeHit,
+  SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
   WikiNode,
   WriteNodeRequest,
-  WriteNodeResult
+  WriteNodeResult,
+  WriteSourceForGenerationRequest,
+  WriteSourceForGenerationResult
 } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
@@ -117,6 +120,20 @@ type RawWriteNodeResult = {
   node: RawRecent;
 };
 
+type RawWriteSourceForGenerationRequest = {
+  database_id: string;
+  path: string;
+  content: string;
+  metadata_json: string;
+  expected_etag: [] | [string];
+  session_nonce: string;
+};
+
+type RawWriteSourceForGenerationResult = {
+  write: RawWriteNodeResult;
+  session_nonce: string;
+};
+
 type RawDeleteNodeRequest = {
   database_id: string;
   path: string;
@@ -177,6 +194,13 @@ type RawQueryAnswerSessionCheckResult = {
   principal: string;
 };
 
+type RawSourceRunSessionCheckRequest = {
+  database_id: string;
+  source_path: string;
+  source_etag: string;
+  session_nonce: string;
+};
+
 type RawLinkEdge = {
   source_path: string;
   target_path: string;
@@ -207,9 +231,11 @@ type VfsActor = {
   authorize_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   canister_health: () => Promise<RawCanisterHealth>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
+  check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_billable: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  delete_database: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_billing_config: () => Promise<{ Ok: RawBillingConfig } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
@@ -254,6 +280,9 @@ type VfsActor = {
     preview_mode: [] | [Variant];
   }) => Promise<{ Ok: RawSearchHit[] } | { Err: string }>;
   write_node: (request: RawWriteNodeRequest) => Promise<{ Ok: RawWriteNodeResult } | { Err: string }>;
+  write_source_for_generation: (request: RawWriteSourceForGenerationRequest) => Promise<
+    { Ok: RawWriteSourceForGenerationResult } | { Err: string }
+  >;
 };
 
 export function validateCanisterId(canisterId: string): Principal | string {
@@ -424,6 +453,16 @@ export async function createDatabaseAuthenticated(canisterId: string, identity: 
   });
 }
 
+export async function deleteDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.delete_database(databaseId);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+  });
+}
+
 export async function renameDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string, name: string): Promise<void> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
@@ -451,6 +490,34 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
     return {
       created: result.Ok.created,
       node: normalizeRecentNode(result.Ok.node)
+    };
+  });
+}
+
+export async function writeSourceForGenerationAuthenticated(
+  canisterId: string,
+  identity: Identity,
+  request: WriteSourceForGenerationRequest
+): Promise<WriteSourceForGenerationResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.write_source_for_generation({
+      database_id: request.databaseId,
+      path: request.path,
+      content: request.content,
+      metadata_json: request.metadataJson,
+      expected_etag: request.expectedEtag ? [request.expectedEtag] : [],
+      session_nonce: request.sessionNonce
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return {
+      write: {
+        created: result.Ok.write.created,
+        node: normalizeRecentNode(result.Ok.write.node)
+      },
+      sessionNonce: result.Ok.session_nonce
     };
   });
 }
@@ -556,6 +623,16 @@ export async function checkQueryAnswerSession(canisterId: string, request: Query
     return {
       principal: result.Ok.principal
     };
+  });
+}
+
+export async function checkSourceRunSession(canisterId: string, request: SourceRunSessionCheckRequest): Promise<void> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.check_source_run_session(rawSourceRunSessionCheckRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
   });
 }
 
@@ -936,6 +1013,15 @@ function rawQueryAnswerSessionRequest(request: QueryAnswerSessionRequest): RawQu
 function rawQueryAnswerSessionCheckRequest(request: QueryAnswerSessionCheckRequest): RawQueryAnswerSessionCheckRequest {
   return {
     database_id: request.databaseId,
+    session_nonce: request.sessionNonce
+  };
+}
+
+function rawSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest): RawSourceRunSessionCheckRequest {
+  return {
+    database_id: request.databaseId,
+    source_path: request.sourcePath,
+    source_etag: request.sourceEtag,
     session_nonce: request.sessionNonce
   };
 }

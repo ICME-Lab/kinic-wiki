@@ -29,20 +29,26 @@
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       "js": ["dist/content-ui.js"],
       "run_at": "document_start"
+    },
+    {
+      "matches": ["https://claude.ai/*"],
+      "js": ["dist/content-ui.js"],
+      "run_at": "document_start"
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["icons/icon-32.png"],
-      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"]
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*", "https://claude.ai/*"]
     }
   ],
-  "permissions": ["storage", "activeTab", "offscreen", "contextMenus"],
+  "permissions": ["storage", "activeTab", "scripting", "offscreen", "contextMenus"],
   "host_permissions": [
     "https://wiki.kinic.xyz/*",
     "https://id.ai/*",
     "https://chatgpt.com/*",
     "https://chat.openai.com/*",
+    "https://claude.ai/*",
     "https://icp0.io/*",
     "https://xis3j-paaaa-aaaai-axumq-cai.icp0.io/*"
   ]

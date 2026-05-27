@@ -6,7 +6,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Plus, TerminalSquare } from "lucide-react";
 import { CreateDatabaseDialog } from "./create-database-dialog";
-import { AuthControls, CreatedDatabasePanel, DatabaseBody, StatusPanel } from "./home-ui";
+import { AuthControls, CreatedDatabasePanel, DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { BillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
@@ -45,10 +45,10 @@ export default function HomePage() {
       setWarning(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [publicResult, memberResult, billingConfigResult] = await Promise.allSettled([
+        const [billingResult, publicResult, memberResult] = await Promise.allSettled([
+          getBillingConfig(canisterId),
           listDatabasesPublic(canisterId),
-          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([]),
-          getBillingConfig(canisterId)
+          identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
         if (publicResult.status === "rejected" && memberResult.status === "rejected") {
           throw new Error(`${errorMessage(publicResult.reason)}; ${errorMessage(memberResult.reason)}`);
@@ -58,10 +58,10 @@ export default function HomePage() {
         const nextDatabases = mergeDatabaseRows(memberDatabases, publicDatabases);
         if (!isCurrentRefresh()) return;
         setDatabases(nextDatabases);
-        setBillingConfig(billingConfigResult.status === "fulfilled" ? billingConfigResult.value : null);
+        setBillingConfig(billingResult.status === "fulfilled" ? billingResult.value : null);
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
-        setWarning(listWarning(publicResult, memberResult, billingConfigResult));
+        setWarning(listWarning(publicResult, memberResult));
         setLoadState("ready");
       } catch (cause) {
         if (!isCurrentRefresh()) return;
@@ -202,31 +202,40 @@ export default function HomePage() {
           onSubmit={() => void createDatabase()}
         />
 
-        <section className="rounded-lg border border-line bg-paper shadow-sm">
-          {principal ? (
+        <OfficialKinicWikiPanel />
+
+        {principal ? (
+          <>
+            <section className="rounded-lg border border-line bg-paper shadow-sm">
+              <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-semibold text-ink">Database dashboard</h2>
+                  <p className="mt-1 font-mono text-xs text-muted">{principal}</p>
+                </div>
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+                  disabled={creating || loadState === "loading"}
+                  type="button"
+                  onClick={() => setCreateDialogOpen(true)}
+                >
+                  <Plus aria-hidden size={15} />
+                  <span>{creating ? "Creating..." : "Create database"}</span>
+                </button>
+              </div>
+            </section>
+            <DatabaseBody billingConfig={billingConfig} canisterId={canisterId} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+          </>
+        ) : (
+          <section className="rounded-lg border border-line bg-paper shadow-sm">
             <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-ink">Databases</h2>
-                <p className="mt-1 font-mono text-xs text-muted">{principal}</p>
+                <h2 className="text-lg font-semibold text-ink">Public databases</h2>
+                <p className="mt-1 text-sm leading-6 text-muted">Public databases open without login. Login with Internet Identity to show My databases linked to your principal.</p>
               </div>
-              <button
-                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
-                disabled={creating || loadState === "loading"}
-                type="button"
-                onClick={() => setCreateDialogOpen(true)}
-              >
-                <Plus aria-hidden size={15} />
-                <span>{creating ? "Creating..." : "Create database"}</span>
-              </button>
             </div>
-          ) : (
-            <div className="border-b border-line px-4 py-4">
-              <h2 className="text-lg font-semibold text-ink">Public databases</h2>
-              <p className="mt-1 text-sm leading-6 text-muted">Login with Internet Identity to list databases where your principal has membership.</p>
-            </div>
-          )}
-          <DatabaseBody billingConfig={billingConfig} canisterId={canisterId} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
-        </section>
+            <DatabaseBody billingConfig={billingConfig} canisterId={canisterId} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+          </section>
+        )}
       </section>
     </main>
   );
@@ -244,8 +253,7 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   return [...rows.values()].sort((left, right) => left.databaseId.localeCompare(right.databaseId));
 }
 
-function listWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>, billingConfigResult: PromiseSettledResult<BillingConfig>): string | null {
-  if (billingConfigResult.status === "rejected") return `Billing config unavailable: ${errorMessage(billingConfigResult.reason)}`;
+function listWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;
 }

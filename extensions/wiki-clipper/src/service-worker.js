@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/service-worker.js
 // What: MV3 background workflow for canister persistence.
-// Why: Content scripts fetch ChatGPT data while the worker owns canister writes.
+// Why: Content scripts fetch AI conversation data while the worker owns canister writes.
 import { buildRawSource } from "./raw-source.js";
 import {
   DEFAULT_CANISTER_ID,
@@ -8,13 +8,27 @@ import {
   URL_INGEST_STATUS_KEY,
   normalizedHttpUrl
 } from "./url-ingest-request.js";
+import { buildWebRawSource, collectWebPageSnapshot } from "./web-source.js";
 
 const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
   databaseId: "",
   host: DEFAULT_IC_HOST
 };
-const ALLOWED_CHATGPT_ORIGINS = new Set(["https://chatgpt.com", "https://chat.openai.com"]);
+const PROVIDERS = {
+  chatgpt: {
+    label: "ChatGPT",
+    origins: new Set(["https://chatgpt.com", "https://chat.openai.com"]),
+    pathPattern: /^\/c\/[^/]+\/?$/,
+    pathHint: "/c/<id>"
+  },
+  claude: {
+    label: "Claude",
+    origins: new Set(["https://claude.ai"]),
+    pathPattern: /^\/chat\/[^/]+\/?$/,
+    pathHint: "/chat/<id>"
+  }
+};
 const ALLOWED_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const MAX_MESSAGE_COUNT = 500;
 const MAX_MESSAGE_CONTENT_CHARS = 200_000;
@@ -79,6 +93,9 @@ export async function handleMessage(message, sender) {
   if (message?.type === "auth-status") {
     return { ok: true, result: await authStatus() };
   }
+  if (message?.type === "list-writable-databases") {
+    return { ok: true, result: await listWritableDatabases() };
+  }
   if (message?.type === "open-settings") {
     await openSettingsOnce();
     return { ok: true };
@@ -121,15 +138,16 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       await deps.setBadge("BUSY", "#5f6368");
       return { ok: false, error: status.message };
     }
+    const rawSource = await deps.captureTabSource(tab, url);
     await deps.ensureOffscreen();
-    const response = await deps.sendOffscreen({
+    const saveResponse = await deps.sendOffscreen({
       target: "offscreen",
-      type: "queue-url-ingest",
-      tab: { url, title: tab?.title || "" },
+      type: "save-raw-source",
+      rawSource,
       config
     });
-    if (!response?.ok) {
-      const error = response?.error || "URL ingest failed";
+    if (!saveResponse?.ok) {
+      const error = saveResponse?.error || "source save failed";
       await deps.writeStatus(errorStatus(error, url));
       await deps.setBadge("ERR", "#b42318");
       if (shouldOpenSettingsForError(error)) {
@@ -137,14 +155,31 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       }
       return { ok: false, error };
     }
-    const status = successStatus(response.result);
+    const triggerResponse = await deps.sendOffscreen({
+      target: "offscreen",
+      type: "trigger-source-generation",
+      sourcePath: saveResponse.result.path,
+      sourceEtag: saveResponse.result.etag,
+      sessionNonce: saveResponse.result.sourceRunSessionNonce,
+      config
+    });
+    const result = {
+      url,
+      title: tab?.title || "",
+      sourcePath: saveResponse.result.path,
+      sourceEtag: saveResponse.result.etag,
+      sourceCreated: saveResponse.result.created,
+      generationQueued: Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false),
+      generationError: triggerResponse?.ok ? triggerResponse.result?.triggerError || null : triggerResponse?.error || "generation queue failed"
+    };
+    const status = sourceCaptureStatus(result);
     await deps.writeStatus(status);
-    if (response.result?.triggered === false) {
-      await deps.setBadge("ERR", "#b42318");
-      return { ok: false, result: response.result, error: response.result.triggerError || "worker trigger failed" };
+    if (!result.generationQueued) {
+      await deps.setBadge("SRC", "#5f6368");
+      return { ok: true, result };
     }
     await deps.setBadge("OK", "#137333");
-    return { ok: true, result: response.result };
+    return { ok: true, result };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await deps.writeStatus(errorStatus(message, tab?.url || ""));
@@ -188,11 +223,35 @@ async function saveSource(capture, overrideConfig, sender) {
     }
     throw new Error(message);
   }
+  let triggerResponse;
+  try {
+    triggerResponse = await offscreenBridge({
+      target: "offscreen",
+      type: "trigger-source-generation",
+      sourcePath: result.result.path,
+      sourceEtag: result.result.etag,
+      sessionNonce: result.result.sourceRunSessionNonce,
+      config
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "UNAUTHENTICATED") {
+      await openSettingsOnce();
+    }
+    triggerResponse = { ok: false, error: message };
+  }
+  const generationQueued = Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false);
   return {
     path: result.result.path,
     sourceId: result.result.sourceId,
     created: result.result.created,
-    etag: result.result.etag
+    etag: result.result.etag,
+    generationQueued,
+    generationError: generationQueued
+      ? null
+      : triggerResponse?.ok
+        ? triggerResponse.result?.triggerError || "generation queue failed"
+        : triggerResponse?.error || "generation queue failed"
   };
 }
 
@@ -222,6 +281,21 @@ async function authStatus() {
     await openSettingsOnce();
   }
   return result;
+}
+
+async function listWritableDatabases() {
+  const response = await offscreenBridge({
+    target: "offscreen",
+    type: "list-writable-databases",
+    config: withFixedRuntimeConfig(await loadConfig())
+  });
+  if (!response?.ok) {
+    if (response?.error === "UNAUTHENTICATED") {
+      await openSettingsOnce();
+    }
+    throw new Error(response?.error || "database list failed");
+  }
+  return response.result || [];
 }
 
 async function readSessionValue(key) {
@@ -254,16 +328,16 @@ async function writeLatestUrlIngestStatus(status) {
   await chrome.storage.session.set({ [URL_INGEST_STATUS_KEY]: JSON.stringify(status) });
 }
 
-function successStatus(result) {
-  const triggered = result?.triggered !== false;
+function sourceCaptureStatus(result) {
+  const queued = result?.generationQueued === true;
   return {
-    status: triggered ? "ok" : "error",
+    status: queued ? "ok" : "source_saved",
     url: result?.url || "",
     title: result?.title || "",
-    requestPath: result?.requestPath || "",
-    message: triggered
-      ? "URL ingest queued and started."
-      : `Queued, trigger failed: ${result?.triggerError || "worker trigger failed"}`,
+    sourcePath: result?.sourcePath || "",
+    message: queued
+      ? "Source saved. Generation queued."
+      : `Source saved. Generation queue failed: ${result?.generationError || "worker trigger failed"}`,
     updatedAt: new Date().toISOString()
   };
 }
@@ -308,8 +382,24 @@ function defaultActionDeps() {
     setBadge: setActionBadge,
     openSettings: openSettingsOnce,
     reserveUrlIngest,
-    releaseUrlIngest
+    releaseUrlIngest,
+    captureTabSource
   };
+}
+
+async function captureTabSource(tab, url) {
+  if (!tab?.id) {
+    throw new Error("active tab id is required");
+  }
+  if (!globalThis.chrome?.scripting?.executeScript) {
+    throw new Error("page capture is unavailable");
+  }
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: collectWebPageSnapshot
+  });
+  const snapshot = results?.[0]?.result;
+  return buildWebRawSource({ ...snapshot, url });
 }
 
 async function createSettingsContextMenu() {
@@ -353,17 +443,23 @@ async function ensureOffscreen() {
 }
 
 export function validateSaveSource(capture, sender) {
-  if (!isAllowedChatGptUrl(sender?.tab?.url)) {
-    throw new Error("save-source sender must be a ChatGPT tab");
+  const senderProvider = providerForUrl(sender?.tab?.url);
+  if (!senderProvider) {
+    throw new Error("save-source sender must be a supported AI conversation tab");
   }
-  if (!isAllowedChatGptUrl(capture?.url)) {
-    throw new Error("capture url must be a ChatGPT conversation");
+  const captureProvider = providerForUrl(capture?.url);
+  if (!captureProvider) {
+    throw new Error("capture url must be a supported AI conversation");
   }
-  if (!isConversationUrl(capture.url)) {
-    throw new Error("capture url must use /c/<id>");
+  if (senderProvider !== captureProvider) {
+    throw new Error("capture provider must match sender origin");
   }
-  if (capture.provider !== "chatgpt") {
-    throw new Error("capture provider must be chatgpt");
+  if (capture.provider !== captureProvider) {
+    throw new Error("capture provider must match sender origin");
+  }
+  const rule = PROVIDERS[captureProvider];
+  if (!isConversationUrl(capture.url, rule)) {
+    throw new Error(`capture url must use ${rule.pathHint}`);
   }
   if (typeof capture.conversationTitle !== "string") {
     throw new Error("capture conversationTitle must be a string");
@@ -393,17 +489,21 @@ export function validateSaveSource(capture, sender) {
   }
 }
 
-function isAllowedChatGptUrl(value) {
+function providerForUrl(value) {
   try {
-    return ALLOWED_CHATGPT_ORIGINS.has(new URL(value).origin);
+    const origin = new URL(value).origin;
+    for (const [provider, rule] of Object.entries(PROVIDERS)) {
+      if (rule.origins.has(origin)) return provider;
+    }
+    return "";
   } catch {
-    return false;
+    return "";
   }
 }
 
-function isConversationUrl(value) {
+function isConversationUrl(value, rule) {
   try {
-    return /^\/c\/[^/]+\/?$/.test(new URL(value).pathname);
+    return rule.pathPattern.test(new URL(value).pathname);
   } catch {
     return false;
   }

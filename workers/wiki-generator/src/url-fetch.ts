@@ -7,6 +7,9 @@ export type FetchedUrlSource = {
   title: string | null;
   contentType: string;
   text: string;
+  fetchedTruncated: boolean;
+  fetchedBytes: number;
+  maxFetchedBytes: number;
 };
 
 const ACCEPTED_CONTENT_TYPES = ["text/html", "text/plain", "text/markdown", "text/x-markdown"];
@@ -22,14 +25,17 @@ export async function fetchUrlSource(urlText: string, maxBytes: number): Promise
   if (!ACCEPTED_CONTENT_TYPES.includes(contentType)) {
     throw new Error(`unsupported content-type: ${contentType || "unknown"}`);
   }
-  const rawText = await readTextBounded(response, maxBytes);
-  const extracted = contentType === "text/html" ? extractHtmlText(rawText) : { title: firstMarkdownTitle(rawText), text: rawText };
+  const raw = await readTextLimited(response, maxBytes);
+  const extracted = contentType === "text/html" ? extractHtmlText(raw.text) : { title: firstMarkdownTitle(raw.text), text: raw.text };
   return {
     url: firstUrl.toString(),
     finalUrl: finalUrl.toString(),
     title: extracted.title,
     contentType,
-    text: normalizeWhitespace(extracted.text)
+    text: normalizeWhitespace(extracted.text),
+    fetchedTruncated: raw.truncated,
+    fetchedBytes: raw.bytes,
+    maxFetchedBytes: maxBytes
   };
 }
 
@@ -79,21 +85,31 @@ function isRedirectStatus(status: number): boolean {
   return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
 }
 
-async function readTextBounded(response: Response, maxBytes: number): Promise<string> {
-  if (!response.body) return "";
+async function readTextLimited(response: Response, maxBytes: number): Promise<{ text: string; truncated: boolean; bytes: number }> {
+  if (!response.body) return { text: "", truncated: false, bytes: 0 };
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let truncated = false;
   for (;;) {
     const result = await reader.read();
     if (result.done) break;
     if (!result.value) continue;
-    total += result.value.byteLength;
-    if (total > maxBytes) {
+    const remaining = maxBytes - total;
+    if (remaining <= 0) {
+      truncated = true;
       await reader.cancel();
-      throw new Error(`response exceeds ${maxBytes} bytes`);
+      break;
+    }
+    if (result.value.byteLength > remaining) {
+      chunks.push(result.value.slice(0, remaining));
+      total = maxBytes;
+      truncated = true;
+      await reader.cancel();
+      break;
     }
     chunks.push(result.value);
+    total += result.value.byteLength;
   }
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -101,15 +117,12 @@ async function readTextBounded(response: Response, maxBytes: number): Promise<st
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(bytes);
+  return { text: new TextDecoder().decode(bytes), truncated, bytes: total };
 }
 
 function extractHtmlText(html: string): { title: string | null; text: string } {
   const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? null;
-  const body = html
-    .replace(/<script\b[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/gi, " ")
-    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, " ")
+  const body = stripRawTextElements(html)
     .replace(/<(nav|footer|header|aside)\b[\s\S]*?<\/\1>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(br|p|div|section|article|h[1-6]|li)\b[^>]*>/gi, "\n")
@@ -118,6 +131,12 @@ function extractHtmlText(html: string): { title: string | null; text: string } {
     title: title ? decodeEntities(normalizeWhitespace(title)) : null,
     text: decodeEntities(body)
   };
+}
+
+function stripRawTextElements(html: string): string {
+  return html
+    .replace(/<(script|style|noscript)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<(script|style|noscript)\b[\s\S]*$/gi, " ");
 }
 
 function firstMarkdownTitle(text: string): string | null {

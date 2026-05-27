@@ -219,7 +219,7 @@ mod tests {
         let documents = build_documents(
             &sample_conversation(),
             "/Wiki/run/conv-1",
-            "/Sources/raw/run-conv-1/run-conv-1.md",
+            "/Sources/raw/beam/run-conv-1.md",
         );
         let paths = documents
             .iter()
@@ -236,7 +236,7 @@ mod tests {
                 "/Wiki/run/conv-1/open_questions.md".to_string(),
                 "/Wiki/run/conv-1/summary.md".to_string(),
                 "/Wiki/run/conv-1/provenance.md".to_string(),
-                "/Sources/raw/run-conv-1/run-conv-1.md".to_string()
+                "/Sources/raw/beam/run-conv-1.md".to_string()
             ]
         );
         assert!(documents[0].1.contains("## Identifiers"));

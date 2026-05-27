@@ -86,6 +86,7 @@ export type QueueMessage = SourceQueueMessage | UrlIngestQueueMessage;
 export type ManualRunInput = {
   databaseId: string;
   sourcePath: string;
+  sourceEtag: string;
   dryRun: boolean;
 };
 
@@ -98,6 +99,7 @@ export type WorkerConfig = {
   contextPrefix: string;
   maxRawChars: number;
   maxFetchedBytes: number;
+  maxSourceChars: number;
   maxContextHits: number;
   maxOutputTokens: number;
 };

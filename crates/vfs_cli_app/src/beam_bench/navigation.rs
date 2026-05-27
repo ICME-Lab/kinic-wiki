@@ -48,7 +48,7 @@ pub fn raw_source_id(namespace: &str, conversation_id: &str) -> String {
 
 pub fn raw_source_path(namespace: &str, conversation_id: &str) -> String {
     let source_id = raw_source_id(namespace, conversation_id);
-    format!("{SOURCES_ROOT_PREFIX}/{source_id}/{source_id}.md")
+    format!("{SOURCES_ROOT_PREFIX}/beam/{source_id}.md")
 }
 
 pub async fn sync_beam_indexes(
