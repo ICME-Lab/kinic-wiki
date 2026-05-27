@@ -10,7 +10,7 @@ use vfs_cli::connection::{
 use vfs_cli_app::claude::run_claude_command;
 use vfs_cli_app::cli::{Cli, Command, DatabaseCommand, IdentityModeArg};
 use vfs_cli_app::codex::run_codex_command;
-use vfs_cli_app::commands::run_command;
+use vfs_cli_app::commands::{run_command, run_local_docs_command};
 use vfs_cli_app::identity::load_default_identity;
 use vfs_cli_app::identity_mode::{
     ClientIdentityMode, anonymous_can_read_database, identity_is_database_member,
@@ -46,6 +46,9 @@ async fn main() -> Result<()> {
     }
     if let Command::Claude { command } = cli.command.clone() {
         run_claude_command(command)?;
+        return Ok(());
+    }
+    if run_local_docs_command(&cli.command)? {
         return Ok(());
     }
     if let Command::Hermes {

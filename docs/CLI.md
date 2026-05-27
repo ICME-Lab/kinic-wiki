@@ -207,6 +207,25 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-path-remote "meeting" -
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --preview-mode content-start --json
 ```
 
+## Docs Context
+
+Docs context commands are read-only adapters over official docs chunks under `/Wiki/sources/...`.
+They normalize chunk `metadata_json` into source IDs, versions, trust labels, and citations before producing LLM evidence.
+These commands are separate from the Agent Memory API `query_context` and `source_evidence`, which remain the generic wiki memory surface.
+Docs `source_id` segments may use ASCII letters, numbers, `-`, and `.`, but not `_`; dots are encoded as `_` in `/Wiki/sources/<encoded>`.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- docs source list --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- docs source resolve "next middleware" --top-k 10 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- docs source query --source-id /vercel/next.js "next middleware" --version 16 --top-k 10 --max-tokens 4000 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- docs context pack "next middleware" --top-sources 3 --top-k-per-source 6 --max-tokens 8000 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- docs cite --input evidence-pack.json --json
+```
+
+`docs source query` returns only docs chunks with both `metadata_json.chunk_id` and `metadata_json.citation`.
+Index nodes and malformed metadata are excluded from evidence and reported in `warnings`.
+Search scores are raw backend scores; lower values rank earlier.
+
 ## Node Operations
 
 Common read and write commands:
