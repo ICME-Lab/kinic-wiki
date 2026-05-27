@@ -4847,10 +4847,125 @@ mod tests {
                version TEXT PRIMARY KEY,
                applied_at INTEGER NOT NULL
              );
-             INSERT INTO schema_migrations (version, applied_at)
-               VALUES ('database_index:010_database_name_breaking', 0);
+             INSERT INTO schema_migrations (version, applied_at) VALUES
+               ('database_index:000_initial', 0),
+               ('database_index:001_lifecycle', 0),
+               ('database_index:002_restore_size', 0),
+               ('database_index:003_restore_chunks', 0),
+               ('database_index:004_usage_events', 0),
+               ('database_index:005_mount_history', 0),
+               ('database_index:006_url_ingest_trigger_sessions', 0),
+               ('database_index:007_ops_answer_sessions', 0),
+               ('database_index:008_restore_sessions', 0),
+               ('database_index:009_restore_chunk_bytes', 0),
+               ('database_index:010_database_name_breaking', 0),
+               ('database_index:011_source_run_sessions', 0);
              CREATE TABLE databases (
-               database_id TEXT PRIMARY KEY
+               database_id TEXT PRIMARY KEY,
+               name TEXT NOT NULL,
+               db_file_name TEXT NOT NULL,
+               mount_id INTEGER NOT NULL,
+               active_mount_id INTEGER,
+               status TEXT NOT NULL DEFAULT 'hot',
+               schema_version TEXT NOT NULL,
+               logical_size_bytes INTEGER NOT NULL DEFAULT 0,
+               snapshot_hash BLOB,
+               archived_at_ms INTEGER,
+               deleted_at_ms INTEGER,
+               restore_size_bytes INTEGER,
+               created_at_ms INTEGER NOT NULL,
+               updated_at_ms INTEGER NOT NULL
+             );
+             CREATE UNIQUE INDEX databases_active_mount_id_idx
+               ON databases(active_mount_id)
+               WHERE active_mount_id IS NOT NULL;
+             CREATE TABLE database_members (
+               database_id TEXT NOT NULL,
+               principal TEXT NOT NULL,
+               role TEXT NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               PRIMARY KEY (database_id, principal),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE TABLE database_restore_chunks (
+               database_id TEXT NOT NULL,
+               offset_bytes INTEGER NOT NULL,
+               end_bytes INTEGER NOT NULL,
+               bytes BLOB,
+               PRIMARY KEY (database_id, offset_bytes, end_bytes),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX database_restore_chunks_database_id_idx
+               ON database_restore_chunks(database_id, offset_bytes);
+             CREATE TABLE usage_events (
+               event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+               method TEXT NOT NULL,
+               database_id TEXT,
+               caller TEXT NOT NULL,
+               success INTEGER NOT NULL,
+               cycles_delta INTEGER NOT NULL,
+               error TEXT,
+               created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX usage_events_database_id_created_at_idx
+               ON usage_events(database_id, created_at_ms);
+             CREATE INDEX usage_events_caller_created_at_idx
+               ON usage_events(caller, created_at_ms);
+             CREATE TABLE database_mount_history (
+               database_id TEXT NOT NULL,
+               mount_id INTEGER NOT NULL,
+               reason TEXT NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               PRIMARY KEY (mount_id)
+             );
+             CREATE TABLE url_ingest_trigger_sessions (
+               database_id TEXT NOT NULL,
+               session_nonce TEXT NOT NULL,
+               principal TEXT NOT NULL,
+               expires_at_ms INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               refreshed_at_ms INTEGER NOT NULL,
+               PRIMARY KEY (database_id, session_nonce),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX url_ingest_trigger_sessions_expiry_idx
+               ON url_ingest_trigger_sessions(expires_at_ms);
+             CREATE TABLE ops_answer_sessions (
+               database_id TEXT NOT NULL,
+               session_nonce TEXT NOT NULL,
+               principal TEXT NOT NULL,
+               expires_at_ms INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               refreshed_at_ms INTEGER NOT NULL,
+               PRIMARY KEY (database_id, session_nonce),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX ops_answer_sessions_expiry_idx
+               ON ops_answer_sessions(expires_at_ms);
+             CREATE TABLE source_run_sessions (
+               database_id TEXT NOT NULL,
+               source_path TEXT NOT NULL,
+               source_etag TEXT NOT NULL,
+               session_nonce TEXT NOT NULL,
+               principal TEXT NOT NULL,
+               expires_at_ms INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               refreshed_at_ms INTEGER NOT NULL,
+               PRIMARY KEY (database_id, session_nonce),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX source_run_sessions_expiry_idx
+               ON source_run_sessions(expires_at_ms);
+             CREATE TABLE database_restore_sessions (
+               database_id TEXT PRIMARY KEY,
+               status TEXT NOT NULL,
+               active_mount_id INTEGER,
+               snapshot_hash BLOB,
+               archived_at_ms INTEGER,
+               deleted_at_ms INTEGER,
+               restore_size_bytes INTEGER,
+               created_at_ms INTEGER NOT NULL,
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
              );",
         )
         .expect("pre-billing schema should write");

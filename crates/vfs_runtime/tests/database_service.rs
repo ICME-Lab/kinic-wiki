@@ -116,14 +116,14 @@ fn index_migration_adds_billing_to_existing_database_index() {
         .expect("database billing ledger count should load");
     let marker: String = conn
         .query_row(
-            "SELECT version FROM schema_migrations WHERE version = 'database_index:011_billing_initial'",
+            "SELECT version FROM schema_migrations WHERE version = 'database_index:012_billing_initial'",
             params![],
             |row| row.get(0),
         )
         .expect("billing migration marker should exist");
     let pending_marker: String = conn
         .query_row(
-            "SELECT version FROM schema_migrations WHERE version = 'database_index:012_billing_pending'",
+            "SELECT version FROM schema_migrations WHERE version = 'database_index:013_billing_pending'",
             params![],
             |row| row.get(0),
         )
@@ -139,7 +139,7 @@ fn index_migration_adds_billing_to_existing_database_index() {
     let block_index_marker: String = conn
         .query_row(
             "SELECT version FROM schema_migrations
-             WHERE version = 'database_index:013_billing_ledger_block_index'",
+             WHERE version = 'database_index:014_billing_ledger_block_index'",
             params![],
             |row| row.get(0),
         )
@@ -155,11 +155,11 @@ fn index_migration_adds_billing_to_existing_database_index() {
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(ledger_count, 0);
-    assert_eq!(marker, "database_index:011_billing_initial");
-    assert_eq!(pending_marker, "database_index:012_billing_pending");
+    assert_eq!(marker, "database_index:012_billing_initial");
+    assert_eq!(pending_marker, "database_index:013_billing_pending");
     assert_eq!(
         block_index_marker,
-        "database_index:013_billing_ledger_block_index"
+        "database_index:014_billing_ledger_block_index"
     );
     assert_eq!(pending_table_count, 1);
     assert_eq!(block_index_column_count, 1);
