@@ -8,12 +8,13 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    NodeKind, NodeMutationAck, RecentNodeHit, RecentNodesRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, BillingConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeKind,
+    NodeMutationAck, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
 };
 
 #[derive(Default)]
@@ -57,6 +58,31 @@ impl VfsApi for MockClient {
             file_count: 0,
             source_count: 0,
         })
+    }
+
+    async fn get_billing_config(&self) -> Result<BillingConfig> {
+        Ok(BillingConfig {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            sns_governance_id: "aaaaa-aa".to_string(),
+            rate_numerator_e8s: 1,
+            rate_denominator_cycles: 1,
+            fixed_update_fee_e8s: 0,
+            min_update_balance_e8s: 1,
+        })
+    }
+
+    async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
+        Ok(vec![DatabaseSummary {
+            database_id: "default".to_string(),
+            name: "Default".to_string(),
+            status: DatabaseStatus::Hot,
+            role: DatabaseRole::Owner,
+            logical_size_bytes: 0,
+            billing_balance_e8s: Some(10),
+            billing_suspended_at_ms: None,
+            archived_at_ms: None,
+            deleted_at_ms: None,
+        }])
     }
 
     async fn read_node(&self, _database_id: &str, _path: &str) -> Result<Option<Node>> {
