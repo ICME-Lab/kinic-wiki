@@ -27,11 +27,12 @@ use vfs_types::{
     NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
     QueryContextRequest, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult,
 };
-use wiki_domain::validate_source_path_for_kind;
+use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
 const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
@@ -46,6 +47,7 @@ const INDEX_SCHEMA_VERSION_RESTORE_SESSIONS: &str = "database_index:008_restore_
 const INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES: &str = "database_index:009_restore_chunk_bytes";
 const INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING: &str =
     "database_index:010_database_name_breaking";
+const INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS: &str = "database_index:011_source_run_sessions";
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
@@ -56,6 +58,7 @@ pub const USAGE_EVENTS_RETENTION_LIMIT: u64 = 100_000;
 const USAGE_EVENTS_PURGE_INTERVAL: i64 = 100;
 const URL_INGEST_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const OPS_ANSWER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
+const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
 const SHA256_DIGEST_BYTES: usize = 32;
 const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
@@ -996,6 +999,52 @@ impl VfsService {
         Ok(OpsAnswerSessionCheckResult { principal })
     }
 
+    pub fn check_source_run_session(
+        &self,
+        request: SourceRunSessionCheckRequest,
+        now: i64,
+    ) -> Result<(), String> {
+        validate_source_run_session_check_request(&request)?;
+        self.require_role(
+            &request.database_id,
+            DEFAULT_LLM_WRITER_PRINCIPAL,
+            RequiredRole::Writer,
+        )
+        .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
+        let principal: String = self.read_index(|conn| {
+            conn.query_row(
+                "SELECT principal FROM source_run_sessions
+                 WHERE database_id = ?1
+                   AND source_path = ?2
+                   AND source_etag = ?3
+                   AND session_nonce = ?4
+                   AND expires_at_ms >= ?5",
+                params![
+                    request.database_id,
+                    request.source_path,
+                    request.source_etag,
+                    request.session_nonce,
+                    now
+                ],
+                |row| crate::sqlite::row_get(row, 0),
+            )
+            .optional()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "source run session is missing or expired".to_string())
+        })?;
+        self.require_role(&request.database_id, &principal, RequiredRole::Writer)?;
+        let source = self
+            .read_node(&request.database_id, &principal, &request.source_path)?
+            .ok_or_else(|| format!("source node not found: {}", request.source_path))?;
+        if source.kind != NodeKind::Source {
+            return Err("source run session target is not a source node".to_string());
+        }
+        if source.etag != request.source_etag {
+            return Err("source run session source etag is stale".to_string());
+        }
+        Ok(())
+    }
+
     pub fn list_nodes(
         &self,
         caller: &str,
@@ -1034,6 +1083,54 @@ impl VfsService {
             self.refresh_logical_size(&database_id)?;
         }
         result
+    }
+
+    pub fn write_source_for_generation(
+        &self,
+        caller: &str,
+        request: WriteSourceForGenerationRequest,
+        now: i64,
+    ) -> Result<WriteSourceForGenerationResult, String> {
+        if caller == ANONYMOUS_PRINCIPAL {
+            return Err("anonymous caller not allowed".to_string());
+        }
+        validate_source_for_generation_request(&request)?;
+        self.require_role(&request.database_id, caller, RequiredRole::Writer)?;
+        self.require_role(
+            &request.database_id,
+            DEFAULT_LLM_WRITER_PRINCIPAL,
+            RequiredRole::Writer,
+        )
+        .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
+
+        let database_id = request.database_id.clone();
+        let session_nonce = request.session_nonce.clone();
+        let path = request.path.clone();
+        let write_request = WriteNodeRequest {
+            database_id: request.database_id,
+            path: request.path,
+            kind: NodeKind::Source,
+            content: request.content,
+            metadata_json: request.metadata_json,
+            expected_etag: request.expected_etag,
+        };
+        let write =
+            self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
+                store.write_node(write_request, now)
+            })?;
+        self.write_source_run_session(
+            &database_id,
+            &path,
+            &write.node.etag,
+            &session_nonce,
+            caller,
+            now,
+        )?;
+        self.refresh_logical_size(&database_id)?;
+        Ok(WriteSourceForGenerationResult {
+            write,
+            session_nonce,
+        })
     }
 
     pub fn write_nodes(
@@ -1593,6 +1690,43 @@ impl VfsService {
         }
     }
 
+    fn write_source_run_session(
+        &self,
+        database_id: &str,
+        source_path: &str,
+        source_etag: &str,
+        session_nonce: &str,
+        principal: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        self.write_index(|conn| {
+            purge_expired_source_run_sessions(conn, now)?;
+            conn.execute(
+                "INSERT INTO source_run_sessions
+                 (database_id, source_path, source_etag, session_nonce, principal,
+                  expires_at_ms, created_at_ms, refreshed_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+                 ON CONFLICT(database_id, session_nonce) DO UPDATE SET
+                   source_path = excluded.source_path,
+                   source_etag = excluded.source_etag,
+                   principal = excluded.principal,
+                   expires_at_ms = excluded.expires_at_ms,
+                   refreshed_at_ms = excluded.refreshed_at_ms",
+                params![
+                    database_id,
+                    source_path,
+                    source_etag,
+                    session_nonce,
+                    principal,
+                    now + SOURCE_RUN_SESSION_TTL_MS,
+                    now
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+    }
+
     fn read_index<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1828,6 +1962,32 @@ fn run_index_migrations(conn: &mut Connection) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
         tx.commit().map_err(|error| error.to_string())?;
     }
+    if !migration_applied(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        tx.execute_batch(
+            "CREATE TABLE source_run_sessions (
+               database_id TEXT NOT NULL,
+               source_path TEXT NOT NULL,
+               source_etag TEXT NOT NULL,
+               session_nonce TEXT NOT NULL,
+               principal TEXT NOT NULL,
+               expires_at_ms INTEGER NOT NULL,
+               created_at_ms INTEGER NOT NULL,
+               refreshed_at_ms INTEGER NOT NULL,
+               PRIMARY KEY (database_id, session_nonce),
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX source_run_sessions_expiry_idx
+               ON source_run_sessions(expires_at_ms);",
+        )
+        .map_err(|error| error.to_string())?;
+        tx.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+            params![INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS],
+        )
+        .map_err(|error| error.to_string())?;
+        tx.commit().map_err(|error| error.to_string())?;
+    }
     if !migration_applied(conn, INDEX_SCHEMA_VERSION_RESTORE_SESSIONS)? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
         tx.execute_batch(
@@ -1980,6 +2140,20 @@ fn run_index_migrations_in_tx(conn: &Transaction<'_>) -> Result<(), String> {
          );
          CREATE INDEX ops_answer_sessions_expiry_idx
            ON ops_answer_sessions(expires_at_ms);
+         CREATE TABLE source_run_sessions (
+           database_id TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           source_etag TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX source_run_sessions_expiry_idx
+           ON source_run_sessions(expires_at_ms);
          CREATE TABLE database_restore_sessions (
            database_id TEXT PRIMARY KEY,
            status TEXT NOT NULL,
@@ -2038,6 +2212,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_RESTORE_SESSIONS,
     INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES,
     INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING,
+    INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -2048,6 +2223,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_mount_history",
     "url_ingest_trigger_sessions",
     "ops_answer_sessions",
+    "source_run_sessions",
     "database_restore_sessions",
 ];
 
@@ -2240,6 +2416,38 @@ fn validate_ops_answer_session_check_request(
     validate_session_nonce(&request.session_nonce)
 }
 
+fn validate_source_for_generation_request(
+    request: &WriteSourceForGenerationRequest,
+) -> Result<(), String> {
+    if request.database_id.trim().is_empty() {
+        return Err("database_id is required".to_string());
+    }
+    validate_raw_source_run_path(&request.path)?;
+    validate_session_nonce(&request.session_nonce)
+}
+
+fn validate_source_run_session_check_request(
+    request: &SourceRunSessionCheckRequest,
+) -> Result<(), String> {
+    if request.database_id.trim().is_empty() {
+        return Err("database_id is required".to_string());
+    }
+    validate_raw_source_run_path(&request.source_path)?;
+    if request.source_etag.trim().is_empty() {
+        return Err("source_etag is required".to_string());
+    }
+    validate_session_nonce(&request.session_nonce)
+}
+
+fn validate_raw_source_run_path(path: &str) -> Result<(), String> {
+    if !(path == RAW_SOURCES_PREFIX || path.starts_with(&format!("{RAW_SOURCES_PREFIX}/"))) {
+        return Err(format!(
+            "source_path must stay under {RAW_SOURCES_PREFIX}: {path}"
+        ));
+    }
+    validate_source_path_for_kind(path, &NodeKind::Source)
+}
+
 fn validate_url_ingest_trigger_session_nonce(session_nonce: &str) -> Result<(), String> {
     validate_session_nonce(session_nonce)
 }
@@ -2347,6 +2555,15 @@ fn purge_expired_url_ingest_trigger_sessions(conn: &Connection, now: i64) -> Res
 fn purge_expired_ops_answer_sessions(conn: &Connection, now: i64) -> Result<(), String> {
     conn.execute(
         "DELETE FROM ops_answer_sessions WHERE expires_at_ms < ?1",
+        params![now],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
+fn purge_expired_source_run_sessions(conn: &Connection, now: i64) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM source_run_sessions WHERE expires_at_ms < ?1",
         params![now],
     )
     .map(|_| ())

@@ -27,7 +27,7 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<source_id>/<source_id>.md`.
+- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless the workflow explicitly writes it back through VFS commands.
 - Stop at review-ready unless the user explicitly asks for push. `review-ready` means edits and any existing or requested `log.md` updates are complete, but no push or publish step has run.
 - Keep source persistence separate from wiki synthesis.

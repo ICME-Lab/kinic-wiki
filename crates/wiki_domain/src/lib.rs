@@ -34,7 +34,7 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
 
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
     if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
-        return validate_source_path_under_prefix(path, RAW_SOURCES_PREFIX);
+        return validate_raw_source_path(path);
     }
     if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
         return validate_source_path_under_prefix(path, SESSION_SOURCES_PREFIX);
@@ -103,6 +103,56 @@ fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), Str
     Ok(())
 }
 
+fn validate_raw_source_path(path: &str) -> Result<(), String> {
+    let relative = path
+        .strip_prefix(RAW_SOURCES_PREFIX)
+        .ok_or_else(|| format!("source path must stay under {RAW_SOURCES_PREFIX}: {path}"))?;
+    let segments = relative
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    if segments.len() != 2 {
+        return Err(format!(
+            "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
+        ));
+    }
+    let [provider, file_name] = segments.as_slice() else {
+        unreachable!();
+    };
+    if !is_safe_provider_segment(provider)
+        || !file_name.ends_with(".md")
+        || !is_safe_source_segment(file_name.trim_end_matches(".md"))
+    {
+        return Err(format!(
+            "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
+        ));
+    }
+    Ok(())
+}
+
+fn is_safe_source_segment(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    is_source_segment_char(first)
+        && first.is_ascii_alphanumeric()
+        && chars.all(is_source_segment_char)
+}
+
+fn is_safe_provider_segment(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_lowercase()
+        && chars.all(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
+}
+
+fn is_source_segment_char(value: char) -> bool {
+    value.is_ascii_alphanumeric() || value == '.' || value == '_' || value == '-'
+}
+
 fn validate_skill_run_source_path(path: &str) -> Result<(), String> {
     let relative = path
         .strip_prefix(SKILL_RUNS_PREFIX)
@@ -139,14 +189,21 @@ mod tests {
 
     #[test]
     fn canonical_source_path_accepts_expected_shape() {
-        let path = format!("{RAW_SOURCES_PREFIX}/alpha/alpha.md");
+        let path = format!("{RAW_SOURCES_PREFIX}/chatgpt/alpha.md");
         assert!(validate_canonical_source_path(&path).is_ok());
     }
 
     #[test]
     fn canonical_source_path_rejects_wrong_file_name() {
-        let error = validate_canonical_source_path("/Sources/raw/alpha/beta.md")
+        let error = validate_canonical_source_path("/Sources/raw/alpha/beta.txt")
             .expect_err("non-canonical path should fail");
+        assert!(error.contains("canonical form"));
+    }
+
+    #[test]
+    fn canonical_source_path_rejects_old_raw_directory_ids() {
+        let error = validate_canonical_source_path("/Sources/raw/web-abc/web-abc.md")
+            .expect_err("old raw source layout should fail");
         assert!(error.contains("canonical form"));
     }
 

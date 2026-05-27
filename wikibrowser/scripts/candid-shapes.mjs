@@ -73,6 +73,21 @@ export const expectedTypes = {
     kind: "record",
     fields: { created: "bool", node: "RecentNodeHit" }
   },
+  WriteSourceForGenerationRequest: {
+    kind: "record",
+    fields: {
+      content: "text",
+      path: "text",
+      session_nonce: "text",
+      expected_etag: "opt text",
+      metadata_json: "text",
+      database_id: "text"
+    }
+  },
+  WriteSourceForGenerationResult: {
+    kind: "record",
+    fields: { session_nonce: "text", write: "WriteNodeResult" }
+  },
   DeleteNodeRequest: {
     kind: "record",
     fields: {
@@ -125,6 +140,15 @@ export const expectedTypes = {
   OpsAnswerSessionCheckResult: {
     kind: "record",
     fields: { principal: "text" }
+  },
+  SourceRunSessionCheckRequest: {
+    kind: "record",
+    fields: {
+      source_path: "text",
+      source_etag: "text",
+      session_nonce: "text",
+      database_id: "text"
+    }
   },
   MemoryCapability: { kind: "record", fields: { name: "text", description: "text" } },
   MemoryManifest: {
@@ -208,6 +232,10 @@ export const expectedTypes = {
   ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
+  ResultWriteSourceForGeneration: {
+    kind: "variant",
+    cases: { Ok: "WriteSourceForGenerationResult", Err: "text" }
+  },
   SearchNodeHit: {
     kind: "record",
     fields: {
@@ -286,7 +314,8 @@ export const didTypeAliases = {
   ResultRecent: "Result_21",
   ResultSearch: "Result_22",
   ResultSourceEvidence: "Result_23",
-  ResultOpsAnswerSessionCheck: "Result_3"
+  ResultOpsAnswerSessionCheck: "Result_3",
+  ResultWriteSourceForGeneration: "Result_25"
 };
 
 export const expectedMethods = {
@@ -294,8 +323,10 @@ export const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
+  check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
+  delete_database: { input: ["text"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
   rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
@@ -317,5 +348,6 @@ export const expectedMethods = {
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
-  write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" }
+  write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
+  write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };

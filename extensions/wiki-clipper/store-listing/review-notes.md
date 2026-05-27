@@ -12,10 +12,11 @@ The extension requires Internet Identity and writer access to a Kinic Wiki datab
 4. Open any `http` or `https` page and click the extension action.
 5. Confirm that a URL ingest request is created in the selected database.
 6. Open `https://chatgpt.com`, click the Kinic Wiki Clipper page control, and start export.
+7. Open `https://claude.ai`, click the Kinic Wiki Clipper page control, and start export.
 
 ## Notes for reviewers
 
-- The extension does not inject UI outside ChatGPT pages.
+- The extension injects export UI only on ChatGPT and Claude pages.
 - The extension rejects non-web pages such as `chrome://extensions`.
-- ChatGPT export uses the user's existing ChatGPT browser session and starts only after user action.
+- ChatGPT/Claude export uses the user's existing browser session and starts only after user action.
 - URL ingest uses a short-lived session nonce authorized by the Kinic Wiki canister.

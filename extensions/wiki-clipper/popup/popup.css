@@ -79,6 +79,19 @@ main {
   gap: 8px;
 }
 
+.create-database-form {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--kinic-line);
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--kinic-paper);
+}
+
+.create-database-form[hidden] {
+  display: none;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -102,12 +115,6 @@ select:focus {
   border-color: var(--kinic-hot-pink);
   outline: 2px solid var(--kinic-soft-pink);
   outline-offset: 1px;
-}
-
-.settings-actions {
-  display: grid;
-  grid-template-columns: 0.72fr 1fr;
-  gap: 8px;
 }
 
 button {

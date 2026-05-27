@@ -69,12 +69,12 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -106,6 +106,7 @@ export function OfficialKinicWikiPanel() {
 }
 
 function DatabaseSection({
+  description,
   emptyMessage,
   mode,
   publicError = null,
@@ -113,6 +114,7 @@ function DatabaseSection({
   showTitle = true,
   title
 }: {
+  description: string;
   emptyMessage: string;
   mode: "member" | "public";
   publicError?: string | null;
@@ -124,6 +126,7 @@ function DatabaseSection({
     return (
       <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
+        {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
         <p className="mt-2 text-sm text-muted">{publicError}</p>
       </section>
     );
@@ -132,6 +135,7 @@ function DatabaseSection({
     return (
       <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
+        {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
         <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
       </section>
     );
@@ -141,6 +145,7 @@ function DatabaseSection({
       {showTitle ? (
         <div className="border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
+          <p className="mt-1 text-xs leading-5 text-muted">{description}</p>
         </div>
       ) : null}
       <div className="grid gap-3 p-3 sm:hidden">

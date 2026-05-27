@@ -22,6 +22,8 @@ const expectedTypes = {
       deleted_at_ms: "opt int64"
     }
   },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -46,19 +48,33 @@ const expectedTypes = {
       expected_etag: "opt text"
     }
   },
+  WriteSourceForGenerationRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      path: "text",
+      content: "text",
+      metadata_json: "text",
+      expected_etag: "opt text",
+      session_nonce: "text"
+    }
+  },
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
   OpsAnswerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
   RecentNodeHit: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
-  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } }
+  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } },
+  WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 
 const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
+  create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
-  write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" }
+  write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
+  write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };
 
 const didTypes = parseDidTypes(did);
@@ -161,9 +177,11 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
+  if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_13") return "ResultDatabases";
   if (normalized === "Result_15") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultNode";
+  if (normalized === "Result_25") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -195,10 +213,12 @@ function splitActorInputs(value) {
 function actorResultName(okShape) {
   const normalized = normalizeActorShape(okShape);
   if (normalized === "null") return "ResultUnit";
+  if (normalized === "CreateDatabaseResult") return "ResultCreateDatabase";
   if (normalized === "Vec(DatabaseSummary)") return "ResultDatabases";
   if (normalized === "MkdirNodeResult") return "ResultMkdirNode";
   if (normalized === "opt Node") return "ResultNode";
   if (normalized === "WriteNodeResult") return "ResultWriteNode";
+  if (normalized === "WriteSourceForGenerationResult") return "ResultWriteSourceForGeneration";
   return normalized;
 }
 

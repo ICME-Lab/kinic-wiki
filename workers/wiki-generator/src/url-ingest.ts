@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/url-ingest.ts
 // What: URL ingest request parsing, source persistence, and request state writes.
-// Why: Browser-submitted URLs should become raw sources before wiki draft generation.
+// Why: Browser-submitted URLs should become raw sources before wiki page generation.
 import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
@@ -103,7 +103,7 @@ export async function processUrlIngestRequest(env: RuntimeEnv, vfs: VfsClient, c
     if (current.status === "fetching") {
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
       const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl);
-      sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, current.path, fetched);
+      sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, current.path, fetched, config.maxSourceChars);
       current = await writeRequestState(vfs, databaseId, current, { status: "source_written", sourcePath: sourceAck.path, error: null });
     }
     if (!current.sourcePath) throw new Error("source_path is missing after source write");
@@ -149,10 +149,18 @@ export async function markIngestRequestFailed(vfs: VfsClient, databaseId: string
   await writeRequestState(vfs, databaseId, request, { status: "failed", error });
 }
 
-async function writeFetchedSource(vfs: VfsClient, databaseId: string, path: string, _requestPath: string, fetched: FetchedUrlSource): Promise<WriteNodeAck> {
+async function writeFetchedSource(
+  vfs: VfsClient,
+  databaseId: string,
+  path: string,
+  _requestPath: string,
+  fetched: FetchedUrlSource,
+  maxSourceChars: number
+): Promise<WriteNodeAck> {
   const existing = await vfs.readNode(databaseId, path);
   const capturedAt = new Date().toISOString();
   const title = fetched.title ?? fetched.finalUrl;
+  const sourceText = limitSourceText(fetched.text, maxSourceChars);
   const content = renderFrontmatter(
     {
       kind: "kinic.raw_web_source",
@@ -161,9 +169,15 @@ async function writeFetchedSource(vfs: VfsClient, databaseId: string, path: stri
       final_url: fetched.finalUrl,
       title,
       content_type: fetched.contentType,
-      captured_at: capturedAt
+      captured_at: capturedAt,
+      truncated: sourceText.truncated,
+      original_chars: sourceText.originalChars,
+      saved_chars: sourceText.savedChars,
+      fetched_truncated: fetched.fetchedTruncated,
+      fetched_bytes: fetched.fetchedBytes,
+      max_fetched_bytes: fetched.maxFetchedBytes
     },
-    [`# ${title}`, "", `Source URL: ${fetched.finalUrl}`, "", fetched.text].join("\n")
+    [`# ${title}`, "", `Source URL: ${fetched.finalUrl}`, "", sourceText.text].join("\n")
   );
   await ensureParentFolders(vfs, databaseId, path);
   const ack = await vfs.writeNode({
@@ -171,11 +185,30 @@ async function writeFetchedSource(vfs: VfsClient, databaseId: string, path: stri
     path,
     kind: "source",
     content,
-    metadataJson: JSON.stringify({ source_type: "url", url: fetched.url, final_url: fetched.finalUrl }),
+    metadataJson: JSON.stringify({
+      source_type: "url",
+      url: fetched.url,
+      final_url: fetched.finalUrl,
+      truncated: sourceText.truncated,
+      original_chars: sourceText.originalChars,
+      saved_chars: sourceText.savedChars,
+      fetched_truncated: fetched.fetchedTruncated,
+      fetched_bytes: fetched.fetchedBytes,
+      max_fetched_bytes: fetched.maxFetchedBytes
+    }),
     expectedEtag: existing?.etag ?? null
   });
   if (ack.kind !== "source") throw new Error(`write_node returned non-source kind: ${ack.path}`);
   return ack;
+}
+
+function limitSourceText(text: string, maxChars: number): { text: string; truncated: boolean; originalChars: number; savedChars: number } {
+  const originalChars = text.length;
+  if (originalChars <= maxChars) {
+    return { text, truncated: false, originalChars, savedChars: originalChars };
+  }
+  const limited = text.slice(0, maxChars).trimEnd();
+  return { text: limited, truncated: true, originalChars, savedChars: limited.length };
 }
 
 async function writeRequestState(
@@ -288,7 +321,7 @@ async function requireSourceAck(vfs: VfsClient, databaseId: string, path: string
 
 async function sourcePathForUrl(sourcePrefix: string, finalUrl: string): Promise<string> {
   const id = `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
-  return `${sourcePrefix}/${id}/${id}.md`;
+  return `${sourcePrefix}/web/${id.slice("web-".length)}.md`;
 }
 
 async function sha256Hex(value: string): Promise<string> {

@@ -4,27 +4,34 @@
 import { loadConfig } from "./config.js";
 import { enqueueSourceJob, loadJob, markCompleted, markFailed, markProcessing, shouldSkipJob } from "./jobs.js";
 import { generateDraft, validateDraftSources } from "./openai.js";
-import { ensureTargetCanBeWritten, renderDraftMarkdown, slugForDraft } from "./render.js";
+import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "./render.js";
 import { validateCanonicalSourcePath } from "./source-path.js";
 import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
 import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
-export async function runManual(env: RuntimeEnv, input: ManualRunInput): Promise<Response> {
+export type ManualRunContext = {
+  vfs: VfsClient;
+};
+
+export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
   const config = loadConfig(env);
   validateCanonicalSourcePath(input.sourcePath, config.sourcePrefix);
-  const vfs = await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM);
+  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, input.databaseId, input.sourcePath);
+  if (source.etag !== input.sourceEtag) {
+    return jsonResponse({ error: "source etag mismatch", sourcePath: input.sourcePath }, 409);
+  }
 
   if (!input.dryRun) {
     const enqueued = await enqueueSourceJob(env, {
       kind: "source",
       databaseId: input.databaseId,
       sourcePath: input.sourcePath,
-      sourceEtag: source.etag
+      sourceEtag: input.sourceEtag
     });
-    return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: source.etag }, 202);
+    return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: input.sourceEtag }, 202);
   }
 
   const generated = await generateFromSource(env, vfs, config, input.databaseId, source);
@@ -64,7 +71,7 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
   await markProcessing(env.DB, message);
   try {
     const generated = await generateFromSource(env, vfs, config, message.databaseId, source);
-    await writeGeneratedDraft(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
+    await writeGeneratedPage(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
     await markCompleted(env.DB, message, generated.targetPath);
     if (message.requestPath) {
       await markIngestRequestCompleted(vfs, message.databaseId, message.requestPath, source.path, generated.targetPath);
@@ -90,14 +97,16 @@ export async function bestEffortAppendWorkerLog(vfs: VfsClient, databaseId: stri
 }
 
 export function parseManualRunInput(value: unknown): ManualRunInput | string {
-  if (!isObject(value)) return "body must include databaseId and sourcePath";
+  if (!isObject(value)) return "body must include databaseId, sourcePath, and sourceEtag";
   const databaseId = value.databaseId;
   const sourcePath = value.sourcePath;
+  const sourceEtag = value.sourceEtag;
   const dryRun = value.dryRun;
   if (typeof databaseId !== "string" || databaseId.length === 0) return "databaseId is required";
   if (typeof sourcePath !== "string" || sourcePath.length === 0) return "sourcePath is required";
+  if (typeof sourceEtag !== "string" || sourceEtag.length === 0) return "sourceEtag is required";
   if (dryRun !== undefined && typeof dryRun !== "boolean") return "dryRun must be a boolean";
-  return { databaseId, sourcePath, dryRun: dryRun ?? false };
+  return { databaseId, sourcePath, sourceEtag, dryRun: dryRun ?? false };
 }
 
 export function parseQueueMessage(value: unknown): QueueMessage | null {
@@ -129,14 +138,14 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
   return null;
 }
 
-async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, source: WikiNode): Promise<GeneratedDraft> {
+async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, source: WikiNode): Promise<GeneratedPage> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
   const draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
   validateDraftSources(draft, source.path);
-  const targetPath = `${config.targetRoot}/${slugForDraft(draft)}.md`;
+  const targetPath = `${config.targetRoot}/${slugForGeneratedPage(draft)}.md`;
   return {
     targetPath,
-    content: renderDraftMarkdown(draft, source, contextHits),
+    content: renderGeneratedMarkdown(draft, source, contextHits),
     contextHits
   };
 }
@@ -158,7 +167,7 @@ async function readRequiredSource(vfs: VfsClient, databaseId: string, sourcePath
   return source;
 }
 
-async function writeGeneratedDraft(vfs: VfsClient, databaseId: string, targetPath: string, content: string, sourcePath: string): Promise<void> {
+async function writeGeneratedPage(vfs: VfsClient, databaseId: string, targetPath: string, content: string, sourcePath: string): Promise<void> {
   const existing = await vfs.readNode(databaseId, targetPath);
   ensureTargetCanBeWritten(existing?.content ?? null, targetPath, sourcePath);
   await ensureParentFolders(vfs, databaseId, targetPath);
@@ -167,7 +176,7 @@ async function writeGeneratedDraft(vfs: VfsClient, databaseId: string, targetPat
     path: targetPath,
     kind: "file",
     content,
-    metadataJson: JSON.stringify({ generated_by: "wiki-generator", source_path: sourcePath, state: "Draft" }),
+    metadataJson: JSON.stringify({ generated_by: "wiki-generator", source_path: sourcePath }),
     expectedEtag: existing?.etag ?? null
   });
 }
@@ -226,7 +235,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-type GeneratedDraft = {
+type GeneratedPage = {
   targetPath: string;
   content: string;
   contextHits: SearchNodeHit[];

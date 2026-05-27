@@ -591,10 +591,7 @@ mod tests {
             plan.paths
                 .contains(&"/Sources/ingest-requests/r1.md".to_string())
         );
-        assert!(
-            plan.paths
-                .contains(&"/Sources/raw/web-1/web-1.md".to_string())
-        );
+        assert!(plan.paths.contains(&"/Sources/raw/web/1.md".to_string()));
         assert!(
             plan.paths
                 .contains(&"/Wiki/conversations/web-1".to_string())
@@ -639,7 +636,7 @@ mod tests {
         MatchedRequest {
             path: "/Sources/ingest-requests/r1.md".to_string(),
             url: "https://example.com/page".to_string(),
-            source_path: Some("/Sources/raw/web-1/web-1.md".to_string()),
+            source_path: Some("/Sources/raw/web/1.md".to_string()),
             target_path: target_path.map(ToString::to_string),
             status: Some("completed".to_string()),
         }

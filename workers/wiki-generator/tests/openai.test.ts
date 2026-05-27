@@ -75,7 +75,8 @@ function config(): WorkerConfig {
     sourcePrefix: "/Sources/raw",
     contextPrefix: "/Wiki",
     maxRawChars: 120_000,
-    maxFetchedBytes: 1_000_000,
+    maxFetchedBytes: 5_000_000,
+    maxSourceChars: 300_000,
     maxContextHits: 8,
     maxOutputTokens: 6_000
   };

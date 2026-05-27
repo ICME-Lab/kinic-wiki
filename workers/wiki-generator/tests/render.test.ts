@@ -3,7 +3,7 @@
 // Why: Existing pages must not be overwritten without matching provenance.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ensureTargetCanBeWritten, renderDraftMarkdown, slugForDraft } from "../src/render.js";
+import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage } from "../src/render.js";
 import type { WikiDraft, WikiNode } from "../src/types.js";
 
 const source: WikiNode = {
@@ -24,10 +24,11 @@ const draft: WikiDraft = {
   follow_ups: []
 };
 
-test("slug and markdown include draft state and provenance", () => {
-  assert.equal(slugForDraft(draft), "project-notes");
-  const markdown = renderDraftMarkdown(draft, source, []);
-  assert.match(markdown, /State: Draft/);
+test("slug and markdown include generated provenance without draft state", () => {
+  assert.equal(slugForGeneratedPage(draft), "project-notes");
+  const markdown = renderGeneratedMarkdown(draft, source, []);
+  assert.doesNotMatch(markdown, /State: Draft/);
+  assert.doesNotMatch(markdown, /## Status/);
   assert.match(markdown, /source_path: \/Sources\/raw\/a\/a\.md/);
 });
 

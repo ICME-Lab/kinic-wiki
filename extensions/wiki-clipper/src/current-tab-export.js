@@ -1,6 +1,11 @@
 // Where: extensions/wiki-clipper/src/current-tab-export.js
-// What: Export recent ChatGPT conversations through ChatGPT backend APIs.
-// Why: Direct API export avoids visible tab navigation.
+// What: Export recent AI conversations through provider browser APIs.
+// Why: Direct API export avoids visible tab navigation where provider sessions allow it.
+import {
+  fetchClaudeConversationCapture,
+  fetchClaudeConversationTargets,
+  resolveClaudeOrganizationId
+} from "./claude-response.js";
 import { captureFromChatGptResponse } from "./chatgpt-response.js";
 
 const STATE_KEY = "kinic-current-tab-export-v1";
@@ -10,7 +15,7 @@ const EXPORT_CONCURRENCY = 2;
 const CONVERSATION_LIST_PAGE_SIZE = 28;
 export const EXPORT_LOGIN_REQUIRED_MESSAGE = "Login with Internet Identity before exporting.";
 
-export function createExportState({ limit, config, originalUrl, startedAt = new Date().toISOString() }) {
+export function createExportState({ limit, config, provider, originalUrl, startedAt = new Date().toISOString() }) {
   const startedAtMs = Date.parse(startedAt);
   const expiresAt = new Date((Number.isFinite(startedAtMs) ? startedAtMs : Date.now()) + STATE_TTL_MS).toISOString();
   return {
@@ -18,6 +23,7 @@ export function createExportState({ limit, config, originalUrl, startedAt = new 
     limit,
     targets: [],
     config,
+    provider: provider || providerFromUrl(originalUrl || "") || "chatgpt",
     originalUrl,
     startedAt,
     expiresAt,
@@ -89,7 +95,8 @@ async function processDirectExport(callbacks) {
   if (!state || state.status !== "exporting") return;
   hydrate(callbacks, state);
   try {
-    const targets = await fetchRecentConversationTargets(state.limit);
+    const provider = state.provider || providerFromUrl(state.originalUrl) || "chatgpt";
+    const targets = await fetchRecentConversationTargets(state.limit, fetch, location, provider);
     state = {
       ...((await readExportState()) || state),
       targets,
@@ -103,7 +110,7 @@ async function processDirectExport(callbacks) {
       return;
     }
     if (!targets.length) {
-      throw new Error("No recent ChatGPT conversations found.");
+      throw new Error(`No recent ${providerLabel(provider)} conversations found.`);
     }
     let latest = await processExportTargets(targets, state, callbacks);
     const storedState = await readExportState();
@@ -179,7 +186,18 @@ export async function exportTarget(target, config, send, fetchImpl = fetch) {
   return saveCaptureResult(result, config, send);
 }
 
-export async function fetchRecentConversationTargets(limit, fetchImpl = fetch, loc = location) {
+export async function fetchRecentConversationTargets(limit, fetchImpl = fetch, loc = location, provider = providerFromLocation(loc)) {
+  if (provider === "claude") {
+    const organizationId = resolveClaudeOrganizationId();
+    if (!organizationId) {
+      throw new Error("Claude organization id was not found. Reload Claude and try again.");
+    }
+    const targets = await fetchClaudeConversationTargets(limit, document, loc);
+    if (targets.length === 0) {
+      throw new Error("No recent Claude conversations found. Open Claude history and try again.");
+    }
+    return targets.map((target) => ({ ...target, organizationId }));
+  }
   const targets = [];
   const seen = new Set();
   const currentTarget = currentConversationTarget(loc);
@@ -214,6 +232,10 @@ export async function fetchRecentConversationTargets(limit, fetchImpl = fetch, l
 }
 
 export async function fetchConversationCapture(target, fetchImpl = fetch) {
+  const provider = target.provider || providerFromUrl(target.url) || "chatgpt";
+  if (provider === "claude") {
+    return fetchClaudeConversationCapture(target, fetchImpl);
+  }
   try {
     const payload = await fetchJson(`/backend-api/conversation/${encodeURIComponent(target.id)}`, fetchImpl);
     const capture = captureFromChatGptResponse(payload, target.url);
@@ -236,13 +258,19 @@ async function saveCaptureResult(result, config, send) {
   }
   try {
     const response = await send({ type: "save-source", capture: result.capture, config });
+    const saved = response.result || {};
+    const generationQueued = saved.generationQueued === true;
     return {
-      ok: true,
+      ok: generationQueued,
       title: result.capture.conversationTitle || result.target.title,
       provider: result.capture.provider,
       captureMethod: result.capture.captureMethod,
-      path: response.result.path,
-      created: response.result.created
+      path: saved.path,
+      created: saved.created,
+      sourceSaved: Boolean(saved.path),
+      generationQueued,
+      generationError: saved.generationError || null,
+      error: generationQueued ? "" : `Generation queue failed: ${saved.generationError || "unknown error"}`
     };
   } catch (error) {
     return {
@@ -398,13 +426,41 @@ function hydrate(callbacks, state) {
 }
 
 function logFromEvent(event) {
+  const message = logMessageFromEvent(event);
   return {
     id: globalThis.crypto?.randomUUID?.() || `${event.title || event.url}-${Date.now()}`,
     kind: event.ok ? "success" : "error",
-    provider: event.provider || "ChatGPT",
+    provider: event.provider ? providerLabel(event.provider) : "ChatGPT",
     time: "just now",
-    message: event.ok
-      ? `Memory: ${event.title || event.path} via ${event.captureMethod || "unknown"} (${event.created ? "Created" : "Updated"})`
-      : `Failed: ${event.title || event.url} - ${event.error}`
+    message
   };
+}
+
+function logMessageFromEvent(event) {
+  if (!event.ok && event.sourceSaved) {
+    return `Source saved: ${event.path}. Generation queue failed: ${event.generationError || event.error || "unknown error"}`;
+  }
+  if (event.ok) {
+    return `Memory: ${event.title || event.path} via ${event.captureMethod || "unknown"} (${event.created ? "Created" : "Updated"})`;
+  }
+  return `Failed: ${event.title || event.url} - ${event.error}`;
+}
+
+export function providerFromLocation(loc = location) {
+  return providerFromUrl(loc?.href || loc?.origin || "");
+}
+
+export function providerFromUrl(value) {
+  try {
+    const hostname = new URL(value).hostname;
+    if (hostname === "chatgpt.com" || hostname === "chat.openai.com") return "chatgpt";
+    if (hostname === "claude.ai") return "claude";
+    return "";
+  } catch {
+    return "";
+  }
+}
+
+export function providerLabel(provider) {
+  return provider === "claude" ? "Claude" : "ChatGPT";
 }

@@ -6,6 +6,7 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRoleFromValue, isBusyGrant, isBusyRevoke, principalDisplayName, type BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
+import { DatabaseDangerZone } from "./database-danger-zone";
 import { MemberTable } from "./member-table";
 import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
@@ -79,9 +80,11 @@ export function SummaryPanel({
 export function OwnerPanel(props: {
   busy: boolean;
   busyAction: BusyAction | null;
+  databaseId: string;
   databaseName: string;
   members: DatabaseMember[];
   principal: string;
+  onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
   onRename: (name: string) => void;
   onRevoke: (principalText: string) => void;
@@ -234,6 +237,7 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
+      <DatabaseDangerZone busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
     </section>
   );
 }

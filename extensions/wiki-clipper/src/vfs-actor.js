@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/vfs-actor.js
 // What: Minimal write-capable VFS actor for raw source persistence.
-// Why: The wiki browser client is read-only; capture needs read_node plus write_node.
+// Why: The wiki browser client is read-only; capture needs source writes plus trigger session APIs.
 export async function createVfsActor({ canisterId, host, identity }) {
   const [{ Actor, HttpAgent }, { Principal }] = await Promise.all([
     import("@icp-sdk/core/agent"),
@@ -32,6 +32,8 @@ function idlFactory({ IDL: idl }) {
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
+  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     path: idl.Text,
@@ -50,6 +52,14 @@ function idlFactory({ IDL: idl }) {
     metadata_json: idl.Text,
     expected_etag: idl.Opt(idl.Text)
   });
+  const WriteSourceForGenerationRequest = idl.Record({
+    database_id: idl.Text,
+    path: idl.Text,
+    content: idl.Text,
+    metadata_json: idl.Text,
+    expected_etag: idl.Opt(idl.Text),
+    session_nonce: idl.Text
+  });
   const MkdirNodeRequest = idl.Record({ database_id: idl.Text, path: idl.Text });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
   const OpsAnswerSessionRequest = idl.Record({
@@ -63,13 +73,32 @@ function idlFactory({ IDL: idl }) {
     path: idl.Text
   });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteSourceForGenerationResult = idl.Record({
+    write: WriteNodeResult,
+    session_nonce: idl.Text
+  });
   return idl.Service({
     authorize_url_ingest_trigger_session: idl.Func([OpsAnswerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
+    create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),
-    write_node: idl.Func([WriteNodeRequest], [idl.Variant({ Ok: WriteNodeResult, Err: idl.Text })], [])
+    write_node: idl.Func([WriteNodeRequest], [idl.Variant({ Ok: WriteNodeResult, Err: idl.Text })], []),
+    write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text })], [])
   });
+}
+
+export async function createDatabase(config, name) {
+  const actor = await createVfsActor(config);
+  return createDatabaseWithActor(actor, name);
+}
+
+export async function createDatabaseWithActor(actor, name) {
+  const result = await actor.create_database({ name });
+  if ("Err" in result) {
+    throw new Error(result.Err);
+  }
+  return normalizeCreateDatabaseResult(result.Ok);
 }
 
 export async function listWritableDatabases(config) {
@@ -85,6 +114,13 @@ export function normalizeWritableDatabases(rawDatabases) {
   return rawDatabases.map(normalizeDatabaseSummary).filter((database) => {
     return database.status === "Hot" && (database.role === "Owner" || database.role === "Writer");
   });
+}
+
+export function normalizeCreateDatabaseResult(raw) {
+  return {
+    databaseId: raw.database_id,
+    name: String(raw.name || "")
+  };
 }
 
 function normalizeDatabaseSummary(raw) {

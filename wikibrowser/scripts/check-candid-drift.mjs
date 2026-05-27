@@ -198,6 +198,7 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_21") return "ResultRecent";
   if (normalized === "Result_22") return "ResultSearch";
   if (normalized === "Result_23") return "ResultSourceEvidence";
+  if (normalized === "Result_25") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

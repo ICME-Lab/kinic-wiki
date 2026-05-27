@@ -241,7 +241,7 @@ Use `write-nodes` for one atomic batch write when the full node bodies are alrea
 ]
 ```
 
-`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes must use canonical source paths such as `/Sources/raw/<source_id>/<source_id>.md`.
+`kind` is `file` or `source`. `metadata_json` and `expected_etag` may be omitted. Source nodes must use canonical source paths such as `/Sources/raw/<provider>/<id>.md`; legacy one-segment raw source paths are rejected and must be migrated explicitly before regeneration or purge operations.
 `delete-node` deletes one node path. `delete-tree` deletes real node paths under a prefix, deepest-first; inspect the target first with `list-nodes --prefix <path> --recursive --json`.
 
 Maintenance and database lifecycle operations live in their own command groups:

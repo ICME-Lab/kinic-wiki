@@ -12,6 +12,7 @@ import {
   fetchRecentConversationTargets,
   isValidState,
   mapWithConcurrency,
+  providerFromLocation,
   readExportState,
   startCurrentTabExport,
   writeExportState
@@ -27,6 +28,14 @@ const VALID_CAPTURE = {
   messages: [{ role: "user", content: "Hello" }]
 };
 const VALID_SENDER = { tab: { url: "https://chatgpt.com/c/abc" } };
+const VALID_CLAUDE_CAPTURE = {
+  provider: "claude",
+  conversationTitle: "Claude Project",
+  url: "https://claude.ai/chat/claude-abc",
+  capturedAt: "2026-05-01T00:00:00.000Z",
+  messages: [{ role: "user", content: "Hello" }]
+};
+const VALID_CLAUDE_SENDER = { tab: { url: "https://claude.ai/chat/claude-abc" } };
 
 test("createExportState initializes direct-api state", () => {
   const state = createExportState({
@@ -171,6 +180,35 @@ test("fetchConversationCapture converts payloads and rejects empty messages", as
   assert.match(empty.error, /no conversation messages/);
 });
 
+test("fetchConversationCapture converts Claude private API payloads", async () => {
+  const result = await fetchConversationCapture(
+    {
+      id: "claude-abc",
+      title: "Claude Project",
+      url: "https://claude.ai/chat/claude-abc",
+      organizationId: "12345678-1234-1234-1234-123456789abc"
+    },
+    async () =>
+      jsonResponse({
+        chat: {
+          name: "Claude Project",
+          chat_messages: [
+            { sender: "human", text: "Hello" },
+            { sender: "assistant", content: [{ text: "Hi" }] }
+          ]
+        }
+      })
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.capture.provider, "claude");
+  assert.equal(result.capture.captureMethod, "claude private api");
+  assert.deepEqual(result.capture.messages, [
+    { role: "user", content: "Hello" },
+    { role: "assistant", content: "Hi" }
+  ]);
+});
+
 test("exportTarget saves immediately after fetching a valid conversation", async () => {
   const calls = [];
   const target = { id: "abc", title: "Project", url: "https://chatgpt.com/c/abc" };
@@ -179,7 +217,7 @@ test("exportTarget saves immediately after fetching a valid conversation", async
     { canisterId: "canister", host: "http://127.0.0.1:8001" },
     async (message) => {
       calls.push(["save", message.capture.conversationTitle]);
-      return { result: { path: "/Sources/raw/chatgpt-abc/chatgpt-abc.md", created: true } };
+      return { result: { path: "/Sources/raw/chatgpt/abc.md", created: true, generationQueued: true, generationError: null } };
     },
     chatGptFetch(async (url) => {
       calls.push(["fetch", target.id]);
@@ -193,6 +231,38 @@ test("exportTarget saves immediately after fetching a valid conversation", async
   ]);
   assert.equal(event.ok, true);
   assert.equal(event.captureMethod, "direct api");
+});
+
+test("exportTarget treats saved source with failed generation queue as partial event", async () => {
+  const target = { id: "abc", title: "Project", url: "https://chatgpt.com/c/abc" };
+  const event = await exportTarget(
+    target,
+    { canisterId: "canister", host: "http://127.0.0.1:8001" },
+    async () => ({
+      result: {
+        path: "/Sources/raw/chatgpt/abc.md",
+        created: true,
+        generationQueued: false,
+        generationError: "worker trigger failed: HTTP 502"
+      }
+    }),
+    chatGptFetch(async () => jsonResponse(conversationPayload("abc", "Project")))
+  );
+
+  assert.equal(event.ok, false);
+  assert.equal(event.sourceSaved, true);
+  assert.equal(event.path, "/Sources/raw/chatgpt/abc.md");
+  assert.equal(event.generationQueued, false);
+  assert.equal(event.generationError, "worker trigger failed: HTTP 502");
+
+  const state = advanceState(
+    { ...createExportState({ limit: 1, config: {}, originalUrl: "https://chatgpt.com/" }), progress: { total: 1, done: 0, ok: 0, failed: 0 } },
+    event
+  );
+  assert.deepEqual(state.progress, { total: 1, done: 1, ok: 0, failed: 1 });
+  assert.equal(state.logs[0].kind, "error");
+  assert.match(state.logs[0].message, /Source saved: \/Sources\/raw\/chatgpt\/abc\.md/);
+  assert.match(state.logs[0].message, /worker trigger failed: HTTP 502/);
 });
 
 test("exportTarget does not save API failures or empty conversations", async () => {
@@ -228,11 +298,17 @@ test("advanceState records direct-api success and errors in order", () => {
   });
   state = { ...state, progress: { total: 2, done: 0, ok: 0, failed: 0 } };
 
-  state = advanceState(state, { ok: true, title: "One", provider: "ChatGPT", captureMethod: "direct api", created: true });
-  state = advanceState(state, { ok: false, title: "Two", url: "https://chatgpt.com/c/2", error: "empty" });
+  state = advanceState(state, { ok: true, title: "One", provider: "chatgpt", captureMethod: "direct api", created: true });
+  state = advanceState(state, {
+    ok: false,
+    title: "Two",
+    provider: "chatgpt",
+    error: "save failed"
+  });
 
   assert.deepEqual(state.progress, { total: 2, done: 2, ok: 1, failed: 1 });
   assert.equal(state.logs[0].kind, "error");
+  assert.match(state.logs[0].message, /Failed: Two - save failed/);
   assert.match(state.logs[1].message, /via direct api/);
 });
 
@@ -327,25 +403,37 @@ test("validateSaveSource accepts ChatGPT captures from ChatGPT tabs", () => {
   );
 });
 
-test("validateSaveSource rejects non-ChatGPT senders and capture urls", () => {
+test("validateSaveSource accepts Claude captures from Claude tabs", () => {
+  assert.doesNotThrow(() => validateSaveSource(VALID_CLAUDE_CAPTURE, VALID_CLAUDE_SENDER));
+});
+
+test("validateSaveSource rejects unsupported senders and capture urls", () => {
   assert.throws(
     () => validateSaveSource(VALID_CAPTURE, { tab: { url: "https://evil.test/c/abc" } }),
-    /sender must be a ChatGPT tab/
+    /sender must be a supported AI conversation tab/
   );
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, url: "https://evil.test/c/abc" }, VALID_SENDER),
-    /capture url must be a ChatGPT conversation/
+    /capture url must be a supported AI conversation/
   );
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, url: "https://chatgpt.com/" }, VALID_SENDER),
     /must use \/c\/<id>/
+  );
+  assert.throws(
+    () => validateSaveSource({ ...VALID_CLAUDE_CAPTURE, url: "https://claude.ai/" }, VALID_CLAUDE_SENDER),
+    /must use \/chat\/<id>/
   );
 });
 
 test("validateSaveSource rejects wrong provider and malformed messages", () => {
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, provider: "other" }, VALID_SENDER),
-    /provider must be chatgpt/
+    /provider must match sender origin/
+  );
+  assert.throws(
+    () => validateSaveSource(VALID_CLAUDE_CAPTURE, VALID_SENDER),
+    /provider must match sender origin/
   );
   assert.throws(
     () => validateSaveSource({ ...VALID_CAPTURE, messages: [] }, VALID_SENDER),
@@ -391,6 +479,12 @@ test("validateSaveSource rejects wrong provider and malformed messages", () => {
       ),
     /raw source must not exceed/
   );
+});
+
+test("providerFromLocation detects supported AI hosts", () => {
+  assert.equal(providerFromLocation({ href: "https://chatgpt.com/", origin: "https://chatgpt.com" }), "chatgpt");
+  assert.equal(providerFromLocation({ href: "https://claude.ai/new", origin: "https://claude.ai" }), "claude");
+  assert.equal(providerFromLocation({ href: "https://example.com/", origin: "https://example.com" }), "");
 });
 
 test("handleMessage stores export state in chrome.storage.session", async () => {
@@ -439,7 +533,19 @@ test("save-source delegates raw source write with database_id", async () => {
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    return { ok: true, result: { path: message.rawSource.path, sourceId: message.rawSource.sourceId, created: false, etag: "etag-2" } };
+    if (message.type === "save-raw-source") {
+      return {
+        ok: true,
+        result: {
+          path: message.rawSource.path,
+          sourceId: message.rawSource.sourceId,
+          created: false,
+          etag: "etag-2",
+          sourceRunSessionNonce: "session-source"
+        }
+      };
+    }
+    return { ok: true, result: { sourcePath: message.sourcePath, triggered: true, triggerError: null } };
   });
   try {
     const response = await handleMessage(
@@ -458,7 +564,13 @@ test("save-source delegates raw source write with database_id", async () => {
     assert.equal(response.ok, true);
     assert.equal(calls[0].type, "save-raw-source");
     assert.equal(calls[0].config.databaseId, "team_wiki");
-    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt-abc/chatgpt-abc.md");
+    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].type, "trigger-source-generation");
+    assert.equal(calls[1].sourcePath, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].sourceEtag, "etag-2");
+    assert.equal(calls[1].sessionNonce, "session-source");
+    assert.equal(calls.length, 2);
+    assert.equal(response.result.generationQueued, true);
   } finally {
     setOffscreenBridgeForTest(null);
     restore();
