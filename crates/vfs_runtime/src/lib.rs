@@ -442,7 +442,12 @@ impl VfsService {
             "INSERT INTO database_billing_accounts
              (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![database_id, initial_balance_e8s, suspended_at_ms, now],
+            params![
+                database_id,
+                initial_balance_e8s,
+                crate::sqlite::nullable_integer_value(suspended_at_ms),
+                now
+            ],
         )
         .map_err(|error| error.to_string())?;
         Ok(DatabaseMeta {
