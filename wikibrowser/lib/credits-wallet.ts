@@ -4,24 +4,24 @@ import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
 import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
-import { getBillingConfig, previewDatabaseTopUp } from "@/lib/vfs-client";
+import { getCreditsConfig, previewDatabaseCreditPurchase } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
 
 type WalletProvider = "oisy" | "plug";
 
-type DepositRequest = {
+type CreditsPurchaseRequest = {
   canisterId: string;
   databaseId: string;
   amountE8s: bigint;
 };
 
-type DepositResult = {
+type CreditsPurchaseResult = {
   provider: WalletProvider;
   approveBlockIndex: string;
   approvedAllowanceE8s: string;
   creditedAmountE8s: string;
   transferFeeE8s: string;
-  topUpBlockIndex: string | null;
+  purchaseBlockIndex: string | null;
   balanceE8s: string | null;
 };
 
@@ -37,7 +37,7 @@ type PlugWallet = {
 };
 
 type PlugVfsActor = {
-  top_up_database: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: { block_index: bigint; balance_e8s: bigint } } | { Err: string }>;
+  purchase_database_credits: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: { block_index: bigint; balance_e8s: bigint } } | { Err: string }>;
 };
 
 type LedgerActor = {
@@ -128,12 +128,12 @@ export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
   return { principal: principal.toText() };
 }
 
-export async function depositWithOisy(request: DepositRequest, connection: ConnectedOisyWallet): Promise<DepositResult> {
-  assertConfiguredDepositCanister(request.canisterId);
-  const config = await getBillingConfig(request.canisterId);
-  await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
+export async function purchaseCreditsWithOisy(request: CreditsPurchaseRequest, connection: ConnectedOisyWallet): Promise<CreditsPurchaseResult> {
+  assertConfiguredCreditsCanister(request.canisterId);
+  const config = await getCreditsConfig(request.canisterId);
+  await previewDatabaseCreditPurchase(request.canisterId, request.databaseId, request.amountE8s);
   const transferFeeE8s = await getLedgerTransferFee(config.kinicLedgerCanisterId);
-  const approvedAllowanceE8s = allowanceForTopUp(request.amountE8s, transferFeeE8s);
+  const approvedAllowanceE8s = allowanceForCreditPurchase(request.amountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
   const currentAllowance = await getLedgerAllowance(config.kinicLedgerCanisterId, connection.owner, request.canisterId);
   const approveBlockIndex = await connection.wallet.approve({
@@ -142,22 +142,22 @@ export async function depositWithOisy(request: DepositRequest, connection: Conne
     params: approveParams(request.canisterId, approvedAllowanceE8s, currentAllowance, expiresAt),
     options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
   });
-  const topUp = await topUpAfterApprove(() => oisyCallTopUp(connection.wallet, connection.owner, request), expiresAt);
+  const purchase = await purchaseAfterApprove(() => oisyCallCreditPurchase(connection.wallet, connection.owner, request), expiresAt);
   return {
     provider: "oisy",
     approveBlockIndex: approveBlockIndex.toString(),
     approvedAllowanceE8s: approvedAllowanceE8s.toString(),
     creditedAmountE8s: request.amountE8s.toString(),
     transferFeeE8s: transferFeeE8s.toString(),
-    topUpBlockIndex: topUp.blockIndex,
-    balanceE8s: topUp.balanceE8s
+    purchaseBlockIndex: purchase.blockIndex,
+    balanceE8s: purchase.balanceE8s
   };
 }
 
-export async function depositWithPlug(request: DepositRequest, connection: ConnectedPlugWallet): Promise<DepositResult> {
-  assertConfiguredDepositCanister(request.canisterId);
-  const config = await getBillingConfig(request.canisterId);
-  await previewDatabaseTopUp(request.canisterId, request.databaseId, request.amountE8s);
+export async function purchaseCreditsWithPlug(request: CreditsPurchaseRequest, connection: ConnectedPlugWallet): Promise<CreditsPurchaseResult> {
+  assertConfiguredCreditsCanister(request.canisterId);
+  const config = await getCreditsConfig(request.canisterId);
+  await previewDatabaseCreditPurchase(request.canisterId, request.databaseId, request.amountE8s);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
   const connected = await plug.requestConnect({
@@ -173,7 +173,7 @@ export async function depositWithPlug(request: DepositRequest, connection: Conne
     interfaceFactory: ledgerIdlFactory
   });
   const transferFeeE8s = await (ledgerActor as PlugLedgerActor).icrc1_fee();
-  const approvedAllowanceE8s = allowanceForTopUp(request.amountE8s, transferFeeE8s);
+  const approvedAllowanceE8s = allowanceForCreditPurchase(request.amountE8s, transferFeeE8s);
   const currentAllowance = await (ledgerActor as PlugLedgerActor).icrc2_allowance(allowanceArgs(principal.toText(), request.canisterId));
   const expiresAt = approveExpiresAt();
   const approve = await (ledgerActor as PlugLedgerActor).icrc2_approve(
@@ -184,8 +184,8 @@ export async function depositWithPlug(request: DepositRequest, connection: Conne
     canisterId: request.canisterId,
     interfaceFactory: idlFactory
   });
-  const topUp = await topUpAfterApprove(async () => {
-    const result = await (vfsActor as PlugVfsActor).top_up_database(request.databaseId, request.amountE8s);
+  const purchase = await purchaseAfterApprove(async () => {
+    const result = await (vfsActor as PlugVfsActor).purchase_database_credits(request.databaseId, request.amountE8s);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
   }, expiresAt);
@@ -195,8 +195,8 @@ export async function depositWithPlug(request: DepositRequest, connection: Conne
     approvedAllowanceE8s: approvedAllowanceE8s.toString(),
     creditedAmountE8s: request.amountE8s.toString(),
     transferFeeE8s: transferFeeE8s.toString(),
-    topUpBlockIndex: topUp.block_index.toString(),
-    balanceE8s: topUp.balance_e8s.toString()
+    purchaseBlockIndex: purchase.block_index.toString(),
+    balanceE8s: purchase.balance_e8s.toString()
   };
 }
 
@@ -223,7 +223,7 @@ function rawApproveArgs(canisterId: string, allowanceE8s: bigint, expectedAllowa
   };
 }
 
-function allowanceForTopUp(amountE8s: bigint, transferFeeE8s: bigint): bigint {
+function allowanceForCreditPurchase(amountE8s: bigint, transferFeeE8s: bigint): bigint {
   return amountE8s + transferFeeE8s;
 }
 
@@ -231,11 +231,11 @@ function approveExpiresAt(): bigint {
   return BigInt(Date.now() + APPROVE_EXPIRES_IN_MS) * 1_000_000n;
 }
 
-function assertConfiguredDepositCanister(canisterId: string): void {
+function assertConfiguredCreditsCanister(canisterId: string): void {
   const configured = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID;
   if (!configured) throw new Error("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
   if (Principal.fromText(canisterId).toText() !== Principal.fromText(configured).toText()) {
-    throw new Error("deposit canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
+    throw new Error("VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
   }
 }
 
@@ -269,32 +269,32 @@ function allowanceArgs(owner: string, spender: string): LedgerAllowanceArgs {
   };
 }
 
-async function oisyCallTopUp(wallet: IcrcWallet, owner: string, request: DepositRequest): Promise<{ blockIndex: string; balanceE8s: string }> {
+async function oisyCallCreditPurchase(wallet: IcrcWallet, owner: string, request: CreditsPurchaseRequest): Promise<{ blockIndex: string; balanceE8s: string }> {
   const caller = wallet as unknown as OisyCanisterCaller;
-  const arg = encodeTopUpArgs(request.databaseId, request.amountE8s);
+  const arg = encodeCreditPurchaseArgs(request.databaseId, request.amountE8s);
   const result = await caller.call({
     params: {
       canisterId: request.canisterId,
       sender: owner,
-      method: "top_up_database",
+      method: "purchase_database_credits",
       arg
     },
     options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
   });
-  return decodeOisyTopUpResult({
+  return decodeOisyCreditPurchaseResult({
     canisterId: request.canisterId,
-    method: "top_up_database",
+    method: "purchase_database_credits",
     arg,
     result
   });
 }
 
-async function topUpAfterApprove<T>(run: () => Promise<T>, expiresAt: bigint): Promise<T> {
+async function purchaseAfterApprove<T>(run: () => Promise<T>, expiresAt: bigint): Promise<T> {
   try {
     return await run();
   } catch (cause) {
     const expiry = new Date(Number(expiresAt / 1_000_000n)).toISOString();
-    throw new Error(`top-up failed after approve; approval remains until ${expiry}: ${errorMessage(cause)}`);
+    throw new Error(`credits purchase failed after approve; approval remains until ${expiry}: ${errorMessage(cause)}`);
   }
 }
 
@@ -302,11 +302,11 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function encodeTopUpArgs(databaseId: string, amountE8s: bigint): string {
+function encodeCreditPurchaseArgs(databaseId: string, amountE8s: bigint): string {
   return uint8ArrayToBase64(IDL.encode([IDL.Text, IDL.Nat64], [databaseId, amountE8s]));
 }
 
-async function decodeOisyTopUpResult({
+async function decodeOisyCreditPurchaseResult({
   canisterId,
   method,
   arg,
@@ -335,7 +335,7 @@ async function decodeOisyTopUpResult({
   });
   const reply = lookupResultToBuffer(certificate.lookup_path([new TextEncoder().encode("request_status"), requestId, "reply"]));
   if (!reply) throw new Error("wallet response reply unavailable");
-  const [decoded] = IDL.decode([topUpResultType()], reply) as [{ Ok: { block_index: bigint; balance_e8s: bigint } } | { Err: string }];
+  const [decoded] = IDL.decode([purchaseResultType()], reply) as [{ Ok: { block_index: bigint; balance_e8s: bigint } } | { Err: string }];
   if ("Err" in decoded) throw new Error(decoded.Err);
   return {
     blockIndex: decoded.Ok.block_index.toString(),
@@ -343,7 +343,7 @@ async function decodeOisyTopUpResult({
   };
 }
 
-function topUpResultType() {
+function purchaseResultType() {
   return IDL.Variant({
     Ok: IDL.Record({ block_index: IDL.Nat64, balance_e8s: IDL.Nat64 }),
     Err: IDL.Text

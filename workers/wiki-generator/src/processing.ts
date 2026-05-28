@@ -121,7 +121,7 @@ async function ensureExternalCostAllowed(vfs: VfsClient, databaseId: string, req
       await vfs.checkUrlIngestTriggerSession(databaseId, requestPath, sessionNonce);
       return;
     }
-    await vfs.checkDatabaseBillable(databaseId);
+    await vfs.checkDatabaseWriteCredits(databaseId);
   } catch (error) {
     throw new ExternalCostGateError(errorMessage(error));
   }

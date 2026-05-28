@@ -230,7 +230,7 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   }
 });
 
-test("queueUrlIngest rejects low billing balance before writing", async () => {
+test("queueUrlIngest rejects low credit balance before writing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -262,7 +262,7 @@ test("queueUrlIngest rejects low billing balance before writing", async () => {
   }
 });
 
-test("saveRawSource rejects suspended billing before writing", async () => {
+test("saveRawSource rejects suspended credits before writing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -283,7 +283,7 @@ test("saveRawSource rejects suspended billing before writing", async () => {
     })
   });
   try {
-    await assert.rejects(() => saveRawSource(rawSource(), config()), /billing is suspended/);
+    await assert.rejects(() => saveRawSource(rawSource(), config()), /credits are suspended/);
 
     assert.deepEqual(calls, []);
   } finally {
@@ -345,7 +345,7 @@ test("listWritableDatabases returns active writable database summaries", async (
           ]
         };
       },
-      async get_billing_config() {
+      async get_credits_config() {
         return {
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
@@ -367,10 +367,10 @@ test("listWritableDatabases returns active writable database summaries", async (
         role: "Writer",
         status: "Active",
         logicalSizeBytes: "0",
-        billingBalanceE8s: "20000",
-        billingSuspendedAtMs: null,
+        creditsBalanceE8s: "20000",
+        creditsSuspendedAtMs: null,
         billable: true,
-        billingReason: null
+        creditsReason: null
       }
     ]);
   } finally {
@@ -406,15 +406,15 @@ function billableActorMethods({ databaseId = "team-db", balanceE8s = 20_000n, su
             role: { Writer: null },
             status: { Active: null },
             logical_size_bytes: 0n,
-            billing_balance_e8s: [balanceE8s],
-            billing_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
+            credit_balance_e8s: [balanceE8s],
+            credits_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
             archived_at_ms: [],
             deleted_at_ms: []
           }
         ]
       };
     },
-    async get_billing_config() {
+    async get_credits_config() {
       return {
         Ok: {
           kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
@@ -436,8 +436,8 @@ function rawDatabase(databaseId, name, role, status) {
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    billing_balance_e8s: [20_000n],
-    billing_suspended_at_ms: [],
+    credit_balance_e8s: [20_000n],
+    credits_suspended_at_ms: [],
     archived_at_ms: [],
     deleted_at_ms: []
   };

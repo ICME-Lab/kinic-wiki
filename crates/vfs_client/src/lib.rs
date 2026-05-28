@@ -11,19 +11,19 @@ use ic_agent::{
 };
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
-    AppendNodeRequest, BillingAccount, BillingConfig, BillingTransferResult, CanisterHealth,
-    ChildNode, CreateDatabaseRequest, CreateDatabaseResult, DatabaseArchiveChunk,
-    DatabaseArchiveInfo, DatabaseBillingEntryPage, DatabaseBillingPendingOperationPage,
-    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryManifest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
+    CreditsConfig, CreditsPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
+    DatabaseCreditEntryPage, DatabaseCreditPendingOperationPage, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -45,112 +45,80 @@ pub trait VfsApi: Sync {
     async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
         Err(anyhow!("rename_database is not implemented by this client"))
     }
-    async fn top_up_database(
+    async fn purchase_database_credits(
         &self,
         _database_id: &str,
         _amount_e8s: u64,
-    ) -> Result<BillingTransferResult> {
-        Err(anyhow!("top_up_database is not implemented by this client"))
-    }
-    async fn preview_database_top_up(&self, _database_id: &str, _amount_e8s: u64) -> Result<()> {
+    ) -> Result<CreditsPurchaseResult> {
         Err(anyhow!(
-            "preview_database_top_up is not implemented by this client"
+            "purchase_database_credits is not implemented by this client"
         ))
     }
-    async fn check_database_billable(&self, _database_id: &str) -> Result<()> {
-        Err(anyhow!(
-            "check_database_billable is not implemented by this client"
-        ))
-    }
-    async fn withdraw_database_balance(
+    async fn preview_database_credit_purchase(
         &self,
         _database_id: &str,
         _amount_e8s: u64,
-        _to: BillingAccount,
-    ) -> Result<BillingTransferResult> {
+    ) -> Result<()> {
         Err(anyhow!(
-            "withdraw_database_balance is not implemented by this client"
+            "preview_database_credit_purchase is not implemented by this client"
         ))
     }
-    async fn list_database_billing_entries(
+    async fn check_database_write_credits(&self, _database_id: &str) -> Result<()> {
+        Err(anyhow!(
+            "check_database_write_credits is not implemented by this client"
+        ))
+    }
+    async fn list_database_credit_entries(
         &self,
         _database_id: &str,
         _cursor: Option<u64>,
         _limit: u32,
-    ) -> Result<DatabaseBillingEntryPage> {
+    ) -> Result<DatabaseCreditEntryPage> {
         Err(anyhow!(
-            "list_database_billing_entries is not implemented by this client"
+            "list_database_credit_entries is not implemented by this client"
         ))
     }
-    async fn list_database_billing_pending_operations(
+    async fn list_database_credit_pending_operations(
         &self,
         _database_id: &str,
         _cursor: Option<u64>,
         _limit: u32,
-    ) -> Result<DatabaseBillingPendingOperationPage> {
+    ) -> Result<DatabaseCreditPendingOperationPage> {
         Err(anyhow!(
-            "list_database_billing_pending_operations is not implemented by this client"
+            "list_database_credit_pending_operations is not implemented by this client"
         ))
     }
-    async fn repair_database_top_up_complete(
+    async fn repair_database_credit_purchase_complete(
         &self,
         _database_id: &str,
         _operation_id: u64,
         _ledger_block_index: u64,
-    ) -> Result<BillingTransferResult> {
+    ) -> Result<CreditsPurchaseResult> {
         Err(anyhow!(
-            "repair_database_top_up_complete is not implemented by this client"
+            "repair_database_credit_purchase_complete is not implemented by this client"
         ))
     }
-    async fn repair_database_top_up_cancel(
+    async fn repair_database_credit_purchase_cancel(
         &self,
         _database_id: &str,
         _operation_id: u64,
     ) -> Result<()> {
         Err(anyhow!(
-            "repair_database_top_up_cancel is not implemented by this client"
+            "repair_database_credit_purchase_cancel is not implemented by this client"
         ))
     }
-    async fn repair_database_top_up_retry(
+    async fn repair_database_credit_purchase_retry(
         &self,
         _database_id: &str,
         _operation_id: u64,
-    ) -> Result<BillingTransferResult> {
+    ) -> Result<CreditsPurchaseResult> {
         Err(anyhow!(
-            "repair_database_top_up_retry is not implemented by this client"
+            "repair_database_credit_purchase_retry is not implemented by this client"
         ))
     }
-    async fn repair_database_withdraw_complete(
-        &self,
-        _database_id: &str,
-        _operation_id: u64,
-        _ledger_block_index: u64,
-    ) -> Result<BillingTransferResult> {
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
         Err(anyhow!(
-            "repair_database_withdraw_complete is not implemented by this client"
-        ))
-    }
-    async fn repair_database_withdraw_retry(
-        &self,
-        _database_id: &str,
-        _operation_id: u64,
-    ) -> Result<BillingTransferResult> {
-        Err(anyhow!(
-            "repair_database_withdraw_retry is not implemented by this client"
-        ))
-    }
-    async fn repair_database_withdraw_reverse(
-        &self,
-        _database_id: &str,
-        _operation_id: u64,
-    ) -> Result<u64> {
-        Err(anyhow!(
-            "repair_database_withdraw_reverse is not implemented by this client"
-        ))
-    }
-    async fn get_billing_config(&self) -> Result<BillingConfig> {
-        Err(anyhow!(
-            "get_billing_config is not implemented by this client"
+            "get_credits_config is not implemented by this client"
         ))
     }
     async fn kinic_ledger_fee_e8s(&self, _ledger_canister_id: &str) -> Result<u64> {
@@ -527,21 +495,29 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn top_up_database(
+    async fn purchase_database_credits(
         &self,
         database_id: &str,
         amount_e8s: u64,
-    ) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> = self
-            .update2("top_up_database", &database_id.to_string(), &amount_e8s)
+    ) -> Result<CreditsPurchaseResult> {
+        let result: Result<CreditsPurchaseResult, String> = self
+            .update2(
+                "purchase_database_credits",
+                &database_id.to_string(),
+                &amount_e8s,
+            )
             .await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn preview_database_top_up(&self, database_id: &str, amount_e8s: u64) -> Result<()> {
+    async fn preview_database_credit_purchase(
+        &self,
+        database_id: &str,
+        amount_e8s: u64,
+    ) -> Result<()> {
         let result: Result<(), String> = self
             .query2(
-                "preview_database_top_up",
+                "preview_database_credit_purchase",
                 &database_id.to_string(),
                 &amount_e8s,
             )
@@ -549,39 +525,22 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn check_database_billable(&self, database_id: &str) -> Result<()> {
+    async fn check_database_write_credits(&self, database_id: &str) -> Result<()> {
         let result: Result<(), String> = self
-            .query("check_database_billable", &database_id.to_string())
+            .query("check_database_write_credits", &database_id.to_string())
             .await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn withdraw_database_balance(
-        &self,
-        database_id: &str,
-        amount_e8s: u64,
-        to: BillingAccount,
-    ) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> = self
-            .update3(
-                "withdraw_database_balance",
-                &database_id.to_string(),
-                &amount_e8s,
-                &to,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn list_database_billing_entries(
+    async fn list_database_credit_entries(
         &self,
         database_id: &str,
         cursor: Option<u64>,
         limit: u32,
-    ) -> Result<DatabaseBillingEntryPage> {
-        let result: Result<DatabaseBillingEntryPage, String> = self
+    ) -> Result<DatabaseCreditEntryPage> {
+        let result: Result<DatabaseCreditEntryPage, String> = self
             .query3(
-                "list_database_billing_entries",
+                "list_database_credit_entries",
                 &database_id.to_string(),
                 &cursor,
                 &limit,
@@ -590,15 +549,15 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn list_database_billing_pending_operations(
+    async fn list_database_credit_pending_operations(
         &self,
         database_id: &str,
         cursor: Option<u64>,
         limit: u32,
-    ) -> Result<DatabaseBillingPendingOperationPage> {
-        let result: Result<DatabaseBillingPendingOperationPage, String> = self
+    ) -> Result<DatabaseCreditPendingOperationPage> {
+        let result: Result<DatabaseCreditPendingOperationPage, String> = self
             .query3(
-                "list_database_billing_pending_operations",
+                "list_database_credit_pending_operations",
                 &database_id.to_string(),
                 &cursor,
                 &limit,
@@ -607,15 +566,15 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn repair_database_top_up_complete(
+    async fn repair_database_credit_purchase_complete(
         &self,
         database_id: &str,
         operation_id: u64,
         ledger_block_index: u64,
-    ) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> = self
+    ) -> Result<CreditsPurchaseResult> {
+        let result: Result<CreditsPurchaseResult, String> = self
             .update3(
-                "repair_database_top_up_complete",
+                "repair_database_credit_purchase_complete",
                 &database_id.to_string(),
                 &operation_id,
                 &ledger_block_index,
@@ -624,14 +583,14 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn repair_database_top_up_cancel(
+    async fn repair_database_credit_purchase_cancel(
         &self,
         database_id: &str,
         operation_id: u64,
     ) -> Result<()> {
         let result: Result<(), String> = self
             .update2(
-                "repair_database_top_up_cancel",
+                "repair_database_credit_purchase_cancel",
                 &database_id.to_string(),
                 &operation_id,
             )
@@ -639,14 +598,14 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn repair_database_top_up_retry(
+    async fn repair_database_credit_purchase_retry(
         &self,
         database_id: &str,
         operation_id: u64,
-    ) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> = self
+    ) -> Result<CreditsPurchaseResult> {
+        let result: Result<CreditsPurchaseResult, String> = self
             .update2(
-                "repair_database_top_up_retry",
+                "repair_database_credit_purchase_retry",
                 &database_id.to_string(),
                 &operation_id,
             )
@@ -654,55 +613,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn repair_database_withdraw_complete(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-        ledger_block_index: u64,
-    ) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> = self
-            .update3(
-                "repair_database_withdraw_complete",
-                &database_id.to_string(),
-                &operation_id,
-                &ledger_block_index,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn repair_database_withdraw_retry(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-    ) -> Result<BillingTransferResult> {
-        let result: Result<BillingTransferResult, String> = self
-            .update2(
-                "repair_database_withdraw_retry",
-                &database_id.to_string(),
-                &operation_id,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn repair_database_withdraw_reverse(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-    ) -> Result<u64> {
-        let result: Result<u64, String> = self
-            .update2(
-                "repair_database_withdraw_reverse",
-                &database_id.to_string(),
-                &operation_id,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn get_billing_config(&self) -> Result<BillingConfig> {
-        let result: Result<BillingConfig, String> = self.query("get_billing_config", &()).await?;
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        let result: Result<CreditsConfig, String> = self.query("get_credits_config", &()).await?;
         result.map_err(|error| anyhow!(error))
     }
 

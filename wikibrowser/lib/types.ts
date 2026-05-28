@@ -119,19 +119,17 @@ export type DatabaseSummary = {
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
-  billingBalanceE8s: string;
-  billingSuspendedAtMs: string | null;
+  creditsBalanceE8s: string;
+  creditsSuspendedAtMs: string | null;
   archivedAtMs: string | null;
   deletedAtMs: string | null;
 };
 
 export type DeleteDatabaseRequest = {
   databaseId: string;
-  expectedBillingBalanceE8s: string;
-  allowBalanceWriteoff: boolean;
 };
 
-export type BillingConfig = {
+export type CreditsConfig = {
   kinicLedgerCanisterId: string;
   snsGovernanceId: string;
   rateNumeratorE8s: string;
@@ -140,7 +138,7 @@ export type BillingConfig = {
   minUpdateBalanceE8s: string;
 };
 
-export type BillingTransferResult = {
+export type CreditsPurchaseResult = {
   blockIndex: string;
   balanceE8s: string;
 };
@@ -152,7 +150,7 @@ export type DatabaseMember = {
   createdAtMs: string;
 };
 
-export type DatabaseBillingPendingOperation = {
+export type DatabaseCreditPendingOperation = {
   operationId: string;
   databaseId: string;
   kind: string;

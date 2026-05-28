@@ -6,9 +6,9 @@ import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
 import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
-  BillingConfig,
+  CreditsConfig,
   ChildNode,
-  DatabaseBillingPendingOperation,
+  DatabaseCreditPendingOperation,
   DeleteDatabaseRequest,
   DeleteNodeRequest,
   DeleteNodeResult,
@@ -57,7 +57,7 @@ type RawCanisterHealth = {
   cycles_balance: bigint;
 };
 
-type RawBillingConfig = {
+type RawCreditsConfig = {
   kinic_ledger_canister_id: string;
   sns_governance_id: string;
   rate_numerator_e8s: bigint;
@@ -72,16 +72,14 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
-  billing_balance_e8s: [] | [bigint];
-  billing_suspended_at_ms: [] | [bigint];
+  credit_balance_e8s: [] | [bigint];
+  credits_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
   deleted_at_ms: [] | [bigint];
 };
 
 type RawDeleteDatabaseRequest = {
   database_id: string;
-  expected_billing_balance_e8s: bigint;
-  allow_balance_writeoff: boolean;
 };
 
 type RawCreateDatabaseResult = {
@@ -96,7 +94,7 @@ type RawDatabaseMember = {
   created_at_ms: bigint;
 };
 
-type RawDatabaseBillingPendingOperation = {
+type RawDatabaseCreditPendingOperation = {
   operation_id: bigint;
   database_id: string;
   kind: string;
@@ -250,16 +248,16 @@ type VfsActor = {
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
-  check_database_billable: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
+  check_database_write_credits: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
-  get_billing_config: () => Promise<{ Ok: RawBillingConfig } | { Err: string }>;
+  get_credits_config: () => Promise<{ Ok: RawCreditsConfig } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
   move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: string }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
-  list_database_billing_pending_operations: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: { entries: RawDatabaseBillingPendingOperation[]; next_cursor: [] | [bigint] } } | { Err: string }>;
+  list_database_credit_pending_operations: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: { entries: RawDatabaseCreditPendingOperation[]; next_cursor: [] | [bigint] } } | { Err: string }>;
   list_database_members: (databaseId: string) => Promise<{ Ok: RawDatabaseMember[] } | { Err: string }>;
   revoke_database_access: (databaseId: string, principal: string) => Promise<{ Ok: null } | { Err: string }>;
   rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
@@ -270,7 +268,7 @@ type VfsActor = {
   >;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
-  preview_database_top_up: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
+  preview_database_credit_purchase: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
@@ -407,31 +405,31 @@ export function canisterHealth(canisterId: string): Promise<CanisterHealth> {
   return request;
 }
 
-export async function getBillingConfig(canisterId: string): Promise<BillingConfig> {
+export async function getCreditsConfig(canisterId: string): Promise<CreditsConfig> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.get_billing_config();
+    const result = await actor.get_credits_config();
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return normalizeBillingConfig(result.Ok);
+    return normalizeCreditsConfig(result.Ok);
   });
 }
 
-export async function previewDatabaseTopUp(canisterId: string, databaseId: string, amountE8s: bigint): Promise<void> {
+export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, amountE8s: bigint): Promise<void> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.preview_database_top_up(databaseId, amountE8s);
+    const result = await actor.preview_database_credit_purchase(databaseId, amountE8s);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
   });
 }
 
-export async function checkDatabaseBillable(canisterId: string, identity: Identity, databaseId: string): Promise<void> {
+export async function checkDatabaseWriteCredits(canisterId: string, identity: Identity, databaseId: string): Promise<void> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.check_database_billable(databaseId);
+    const result = await actor.check_database_write_credits(databaseId);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -471,14 +469,14 @@ export async function createDatabaseAuthenticated(canisterId: string, identity: 
   });
 }
 
-export async function listDatabaseBillingPendingOperationsAuthenticated(canisterId: string, identity: Identity, databaseId: string): Promise<DatabaseBillingPendingOperation[]> {
+export async function listDatabaseCreditPendingOperationsAuthenticated(canisterId: string, identity: Identity, databaseId: string): Promise<DatabaseCreditPendingOperation[]> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.list_database_billing_pending_operations(databaseId, [], 10);
+    const result = await actor.list_database_credit_pending_operations(databaseId, [], 10);
     if ("Err" in result) {
       throw new Error(result.Err);
     }
-    return result.Ok.entries.map((raw) => normalizeDatabaseBillingPendingOperation(raw));
+    return result.Ok.entries.map((raw) => normalizeDatabaseCreditPendingOperation(raw));
   });
 }
 
@@ -486,9 +484,7 @@ export async function deleteDatabaseAuthenticated(canisterId: string, identity: 
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.delete_database({
-      database_id: request.databaseId,
-      expected_billing_balance_e8s: BigInt(request.expectedBillingBalanceE8s),
-      allow_balance_writeoff: request.allowBalanceWriteoff
+      database_id: request.databaseId
     });
     if ("Err" in result) {
       throw new Error(result.Err);
@@ -894,7 +890,7 @@ function normalizeCanisterHealth(raw: RawCanisterHealth): CanisterHealth {
   };
 }
 
-function normalizeBillingConfig(raw: RawBillingConfig): BillingConfig {
+function normalizeCreditsConfig(raw: RawCreditsConfig): CreditsConfig {
   return {
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
     snsGovernanceId: raw.sns_governance_id,
@@ -912,8 +908,8 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
-    billingBalanceE8s: raw.billing_balance_e8s[0]?.toString() ?? "0",
-    billingSuspendedAtMs: raw.billing_suspended_at_ms[0]?.toString() ?? null,
+    creditsBalanceE8s: raw.credit_balance_e8s[0]?.toString() ?? "0",
+    creditsSuspendedAtMs: raw.credits_suspended_at_ms[0]?.toString() ?? null,
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
@@ -928,7 +924,7 @@ function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
   };
 }
 
-function normalizeDatabaseBillingPendingOperation(raw: RawDatabaseBillingPendingOperation): DatabaseBillingPendingOperation {
+function normalizeDatabaseCreditPendingOperation(raw: RawDatabaseCreditPendingOperation): DatabaseCreditPendingOperation {
   return {
     operationId: raw.operation_id.toString(),
     databaseId: raw.database_id,

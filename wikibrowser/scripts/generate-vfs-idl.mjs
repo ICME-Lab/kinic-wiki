@@ -29,18 +29,17 @@ const typeOrder = [
   "DatabaseRole",
   "DatabaseStatus",
   "DatabaseSummary",
-  "BillingConfig",
-  "BillingTransferResult",
-  "BillingAccount",
+  "CreditsConfig",
+  "CreditsPurchaseResult",
   "CreateDatabaseRequest",
   "CreateDatabaseResult",
   "RenameDatabaseRequest",
   "DeleteDatabaseRequest",
   "DatabaseMember",
-  "DatabaseBillingEntry",
-  "DatabaseBillingEntryPage",
-  "DatabaseBillingPendingOperation",
-  "DatabaseBillingPendingOperationPage",
+  "DatabaseCreditEntry",
+  "DatabaseCreditEntryPage",
+  "DatabaseCreditPendingOperation",
+  "DatabaseCreditPendingOperationPage",
   "NodeKind",
   "NodeEntryKind",
   "Node",
@@ -91,11 +90,10 @@ const typeOrder = [
   "ResultQueryContext",
   "ResultSourceEvidence",
   "ResultCreateDatabase",
-  "ResultBillingConfig",
-  "ResultBillingTransfer",
-  "ResultBillingEntries",
-  "ResultBillingPending",
-  "ResultNat64",
+  "ResultCreditsConfig",
+  "ResultCreditsPurchase",
+  "ResultCreditsEntries",
+  "ResultCreditsPending",
   "ResultDatabases",
   "ResultMembers",
   "WriteNodeResult",
@@ -116,20 +114,20 @@ const methodOrder = [
   "authorize_ops_answer_session",
   "authorize_url_ingest_trigger_session",
   "canister_health",
-  "check_database_billable",
+  "check_database_write_credits",
   "check_ops_answer_session",
   "check_source_run_session",
   "check_url_ingest_trigger_session",
   "create_database",
   "delete_database",
   "delete_node",
-  "get_billing_config",
+  "get_credits_config",
   "grant_database_access",
   "graph_links",
   "graph_neighborhood",
   "incoming_links",
-  "list_database_billing_entries",
-  "list_database_billing_pending_operations",
+  "list_database_credit_entries",
+  "list_database_credit_pending_operations",
   "list_databases",
   "list_database_members",
   "memory_manifest",
@@ -140,21 +138,17 @@ const methodOrder = [
   "read_node_context",
   "list_children",
   "outgoing_links",
-  "preview_database_top_up",
+  "preview_database_credit_purchase",
   "recent_nodes",
-  "repair_database_top_up_cancel",
-  "repair_database_top_up_complete",
-  "repair_database_top_up_retry",
-  "repair_database_withdraw_complete",
-  "repair_database_withdraw_retry",
-  "repair_database_withdraw_reverse",
+  "repair_database_credit_purchase_cancel",
+  "repair_database_credit_purchase_complete",
+  "repair_database_credit_purchase_retry",
   "revoke_database_access",
   "rename_database",
   "search_node_paths",
   "search_nodes",
   "source_evidence",
-  "top_up_database",
-  "withdraw_database_balance",
+  "purchase_database_credits",
   "write_node",
   "write_source_for_generation"
 ];
@@ -356,8 +350,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_10") return "ResultLinks";
   if (normalized === "Result_11") return "ResultLinks";
   if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultBillingEntries";
-  if (normalized === "Result_14") return "ResultBillingPending";
+  if (normalized === "Result_13") return "ResultCreditsEntries";
+  if (normalized === "Result_14") return "ResultCreditsPending";
   if (normalized === "Result_15") return "ResultMembers";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
@@ -365,17 +359,17 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultQueryContext";
-  if (normalized === "Result_23") return "ResultNode";
-  if (normalized === "Result_24") return "ResultNodeContext";
-  if (normalized === "Result_25") return "ResultRecent";
-  if (normalized === "Result_26") return "ResultBillingTransfer";
-  if (normalized === "Result_27") return "ResultNat64";
-  if (normalized === "Result_28") return "ResultSearch";
-  if (normalized === "Result_29") return "ResultSourceEvidence";
+  if (normalized === "Result_20") return "ResultCreditsPurchase";
+  if (normalized === "Result_21") return "ResultQueryContext";
+  if (normalized === "Result_24") return "ResultNode";
+  if (normalized === "Result_25") return "ResultNodeContext";
+  if (normalized === "Result_26") return "ResultRecent";
+  if (normalized === "Result_27") return "ResultSearch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
+  if (normalized === "Result_29") return "ResultWriteNodes";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultBillingConfig";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

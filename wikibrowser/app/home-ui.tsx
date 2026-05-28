@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { BookOpen, Settings, Share2, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
-import { databaseBillingView, databaseDepositHref } from "@/lib/billing-state";
-import type { BillingConfig, DatabaseSummary } from "@/lib/types";
+import { databaseCreditsView, databaseCreditsHref } from "@/lib/credits-state";
+import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 const OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv";
@@ -57,14 +57,14 @@ export function AuthControls({
 }
 
 export function DatabaseBody({
-  billingConfig,
+  creditsConfig,
   loading,
   myDatabases,
   principal,
   publicError,
   publicDatabases
 }: {
-  billingConfig: BillingConfig | null;
+  creditsConfig: CreditsConfig | null;
   loading: boolean;
   myDatabases: DatabaseRow[];
   principal: string | null;
@@ -73,12 +73,12 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection billingConfig={billingConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection creditsConfig={creditsConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection billingConfig={billingConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection billingConfig={billingConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection creditsConfig={creditsConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection creditsConfig={creditsConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -110,7 +110,7 @@ export function OfficialKinicWikiPanel() {
 }
 
 function DatabaseSection({
-  billingConfig,
+  creditsConfig,
   description,
   emptyMessage,
   mode,
@@ -119,7 +119,7 @@ function DatabaseSection({
   showTitle = true,
   title
 }: {
-  billingConfig: BillingConfig | null;
+  creditsConfig: CreditsConfig | null;
   description: string;
   emptyMessage: string;
   mode: "member" | "public";
@@ -150,7 +150,7 @@ function DatabaseSection({
       {!showTitle && publicError && mode === "public" ? <p className="px-4 pt-4 text-sm text-muted">{publicError}</p> : null}
       <div className="grid gap-3 p-3 sm:hidden">
         {rows.map((database) => (
-          <DatabaseMobileCard key={database.databaseId} billingConfig={billingConfig} database={database} mode={mode} />
+          <DatabaseMobileCard key={database.databaseId} creditsConfig={creditsConfig} database={database} mode={mode} />
         ))}
       </div>
       <div className="hidden overflow-x-auto sm:block">
@@ -161,7 +161,7 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Role</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Logical size</th>
-              <th className="px-4 py-3 font-medium">Billing</th>
+              <th className="px-4 py-3 font-medium">Credits</th>
               <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
               {mode === "member" ? <th className="px-4 py-3 font-medium">Skills</th> : null}
@@ -181,7 +181,7 @@ function DatabaseSection({
                 <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
                 <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
                 <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
-                <td className="px-4 py-3 text-ink">{databaseBillingView(database, billingConfig).summary}</td>
+                <td className="px-4 py-3 text-ink">{databaseCreditsView(database, creditsConfig).summary}</td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap gap-2">
                     {isRoutableDatabaseId(database.databaseId) ? <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : <span className="text-muted">-</span>}
@@ -198,7 +198,7 @@ function DatabaseSection({
                         Registry
                       </Link>
                       {database.status !== "deleted" ? (
-                        <DatabaseActionLink href={databaseDepositHref(database)} icon={<Wallet aria-hidden size={14} />} label="Deposit" />
+                        <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
                       ) : null}
                     </div>
                   </td>
@@ -215,7 +215,7 @@ function DatabaseSection({
   );
 }
 
-function DatabaseMobileCard({ billingConfig, database, mode }: { billingConfig: BillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseMobileCard({ creditsConfig, database, mode }: { creditsConfig: CreditsConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -227,7 +227,7 @@ function DatabaseMobileCard({ billingConfig, database, mode }: { billingConfig: 
         <DatabaseCardMeta label="Role" value={database.role} />
         <DatabaseCardMeta label="Status" value={database.status} />
         <DatabaseCardMeta label="Logical size" value={formatBytes(database.logicalSizeBytes)} />
-        <DatabaseCardMeta label="Billing" value={databaseBillingView(database, billingConfig).summary} />
+        <DatabaseCardMeta label="Credits" value={databaseCreditsView(database, creditsConfig).summary} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
         {isRoutableDatabaseId(database.databaseId) ? (
@@ -242,7 +242,7 @@ function DatabaseMobileCard({ billingConfig, database, mode }: { billingConfig: 
           </Link>
         ) : null}
         {mode === "member" && database.status !== "deleted" ? (
-          <DatabaseActionLink href={databaseDepositHref(database)} icon={<Wallet aria-hidden size={14} />} label="Deposit" />
+          <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
         ) : null}
         {database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : null}
         <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Access" />

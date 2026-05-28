@@ -8,8 +8,8 @@ import { Plus, TerminalSquare } from "lucide-react";
 import { CreateDatabaseDialog } from "./create-database-dialog";
 import { AuthControls, CreatedDatabasePanel, DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { BillingConfig, DatabaseSummary } from "@/lib/types";
-import { createDatabaseAuthenticated, getBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
+import { createDatabaseAuthenticated, getCreditsConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import type { DatabaseRow } from "./home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -20,7 +20,7 @@ export default function HomePage() {
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseRow[]>([]);
-  const [billingConfig, setBillingConfig] = useState<BillingConfig | null>(null);
+  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [publicError, setPublicError] = useState<string | null>(null);
@@ -45,8 +45,8 @@ export default function HomePage() {
       setWarning(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [billingResult, publicResult, memberResult] = await Promise.allSettled([
-          getBillingConfig(canisterId),
+        const [creditsResult, publicResult, memberResult] = await Promise.allSettled([
+          getCreditsConfig(canisterId),
           listDatabasesPublic(canisterId),
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
@@ -58,7 +58,7 @@ export default function HomePage() {
         const nextDatabases = mergeDatabaseRows(memberDatabases, publicDatabases);
         if (!isCurrentRefresh()) return;
         setDatabases(nextDatabases);
-        setBillingConfig(billingResult.status === "fulfilled" ? billingResult.value : null);
+        setCreditsConfig(creditsResult.status === "fulfilled" ? creditsResult.value : null);
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
         setWarning(listWarning(memberResult));
@@ -115,7 +115,7 @@ export default function HomePage() {
     if (!authClient) return;
     await authClient.logout();
     setPrincipal(null);
-    setBillingConfig(null);
+    setCreditsConfig(null);
     setCreatedDatabase(null);
     setCreateDialogOpen(false);
     setNewDatabaseName("");
@@ -223,7 +223,7 @@ export default function HomePage() {
                 </button>
               </div>
             </section>
-            <DatabaseBody billingConfig={billingConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody creditsConfig={creditsConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </>
         ) : (
           <section className="rounded-lg border border-line bg-paper shadow-sm">
@@ -233,7 +233,7 @@ export default function HomePage() {
                 <p className="mt-1 text-sm leading-6 text-muted">Public databases open without login. Login with Internet Identity to show My databases linked to your principal.</p>
               </div>
             </div>
-            <DatabaseBody billingConfig={billingConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody creditsConfig={creditsConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </section>
         )}
       </section>

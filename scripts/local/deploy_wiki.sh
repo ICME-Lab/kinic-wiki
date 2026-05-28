@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Where: scripts/local/deploy_wiki.sh
-# What: Deploy the wiki canister locally with explicit billing init args.
-# Why: Local billing tests need a stable ledger ID while production keeps explicit env validation.
+# What: Deploy the wiki canister locally with explicit credits init args.
+# Why: Local credits tests need a stable ledger ID while production keeps explicit env validation.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -43,7 +43,7 @@ require_principal_env() {
 require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env SNS_GOVERNANCE_ID
 
-ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-local-billing-init.XXXXXX.did")"
+ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-local-credits-init.XXXXXX.did")"
 trap 'rm -f "${ARGS_FILE}"' EXIT
 
 cat >"${ARGS_FILE}" <<EOF
@@ -58,7 +58,7 @@ cat >"${ARGS_FILE}" <<EOF
 EOF
 
 if [[ "${1:-}" == "--dry-run" ]]; then
-  echo "local wiki billing init args generated for ${ICP_ENVIRONMENT}" >&2
+  echo "local wiki credits init args generated for ${ICP_ENVIRONMENT}" >&2
   echo "KINIC_LEDGER_CANISTER_ID=${KINIC_LEDGER_CANISTER_ID}" >&2
   echo "SNS_GOVERNANCE_ID=${SNS_GOVERNANCE_ID}" >&2
   exit 0

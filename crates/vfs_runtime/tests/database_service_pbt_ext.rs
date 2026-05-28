@@ -1,5 +1,5 @@
 // Where: crates/vfs_runtime/tests/database_service_pbt_ext.rs
-// What: Supplemental property tests for billing suspension, mount history, and restore chunks.
+// What: Supplemental property tests for credits suspension, mount history, and restore chunks.
 // Why: The main PBT covers common flows; these tests target branch-risky edge state.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -19,9 +19,8 @@ const OWNER: &str = "owner";
 const DEPOSIT_E8S: u64 = 1_000_000;
 
 #[derive(Clone, Debug)]
-enum BillingOp {
-    TopUpDatabase { amount: u64 },
-    WithdrawDatabase { amount: u64 },
+enum CreditsOp {
+    PurchaseDatabaseCredits { amount: u64 },
     Charge { cycles_delta: u128 },
 }
 
@@ -80,11 +79,9 @@ fn create_billed_database(service: &VfsService, name: &str, now: i64) -> String 
     database_id
 }
 
-fn delete_request(database_id: &str, expected_billing_balance_e8s: u64) -> DeleteDatabaseRequest {
+fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     DeleteDatabaseRequest {
         database_id: database_id.to_string(),
-        expected_billing_balance_e8s,
-        allow_balance_writeoff: expected_billing_balance_e8s > 0,
     }
 }
 
@@ -96,8 +93,9 @@ fn credit_database(
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id = service.begin_database_top_up(database_id, caller, amount_e8s, now)?;
-    service.credit_database_top_up(
+    let operation_id =
+        service.begin_database_credit_purchase(database_id, caller, amount_e8s, now)?;
+    service.credit_database_purchase(
         operation_id,
         database_id,
         caller,
@@ -111,7 +109,7 @@ fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
         "SELECT balance_e8s, suspended_at_ms
-         FROM database_billing_accounts
+         FROM database_credit_accounts
          WHERE database_id = ?1",
         params![database_id],
         |row| {
@@ -120,7 +118,7 @@ fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
             Ok((balance.max(0) as u64, suspended_at_ms))
         },
     )
-    .expect("billing account should exist")
+    .expect("credit account should exist")
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
@@ -145,7 +143,7 @@ fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance
     let mut stmt = conn
         .prepare(
             "SELECT kind, amount_e8s, balance_after_e8s, method, cycles_delta
-             FROM database_billing_ledger
+             FROM database_credit_ledger
              WHERE database_id = ?1
              ORDER BY entry_id ASC",
         )
@@ -168,10 +166,9 @@ fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance
         balance += amount;
         assert_eq!(balance_after, balance, "database ledger chain broke");
         match kind.as_str() {
-            "top_up" => assert!(amount > 0),
-            "withdraw_pending" | "withdraw_fee_pending" | "charge" => assert!(amount <= 0),
-            "withdraw_complete" => assert_eq!(amount, 0),
-            "withdraw_reversal" => assert!(amount >= 0),
+            "credit_purchase" => assert!(amount > 0),
+            "charge" => assert!(amount <= 0),
+            "delete_credit_discard" => assert!(amount <= 0),
             "suspend" => {
                 assert_eq!(amount, 0);
                 assert!(method.is_some());
@@ -272,11 +269,10 @@ fn finalize_restore_from_bytes(
         .expect("complete restore should finalize");
 }
 
-fn billing_operation_strategy() -> impl Strategy<Value = BillingOp> {
+fn credits_operation_strategy() -> impl Strategy<Value = CreditsOp> {
     prop_oneof![
-        4 => (1_u64..=2_000_000).prop_map(|amount| BillingOp::TopUpDatabase { amount }),
-        3 => (1_u64..=2_000_000).prop_map(|amount| BillingOp::WithdrawDatabase { amount }),
-        5 => (0_u128..=8_000_000_000_u128).prop_map(|cycles_delta| BillingOp::Charge { cycles_delta }),
+        4 => (1_u64..=2_000_000).prop_map(|amount| CreditsOp::PurchaseDatabaseCredits { amount }),
+        5 => (0_u128..=8_000_000_000_u128).prop_map(|cycles_delta| CreditsOp::Charge { cycles_delta }),
     ]
 }
 
@@ -292,42 +288,23 @@ proptest! {
     #![proptest_config(property_config())]
 
     #[test]
-    fn database_service_pbt_billing_suspension_and_ledger_chain(
-        operations in prop::collection::vec(billing_operation_strategy(), 1..50),
+    fn database_service_pbt_credits_suspension_and_ledger_chain(
+        operations in prop::collection::vec(credits_operation_strategy(), 1..50),
     ) {
         let env = service_with_root();
         let service = &env.service;
-        let database_id = create_billed_database(service, "billing-pbt", 1);
+        let database_id = create_billed_database(service, "credits-pbt", 1);
         let mut database_balance = DEPOSIT_E8S;
 
         for (index, operation) in operations.into_iter().enumerate() {
             let now = index as i64 + 100;
             match operation {
-                BillingOp::TopUpDatabase { amount } => {
+                CreditsOp::PurchaseDatabaseCredits { amount } => {
                     credit_database(service, &database_id, OWNER, amount, now as u64, now)
-                        .expect("top-up should succeed");
+                        .expect("credit purchase should succeed");
                     database_balance += amount;
                 }
-                BillingOp::WithdrawDatabase { amount } => {
-                    let result = service.begin_database_withdraw(&database_id, OWNER, amount, 0, now);
-                    if database_balance >= amount {
-                        let operation_id =
-                            result.expect("withdraw should succeed with enough database balance");
-                        service
-                            .complete_database_withdraw(
-                                operation_id,
-                                &database_id,
-                                OWNER,
-                                now as u64 + 100,
-                                now,
-                            )
-                            .expect("withdraw should complete");
-                        database_balance -= amount;
-                    } else {
-                        assert!(result.is_err());
-                    }
-                }
-                BillingOp::Charge { cycles_delta } => {
+                CreditsOp::Charge { cycles_delta } => {
                     let before = database_balance;
                     service
                         .charge_database_update(&database_id, OWNER, "pbt_charge", cycles_delta, Some(now as u64), now)
@@ -335,8 +312,8 @@ proptest! {
                     let computed = charge_amount(cycles_delta);
                     database_balance = database_balance.saturating_sub(computed);
                     let entries = service
-                        .list_database_billing_entries(&database_id, OWNER, None, 100)
-                        .expect("database billing entries should load")
+                        .list_database_credit_entries(&database_id, OWNER, None, 100)
+                        .expect("database credits entries should load")
                         .entries;
                     if computed > before {
                         assert_eq!(entries[entries.len() - 2].kind, "charge");
@@ -394,7 +371,7 @@ proptest! {
                 .cancel_database_archive(&database_id, OWNER, 22)
                 .expect("archive should cancel");
             service
-                .delete_database(delete_request(&database_id, DEPOSIT_E8S), OWNER, 23)
+                .delete_database(delete_request(&database_id), OWNER, 23)
                 .expect("active database should delete");
             assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Deleted);
         } else {
@@ -480,7 +457,7 @@ proptest! {
                         && status_and_mount(service, &database_id).0 == DatabaseStatus::Active
                     {
                         service
-                            .delete_database(delete_request(&database_id, 0), OWNER, now)
+                            .delete_database(delete_request(&database_id), OWNER, now)
                             .expect("active slot database should delete");
                     }
                 }

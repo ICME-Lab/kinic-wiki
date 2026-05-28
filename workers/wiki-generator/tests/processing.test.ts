@@ -107,7 +107,7 @@ test("failed status write after DeepSeek is non-retry", async () => {
 
 function failingLogVfs(): VfsClient {
   return {
-    checkDatabaseBillable: async (): Promise<void> => {},
+    checkDatabaseWriteCredits: async (): Promise<void> => {},
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => ({
       path,
@@ -128,8 +128,8 @@ function failingLogVfs(): VfsClient {
 
 function sourceVfs(options: { failBillable?: boolean; failDraftWrite?: boolean } = {}): VfsClient {
   return {
-    checkDatabaseBillable: async (): Promise<void> => {
-      if (options.failBillable) throw new Error("database billing is suspended");
+    checkDatabaseWriteCredits: async (): Promise<void> => {
+      if (options.failBillable) throw new Error("database credits are suspended");
     },
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => {

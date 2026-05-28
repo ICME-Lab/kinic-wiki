@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Where: scripts/mainnet/deploy_wiki.sh
-# What: Deploy the wiki canister to mainnet with explicit billing init args.
-# Why: Billing ledger and SNS principals are immutable after init, so placeholders must never reach production.
+# What: Deploy the wiki canister to mainnet with explicit credits init args.
+# Why: Credits ledger and SNS principals are immutable after init, so placeholders must never reach production.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -29,7 +29,7 @@ require_principal_env() {
 require_principal_env KINIC_LEDGER_CANISTER_ID
 require_principal_env SNS_GOVERNANCE_ID
 
-ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-billing-init.XXXXXX.did")"
+ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-credits-init.XXXXXX.did")"
 trap 'rm -f "${ARGS_FILE}"' EXIT
 
 cat >"${ARGS_FILE}" <<EOF
@@ -44,7 +44,7 @@ cat >"${ARGS_FILE}" <<EOF
 EOF
 
 if [[ "${1:-}" == "--dry-run" ]]; then
-  echo "mainnet wiki billing init args validated" >&2
+  echo "mainnet wiki credits init args validated" >&2
   exit 0
 fi
 

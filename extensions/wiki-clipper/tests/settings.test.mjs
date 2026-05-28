@@ -150,29 +150,29 @@ test("database dropdown options include only active owner and writer databases",
   );
 });
 
-test("database dropdown keeps billing-disabled writer databases with reasons", () => {
+test("database dropdown keeps credits-disabled writer databases with reasons", () => {
   const databases = normalizeWritableDatabases([
     rawDatabase("active-db", "Owner", "Active", 20_000n),
     rawDatabase("low-db", "Writer", "Active", 9_999n),
     rawDatabase("suspended-db", "Writer", "Active", 20_000n, 1n)
   ], { minUpdateBalanceE8s: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.billable, database.billingReason]),
+    databases.map((database) => [database.databaseId, database.billable, database.creditsReason]),
     [
       ["active-db", true, null],
       ["low-db", false, "Database balance is below the minimum update balance."],
-      ["suspended-db", false, "Database billing is suspended."]
+      ["suspended-db", false, "Database credits are suspended."]
     ]
   );
 });
 
-test("database dropdown disables writer databases when billing config is unavailable", () => {
+test("database dropdown disables writer databases when credits config is unavailable", () => {
   const databases = normalizeWritableDatabases([
     rawDatabase("owner-db", "Owner", "Active", 20_000n)
   ]);
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.billable, database.billingReason]),
-    [["owner-db", false, "Billing config unavailable."]]
+    databases.map((database) => [database.databaseId, database.billable, database.creditsReason]),
+    [["owner-db", false, "Credits config unavailable."]]
   );
 });
 
@@ -250,17 +250,17 @@ test("settings docs describe automatic database save", () => {
   assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
-function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, billingSuspendedAtMs = null) {
+function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, creditsSuspendedAtMs = null) {
   const name = typeof nameOrBalance === "string" ? nameOrBalance : `${databaseId} name`;
-  const billingBalanceE8s = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
+  const creditsBalanceE8s = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
   return {
     database_id: databaseId,
     name,
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    billing_balance_e8s: [billingBalanceE8s],
-    billing_suspended_at_ms: billingSuspendedAtMs === null ? [] : [billingSuspendedAtMs],
+    credit_balance_e8s: [creditsBalanceE8s],
+    credits_suspended_at_ms: creditsSuspendedAtMs === null ? [] : [creditsSuspendedAtMs],
     archived_at_ms: [],
     deleted_at_ms: []
   };

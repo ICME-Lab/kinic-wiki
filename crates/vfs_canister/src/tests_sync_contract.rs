@@ -26,9 +26,9 @@ fn install_test_service() {
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
     service
-        .begin_database_top_up("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
-            service.credit_database_top_up(
+            service.credit_database_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",

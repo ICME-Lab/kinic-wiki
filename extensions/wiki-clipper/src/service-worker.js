@@ -352,7 +352,7 @@ function errorStatus(message, url = "") {
 }
 
 function shouldOpenSettingsForError(message) {
-  return message === "UNAUTHENTICATED" || /billing|balance/i.test(String(message || ""));
+  return message === "UNAUTHENTICATED" || /credits|balance/i.test(String(message || ""));
 }
 
 function setupRequiredStatus(url = "") {

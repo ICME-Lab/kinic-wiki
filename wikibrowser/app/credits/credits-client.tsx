@@ -1,27 +1,27 @@
-// Where: /deposit client UI.
-// What: collects a KINIC amount locally, then submits wallet approval and database top-up.
-// Why: deposit amount is user input, not a query parameter.
+// Where: /credits client UI.
+// What: collects a KINIC amount locally, then submits wallet approval and credits purchase.
+// Why: purchase amount is user input, not a query parameter.
 "use client";
 
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { parseDepositAmountInput, parseDepositTarget } from "@/lib/deposit-url";
-import { connectOisyWallet, connectPlugWallet, depositWithOisy, depositWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/deposit-wallet";
-import { formatTokenAmountFromE8s } from "@/lib/token-amount";
+import { parseCreditsAmountInput, parseCreditsTarget } from "@/lib/credits-url";
+import { connectOisyWallet, connectPlugWallet, purchaseCreditsWithOisy, purchaseCreditsWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/credits-wallet";
+import { formatTokenAmountFromE8s } from "@/lib/credit-amount";
 
-type DepositStatus = "idle" | "connecting" | "running" | "success" | "error";
-type DepositProvider = "oisy" | "plug";
+type CreditsStatus = "idle" | "connecting" | "running" | "success" | "error";
+type CreditsProvider = "oisy" | "plug";
 
-type DepositClientProps = {
+type CreditsClientProps = {
   canisterId: string;
   databaseId: string;
 };
 
-export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
-  const [status, setStatus] = useState<DepositStatus>("idle");
+export function CreditsClient({ canisterId, databaseId }: CreditsClientProps) {
+  const [status, setStatus] = useState<CreditsStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
-  const [provider, setProvider] = useState<DepositProvider | null>(null);
+  const [provider, setProvider] = useState<CreditsProvider | null>(null);
   const [amount, setAmount] = useState("1");
   const [oisyWallet, setOisyWallet] = useState<ConnectedOisyWallet | null>(null);
   const [plugWallet, setPlugWallet] = useState<ConnectedPlugWallet | null>(null);
@@ -29,9 +29,9 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
   const parsedTarget = useMemo(() => {
     const params = new URLSearchParams();
     params.set("database_id", databaseId);
-    return parseDepositTarget(params);
+    return parseCreditsTarget(params);
   }, [databaseId]);
-  const parsedAmount = useMemo(() => parseDepositAmountInput(amount), [amount]);
+  const parsedAmount = useMemo(() => parseCreditsAmountInput(amount), [amount]);
   const error =
     typeof parsedTarget === "string"
       ? parsedTarget
@@ -50,7 +50,7 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
           : plugWallet
             ? "plug"
             : null;
-  const depositDisabled = !selectedProvider || Boolean(error) || Boolean(amountError) || busy;
+  const purchaseDisabled = !selectedProvider || Boolean(error) || Boolean(amountError) || busy;
 
   useEffect(() => {
     return () => {
@@ -58,7 +58,7 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
     };
   }, [oisyWallet]);
 
-  async function connect(nextProvider: DepositProvider) {
+  async function connect(nextProvider: CreditsProvider) {
     setStatus("connecting");
     setProvider(nextProvider);
     setMessage(null);
@@ -79,7 +79,7 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
     }
   }
 
-  async function deposit() {
+  async function purchase() {
     if (!selectedProvider) return;
     if (typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
     const activeOisyWallet = selectedProvider === "oisy" ? oisyWallet : null;
@@ -93,14 +93,14 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
       const request = { canisterId, databaseId: parsedTarget.databaseId, amountE8s: parsedAmount };
       const result =
         selectedProvider === "oisy" && activeOisyWallet
-          ? await depositWithOisy(request, activeOisyWallet)
+          ? await purchaseCreditsWithOisy(request, activeOisyWallet)
           : activePlugWallet
-            ? await depositWithPlug(request, activePlugWallet)
+            ? await purchaseCreditsWithPlug(request, activePlugWallet)
             : null;
       if (!result) return;
-      const balance = result.balanceE8s ? `DB balance ${formatTokenAmountFromE8s(result.balanceE8s)}` : "top-up accepted";
+      const balance = result.balanceE8s ? `credits balance ${formatTokenAmountFromE8s(result.balanceE8s)}` : "credits purchase accepted";
       setMessage(
-        `${result.provider} approve block ${result.approveBlockIndex}; DB credited amount ${formatTokenAmountFromE8s(result.creditedAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
+        `${result.provider} approve block ${result.approveBlockIndex}; purchased credits ${formatTokenAmountFromE8s(result.creditedAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
       );
       if (selectedProvider === "oisy") setOisyWallet(null);
       setStatus("success");
@@ -117,7 +117,7 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
           <Link className="text-sm font-medium text-accent no-underline hover:underline" href="/">
             Database dashboard
           </Link>
-          <h1 className="mt-5 text-3xl font-semibold">Database deposit</h1>
+          <h1 className="mt-5 text-3xl font-semibold">Database purchase</h1>
         </header>
 
         <section className="grid gap-3 rounded-lg border border-line bg-white p-4 shadow-[0_8px_28px_#14142b0d]">
@@ -136,7 +136,7 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
           </label>
         </section>
 
-        <Notice tone="warning" text="Any authenticated wallet can fund this database. Only database owners can withdraw KINIC from the database balance." />
+        <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable credits for this database." />
 
         <div className="grid gap-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -161,12 +161,12 @@ export function DepositClient({ canisterId, databaseId }: DepositClientProps) {
           </div>
           <button
             className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-3 font-semibold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={depositDisabled}
+            disabled={purchaseDisabled}
             type="button"
-            onClick={() => void deposit()}
+            onClick={() => void purchase()}
           >
             {selectedProvider === "plug" ? <PlugZap aria-hidden size={18} /> : <Wallet aria-hidden size={18} />}
-            <span>{depositButtonLabel(selectedProvider, status, provider)}</span>
+            <span>{purchaseButtonLabel(selectedProvider, status, provider)}</span>
           </button>
         </div>
 
@@ -224,14 +224,14 @@ function WalletConnect({
   );
 }
 
-function depositButtonLabel(selectedProvider: DepositProvider | null, status: DepositStatus, activeProvider: DepositProvider | null): string {
+function purchaseButtonLabel(selectedProvider: CreditsProvider | null, status: CreditsStatus, activeProvider: CreditsProvider | null): string {
   if (status === "running" && activeProvider === selectedProvider) {
     if (selectedProvider === "oisy") return "Processing OISY";
     if (selectedProvider === "plug") return "Processing Plug";
   }
-  if (selectedProvider === "oisy") return "Deposit with OISY";
-  if (selectedProvider === "plug") return "Deposit with Plug";
-  return "Deposit";
+  if (selectedProvider === "oisy") return "Purchase credits with OISY";
+  if (selectedProvider === "plug") return "Purchase credits with Plug";
+  return "Purchase credits";
 }
 
 function Field({ label, value }: { label: string; value: string }) {

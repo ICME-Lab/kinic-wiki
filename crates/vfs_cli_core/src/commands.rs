@@ -8,12 +8,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, anyhow};
-use candid::Principal;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, BillingAccount, BillingConfig, DatabaseRestoreChunkRequest, DatabaseSummary,
+    AppendNodeRequest, CreditsConfig, DatabaseRestoreChunkRequest, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
@@ -22,7 +21,7 @@ use vfs_types::{
 };
 use wiki_domain::validate_source_path_for_kind;
 
-use crate::cli::{BillingCommand, DatabaseCommand, VfsCommand};
+use crate::cli::{CreditsCommand, DatabaseCommand, VfsCommand};
 use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
@@ -37,8 +36,8 @@ pub async fn run_vfs_command(
 ) -> Result<()> {
     let database_id = connection.database_id.as_deref();
     let command = match command {
-        VfsCommand::Billing { command } => {
-            run_billing_command(client, command).await?;
+        VfsCommand::Credits { command } => {
+            run_credits_command(client, command).await?;
             return Ok(());
         }
         VfsCommand::Database { command } => {
@@ -52,8 +51,8 @@ pub async fn run_vfs_command(
         require_billable_database(client, database_id).await?;
     }
     match command {
-        VfsCommand::Billing { .. } => {
-            unreachable!("billing command handled before db requirement")
+        VfsCommand::Credits { .. } => {
+            unreachable!("credits command handled before db requirement")
         }
         VfsCommand::Database { .. } => {
             unreachable!("database command handled before db requirement")
@@ -505,37 +504,37 @@ fn command_requires_billable_database(command: &VfsCommand) -> bool {
 
 async fn require_billable_database(client: &impl VfsApi, database_id: &str) -> Result<()> {
     let config = client
-        .get_billing_config()
+        .get_credits_config()
         .await
-        .context("billing config unavailable")?;
+        .context("credits config unavailable")?;
     let databases = client
         .list_databases()
         .await
-        .context("database list unavailable for billing check")?;
+        .context("database list unavailable for credits check")?;
     let database = databases
         .iter()
         .find(|database| database.database_id == database_id)
-        .ok_or_else(|| anyhow!("database billing state unavailable: {database_id}"))?;
-    if let Some(reason) = database_billing_disabled_reason(database, &config) {
+        .ok_or_else(|| anyhow!("database credits state unavailable: {database_id}"))?;
+    if let Some(reason) = database_credits_disabled_reason(database, &config) {
         return Err(anyhow!("{reason}"));
     }
     Ok(())
 }
 
-fn database_billing_disabled_reason(
+fn database_credits_disabled_reason(
     database: &DatabaseSummary,
-    config: &BillingConfig,
+    config: &CreditsConfig,
 ) -> Option<String> {
-    let balance = database.billing_balance_e8s.unwrap_or(0);
-    if database.billing_suspended_at_ms.is_some() {
+    let balance = database.credit_balance_e8s.unwrap_or(0);
+    if database.credits_suspended_at_ms.is_some() {
         return Some(format!(
-            "database billing is suspended: {}",
+            "database credits are suspended: {}",
             database.database_id
         ));
     }
     if balance < config.min_update_balance_e8s {
         return Some(format!(
-            "database billing balance is below minimum: {} balance_e8s={} min_update_balance_e8s={}",
+            "database credits balance is below minimum: {} balance_e8s={} min_update_balance_e8s={}",
             database.database_id, balance, config.min_update_balance_e8s
         ));
     }
@@ -679,43 +678,30 @@ async fn run_database_command(
                         database.role,
                         database.status,
                         database.logical_size_bytes,
-                        database.billing_balance_e8s.unwrap_or(0),
+                        database.credit_balance_e8s.unwrap_or(0),
                         database
-                            .billing_suspended_at_ms
+                            .credits_suspended_at_ms
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "-".to_string())
                     );
                 }
             }
         }
-        DatabaseCommand::TopUp {
+        DatabaseCommand::PurchaseCredits {
             database_id,
             amount_e8s,
         } => {
-            let result = client.top_up_database(&database_id, amount_e8s).await?;
-            println!(
-                "{database_id}\t{}\t{}",
-                result.block_index, result.balance_e8s
-            );
-        }
-        DatabaseCommand::Withdraw {
-            database_id,
-            amount_e8s,
-            to_principal,
-            to_subaccount_hex,
-        } => {
-            let to = billing_account(&to_principal, to_subaccount_hex.as_deref())?;
             let result = client
-                .withdraw_database_balance(&database_id, amount_e8s, to)
+                .purchase_database_credits(&database_id, amount_e8s)
                 .await?;
             println!(
                 "{database_id}\t{}\t{}",
                 result.block_index, result.balance_e8s
             );
         }
-        DatabaseCommand::BillingHistory { database_id, json } => {
+        DatabaseCommand::CreditsHistory { database_id, json } => {
             let page = client
-                .list_database_billing_entries(&database_id, None, 100)
+                .list_database_credit_entries(&database_id, None, 100)
                 .await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&page)?);
@@ -742,9 +728,9 @@ async fn run_database_command(
                 }
             }
         }
-        DatabaseCommand::BillingPending { database_id, json } => {
+        DatabaseCommand::CreditsPending { database_id, json } => {
             let page = client
-                .list_database_billing_pending_operations(&database_id, None, 100)
+                .list_database_credit_pending_operations(&database_id, None, 100)
                 .await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&page)?);
@@ -773,80 +759,46 @@ async fn run_database_command(
                 }
             }
         }
-        DatabaseCommand::RepairTopUpComplete {
+        DatabaseCommand::RepairCreditPurchaseComplete {
             database_id,
             operation_id,
             block_index,
         } => {
             let result = client
-                .repair_database_top_up_complete(&database_id, operation_id, block_index)
+                .repair_database_credit_purchase_complete(&database_id, operation_id, block_index)
                 .await?;
             println!(
                 "{database_id}\t{operation_id}\t{}\t{}",
                 result.block_index, result.balance_e8s
             );
         }
-        DatabaseCommand::RepairTopUpCancel {
+        DatabaseCommand::RepairCreditPurchaseCancel {
             database_id,
             operation_id,
         } => {
             client
-                .repair_database_top_up_cancel(&database_id, operation_id)
+                .repair_database_credit_purchase_cancel(&database_id, operation_id)
                 .await?;
             println!("{database_id}\t{operation_id}");
         }
-        DatabaseCommand::RepairTopUpRetry {
+        DatabaseCommand::RepairCreditPurchaseRetry {
             database_id,
             operation_id,
         } => {
             let result = client
-                .repair_database_top_up_retry(&database_id, operation_id)
+                .repair_database_credit_purchase_retry(&database_id, operation_id)
                 .await?;
             println!(
                 "{database_id}\t{operation_id}\t{}\t{}",
                 result.block_index, result.balance_e8s
             );
         }
-        DatabaseCommand::RepairWithdrawComplete {
-            database_id,
-            operation_id,
-            block_index,
-        } => {
-            let result = client
-                .repair_database_withdraw_complete(&database_id, operation_id, block_index)
-                .await?;
-            println!(
-                "{database_id}\t{operation_id}\t{}\t{}",
-                result.block_index, result.balance_e8s
-            );
-        }
-        DatabaseCommand::RepairWithdrawRetry {
-            database_id,
-            operation_id,
-        } => {
-            let result = client
-                .repair_database_withdraw_retry(&database_id, operation_id)
-                .await?;
-            println!(
-                "{database_id}\t{operation_id}\t{}\t{}",
-                result.block_index, result.balance_e8s
-            );
-        }
-        DatabaseCommand::RepairWithdrawReverse {
-            database_id,
-            operation_id,
-        } => {
-            let balance = client
-                .repair_database_withdraw_reverse(&database_id, operation_id)
-                .await?;
-            println!("{database_id}\t{operation_id}\t{balance}");
-        }
-        DatabaseCommand::Deposit {
+        DatabaseCommand::Credits {
             database_id,
             amount_e8s,
             browser_origin,
         } => {
-            let url = database_deposit_url(
+            let url = database_credits_url(
                 browser_origin.as_deref(),
                 &connection.canister_id,
                 &database_id,
@@ -936,33 +888,7 @@ async fn run_database_command(
     Ok(())
 }
 
-fn billing_account(to_principal: &str, to_subaccount_hex: Option<&str>) -> Result<BillingAccount> {
-    let owner = Principal::from_text(to_principal)
-        .map_err(|error| anyhow!("invalid --to-principal: {error}"))?;
-    let subaccount = match to_subaccount_hex {
-        Some(value) => Some(parse_subaccount_hex(value)?),
-        None => None,
-    };
-    Ok(BillingAccount { owner, subaccount })
-}
-
-fn parse_subaccount_hex(value: &str) -> Result<Vec<u8>> {
-    let normalized = value.strip_prefix("0x").unwrap_or(value);
-    if normalized.len() != 64 {
-        return Err(anyhow!(
-            "--to-subaccount-hex must be 32 bytes / 64 hex chars"
-        ));
-    }
-    let mut bytes = Vec::with_capacity(32);
-    for index in (0..normalized.len()).step_by(2) {
-        let byte = u8::from_str_radix(&normalized[index..index + 2], 16)
-            .map_err(|error| anyhow!("invalid --to-subaccount-hex: {error}"))?;
-        bytes.push(byte);
-    }
-    Ok(bytes)
-}
-
-fn database_deposit_url(
+fn database_credits_url(
     browser_origin: Option<&str>,
     canister_id: &str,
     database_id: &str,
@@ -977,7 +903,7 @@ fn database_deposit_url(
         return Err(anyhow!("browser origin must not be empty"));
     }
     Ok(format!(
-        "{origin}/deposit?canisterId={}&databaseId={}&amountE8s={}",
+        "{origin}/credits?canisterId={}&databaseId={}&amountE8s={}",
         query_encode(canister_id),
         query_encode(database_id),
         amount_e8s
@@ -1015,10 +941,10 @@ fn open_browser_url(url: &str) -> Result<()> {
     Ok(())
 }
 
-async fn run_billing_command(client: &impl VfsApi, command: BillingCommand) -> Result<()> {
+async fn run_credits_command(client: &impl VfsApi, command: CreditsCommand) -> Result<()> {
     match command {
-        BillingCommand::Config { json } => {
-            let config = client.get_billing_config().await?;
+        CreditsCommand::Config { json } => {
+            let config = client.get_credits_config().await?;
             let ledger_fee_e8s = client
                 .kinic_ledger_fee_e8s(&config.kinic_ledger_canister_id)
                 .await
@@ -1031,13 +957,13 @@ async fn run_billing_command(client: &impl VfsApi, command: BillingCommand) -> R
             if json {
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&BillingConfigOutput::new(
+                    serde_json::to_string_pretty(&CreditsConfigOutput::new(
                         config,
                         ledger_fee_e8s
                     ))?
                 );
             } else {
-                for line in billing_config_lines(&config, ledger_fee_e8s) {
+                for line in credits_config_lines(&config, ledger_fee_e8s) {
                     println!("{line}");
                 }
             }
@@ -1047,7 +973,7 @@ async fn run_billing_command(client: &impl VfsApi, command: BillingCommand) -> R
 }
 
 #[derive(Debug, serde::Serialize)]
-struct BillingConfigOutput {
+struct CreditsConfigOutput {
     kinic_ledger_canister_id: String,
     sns_governance_id: String,
     rate_numerator_e8s: u64,
@@ -1057,8 +983,8 @@ struct BillingConfigOutput {
     ledger_fee_e8s: u64,
 }
 
-impl BillingConfigOutput {
-    fn new(config: BillingConfig, ledger_fee_e8s: u64) -> Self {
+impl CreditsConfigOutput {
+    fn new(config: CreditsConfig, ledger_fee_e8s: u64) -> Self {
         Self {
             kinic_ledger_canister_id: config.kinic_ledger_canister_id,
             sns_governance_id: config.sns_governance_id,
@@ -1071,7 +997,7 @@ impl BillingConfigOutput {
     }
 }
 
-fn billing_config_lines(config: &BillingConfig, ledger_fee_e8s: u64) -> Vec<String> {
+fn credits_config_lines(config: &CreditsConfig, ledger_fee_e8s: u64) -> Vec<String> {
     vec![
         format!(
             "kinic_ledger_canister_id\t{}",
@@ -1483,11 +1409,10 @@ fn default_metadata_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::{command_requires_billable_database, run_vfs_command};
-    use crate::cli::{BillingCommand, NodeKindArg, VfsCommand};
+    use crate::cli::{CreditsCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
     use async_trait::async_trait;
-    use candid::Principal;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use tempfile::tempdir;
@@ -1502,17 +1427,14 @@ mod tests {
         entries: Vec<NodeEntry>,
         created: Mutex<u32>,
         database_lists: Mutex<u32>,
-        database_top_ups: Mutex<Vec<(String, u64)>>,
-        database_withdraws: Mutex<Vec<(String, u64, BillingAccount)>>,
-        database_billing_history: Mutex<Vec<String>>,
-        database_billing_pending: Mutex<Vec<String>>,
-        database_top_up_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
-        database_top_up_repairs_cancel: Mutex<Vec<(String, u64)>>,
-        database_withdraw_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
-        database_withdraw_repairs_reverse: Mutex<Vec<(String, u64)>>,
+        database_credit_purchases: Mutex<Vec<(String, u64)>>,
+        database_credits_history: Mutex<Vec<String>>,
+        database_credits_pending: Mutex<Vec<String>>,
+        database_credit_purchase_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
+        database_credit_purchase_repairs_cancel: Mutex<Vec<(String, u64)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
-        billing_configs: Mutex<u32>,
-        fail_billing_config: Mutex<bool>,
+        credits_configs: Mutex<u32>,
+        fail_credits_config: Mutex<bool>,
         ledger_fee_queries: Mutex<Vec<String>>,
         fail_ledger_fee_query: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
@@ -1591,8 +1513,8 @@ mod tests {
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 42,
-            billing_balance_e8s: balance_e8s,
-            billing_suspended_at_ms: suspended_at_ms,
+            credit_balance_e8s: balance_e8s,
+            credits_suspended_at_ms: suspended_at_ms,
             archived_at_ms: None,
             deleted_at_ms: None,
         }
@@ -1611,54 +1533,39 @@ mod tests {
                 name: name.to_string(),
             })
         }
-        async fn top_up_database(
+        async fn purchase_database_credits(
             &self,
             database_id: &str,
             amount_e8s: u64,
-        ) -> Result<BillingTransferResult> {
-            self.database_top_ups
+        ) -> Result<CreditsPurchaseResult> {
+            self.database_credit_purchases
                 .lock()
                 .unwrap()
                 .push((database_id.to_string(), amount_e8s));
-            Ok(BillingTransferResult {
+            Ok(CreditsPurchaseResult {
                 block_index: 7,
                 balance_e8s: amount_e8s,
             })
         }
-        async fn withdraw_database_balance(
-            &self,
-            database_id: &str,
-            amount_e8s: u64,
-            to: BillingAccount,
-        ) -> Result<BillingTransferResult> {
-            self.database_withdraws
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), amount_e8s, to));
-            Ok(BillingTransferResult {
-                block_index: 8,
-                balance_e8s: 1,
-            })
-        }
-        async fn list_database_billing_entries(
+        async fn list_database_credit_entries(
             &self,
             database_id: &str,
             _cursor: Option<u64>,
             _limit: u32,
-        ) -> Result<DatabaseBillingEntryPage> {
-            self.database_billing_history
+        ) -> Result<DatabaseCreditEntryPage> {
+            self.database_credits_history
                 .lock()
                 .unwrap()
                 .push(database_id.to_string());
-            Ok(DatabaseBillingEntryPage {
-                entries: vec![DatabaseBillingEntry {
+            Ok(DatabaseCreditEntryPage {
+                entries: vec![DatabaseCreditEntry {
                     entry_id: 1,
                     database_id: database_id.to_string(),
-                    kind: "top_up".to_string(),
+                    kind: "credit_purchase".to_string(),
                     amount_e8s: 500_000,
                     balance_after_e8s: 500_000,
                     caller: "caller".to_string(),
-                    method: Some("top_up_database".to_string()),
+                    method: Some("purchase_database_credits".to_string()),
                     cycles_delta: None,
                     rate_numerator_e8s: None,
                     rate_denominator_cycles: None,
@@ -1670,21 +1577,21 @@ mod tests {
                 next_cursor: None,
             })
         }
-        async fn list_database_billing_pending_operations(
+        async fn list_database_credit_pending_operations(
             &self,
             database_id: &str,
             _cursor: Option<u64>,
             _limit: u32,
-        ) -> Result<DatabaseBillingPendingOperationPage> {
-            self.database_billing_pending
+        ) -> Result<DatabaseCreditPendingOperationPage> {
+            self.database_credits_pending
                 .lock()
                 .unwrap()
                 .push(database_id.to_string());
-            Ok(DatabaseBillingPendingOperationPage {
-                entries: vec![DatabaseBillingPendingOperation {
+            Ok(DatabaseCreditPendingOperationPage {
+                entries: vec![DatabaseCreditPendingOperation {
                     operation_id: 9,
                     database_id: database_id.to_string(),
-                    kind: "top_up".to_string(),
+                    kind: "credit_purchase".to_string(),
                     caller: "caller".to_string(),
                     amount_e8s: 500_000,
                     fee_e8s: 0,
@@ -1699,66 +1606,39 @@ mod tests {
                 next_cursor: None,
             })
         }
-        async fn repair_database_top_up_complete(
+        async fn repair_database_credit_purchase_complete(
             &self,
             database_id: &str,
             operation_id: u64,
             ledger_block_index: u64,
-        ) -> Result<BillingTransferResult> {
-            self.database_top_up_repairs_complete.lock().unwrap().push((
-                database_id.to_string(),
-                operation_id,
-                ledger_block_index,
-            ));
-            Ok(BillingTransferResult {
+        ) -> Result<CreditsPurchaseResult> {
+            self.database_credit_purchase_repairs_complete
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id, ledger_block_index));
+            Ok(CreditsPurchaseResult {
                 block_index: ledger_block_index,
                 balance_e8s: 500_000,
             })
         }
-        async fn repair_database_top_up_cancel(
+        async fn repair_database_credit_purchase_cancel(
             &self,
             database_id: &str,
             operation_id: u64,
         ) -> Result<()> {
-            self.database_top_up_repairs_cancel
+            self.database_credit_purchase_repairs_cancel
                 .lock()
                 .unwrap()
                 .push((database_id.to_string(), operation_id));
             Ok(())
         }
-        async fn repair_database_withdraw_complete(
-            &self,
-            database_id: &str,
-            operation_id: u64,
-            ledger_block_index: u64,
-        ) -> Result<BillingTransferResult> {
-            self.database_withdraw_repairs_complete
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), operation_id, ledger_block_index));
-            Ok(BillingTransferResult {
-                block_index: ledger_block_index,
-                balance_e8s: 1,
-            })
-        }
-        async fn repair_database_withdraw_reverse(
-            &self,
-            database_id: &str,
-            operation_id: u64,
-        ) -> Result<u64> {
-            self.database_withdraw_repairs_reverse
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), operation_id));
-            Ok(500_000)
-        }
-        async fn get_billing_config(&self) -> Result<BillingConfig> {
-            let mut configs = self.billing_configs.lock().unwrap();
+        async fn get_credits_config(&self) -> Result<CreditsConfig> {
+            let mut configs = self.credits_configs.lock().unwrap();
             *configs += 1;
-            if *self.fail_billing_config.lock().unwrap() {
-                return Err(anyhow!("billing config unavailable"));
+            if *self.fail_credits_config.lock().unwrap() {
+                return Err(anyhow!("credits config unavailable"));
             }
-            Ok(BillingConfig {
+            Ok(CreditsConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 rate_numerator_e8s: 200,
@@ -1793,8 +1673,8 @@ mod tests {
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
-                billing_balance_e8s: Some(10_000),
-                billing_suspended_at_ms: None,
+                credit_balance_e8s: Some(10_000),
+                credits_suspended_at_ms: None,
                 archived_at_ms: None,
                 deleted_at_ms: None,
             }])
@@ -2032,7 +1912,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_node_rejects_low_billing_balance_before_write() {
+    async fn write_node_rejects_low_credits_balance_before_write() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("source.md");
         std::fs::write(&input, "# Source").expect("input should write");
@@ -2061,7 +1941,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mkdir_node_rejects_suspended_billing_before_write() {
+    async fn mkdir_node_rejects_suspended_credits_before_write() {
         let client = MockClient {
             database_summaries: Mutex::new(vec![database_summary("alpha", Some(20_000), Some(1))]),
             ..MockClient::default()
@@ -2076,18 +1956,18 @@ mod tests {
             },
         )
         .await
-        .expect_err("suspended billing should reject");
+        .expect_err("suspended credits should reject");
 
-        assert!(error.to_string().contains("billing is suspended"));
+        assert!(error.to_string().contains("credits are suspended"));
     }
 
     #[tokio::test]
-    async fn mutating_commands_reject_missing_billing_config_before_write() {
+    async fn mutating_commands_reject_missing_credits_config_before_write() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("source.md");
         std::fs::write(&input, "# Source").expect("input should write");
         let client = MockClient {
-            fail_billing_config: Mutex::new(true),
+            fail_credits_config: Mutex::new(true),
             ..MockClient::default()
         };
 
@@ -2106,7 +1986,7 @@ mod tests {
         .await
         .expect_err("missing config should reject");
 
-        assert!(error.to_string().contains("billing config unavailable"));
+        assert!(error.to_string().contains("credits config unavailable"));
         assert!(client.writes.lock().unwrap().is_empty());
     }
 
@@ -2135,12 +2015,12 @@ mod tests {
         .await
         .expect_err("missing summary should reject");
 
-        assert!(error.to_string().contains("billing state unavailable"));
+        assert!(error.to_string().contains("credits state unavailable"));
         assert!(client.writes.lock().unwrap().is_empty());
     }
 
     #[test]
-    fn billing_gate_covers_content_mutation_commands_only() {
+    fn credits_gate_covers_content_mutation_commands_only() {
         assert!(command_requires_billable_database(&VfsCommand::WriteNode {
             path: "/Wiki/a.md".to_string(),
             kind: NodeKindArg::File,
@@ -2208,7 +2088,7 @@ mod tests {
             json: false,
         }));
         assert!(!command_requires_billable_database(&VfsCommand::Database {
-            command: super::DatabaseCommand::TopUp {
+            command: super::DatabaseCommand::PurchaseCredits {
                 database_id: "alpha".to_string(),
                 amount_e8s: 1,
             },
@@ -2481,124 +2361,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn database_top_up_calls_client() {
+    async fn database_credit_purchase_calls_client() {
         let client = MockClient::default();
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::TopUp {
+                command: super::DatabaseCommand::PurchaseCredits {
                     database_id: "db_alpha".to_string(),
                     amount_e8s: 500_000,
                 },
             },
         )
         .await
-        .expect("database top-up should succeed");
+        .expect("database credit purchase should succeed");
         assert_eq!(
-            *client.database_top_ups.lock().unwrap(),
+            *client.database_credit_purchases.lock().unwrap(),
             vec![("db_alpha".to_string(), 500_000)]
         );
     }
 
     #[tokio::test]
-    async fn database_top_up_does_not_require_billing_precheck() {
+    async fn database_credit_purchase_does_not_require_credits_precheck() {
         let client = MockClient {
-            fail_billing_config: Mutex::new(true),
+            fail_credits_config: Mutex::new(true),
             ..MockClient::default()
         };
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::TopUp {
+                command: super::DatabaseCommand::PurchaseCredits {
                     database_id: "db_alpha".to_string(),
                     amount_e8s: 500_000,
                 },
             },
         )
         .await
-        .expect("database top-up should not need billing precheck");
+        .expect("database credit purchase should not need credits precheck");
         assert_eq!(
-            *client.database_top_ups.lock().unwrap(),
+            *client.database_credit_purchases.lock().unwrap(),
             vec![("db_alpha".to_string(), 500_000)]
         );
     }
 
     #[tokio::test]
-    async fn database_withdraw_calls_client() {
+    async fn database_credits_history_calls_client() {
         let client = MockClient::default();
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::Withdraw {
-                    database_id: "db_alpha".to_string(),
-                    amount_e8s: 500_000,
-                    to_principal: "2vxsx-fae".to_string(),
-                    to_subaccount_hex: Some(
-                        "0000000000000000000000000000000000000000000000000000000000000001"
-                            .to_string(),
-                    ),
-                },
-            },
-        )
-        .await
-        .expect("database withdraw should succeed");
-        let withdraws = client.database_withdraws.lock().unwrap();
-        assert_eq!(withdraws.len(), 1);
-        assert_eq!(withdraws[0].0, "db_alpha");
-        assert_eq!(withdraws[0].1, 500_000);
-        assert_eq!(withdraws[0].2.owner, Principal::anonymous());
-        assert_eq!(
-            withdraws[0].2.subaccount.as_deref(),
-            Some(
-                &[
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    0, 0, 0, 0, 0, 1
-                ][..]
-            )
-        );
-    }
-
-    #[tokio::test]
-    async fn database_billing_history_calls_client() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::BillingHistory {
+                command: super::DatabaseCommand::CreditsHistory {
                     database_id: "db_alpha".to_string(),
                     json: false,
                 },
             },
         )
         .await
-        .expect("database billing-history should succeed");
+        .expect("database credits-history should succeed");
         assert_eq!(
-            *client.database_billing_history.lock().unwrap(),
+            *client.database_credits_history.lock().unwrap(),
             vec!["db_alpha".to_string()]
         );
     }
 
     #[tokio::test]
-    async fn database_billing_pending_calls_client() {
+    async fn database_credits_pending_calls_client() {
         let client = MockClient::default();
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::BillingPending {
+                command: super::DatabaseCommand::CreditsPending {
                     database_id: "db_alpha".to_string(),
                     json: true,
                 },
             },
         )
         .await
-        .expect("database billing-pending should succeed");
+        .expect("database credits-pending should succeed");
         assert_eq!(
-            *client.database_billing_pending.lock().unwrap(),
+            *client.database_credits_pending.lock().unwrap(),
             vec!["db_alpha".to_string()]
         );
     }
@@ -2610,7 +2454,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::RepairTopUpComplete {
+                command: super::DatabaseCommand::RepairCreditPurchaseComplete {
                     database_id: "db_alpha".to_string(),
                     operation_id: 9,
                     block_index: 77,
@@ -2618,66 +2462,24 @@ mod tests {
             },
         )
         .await
-        .expect("repair top-up complete should succeed");
+        .expect("repair credit purchase complete should succeed");
         run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
-                command: super::DatabaseCommand::RepairTopUpCancel {
+                command: super::DatabaseCommand::RepairCreditPurchaseCancel {
                     database_id: "db_alpha".to_string(),
                     operation_id: 10,
                 },
             },
         )
         .await
-        .expect("repair top-up cancel should succeed");
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::RepairWithdrawComplete {
-                    database_id: "db_alpha".to_string(),
-                    operation_id: 11,
-                    block_index: 78,
-                },
-            },
-        )
-        .await
-        .expect("repair withdraw complete should succeed");
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::RepairWithdrawReverse {
-                    database_id: "db_alpha".to_string(),
-                    operation_id: 12,
-                },
-            },
-        )
-        .await
-        .expect("repair withdraw reverse should succeed");
-
-        assert_eq!(
-            *client.database_top_up_repairs_complete.lock().unwrap(),
-            vec![("db_alpha".to_string(), 9, 77)]
-        );
-        assert_eq!(
-            *client.database_top_up_repairs_cancel.lock().unwrap(),
-            vec![("db_alpha".to_string(), 10)]
-        );
-        assert_eq!(
-            *client.database_withdraw_repairs_complete.lock().unwrap(),
-            vec![("db_alpha".to_string(), 11, 78)]
-        );
-        assert_eq!(
-            *client.database_withdraw_repairs_reverse.lock().unwrap(),
-            vec![("db_alpha".to_string(), 12)]
-        );
+        .expect("repair credit purchase cancel should succeed");
     }
 
     #[test]
-    fn database_deposit_url_uses_browser_origin() {
-        let url = super::database_deposit_url(
+    fn database_credits_url_uses_browser_origin() {
+        let url = super::database_credits_url(
             Some("http://127.0.0.1:3000/"),
             "aaaaa-aa",
             "db alpha",
@@ -2687,23 +2489,23 @@ mod tests {
 
         assert_eq!(
             url,
-            "http://127.0.0.1:3000/deposit?canisterId=aaaaa-aa&databaseId=db%20alpha&amountE8s=500000"
+            "http://127.0.0.1:3000/credits?canisterId=aaaaa-aa&databaseId=db%20alpha&amountE8s=500000"
         );
     }
 
     #[tokio::test]
-    async fn billing_config_json_calls_client() {
+    async fn credits_config_json_calls_client() {
         let client = MockClient::default();
         run_vfs_command(
             &client,
             &test_connection(),
-            VfsCommand::Billing {
-                command: BillingCommand::Config { json: true },
+            VfsCommand::Credits {
+                command: CreditsCommand::Config { json: true },
             },
         )
         .await
-        .expect("billing config should succeed");
-        assert_eq!(*client.billing_configs.lock().unwrap(), 1);
+        .expect("credits config should succeed");
+        assert_eq!(*client.credits_configs.lock().unwrap(), 1);
         assert_eq!(
             *client.ledger_fee_queries.lock().unwrap(),
             vec!["ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()]
@@ -2711,14 +2513,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn billing_config_fails_when_ledger_fee_query_fails() {
+    async fn credits_config_fails_when_ledger_fee_query_fails() {
         let client = MockClient::default();
         *client.fail_ledger_fee_query.lock().unwrap() = true;
         let error = run_vfs_command(
             &client,
             &test_connection(),
-            VfsCommand::Billing {
-                command: BillingCommand::Config { json: false },
+            VfsCommand::Credits {
+                command: CreditsCommand::Config { json: false },
             },
         )
         .await
@@ -2727,7 +2529,7 @@ mod tests {
         let message = format!("{error:#}");
         assert!(message.contains("icrc1_fee"));
         assert!(message.contains("ryjl3-tyaaa-aaaaa-aaaba-cai"));
-        assert_eq!(*client.billing_configs.lock().unwrap(), 1);
+        assert_eq!(*client.credits_configs.lock().unwrap(), 1);
         assert_eq!(
             *client.ledger_fee_queries.lock().unwrap(),
             vec!["ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()]
@@ -2735,9 +2537,9 @@ mod tests {
     }
 
     #[test]
-    fn billing_config_text_includes_governance_principal() {
-        let lines = super::billing_config_lines(
-            &BillingConfig {
+    fn credits_config_text_includes_governance_principal() {
+        let lines = super::credits_config_lines(
+            &CreditsConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 rate_numerator_e8s: 200,

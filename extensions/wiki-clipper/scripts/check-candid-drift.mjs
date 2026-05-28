@@ -18,13 +18,13 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      billing_balance_e8s: "opt nat64",
-      billing_suspended_at_ms: "opt int64",
+      credit_balance_e8s: "opt nat64",
+      credits_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64",
       deleted_at_ms: "opt int64"
     }
   },
-  BillingConfig: {
+  CreditsConfig: {
     kind: "record",
     fields: {
       kinic_ledger_canister_id: "text",
@@ -86,7 +86,7 @@ const actorExpectedTypes = {
 
 const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
-  get_billing_config: { input: [], output: "ResultBillingConfig", mode: "query" },
+  get_credits_config: { input: [], output: "ResultCreditsConfig", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
@@ -195,12 +195,12 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_9") return "ResultBillingConfig";
+  if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_23") return "ResultNode";
-  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_24") return "ResultNode";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -232,7 +232,7 @@ function splitActorInputs(value) {
 function actorResultName(okShape) {
   const normalized = normalizeActorShape(okShape);
   if (normalized === "null") return "ResultUnit";
-  if (normalized === "BillingConfig") return "ResultBillingConfig";
+  if (normalized === "CreditsConfig") return "ResultCreditsConfig";
   if (normalized === "CreateDatabaseResult") return "ResultCreateDatabase";
   if (normalized === "Vec(DatabaseSummary)") return "ResultDatabases";
   if (normalized === "MkdirNodeResult") return "ResultMkdirNode";

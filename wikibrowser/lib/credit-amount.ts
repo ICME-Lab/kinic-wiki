@@ -1,6 +1,6 @@
 // Where: shared KINIC balance formatting.
 // What: converts ledger e8s values into compact KINIC display text.
-// Why: UI must name the billing token as KINIC, not the generic "token".
+// Why: UI must name the credits token as KINIC, not the generic "token".
 const E8S_PER_TOKEN = 100_000_000n;
 const E8S_PER_DISPLAY_UNIT = 100_000n;
 

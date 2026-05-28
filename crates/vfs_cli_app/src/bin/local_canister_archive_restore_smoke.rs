@@ -19,7 +19,7 @@ const PRIMARY_QUERY: &str = "alpha canister";
 const CJK_CONTENT_MARKER: &str = "検索精度改善";
 const CJK_QUERY: &str = "検索精度改善";
 const ISOLATION_CONTENT_MARKER: &str = "beta isolated db";
-const DEFAULT_SMOKE_TOP_UP_E8S: u64 = 100_000_000;
+const DEFAULT_SMOKE_CREDIT_PURCHASE_E8S: u64 = 100_000_000;
 
 #[derive(Debug)]
 struct SmokeArgs {
@@ -56,12 +56,12 @@ async fn main() -> Result<()> {
         .transpose()
         .context("ARCHIVE_CHUNK_SIZE must be a u32")?
         .unwrap_or(64 * 1024);
-    let top_up_e8s = env::var("SMOKE_TOP_UP_E8S")
+    let credit_purchase_e8s = env::var("SMOKE_CREDIT_PURCHASE_E8S")
         .ok()
         .map(|value| value.parse::<u64>())
         .transpose()
-        .context("SMOKE_TOP_UP_E8S must be a u64")?
-        .unwrap_or(DEFAULT_SMOKE_TOP_UP_E8S);
+        .context("SMOKE_CREDIT_PURCHASE_E8S must be a u64")?
+        .unwrap_or(DEFAULT_SMOKE_CREDIT_PURCHASE_E8S);
 
     let identity = vfs_cli_app::identity::load_default_identity(&canister_id, true).await?;
     let client =
@@ -76,7 +76,8 @@ async fn main() -> Result<()> {
         println!("isolation_database_id={}", state.isolation_database_id);
         return Ok(());
     }
-    let state = run_create_restore_smoke(&client, &canister_id, chunk_size, top_up_e8s).await?;
+    let state =
+        run_create_restore_smoke(&client, &canister_id, chunk_size, credit_purchase_e8s).await?;
     if let Some(path) = args.state_output {
         write_state(&path, &state)?;
     }
@@ -127,15 +128,15 @@ async fn run_create_restore_smoke(
     client: &CanisterVfsClient,
     canister_id: &str,
     chunk_size: u32,
-    top_up_e8s: u64,
+    credit_purchase_e8s: u64,
 ) -> Result<SmokeState> {
     let database_id = client.create_database("Archive smoke").await?.database_id;
     let isolation_database_id = client
         .create_database("Archive smoke isolation")
         .await?
         .database_id;
-    activate_smoke_database(client, &database_id, top_up_e8s).await?;
-    activate_smoke_database(client, &isolation_database_id, top_up_e8s).await?;
+    activate_smoke_database(client, &database_id, credit_purchase_e8s).await?;
+    activate_smoke_database(client, &isolation_database_id, credit_purchase_e8s).await?;
     ensure_parent_folders(client, &database_id, PRIMARY_SOURCE_PATH).await?;
     ensure_parent_folders(client, &isolation_database_id, PRIMARY_SOURCE_PATH).await?;
     client
@@ -283,9 +284,9 @@ async fn activate_smoke_database(
     amount_e8s: u64,
 ) -> Result<()> {
     client
-        .top_up_database(database_id, amount_e8s)
+        .purchase_database_credits(database_id, amount_e8s)
         .await
-        .with_context(|| format!("failed to top up smoke database {database_id}"))?;
+        .with_context(|| format!("failed to purchase credits for smoke database {database_id}"))?;
     Ok(())
 }
 

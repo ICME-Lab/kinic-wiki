@@ -8,7 +8,7 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, BillingConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    AppendNodeRequest, CreditsConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
@@ -60,8 +60,8 @@ impl VfsApi for MockClient {
         })
     }
 
-    async fn get_billing_config(&self) -> Result<BillingConfig> {
-        Ok(BillingConfig {
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        Ok(CreditsConfig {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
             sns_governance_id: "aaaaa-aa".to_string(),
             rate_numerator_e8s: 1,
@@ -78,8 +78,8 @@ impl VfsApi for MockClient {
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 0,
-            billing_balance_e8s: Some(10),
-            billing_suspended_at_ms: None,
+            credit_balance_e8s: Some(10),
+            credits_suspended_at_ms: None,
             archived_at_ms: None,
             deleted_at_ms: None,
         }])

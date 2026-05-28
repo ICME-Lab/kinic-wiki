@@ -23,12 +23,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     name: idl.Text,
-    billing_balance_e8s: idl.Opt(idl.Nat64),
-    billing_suspended_at_ms: idl.Opt(idl.Int64),
+    credit_balance_e8s: idl.Opt(idl.Nat64),
+    credits_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
-  const BillingConfig = idl.Record({
+  const CreditsConfig = idl.Record({
     min_update_balance_e8s: idl.Nat64,
     fixed_update_fee_e8s: idl.Nat64,
     rate_denominator_cycles: idl.Nat64,
@@ -36,23 +36,18 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     rate_numerator_e8s: idl.Nat64,
     sns_governance_id: idl.Text
   });
-  const BillingTransferResult = idl.Record({ block_index: idl.Nat64, balance_e8s: idl.Nat64 });
-  const BillingAccount = idl.Record({ owner: idl.Principal, subaccount: idl.Opt(idl.Vec(idl.Nat8)) });
+  const CreditsPurchaseResult = idl.Record({ block_index: idl.Nat64, balance_e8s: idl.Nat64 });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
-  const DeleteDatabaseRequest = idl.Record({
-    expected_billing_balance_e8s: idl.Nat64,
-    database_id: idl.Text,
-    allow_balance_writeoff: idl.Bool
-  });
+  const DeleteDatabaseRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
     role: DatabaseRole,
     created_at_ms: idl.Int64,
     database_id: idl.Text
   });
-  const DatabaseBillingEntry = idl.Record({
+  const DatabaseCreditEntry = idl.Record({
     method: idl.Opt(idl.Text),
     fixed_update_fee_e8s: idl.Opt(idl.Nat64),
     kind: idl.Text,
@@ -68,11 +63,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     entry_id: idl.Nat64,
     usage_event_id: idl.Opt(idl.Nat64)
   });
-  const DatabaseBillingEntryPage = idl.Record({
-    entries: idl.Vec(DatabaseBillingEntry),
+  const DatabaseCreditEntryPage = idl.Record({
+    entries: idl.Vec(DatabaseCreditEntry),
     next_cursor: idl.Opt(idl.Nat64)
   });
-  const DatabaseBillingPendingOperation = idl.Record({
+  const DatabaseCreditPendingOperation = idl.Record({
     to_owner: idl.Opt(idl.Text),
     to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
     from_owner: idl.Opt(idl.Text),
@@ -87,8 +82,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     database_id: idl.Text,
     caller: idl.Text
   });
-  const DatabaseBillingPendingOperationPage = idl.Record({
-    entries: idl.Vec(DatabaseBillingPendingOperation),
+  const DatabaseCreditPendingOperationPage = idl.Record({
+    entries: idl.Vec(DatabaseCreditPendingOperation),
     next_cursor: idl.Opt(idl.Nat64)
   });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
@@ -260,11 +255,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
-  const ResultBillingConfig = idl.Variant({ Ok: BillingConfig, Err: idl.Text });
-  const ResultBillingTransfer = idl.Variant({ Ok: BillingTransferResult, Err: idl.Text });
-  const ResultBillingEntries = idl.Variant({ Ok: DatabaseBillingEntryPage, Err: idl.Text });
-  const ResultBillingPending = idl.Variant({ Ok: DatabaseBillingPendingOperationPage, Err: idl.Text });
-  const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
+  const ResultCreditsConfig = idl.Variant({ Ok: CreditsConfig, Err: idl.Text });
+  const ResultCreditsPurchase = idl.Variant({ Ok: CreditsPurchaseResult, Err: idl.Text });
+  const ResultCreditsEntries = idl.Variant({ Ok: DatabaseCreditEntryPage, Err: idl.Text });
+  const ResultCreditsPending = idl.Variant({ Ok: DatabaseCreditPendingOperationPage, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
@@ -285,20 +279,20 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     authorize_ops_answer_session: idl.Func([OpsAnswerSessionRequest], [ResultUnit], []),
     authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [ResultUnit], []),
     canister_health: idl.Func([], [CanisterHealth], ["query"]),
-    check_database_billable: idl.Func([idl.Text], [ResultUnit], ["query"]),
+    check_database_write_credits: idl.Func([idl.Text], [ResultUnit], ["query"]),
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
     delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
-    get_billing_config: idl.Func([], [ResultBillingConfig], ["query"]),
+    get_credits_config: idl.Func([], [ResultCreditsConfig], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
     incoming_links: idl.Func([IncomingLinksRequest], [ResultLinks], ["query"]),
-    list_database_billing_entries: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultBillingEntries], ["query"]),
-    list_database_billing_pending_operations: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultBillingPending], ["query"]),
+    list_database_credit_entries: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCreditsEntries], ["query"]),
+    list_database_credit_pending_operations: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCreditsPending], ["query"]),
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
     memory_manifest: idl.Func([], [MemoryManifest], ["query"]),
@@ -309,21 +303,17 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
-    preview_database_top_up: idl.Func([idl.Text, idl.Nat64], [ResultUnit], ["query"]),
+    preview_database_credit_purchase: idl.Func([idl.Text, idl.Nat64], [ResultUnit], ["query"]),
     recent_nodes: idl.Func([RecentNodesRequest], [ResultRecent], ["query"]),
-    repair_database_top_up_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
-    repair_database_top_up_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultBillingTransfer], []),
-    repair_database_top_up_retry: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
-    repair_database_withdraw_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultBillingTransfer], []),
-    repair_database_withdraw_retry: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
-    repair_database_withdraw_reverse: idl.Func([idl.Text, idl.Nat64], [ResultNat64], []),
+    repair_database_credit_purchase_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
+    repair_database_credit_purchase_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultCreditsPurchase], []),
+    repair_database_credit_purchase_retry: idl.Func([idl.Text, idl.Nat64], [ResultCreditsPurchase], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
-    top_up_database: idl.Func([idl.Text, idl.Nat64], [ResultBillingTransfer], []),
-    withdraw_database_balance: idl.Func([idl.Text, idl.Nat64, BillingAccount], [ResultBillingTransfer], []),
+    purchase_database_credits: idl.Func([idl.Text, idl.Nat64], [ResultCreditsPurchase], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [ResultWriteSourceForGeneration], [])
   });

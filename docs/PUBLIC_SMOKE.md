@@ -4,7 +4,7 @@ Use this flow before publishing a Browser build with CLI setup instructions. The
 
 ## Local Canister
 
-The local billing smoke expects an ICRC ledger installed at `KINIC_LEDGER_CANISTER_ID` and enough local KINIC balance on the current `icp identity` for DB top-ups plus ledger fees. `scripts/local/deploy_wiki.sh` defaults `SNS_GOVERNANCE_ID` to `icp identity principal` when it is not set.
+The local credits smoke expects an ICRC ledger installed at `KINIC_LEDGER_CANISTER_ID` and enough local KINIC balance on the current `icp identity` for DB credit purchases plus ledger fees. `scripts/local/deploy_wiki.sh` defaults `SNS_GOVERNANCE_ID` to `icp identity principal` when it is not set.
 
 ```bash
 icp network start -d -e local-wiki
@@ -26,7 +26,7 @@ icp canister call "${KINIC_LEDGER_CANISTER_ID:-73mez-iiaaa-aaaaq-aaasq-cai}" icr
   "(record { spender = record { owner = principal \"${CANISTER_ID}\"; subaccount = null }; amount = 200000000 : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
   -e local-wiki -o candid
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" \
-  database top-up "$DB_ID" 100000000
+  database purchase-credits "$DB_ID" 100000000
 printf '# Public Smoke\n\nalpha browser smoke\n' > /tmp/llm-wiki-smoke.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" --database-id "$DB_ID" \
   write-node --path /Wiki/smoke.md --input /tmp/llm-wiki-smoke.md
@@ -60,7 +60,7 @@ CANISTER_ID=<local-wiki-canister-id> scripts/smoke/local_canister_archive_restor
 
 That script runs the dedicated Rust archive/restore smoke and then verifies the public CLI commands:
 
-- `database top-up`
+- `database purchase-credits`
 - `database archive-export`
 - `database archive-restore`
 - `read-node`

@@ -60,14 +60,14 @@ pub struct DatabaseSummary {
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
-    pub billing_balance_e8s: Option<u64>,
-    pub billing_suspended_at_ms: Option<i64>,
+    pub credit_balance_e8s: Option<u64>,
+    pub credits_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
     pub deleted_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct BillingConfig {
+pub struct CreditsConfig {
     pub kinic_ledger_canister_id: String,
     pub sns_governance_id: String,
     pub rate_numerator_e8s: u64,
@@ -77,7 +77,7 @@ pub struct BillingConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct BillingConfigUpdate {
+pub struct CreditsConfigUpdate {
     pub rate_numerator_e8s: u64,
     pub rate_denominator_cycles: u64,
     pub fixed_update_fee_e8s: u64,
@@ -85,19 +85,13 @@ pub struct BillingConfigUpdate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct BillingAccount {
-    pub owner: candid::Principal,
-    pub subaccount: Option<Vec<u8>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct BillingTransferResult {
+pub struct CreditsPurchaseResult {
     pub block_index: u64,
     pub balance_e8s: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseBillingEntry {
+pub struct DatabaseCreditEntry {
     pub entry_id: u64,
     pub database_id: String,
     pub kind: String,
@@ -115,13 +109,13 @@ pub struct DatabaseBillingEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseBillingEntryPage {
-    pub entries: Vec<DatabaseBillingEntry>,
+pub struct DatabaseCreditEntryPage {
+    pub entries: Vec<DatabaseCreditEntry>,
     pub next_cursor: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseBillingPendingOperation {
+pub struct DatabaseCreditPendingOperation {
     pub operation_id: u64,
     pub database_id: String,
     pub kind: String,
@@ -138,8 +132,8 @@ pub struct DatabaseBillingPendingOperation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseBillingPendingOperationPage {
-    pub entries: Vec<DatabaseBillingPendingOperation>,
+pub struct DatabaseCreditPendingOperationPage {
+    pub entries: Vec<DatabaseCreditPendingOperation>,
     pub next_cursor: Option<u64>,
 }
 
@@ -170,8 +164,6 @@ pub struct RenameDatabaseRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DeleteDatabaseRequest {
     pub database_id: String,
-    pub expected_billing_balance_e8s: u64,
-    pub allow_balance_writeoff: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

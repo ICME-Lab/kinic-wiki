@@ -1,5 +1,5 @@
 // Where: crates/vfs_runtime/tests/database_service_pbt.rs
-// What: Property tests for database billing and lifecycle operation sequences.
+// What: Property tests for database credits and lifecycle operation sequences.
 // Why: Randomized state-machine checks catch partial updates across balances, status, and mounts.
 use std::path::{Path, PathBuf};
 
@@ -15,13 +15,11 @@ const INITIAL_DATABASE_E8S: u64 = 1_000_000;
 
 #[derive(Clone, Debug)]
 enum RuntimeOp {
-    TopUpDatabase { amount: u64 },
-    WithdrawDatabase { amount: u64 },
+    PurchaseDatabaseCredits { amount: u64 },
     Charge { cycles_delta: u128 },
     ArchiveFinalize,
     RestoreArchived,
     Delete,
-    BadOwnerWithdraw { amount: u64 },
 }
 
 #[derive(Debug)]
@@ -52,13 +50,11 @@ fn property_config() -> ProptestConfig {
 
 fn operation_strategy() -> impl Strategy<Value = RuntimeOp> {
     prop_oneof![
-        4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::TopUpDatabase { amount }),
-        3 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::WithdrawDatabase { amount }),
+        4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::PurchaseDatabaseCredits { amount }),
         4 => (0_u128..=20_000_u128).prop_map(|cycles_delta| RuntimeOp::Charge { cycles_delta }),
         2 => Just(RuntimeOp::ArchiveFinalize),
         2 => Just(RuntimeOp::RestoreArchived),
         1 => Just(RuntimeOp::Delete),
-        2 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::BadOwnerWithdraw { amount }),
     ]
 }
 
@@ -92,11 +88,9 @@ fn create_seeded_database(service: &VfsService) -> String {
     meta.database_id
 }
 
-fn delete_request(database_id: &str, expected_billing_balance_e8s: u64) -> DeleteDatabaseRequest {
+fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     DeleteDatabaseRequest {
         database_id: database_id.to_string(),
-        expected_billing_balance_e8s,
-        allow_balance_writeoff: expected_billing_balance_e8s > 0,
     }
 }
 
@@ -108,8 +102,9 @@ fn credit_database(
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id = service.begin_database_top_up(database_id, caller, amount_e8s, now)?;
-    service.credit_database_top_up(
+    let operation_id =
+        service.begin_database_credit_purchase(database_id, caller, amount_e8s, now)?;
+    service.credit_database_purchase(
         operation_id,
         database_id,
         caller,
@@ -174,7 +169,7 @@ fn charge_amount(cycles_delta: u128) -> u64 {
 
 fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
     let database_entries = service
-        .list_database_billing_entries(database_id, OWNER, None, 100)
+        .list_database_credit_entries(database_id, OWNER, None, 100)
         .expect("database ledger should load")
         .entries;
     let database_after = database_entries
@@ -213,33 +208,13 @@ fn apply_operation(
     step: i64,
 ) {
     match operation {
-        RuntimeOp::TopUpDatabase { amount } => {
+        RuntimeOp::PurchaseDatabaseCredits { amount } => {
             let before = model.database_e8s;
             let result =
                 credit_database(service, database_id, OWNER, amount, step as u64 + 10, step);
             if model.status != DatabaseStatus::Deleted {
-                result.expect("database top-up should succeed");
+                result.expect("database credit purchase should succeed");
                 model.database_e8s += amount;
-            } else {
-                assert!(result.is_err());
-                assert_eq!(model.database_e8s, before);
-            }
-        }
-        RuntimeOp::WithdrawDatabase { amount } => {
-            let before = model.database_e8s;
-            let result = service.begin_database_withdraw(database_id, OWNER, amount, 0, step);
-            if model.database_e8s >= amount {
-                let operation_id = result.expect("database withdraw should succeed");
-                service
-                    .complete_database_withdraw(
-                        operation_id,
-                        database_id,
-                        OWNER,
-                        step as u64 + 100,
-                        step,
-                    )
-                    .expect("database withdraw should complete");
-                model.database_e8s -= amount;
             } else {
                 assert!(result.is_err());
                 assert_eq!(model.database_e8s, before);
@@ -254,7 +229,7 @@ fn apply_operation(
                 None,
                 step,
             );
-            result.expect("database charge should record against billing account");
+            result.expect("database charge should record against credit account");
             let charge = model.database_e8s.min(charge_amount(cycles_delta));
             model.database_e8s -= charge;
         }
@@ -328,11 +303,7 @@ fn apply_operation(
             }
         }
         RuntimeOp::Delete => {
-            let result = service.delete_database(
-                delete_request(database_id, model.database_e8s),
-                OWNER,
-                step,
-            );
+            let result = service.delete_database(delete_request(database_id), OWNER, step);
             if model.status == DatabaseStatus::Active {
                 result.expect("active database should delete");
                 model.status = DatabaseStatus::Deleted;
@@ -340,15 +311,6 @@ fn apply_operation(
             } else {
                 assert!(result.is_err());
             }
-        }
-        RuntimeOp::BadOwnerWithdraw { amount } => {
-            let before = model.database_e8s;
-            assert!(
-                service
-                    .begin_database_withdraw(database_id, "writer", amount, 0, step)
-                    .is_err()
-            );
-            assert_eq!(model.database_e8s, before);
         }
     }
 }

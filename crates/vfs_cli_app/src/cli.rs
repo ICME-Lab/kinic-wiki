@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    BillingCommand, ConnectionArgs, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
+    ConnectionArgs, CreditsCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
     SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
@@ -24,10 +24,10 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
-    #[command(about = "Show KINIC billing configuration")]
-    Billing {
+    #[command(about = "Show KINIC credits configuration")]
+    Credits {
         #[command(subcommand)]
-        command: BillingCommand,
+        command: CreditsCommand,
     },
     #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
     Database {
@@ -654,18 +654,15 @@ pub enum GitHubIngestCommand {
 impl Command {
     pub fn requires_identity(&self) -> bool {
         match self {
-            Self::Billing { command: _ } => false,
+            Self::Credits { command: _ } => false,
             Self::Database { command } => matches!(
                 command,
                 DatabaseCommand::Create { .. }
-                    | DatabaseCommand::TopUp { .. }
-                    | DatabaseCommand::Withdraw { .. }
-                    | DatabaseCommand::BillingHistory { .. }
-                    | DatabaseCommand::BillingPending { .. }
-                    | DatabaseCommand::RepairTopUpComplete { .. }
-                    | DatabaseCommand::RepairTopUpCancel { .. }
-                    | DatabaseCommand::RepairWithdrawComplete { .. }
-                    | DatabaseCommand::RepairWithdrawReverse { .. }
+                    | DatabaseCommand::PurchaseCredits { .. }
+                    | DatabaseCommand::CreditsHistory { .. }
+                    | DatabaseCommand::CreditsPending { .. }
+                    | DatabaseCommand::RepairCreditPurchaseComplete { .. }
+                    | DatabaseCommand::RepairCreditPurchaseCancel { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
@@ -738,7 +735,7 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
-            | Self::Billing { .. }
+            | Self::Credits { .. }
             | Self::Identity { .. }
             | Self::Hermes { .. }
             | Self::Codex { .. }
@@ -774,7 +771,7 @@ impl Command {
 
     pub fn as_vfs_command(&self) -> Option<VfsCommand> {
         match self {
-            Self::Billing { command } => Some(VfsCommand::Billing {
+            Self::Credits { command } => Some(VfsCommand::Credits {
                 command: command.clone(),
             }),
             Self::Database { command } => Some(VfsCommand::Database {
@@ -988,7 +985,7 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        BillingCommand, ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand,
+        ClaudeCommand, Cli, CodexCommand, Command, CreditsCommand, DatabaseCommand, HermesCommand,
         IdentityModeArg, NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg,
         SkillStatusArg,
     };
@@ -1113,52 +1110,30 @@ mod tests {
         assert_eq!(name, "team-db");
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
-        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "top-up", "db_alpha", "500000"]);
-        let Command::Database {
-            command:
-                DatabaseCommand::TopUp {
-                    database_id,
-                    amount_e8s,
-                },
-        } = cli.command
-        else {
-            panic!("expected database top-up command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(amount_e8s, 500_000);
-
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "withdraw",
+            "purchase-credits",
             "db_alpha",
             "500000",
-            "--to-principal",
-            "2vxsx-fae",
-            "--to-subaccount-hex",
-            "0000000000000000000000000000000000000000000000000000000000000001",
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::Withdraw {
+                DatabaseCommand::PurchaseCredits {
                     database_id,
                     amount_e8s,
-                    to_principal,
-                    to_subaccount_hex,
                 },
         } = cli.command
         else {
-            panic!("expected database withdraw command");
+            panic!("expected database credit purchase command");
         };
         assert_eq!(database_id, "db_alpha");
         assert_eq!(amount_e8s, 500_000);
-        assert_eq!(to_principal, "2vxsx-fae");
-        assert!(to_subaccount_hex.is_some());
 
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "deposit",
+            "credits",
             "db_alpha",
             "500000",
             "--browser-origin",
@@ -1166,25 +1141,25 @@ mod tests {
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::Deposit {
+                DatabaseCommand::Credits {
                     database_id,
                     amount_e8s,
                     browser_origin,
                 },
         } = cli.command
         else {
-            panic!("expected database deposit command");
+            panic!("expected database credits command");
         };
         assert_eq!(database_id, "db_alpha");
         assert_eq!(amount_e8s, 500_000);
         assert_eq!(browser_origin.as_deref(), Some("http://127.0.0.1:3000"));
 
-        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "billing-history", "db_alpha"]);
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "credits-history", "db_alpha"]);
         let Command::Database {
-            command: DatabaseCommand::BillingHistory { database_id, json },
+            command: DatabaseCommand::CreditsHistory { database_id, json },
         } = cli.command
         else {
-            panic!("expected database billing-history command");
+            panic!("expected database credits-history command");
         };
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
@@ -1192,15 +1167,15 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "billing-pending",
+            "credits-pending",
             "db_alpha",
             "--json",
         ]);
         let Command::Database {
-            command: DatabaseCommand::BillingPending { database_id, json },
+            command: DatabaseCommand::CreditsPending { database_id, json },
         } = cli.command
         else {
-            panic!("expected database billing-pending command");
+            panic!("expected database credits-pending command");
         };
         assert_eq!(database_id, "db_alpha");
         assert!(json);
@@ -1208,21 +1183,21 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "repair-top-up-complete",
+            "repair-credit-purchase-complete",
             "db_alpha",
             "9",
             "77",
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::RepairTopUpComplete {
+                DatabaseCommand::RepairCreditPurchaseComplete {
                     database_id,
                     operation_id,
                     block_index,
                 },
         } = cli.command
         else {
-            panic!("expected repair-top-up-complete command");
+            panic!("expected repair-credit purchase-complete command");
         };
         assert_eq!(database_id, "db_alpha");
         assert_eq!(operation_id, 9);
@@ -1231,62 +1206,19 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "repair-top-up-cancel",
+            "repair-credit-purchase-cancel",
             "db_alpha",
             "9",
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::RepairTopUpCancel {
+                DatabaseCommand::RepairCreditPurchaseCancel {
                     database_id,
                     operation_id,
                 },
         } = cli.command
         else {
-            panic!("expected repair-top-up-cancel command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 9);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "repair-withdraw-complete",
-            "db_alpha",
-            "9",
-            "78",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::RepairWithdrawComplete {
-                    database_id,
-                    operation_id,
-                    block_index,
-                },
-        } = cli.command
-        else {
-            panic!("expected repair-withdraw-complete command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 9);
-        assert_eq!(block_index, 78);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "repair-withdraw-reverse",
-            "db_alpha",
-            "9",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::RepairWithdrawReverse {
-                    database_id,
-                    operation_id,
-                },
-        } = cli.command
-        else {
-            panic!("expected repair-withdraw-reverse command");
+            panic!("expected repair-credit purchase-cancel command");
         };
         assert_eq!(database_id, "db_alpha");
         assert_eq!(operation_id, 9);
@@ -1349,13 +1281,13 @@ mod tests {
     }
 
     #[test]
-    fn main_cli_parses_billing_commands() {
-        let cli = Cli::parse_from(["kinic-vfs-cli", "billing", "config"]);
-        let Command::Billing {
-            command: BillingCommand::Config { json },
+    fn main_cli_parses_credits_commands() {
+        let cli = Cli::parse_from(["kinic-vfs-cli", "credits", "config"]);
+        let Command::Credits {
+            command: CreditsCommand::Config { json },
         } = cli.command
         else {
-            panic!("expected billing config command");
+            panic!("expected credits config command");
         };
         assert!(!json);
     }
@@ -1419,45 +1351,39 @@ mod tests {
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
 
-        let billing_config = Cli::parse_from(["kinic-vfs-cli", "billing", "config"]);
-        assert!(!billing_config.command.requires_identity());
-        assert!(!billing_config.command.probes_anonymous_database_read());
+        let credits_config = Cli::parse_from(["kinic-vfs-cli", "credits", "config"]);
+        assert!(!credits_config.command.requires_identity());
+        assert!(!credits_config.command.probes_anonymous_database_read());
 
-        let database_top_up =
-            Cli::parse_from(["kinic-vfs-cli", "database", "top-up", "db_alpha", "500000"]);
-        assert!(database_top_up.command.requires_identity());
-
-        let database_withdraw = Cli::parse_from([
+        let database_credit_purchase = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "withdraw",
+            "purchase-credits",
             "db_alpha",
             "500000",
-            "--to-principal",
-            "2vxsx-fae",
         ]);
-        assert!(database_withdraw.command.requires_identity());
+        assert!(database_credit_purchase.command.requires_identity());
 
-        let database_billing_history =
-            Cli::parse_from(["kinic-vfs-cli", "database", "billing-history", "db_alpha"]);
-        assert!(database_billing_history.command.requires_identity());
+        let database_credits_history =
+            Cli::parse_from(["kinic-vfs-cli", "database", "credits-history", "db_alpha"]);
+        assert!(database_credits_history.command.requires_identity());
 
-        let database_billing_pending =
-            Cli::parse_from(["kinic-vfs-cli", "database", "billing-pending", "db_alpha"]);
-        assert!(database_billing_pending.command.requires_identity());
+        let database_credits_pending =
+            Cli::parse_from(["kinic-vfs-cli", "database", "credits-pending", "db_alpha"]);
+        assert!(database_credits_pending.command.requires_identity());
 
         let database_repair = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "repair-top-up-cancel",
+            "repair-credit-purchase-cancel",
             "db_alpha",
             "9",
         ]);
         assert!(database_repair.command.requires_identity());
 
-        let database_deposit =
-            Cli::parse_from(["kinic-vfs-cli", "database", "deposit", "db_alpha", "500000"]);
-        assert!(!database_deposit.command.requires_identity());
+        let database_credits =
+            Cli::parse_from(["kinic-vfs-cli", "database", "credits", "db_alpha", "500000"]);
+        assert!(!database_credits.command.requires_identity());
     }
 
     #[test]

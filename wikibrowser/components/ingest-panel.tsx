@@ -9,12 +9,12 @@ export function IngestPanel({
   canisterId,
   databaseId,
   readIdentity,
-  databaseBillingError
+  databaseCreditsError
 }: {
   canisterId: string;
   databaseId: string;
   readIdentity: Identity | null;
-  databaseBillingError: string | null;
+  databaseCreditsError: string | null;
 }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -24,9 +24,9 @@ export function IngestPanel({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!readIdentity || !url.trim()) return;
-    if (databaseBillingError) {
+    if (databaseCreditsError) {
       setTone("error");
-      setMessage(databaseBillingError);
+      setMessage(databaseCreditsError);
       return;
     }
     setBusy(true);
@@ -54,7 +54,7 @@ export function IngestPanel({
     );
   }
 
-  const submitDisabled = busy || !url.trim() || Boolean(databaseBillingError);
+  const submitDisabled = busy || !url.trim() || Boolean(databaseCreditsError);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 text-sm">
@@ -81,7 +81,7 @@ export function IngestPanel({
         </button>
       </form>
       <div className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">{databaseId}</div>
-      {databaseBillingError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">{databaseBillingError}</div> : null}
+      {databaseCreditsError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">{databaseCreditsError}</div> : null}
       {message ? <div className={`rounded-lg border px-3 py-2 text-xs ${tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-white text-ink"}`}>{message}</div> : null}
     </div>
   );

@@ -209,8 +209,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_10") return "ResultLinks";
   if (normalized === "Result_11") return "ResultLinks";
   if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultBillingEntries";
-  if (normalized === "Result_14") return "ResultBillingPending";
+  if (normalized === "Result_13") return "ResultCreditsEntries";
+  if (normalized === "Result_14") return "ResultCreditsPending";
   if (normalized === "Result_15") return "ResultMembers";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
@@ -218,17 +218,17 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultQueryContext";
-  if (normalized === "Result_23") return "ResultNode";
-  if (normalized === "Result_24") return "ResultNodeContext";
-  if (normalized === "Result_25") return "ResultRecent";
-  if (normalized === "Result_26") return "ResultBillingTransfer";
-  if (normalized === "Result_27") return "ResultNat64";
-  if (normalized === "Result_28") return "ResultSearch";
-  if (normalized === "Result_29") return "ResultSourceEvidence";
+  if (normalized === "Result_20") return "ResultCreditsPurchase";
+  if (normalized === "Result_21") return "ResultQueryContext";
+  if (normalized === "Result_24") return "ResultNode";
+  if (normalized === "Result_25") return "ResultNodeContext";
+  if (normalized === "Result_26") return "ResultRecent";
+  if (normalized === "Result_27") return "ResultSearch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
+  if (normalized === "Result_29") return "ResultWriteNodes";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultBillingConfig";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

@@ -1,37 +1,37 @@
-// Where: dashboard billing state helpers.
-// What: maps canister billing data into display state and deposit links.
-// Why: deposit amount is selected on the deposit screen, not encoded in dashboard URLs.
-import type { BillingConfig, DatabaseSummary } from "@/lib/types";
-import { formatTokenAmountFromE8s } from "@/lib/token-amount";
+// Where: dashboard credits state helpers.
+// What: maps canister credits data into display state and purchase links.
+// Why: purchase amount is selected on the purchase screen, not encoded in dashboard URLs.
+import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
+import { formatTokenAmountFromE8s } from "@/lib/credit-amount";
 
-export type DatabaseBillingState = "active" | "low-balance" | "suspended" | "unknown";
+export type DatabaseCreditState = "active" | "low-balance" | "suspended" | "unknown";
 
-export type DatabaseBillingView = {
-  state: DatabaseBillingState;
+export type DatabaseCreditView = {
+  state: DatabaseCreditState;
   label: string;
   summary: string;
   balanceE8s: bigint;
   minUpdateBalanceE8s: bigint;
   configAvailable: boolean;
-  depositAvailable: boolean;
+  purchaseAvailable: boolean;
   billable: boolean;
   reason: string | null;
 };
 
-export function databaseBillingView(database: DatabaseSummary | null, config: BillingConfig | null): DatabaseBillingView {
-  const balance = parseOptionalE8s(database?.billingBalanceE8s);
+export function databaseCreditsView(database: DatabaseSummary | null, config: CreditsConfig | null): DatabaseCreditView {
+  const balance = parseOptionalE8s(database?.creditsBalanceE8s);
   const minimum = parseOptionalE8s(config?.minUpdateBalanceE8s);
   if (!database || !config) {
     return {
       state: "unknown",
-      label: "Billing unavailable",
+      label: "Credits unavailable",
       summary: "-",
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
       configAvailable: false,
-      depositAvailable: false,
+      purchaseAvailable: false,
       billable: false,
-      reason: "Billing config unavailable."
+      reason: "Credits config unavailable."
     };
   }
   if (database.status === "pending") {
@@ -42,12 +42,12 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
       configAvailable: true,
-      depositAvailable: true,
+      purchaseAvailable: true,
       billable: false,
-      reason: "Database activation is pending until its first top-up completes."
+      reason: "Database activation is pending until its first credit purchase completes."
     };
   }
-  if (database.billingSuspendedAtMs) {
+  if (database.creditsSuspendedAtMs) {
     return {
       state: "suspended",
       label: "Suspended",
@@ -55,9 +55,9 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
       configAvailable: true,
-      depositAvailable: true,
+      purchaseAvailable: true,
       billable: false,
-      reason: "Database billing is suspended."
+      reason: "Database credits are suspended."
     };
   }
   if (balance < minimum) {
@@ -68,7 +68,7 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
       balanceE8s: balance,
       minUpdateBalanceE8s: minimum,
       configAvailable: true,
-      depositAvailable: true,
+      purchaseAvailable: true,
       billable: false,
       reason: "Database balance is below the minimum update balance."
     };
@@ -80,25 +80,25 @@ export function databaseBillingView(database: DatabaseSummary | null, config: Bi
     balanceE8s: balance,
     minUpdateBalanceE8s: minimum,
     configAvailable: true,
-    depositAvailable: true,
+    purchaseAvailable: true,
     billable: true,
     reason: null
   };
 }
 
-export function databaseCanWrite(database: DatabaseSummary | null, config: BillingConfig | null): boolean {
+export function databaseCanWrite(database: DatabaseSummary | null, config: CreditsConfig | null): boolean {
   const role = database?.role;
-  return (role === "writer" || role === "owner") && databaseBillingView(database, config).billable;
+  return (role === "writer" || role === "owner") && databaseCreditsView(database, config).billable;
 }
 
-export function databaseBillingDisabledReason(database: DatabaseSummary | null, config: BillingConfig | null): string | null {
-  return databaseBillingView(database, config).reason;
+export function databaseCreditsDisabledReason(database: DatabaseSummary | null, config: CreditsConfig | null): string | null {
+  return databaseCreditsView(database, config).reason;
 }
 
-export function databaseDepositHref(database: DatabaseSummary): string {
+export function databaseCreditsHref(database: DatabaseSummary): string {
   const params = new URLSearchParams();
   params.set("databaseId", database.databaseId);
-  return `/deposit?${params.toString()}`;
+  return `/credits?${params.toString()}`;
 }
 
 function parseOptionalE8s(value: string | null | undefined): bigint {

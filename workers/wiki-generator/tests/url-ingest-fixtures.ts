@@ -77,7 +77,7 @@ export class TestVfsClient implements VfsClient {
   lastRequest: UrlIngestRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
 
-  async checkDatabaseBillable(databaseId: string): Promise<void> {
+  async checkDatabaseWriteCredits(databaseId: string): Promise<void> {
     this.billableChecks.push(databaseId);
   }
 

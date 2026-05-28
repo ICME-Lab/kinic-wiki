@@ -156,7 +156,7 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     option.value = database.databaseId;
     const label = databaseOptionLabel(database, nameCounts.get(databaseNameKey(database.name)) || 1);
     option.disabled = !database.billable;
-    option.textContent = database.billable ? label : `${label} - ${database.billingReason}`;
+    option.textContent = database.billable ? label : `${label} - ${database.creditsReason}`;
     option.title = database.databaseId;
     databaseSelect.append(option);
   }

@@ -30,7 +30,7 @@ export function QueryPanel({
   writeIdentity,
   readMode,
   readIdentityMode,
-  databaseBillingError
+  databaseCreditsError
 }: {
   canisterId: string;
   databaseId: string;
@@ -40,7 +40,7 @@ export function QueryPanel({
   writeIdentity: Identity | null;
   readMode: "anonymous" | null;
   readIdentityMode: ReadIdentityMode;
-  databaseBillingError: string | null;
+  databaseCreditsError: string | null;
 }) {
   const [input, setInput] = useState("");
   const [activeAction, setActiveAction] = useState<QueryAction | null>(null);
@@ -146,8 +146,8 @@ export function QueryPanel({
       setResult({ kind: "message", tone: "error", text: "Login with Internet Identity to queue URL ingest." });
       return;
     }
-    if (databaseBillingError) {
-      setResult({ kind: "message", tone: "error", text: databaseBillingError });
+    if (databaseCreditsError) {
+      setResult({ kind: "message", tone: "error", text: databaseCreditsError });
       return;
     }
     setBusy(true);

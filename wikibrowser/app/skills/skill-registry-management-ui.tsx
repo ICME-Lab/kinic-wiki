@@ -24,9 +24,9 @@ export type PackageHandlers = {
   pasteUpsert: () => void;
 };
 
-export function RoleBanner({ billingReason, role, principal }: { billingReason: string | null; role: DatabaseRole | null; principal: string | null }) {
+export function RoleBanner({ creditsReason, role, principal }: { creditsReason: string | null; role: DatabaseRole | null; principal: string | null }) {
   const roleWritable = role === "writer" || role === "owner";
-  const writable = roleWritable && !billingReason;
+  const writable = roleWritable && !creditsReason;
   return (
     <section className="rounded-lg border border-line bg-paper p-4 text-sm">
       <div className="flex items-start gap-3">
@@ -35,7 +35,7 @@ export function RoleBanner({ billingReason, role, principal }: { billingReason: 
         </span>
         <div className="min-w-0">
           <p className="font-medium text-ink">Database Role: {role ?? (principal ? "unknown" : "anonymous")}</p>
-          <p className="mt-1 text-muted">{writable ? "Write operations enabled." : roleWritable && billingReason ? billingReason : "Writer or owner access required."}</p>
+          <p className="mt-1 text-muted">{writable ? "Write operations enabled." : roleWritable && creditsReason ? creditsReason : "Writer or owner access required."}</p>
         </div>
       </div>
     </section>

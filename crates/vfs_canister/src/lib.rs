@@ -27,14 +27,14 @@ use ic_stable_structures::DefaultMemoryImpl;
 #[cfg(target_arch = "wasm32")]
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::{
-    BillingPendingLedgerDetailsInput, DatabaseMeta, DatabaseTopUpWithLedgerDetails,
-    DatabaseWithdrawWithLedgerDetails, RequiredRole, UsageEvent, VfsService,
+    CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
+    RequiredRole, UsageEvent, VfsService,
 };
 use vfs_types::{
-    AppendNodeRequest, BillingAccount, BillingConfig, BillingConfigUpdate, BillingTransferResult,
-    CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseBillingEntryPage,
-    DatabaseBillingPendingOperation, DatabaseBillingPendingOperationPage, DatabaseMember,
+    AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
+    CreateDatabaseResult, CreditsConfig, CreditsConfigUpdate, CreditsPurchaseResult,
+    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCreditEntryPage,
+    DatabaseCreditPendingOperation, DatabaseCreditPendingOperationPage, DatabaseMember,
     DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
@@ -87,13 +87,6 @@ thread_local! {
     static SERVICE: RefCell<Option<VfsService>> = const { RefCell::new(None) };
     #[cfg(target_arch = "wasm32")]
     static DATABASE_HANDLES: RefCell<BTreeMap<u16, DbHandle>> = const { RefCell::new(BTreeMap::new()) };
-}
-
-#[derive(Clone, Debug)]
-enum LedgerTransferOutcome {
-    Completed(u64),
-    LedgerErr(String),
-    Ambiguous(String),
 }
 
 #[derive(Clone, Debug)]
@@ -203,14 +196,14 @@ enum TransferFromError {
 }
 
 #[init]
-fn init_hook(config: BillingConfig) {
+fn init_hook(config: CreditsConfig) {
     initialize_or_trap(Some(config));
     certify_http_responses();
 }
 
 #[post_upgrade]
 fn post_upgrade_hook() {
-    let config = post_upgrade_billing_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
+    let config = post_upgrade_credits_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
     initialize_upgrade_or_trap(config);
     certify_http_responses();
 }
@@ -371,41 +364,43 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[query]
-fn preview_database_top_up(database_id: String, amount_e8s: u64) -> Result<(), String> {
+fn preview_database_credit_purchase(database_id: String, amount_e8s: u64) -> Result<(), String> {
     with_service(|service| {
-        service.validate_database_top_up(&database_id, &caller_text(), amount_e8s)
+        service.validate_database_credit_purchase(&database_id, &caller_text(), amount_e8s)
     })
 }
 
 #[update]
-async fn top_up_database(
+async fn purchase_database_credits(
     database_id: String,
     amount_e8s: u64,
-) -> Result<BillingTransferResult, String> {
+) -> Result<CreditsPurchaseResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
     let now = now_millis();
-    let config = with_service(|service| service.billing_config())?;
+    let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let fee_e8s = ledger_fee(ledger).await?;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
     let operation_id = match with_service(|service| {
-        service.begin_database_top_up_with_ledger_details(DatabaseTopUpWithLedgerDetails {
-            database_id: &database_id,
-            caller: &caller,
-            amount_e8s,
-            ledger: BillingPendingLedgerDetailsInput {
-                from_owner: &caller,
-                from_subaccount: None,
-                to_owner: &canister_owner,
-                to_subaccount: None,
-                ledger_fee_e8s: fee_e8s,
-                ledger_created_at_time_ns,
+        service.begin_database_credit_purchase_with_ledger_details(
+            DatabaseCreditPurchaseWithLedgerDetails {
+                database_id: &database_id,
+                caller: &caller,
+                amount_e8s,
+                ledger: CreditsPendingLedgerDetailsInput {
+                    from_owner: &caller,
+                    from_subaccount: None,
+                    to_owner: &canister_owner,
+                    to_subaccount: None,
+                    ledger_fee_e8s: fee_e8s,
+                    ledger_created_at_time_ns,
+                },
+                now,
             },
-            now,
-        })
+        )
     }) {
         Ok(operation_id) => operation_id,
         Err(error) => return Err(error),
@@ -428,9 +423,9 @@ async fn top_up_database(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
-            activate_pending_database_after_ledger_success(&database_id, now)?;
+            activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)?;
             let balance = with_service(|service| {
-                service.credit_database_top_up(
+                service.credit_database_purchase(
                     operation_id,
                     &database_id,
                     &caller,
@@ -439,20 +434,25 @@ async fn top_up_database(
                     now,
                 )
             })?;
-            Ok(BillingTransferResult {
+            Ok(CreditsPurchaseResult {
                 block_index,
                 balance_e8s: balance,
             })
         }
         LedgerTransferFromOutcome::LedgerErr(error) => {
             let _ = with_service(|service| {
-                service.cancel_database_top_up(operation_id, &database_id, &caller, amount_e8s)
+                service.cancel_database_credit_purchase(
+                    operation_id,
+                    &database_id,
+                    &caller,
+                    amount_e8s,
+                )
             });
             Err(error)
         }
         LedgerTransferFromOutcome::Ambiguous(error) => {
             let _ = with_service(|service| {
-                service.mark_database_top_up_ambiguous(
+                service.mark_database_credit_purchase_ambiguous(
                     operation_id,
                     &database_id,
                     &caller,
@@ -460,117 +460,32 @@ async fn top_up_database(
                     now,
                 )
             });
-            Err(format!("top-up pending; manual repair required: {error}"))
-        }
-    }
-}
-
-#[update]
-async fn withdraw_database_balance(
-    database_id: String,
-    amount_e8s: u64,
-    to: BillingAccount,
-) -> Result<BillingTransferResult, String> {
-    require_authenticated_caller()?;
-    validate_billing_account(&to)?;
-    let caller = caller_text();
-    let now = now_millis();
-    let config = with_service(|service| service.billing_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let fee_e8s = ledger_fee(ledger).await?;
-    let ledger_created_at_time_ns = now_nanos();
-    let from_owner = canister_principal().to_text();
-    let to_owner = to.owner.to_text();
-    let operation_id = with_service(|service| {
-        service.begin_database_withdraw_with_ledger_details(DatabaseWithdrawWithLedgerDetails {
-            database_id: &database_id,
-            caller: &caller,
-            amount_e8s,
-            fee_e8s,
-            ledger: BillingPendingLedgerDetailsInput {
-                from_owner: &from_owner,
-                from_subaccount: None,
-                to_owner: &to_owner,
-                to_subaccount: to.subaccount.as_deref(),
-                ledger_fee_e8s: fee_e8s,
-                ledger_created_at_time_ns,
-            },
-            now,
-        })
-    })?;
-    match ledger_transfer(
-        ledger,
-        None,
-        to,
-        amount_e8s,
-        fee_e8s,
-        operation_id,
-        ledger_created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferOutcome::Completed(block_index) => {
-            let balance = with_service(|service| {
-                service.complete_database_withdraw(
-                    operation_id,
-                    &database_id,
-                    &caller,
-                    block_index,
-                    now,
-                )
-            })?;
-            Ok(BillingTransferResult {
-                block_index,
-                balance_e8s: balance,
-            })
-        }
-        LedgerTransferOutcome::LedgerErr(error) => {
-            let _ = with_service(|service| {
-                service.reverse_database_withdraw(
-                    operation_id,
-                    &database_id,
-                    &caller,
-                    amount_e8s,
-                    fee_e8s,
-                    now,
-                )
-            });
-            Err(error)
-        }
-        LedgerTransferOutcome::Ambiguous(error) => {
-            let _ = with_service(|service| {
-                service.mark_database_withdraw_ambiguous(operation_id, &database_id, &caller, now)
-            });
-            Err(format!("withdraw pending; manual repair required: {error}"))
+            Err(format!(
+                "credit purchase pending; manual repair required: {error}"
+            ))
         }
     }
 }
 
 #[query]
-fn list_database_billing_entries(
+fn list_database_credit_entries(
     database_id: String,
     cursor: Option<u64>,
     limit: u32,
-) -> Result<DatabaseBillingEntryPage, String> {
+) -> Result<DatabaseCreditEntryPage, String> {
     with_service(|service| {
-        service.list_database_billing_entries(&database_id, &caller_text(), cursor, limit)
+        service.list_database_credit_entries(&database_id, &caller_text(), cursor, limit)
     })
 }
 
 #[query]
-fn list_database_billing_pending_operations(
+fn list_database_credit_pending_operations(
     database_id: String,
     cursor: Option<u64>,
     limit: u32,
-) -> Result<DatabaseBillingPendingOperationPage, String> {
+) -> Result<DatabaseCreditPendingOperationPage, String> {
     with_service(|service| {
-        service.list_database_billing_pending_operations(
-            &database_id,
-            &caller_text(),
-            cursor,
-            limit,
-        )
+        service.list_database_credit_pending_operations(&database_id, &caller_text(), cursor, limit)
     })
 }
 
@@ -581,29 +496,29 @@ fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResu
 }
 
 #[update]
-async fn repair_database_top_up_complete(
+async fn repair_database_credit_purchase_complete(
     database_id: String,
     operation_id: u64,
     ledger_block_index: u64,
-) -> Result<BillingTransferResult, String> {
+) -> Result<CreditsPurchaseResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
-    let config = with_service(|service| service.billing_config())?;
+    let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let operation = with_service(|service| {
-        service.get_database_billing_pending_operation_for_repair(
+        service.get_database_credit_pending_operation_for_repair(
             &database_id,
             operation_id,
             &caller,
         )
     })?;
-    let expected = expected_top_up_transfer(&operation)?;
+    let expected = expected_credit_purchase_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
     let now = now_millis();
-    activate_pending_database_after_ledger_success(&database_id, now)?;
+    activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)?;
     let balance = with_service(|service| {
-        service.repair_database_top_up_complete(
+        service.repair_database_credit_purchase_complete(
             &database_id,
             operation_id,
             ledger_block_index,
@@ -611,30 +526,30 @@ async fn repair_database_top_up_complete(
             now,
         )
     })?;
-    Ok(BillingTransferResult {
+    Ok(CreditsPurchaseResult {
         block_index: ledger_block_index,
         balance_e8s: balance,
     })
 }
 
 #[update]
-async fn repair_database_top_up_retry(
+async fn repair_database_credit_purchase_retry(
     database_id: String,
     operation_id: u64,
-) -> Result<BillingTransferResult, String> {
+) -> Result<CreditsPurchaseResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
-    let config = with_service(|service| service.billing_config())?;
+    let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let operation = with_service(|service| {
-        service.get_database_billing_pending_operation_for_repair(
+        service.get_database_credit_pending_operation_for_repair(
             &database_id,
             operation_id,
             &caller,
         )
     })?;
-    let expected = expected_top_up_transfer(&operation)?;
+    let expected = expected_credit_purchase_transfer(&operation)?;
     match ledger_transfer_from(
         ledger,
         expected.from,
@@ -648,9 +563,9 @@ async fn repair_database_top_up_retry(
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
             let now = now_millis();
-            activate_pending_database_after_ledger_success(&database_id, now)?;
+            activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)?;
             let balance = with_service(|service| {
-                service.repair_database_top_up_complete(
+                service.repair_database_credit_purchase_complete(
                     &database_id,
                     operation_id,
                     block_index,
@@ -658,24 +573,25 @@ async fn repair_database_top_up_retry(
                     now,
                 )
             })?;
-            Ok(BillingTransferResult {
+            Ok(CreditsPurchaseResult {
                 block_index,
                 balance_e8s: balance,
             })
         }
         LedgerTransferFromOutcome::LedgerErr(error)
         | LedgerTransferFromOutcome::Ambiguous(error) => {
-            Err(format!("top-up retry still pending: {error}"))
+            Err(format!("credit purchase retry still pending: {error}"))
         }
     }
 }
 
-fn activate_pending_database_after_ledger_success(
+fn activate_pending_database_after_credit_purchase_ledger_success(
     database_id: &str,
     now: i64,
 ) -> Result<(), String> {
-    let activation =
-        with_service(|service| service.activate_pending_database_for_top_up(database_id, now))?;
+    let activation = with_service(|service| {
+        service.activate_pending_database_for_credit_purchase(database_id, now)
+    })?;
     if let Some(meta) = &activation {
         if let Err(error) = mount_database_file(meta) {
             return Err(database_create_error(error, None));
@@ -691,131 +607,42 @@ fn activate_pending_database_after_ledger_success(
 }
 
 #[update]
-fn repair_database_top_up_cancel(database_id: String, operation_id: u64) -> Result<(), String> {
+fn repair_database_credit_purchase_cancel(
+    database_id: String,
+    operation_id: u64,
+) -> Result<(), String> {
     require_authenticated_caller()?;
     let caller = caller_text();
     with_service(|service| {
-        service.repair_database_top_up_cancel(&database_id, operation_id, &caller, now_millis())
-    })
-}
-
-#[update]
-async fn repair_database_withdraw_complete(
-    database_id: String,
-    operation_id: u64,
-    ledger_block_index: u64,
-) -> Result<BillingTransferResult, String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    let config = with_service(|service| service.billing_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let operation = with_service(|service| {
-        service.get_database_billing_pending_operation_for_repair(
+        service.repair_database_credit_purchase_cancel(
             &database_id,
             operation_id,
-            &caller,
-        )
-    })?;
-    let expected = expected_withdraw_transfer(&operation)?;
-    validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
-    let balance = with_service(|service| {
-        service.repair_database_withdraw_complete(
-            &database_id,
-            operation_id,
-            ledger_block_index,
             &caller,
             now_millis(),
         )
-    })?;
-    Ok(BillingTransferResult {
-        block_index: ledger_block_index,
-        balance_e8s: balance,
-    })
-}
-
-#[update]
-async fn repair_database_withdraw_retry(
-    database_id: String,
-    operation_id: u64,
-) -> Result<BillingTransferResult, String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    let config = with_service(|service| service.billing_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let operation = with_service(|service| {
-        service.get_database_billing_pending_operation_for_repair(
-            &database_id,
-            operation_id,
-            &caller,
-        )
-    })?;
-    let expected = expected_withdraw_transfer(&operation)?;
-    match ledger_transfer(
-        ledger,
-        expected.from.subaccount,
-        BillingAccount {
-            owner: expected.to.owner,
-            subaccount: expected.to.subaccount,
-        },
-        expected.amount_e8s,
-        expected.fee_e8s,
-        operation_id,
-        expected.created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferOutcome::Completed(block_index) => {
-            let balance = with_service(|service| {
-                service.repair_database_withdraw_complete(
-                    &database_id,
-                    operation_id,
-                    block_index,
-                    &caller,
-                    now_millis(),
-                )
-            })?;
-            Ok(BillingTransferResult {
-                block_index,
-                balance_e8s: balance,
-            })
-        }
-        LedgerTransferOutcome::LedgerErr(error) | LedgerTransferOutcome::Ambiguous(error) => {
-            Err(format!("withdraw retry still pending: {error}"))
-        }
-    }
-}
-
-#[update]
-fn repair_database_withdraw_reverse(database_id: String, operation_id: u64) -> Result<u64, String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    with_service(|service| {
-        service.repair_database_withdraw_reverse(&database_id, operation_id, &caller, now_millis())
     })
 }
 
 #[query]
-fn get_billing_config() -> Result<BillingConfig, String> {
-    with_service(|service| service.billing_config())
+fn get_credits_config() -> Result<CreditsConfig, String> {
+    with_service(|service| service.credits_config())
 }
 
 #[update]
-fn validate_update_billing_config(payload: Vec<u8>) -> Result<(), String> {
+fn validate_update_credits_config(payload: Vec<u8>) -> Result<(), String> {
     require_authenticated_caller()?;
-    let update = Decode!(&payload, BillingConfigUpdate)
-        .map_err(|error| format!("invalid billing config payload: {error}"))?;
-    with_service(|service| service.validate_billing_config_update(&update))
+    let update = Decode!(&payload, CreditsConfigUpdate)
+        .map_err(|error| format!("invalid credits config payload: {error}"))?;
+    with_service(|service| service.validate_credits_config_update(&update))
 }
 
 #[update]
-fn update_billing_config(payload: Vec<u8>) -> Result<(), String> {
+fn update_credits_config(payload: Vec<u8>) -> Result<(), String> {
     require_authenticated_caller()?;
-    let update = Decode!(&payload, BillingConfigUpdate)
-        .map_err(|error| format!("invalid billing config payload: {error}"))?;
-    with_unmetered_update("update_billing_config", None, |service, caller, _now| {
-        service.update_billing_config(update, caller).map(|_| ())
+    let update = Decode!(&payload, CreditsConfigUpdate)
+        .map_err(|error| format!("invalid credits config payload: {error}"))?;
+    with_unmetered_update("update_credits_config", None, |service, caller, _now| {
+        service.update_credits_config(update, caller).map(|_| ())
     })
 }
 
@@ -1023,8 +850,8 @@ fn check_url_ingest_trigger_session(
 }
 
 #[query]
-fn check_database_billable(database_id: String) -> Result<(), String> {
-    with_service(|service| service.check_database_billable(&database_id, &caller_text()))
+fn check_database_write_credits(database_id: String) -> Result<(), String> {
+    with_service(|service| service.check_database_write_credits(&database_id, &caller_text()))
 }
 
 #[update]
@@ -1181,15 +1008,15 @@ fn fetch_updates(request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse, S
     with_service(|service| service.fetch_fs_updates(&caller_text(), request))
 }
 
-fn initialize_or_trap(config: Option<BillingConfig>) {
+fn initialize_or_trap(config: Option<CreditsConfig>) {
     initialize_service_with_config(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
-fn initialize_upgrade_or_trap(config: Option<BillingConfig>) {
+fn initialize_upgrade_or_trap(config: Option<CreditsConfig>) {
     initialize_service_for_upgrade(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
-fn initialize_service_with_config(config: Option<BillingConfig>) -> Result<(), String> {
+fn initialize_service_with_config(config: Option<CreditsConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
@@ -1207,7 +1034,7 @@ fn initialize_service_with_config(config: Option<BillingConfig>) -> Result<(), S
     Ok(())
 }
 
-fn initialize_service_for_upgrade(config: Option<BillingConfig>) -> Result<(), String> {
+fn initialize_service_for_upgrade(config: Option<CreditsConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
@@ -1222,26 +1049,26 @@ fn initialize_service_for_upgrade(config: Option<BillingConfig>) -> Result<(), S
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn parse_upgrade_billing_config_arg(bytes: &[u8]) -> Result<Option<BillingConfig>, String> {
+fn parse_upgrade_credits_config_arg(bytes: &[u8]) -> Result<Option<CreditsConfig>, String> {
     if bytes.is_empty() || bytes == b"DIDL\0\0" {
         return Ok(None);
     }
-    if let Ok((config,)) = decode_args::<(BillingConfig,)>(bytes) {
+    if let Ok((config,)) = decode_args::<(CreditsConfig,)>(bytes) {
         return Ok(Some(config));
     }
-    if let Ok((config,)) = decode_args::<(Option<BillingConfig>,)>(bytes) {
+    if let Ok((config,)) = decode_args::<(Option<CreditsConfig>,)>(bytes) {
         return Ok(config);
     }
     Err(
-        "post_upgrade billing config arg must be empty, BillingConfig, or opt BillingConfig"
+        "post_upgrade credits config arg must be empty, CreditsConfig, or opt CreditsConfig"
             .to_string(),
     )
 }
 
-fn post_upgrade_billing_config_arg() -> Result<Option<BillingConfig>, String> {
+fn post_upgrade_credits_config_arg() -> Result<Option<CreditsConfig>, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        parse_upgrade_billing_config_arg(&ic_cdk::api::msg_arg_data())
+        parse_upgrade_credits_config_arg(&ic_cdk::api::msg_arg_data())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1297,7 +1124,6 @@ fn unmount_database_file(_db_file_name: &str) {}
 #[cfg(test)]
 thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_LEDGER_TRANSFER_OUTCOME: RefCell<Option<LedgerTransferOutcome>> = const { RefCell::new(None) };
     static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
     static TEST_LEDGER_TRANSACTIONS: RefCell<Vec<(u64, LedgerTransaction)>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
@@ -1307,13 +1133,6 @@ thread_local! {
 #[cfg(test)]
 fn fail_next_mount_database_file_for_test() {
     TEST_MOUNT_DATABASE_FILE_FAIL_ONCE.with(|flag| flag.replace(true));
-}
-
-#[cfg(test)]
-fn set_next_ledger_transfer_outcome_for_test(outcome: LedgerTransferOutcome) {
-    TEST_LEDGER_TRANSFER_OUTCOME.with(|slot| {
-        slot.replace(Some(outcome));
-    });
 }
 
 #[cfg(test)]
@@ -1426,15 +1245,6 @@ fn require_controller_caller() -> Result<(), String> {
     Err("caller is not a canister controller".to_string())
 }
 
-fn validate_billing_account(account: &BillingAccount) -> Result<(), String> {
-    if let Some(subaccount) = account.subaccount.as_ref()
-        && subaccount.len() != 32
-    {
-        return Err("billing account subaccount must be 32 bytes".to_string());
-    }
-    Ok(())
-}
-
 #[allow(dead_code)]
 fn canister_principal() -> Principal {
     #[cfg(test)]
@@ -1480,26 +1290,17 @@ fn now_nanos() -> u64 {
     }
 }
 
-fn expected_top_up_transfer(
-    operation: &DatabaseBillingPendingOperation,
+fn expected_credit_purchase_transfer(
+    operation: &DatabaseCreditPendingOperation,
 ) -> Result<ExpectedLedgerTransfer, String> {
-    if operation.kind != "top_up" {
-        return Err("pending billing operation kind mismatch".to_string());
+    if operation.kind != "credit_purchase" {
+        return Err("pending credit operation kind mismatch".to_string());
     }
-    expected_ledger_transfer(operation, "top_up")
-}
-
-fn expected_withdraw_transfer(
-    operation: &DatabaseBillingPendingOperation,
-) -> Result<ExpectedLedgerTransfer, String> {
-    if operation.kind != "withdraw" {
-        return Err("pending billing operation kind mismatch".to_string());
-    }
-    expected_ledger_transfer(operation, "withdraw")
+    expected_ledger_transfer(operation, "credit_purchase")
 }
 
 fn expected_ledger_transfer(
-    operation: &DatabaseBillingPendingOperation,
+    operation: &DatabaseCreditPendingOperation,
     memo_kind: &str,
 ) -> Result<ExpectedLedgerTransfer, String> {
     let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
@@ -1528,7 +1329,7 @@ fn expected_ledger_transfer(
         },
         amount_e8s,
         fee_e8s,
-        memo: billing_operation_memo(memo_kind, operation.operation_id),
+        memo: credit_operation_memo(memo_kind, operation.operation_id),
         created_at_time_ns,
     })
 }
@@ -1643,7 +1444,7 @@ async fn ledger_transfer_from(
     operation_id: u64,
     created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
-    let memo = billing_operation_memo("top_up", operation_id);
+    let memo = credit_operation_memo("credit_purchase", operation_id);
     #[cfg(test)]
     {
         let _ = (ledger, from, to, amount_e8s, fee_e8s, created_at_time_ns);
@@ -1696,83 +1497,6 @@ async fn ledger_transfer_from(
     }
 }
 
-async fn ledger_transfer(
-    ledger: Principal,
-    from_subaccount: Option<Vec<u8>>,
-    to: BillingAccount,
-    amount_e8s: u64,
-    fee_e8s: u64,
-    operation_id: u64,
-    created_at_time_ns: u64,
-) -> LedgerTransferOutcome {
-    let memo = billing_operation_memo("withdraw", operation_id);
-    #[cfg(test)]
-    {
-        let _ = (
-            ledger,
-            from_subaccount,
-            to,
-            amount_e8s,
-            fee_e8s,
-            created_at_time_ns,
-        );
-        record_test_ledger_memo(&memo);
-        TEST_LEDGER_TRANSFER_OUTCOME.with(|outcome| {
-            outcome
-                .borrow_mut()
-                .take()
-                .unwrap_or(LedgerTransferOutcome::Completed(2))
-        })
-    }
-    #[cfg(not(test))]
-    {
-        let arg = TransferArg {
-            from_subaccount,
-            to: IcrcAccount {
-                owner: to.owner,
-                subaccount: to.subaccount,
-            },
-            amount: Nat::from(amount_e8s),
-            fee: Some(Nat::from(fee_e8s)),
-            memo: Some(memo),
-            created_at_time: Some(created_at_time_ns),
-        };
-        let response = Call::bounded_wait(ledger, "icrc1_transfer")
-            .with_arg(arg)
-            .await
-            .map_err(|error| {
-                LedgerTransferOutcome::Ambiguous(format!("icrc1_transfer call failed: {error:?}"))
-            });
-        let response = match response {
-            Ok(response) => response,
-            Err(outcome) => return outcome,
-        };
-        let result: Result<Nat, TransferError> = match response.candid().map_err(|error| {
-            LedgerTransferOutcome::Ambiguous(format!("icrc1_transfer decode failed: {error}"))
-        }) {
-            Ok(result) => result,
-            Err(outcome) => return outcome,
-        };
-        match result {
-            Ok(block_index) => match nat_to_u64(&block_index) {
-                Ok(block_index) => LedgerTransferOutcome::Completed(block_index),
-                Err(error) => LedgerTransferOutcome::Ambiguous(error),
-            },
-            Err(error) => transfer_error_outcome(error),
-        }
-    }
-}
-
-fn transfer_error_outcome(error: TransferError) -> LedgerTransferOutcome {
-    match error {
-        TransferError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
-            Ok(block_index) => LedgerTransferOutcome::Completed(block_index),
-            Err(error) => LedgerTransferOutcome::Ambiguous(error),
-        },
-        error => LedgerTransferOutcome::LedgerErr(format!("icrc1_transfer failed: {error:?}")),
-    }
-}
-
 fn transfer_from_error_outcome(error: TransferFromError) -> LedgerTransferFromOutcome {
     match error {
         TransferFromError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
@@ -1793,7 +1517,7 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
         .map_err(|_| "nat exceeds u64".to_string())
 }
 
-fn billing_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
+fn credit_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
     format!("kinic:vfs:{kind}:{operation_id}").into_bytes()
 }
 
@@ -1936,7 +1660,7 @@ where
                 now,
             )
         {
-            ic_cdk::trap(format!("billing charge failed after update: {error}"));
+            ic_cdk::trap(format!("credits charge failed after update: {error}"));
         }
         result
     })

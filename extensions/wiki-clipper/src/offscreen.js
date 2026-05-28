@@ -5,7 +5,7 @@ import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
 import { buildUrlIngestRequest } from "./url-ingest-request.js";
 import {
   createVfsActor as defaultCreateVfsActor,
-  getBillingConfigOrNull,
+  getCreditsConfigOrNull,
   normalizeWritableDatabases,
   requireDatabaseBillable
 } from "./vfs-actor.js";
@@ -148,12 +148,12 @@ export async function listWritableDatabases(config) {
   if (!config?.canisterId) throw new Error("canister id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  const [result, billingConfig] = await Promise.all([
+  const [result, creditsConfig] = await Promise.all([
     actor.list_databases(),
-    getBillingConfigOrNull(actor)
+    getCreditsConfigOrNull(actor)
   ]);
   if ("Err" in result) throw new Error(result.Err);
-  return normalizeWritableDatabases(result.Ok, billingConfig);
+  return normalizeWritableDatabases(result.Ok, creditsConfig);
 }
 
 export function setOffscreenDepsForTest(deps = {}) {

@@ -77,7 +77,7 @@ type RawMkdirNodeResult = {
 type Result<T> = { Ok: T } | { Err: string };
 
 type VfsActor = {
-  check_database_billable: (databaseId: string) => Promise<Result<null>>;
+  check_database_write_credits: (databaseId: string) => Promise<Result<null>>;
   check_url_ingest_trigger_session: (request: {
     database_id: string;
     request_path: string;
@@ -112,7 +112,7 @@ type VfsActor = {
 };
 
 export type VfsClient = {
-  checkDatabaseBillable(databaseId: string): Promise<void>;
+  checkDatabaseWriteCredits(databaseId: string): Promise<void>;
   checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void>;
   readNode(databaseId: string, path: string): Promise<WikiNode | null>;
   mkdirNode(request: MkdirNodeRequest): Promise<void>;
@@ -133,8 +133,8 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
     canisterId: Principal.fromText(config.canisterId)
   });
   return {
-    checkDatabaseBillable: async (databaseId) => {
-      await unwrap(actor.check_database_billable(databaseId));
+    checkDatabaseWriteCredits: async (databaseId) => {
+      await unwrap(actor.check_database_write_credits(databaseId));
     },
     checkUrlIngestTriggerSession: async (databaseId, requestPath, sessionNonce) => {
       await unwrap(

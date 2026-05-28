@@ -56,9 +56,9 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum VfsCommand {
-    Billing {
+    Credits {
         #[command(subcommand)]
-        command: BillingCommand,
+        command: CreditsCommand,
     },
     Database {
         #[command(subcommand)]
@@ -277,70 +277,43 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Pull KINIC directly into one database balance")]
-    TopUp {
+    #[command(about = "Purchase non-refundable database credits with KINIC")]
+    PurchaseCredits {
         database_id: String,
         amount_e8s: u64,
     },
-    #[command(about = "Withdraw KINIC from one database balance")]
-    Withdraw {
-        database_id: String,
-        amount_e8s: u64,
-        #[arg(long)]
-        to_principal: String,
-        #[arg(long)]
-        to_subaccount_hex: Option<String>,
-    },
-    #[command(about = "List billing ledger entries for one database")]
-    BillingHistory {
+    #[command(about = "List credits ledger entries for one database")]
+    CreditsHistory {
         database_id: String,
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List pending billing operations for one database")]
-    BillingPending {
+    #[command(about = "List pending credit operations for one database")]
+    CreditsPending {
         database_id: String,
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Governance repair: complete a pending database top-up")]
-    RepairTopUpComplete {
+    #[command(about = "Governance repair: complete a pending credit purchase")]
+    RepairCreditPurchaseComplete {
         database_id: String,
         operation_id: u64,
         block_index: u64,
     },
-    #[command(about = "Governance repair: cancel a pending database top-up")]
-    RepairTopUpCancel {
+    #[command(about = "Governance repair: cancel a pending credit purchase")]
+    RepairCreditPurchaseCancel {
         database_id: String,
         operation_id: u64,
     },
     #[command(
-        about = "Governance repair: retry a pending database top-up with original ledger args"
+        about = "Governance repair: retry a pending credit purchase with original ledger args"
     )]
-    RepairTopUpRetry {
+    RepairCreditPurchaseRetry {
         database_id: String,
         operation_id: u64,
     },
-    #[command(about = "Governance repair: complete a pending database withdraw")]
-    RepairWithdrawComplete {
-        database_id: String,
-        operation_id: u64,
-        block_index: u64,
-    },
-    #[command(
-        about = "Governance repair: retry a pending database withdraw with original ledger args"
-    )]
-    RepairWithdrawRetry {
-        database_id: String,
-        operation_id: u64,
-    },
-    #[command(about = "Governance repair: reverse a pending database withdraw")]
-    RepairWithdrawReverse {
-        database_id: String,
-        operation_id: u64,
-    },
-    #[command(about = "Open the browser deposit page for one database")]
-    Deposit {
+    #[command(about = "Open the browser credits purchase page for one database")]
+    Credits {
         database_id: String,
         amount_e8s: u64,
         #[arg(long)]
@@ -406,8 +379,8 @@ pub enum DatabaseCommand {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum BillingCommand {
-    #[command(about = "Show canister billing configuration")]
+pub enum CreditsCommand {
+    #[command(about = "Show canister credits configuration")]
     Config {
         #[arg(long)]
         json: bool,

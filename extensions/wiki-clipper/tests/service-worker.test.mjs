@@ -222,7 +222,7 @@ test("unauthenticated save-source opens settings once", async () => {
   }
 });
 
-test("billing-disabled save-source opens settings once", async () => {
+test("credits-disabled save-source opens settings once", async () => {
   const syncStorage = memoryStorage();
   const settingsTabs = [];
   resetSettingsOpenThrottleForTest();
@@ -285,12 +285,12 @@ test("action click opens settings when database config is incomplete", async () 
   ]);
 });
 
-test("action click opens settings and stores status when billing is disabled", async () => {
+test("action click opens settings and stores status when credits is disabled", async () => {
   const calls = [];
   const response = await handleActionClick(
     { url: "https://example.com/", title: "Example" },
     actionDeps({
-      sendOffscreen: async () => ({ ok: false, error: "Database billing is suspended." }),
+      sendOffscreen: async () => ({ ok: false, error: "Database credits are suspended." }),
       openSettings: async () => calls.push(["settings"]),
       writeStatus: async (status) => calls.push(["status", status.status, status.message]),
       setBadge: async (text) => calls.push(["badge", text])
@@ -299,7 +299,7 @@ test("action click opens settings and stores status when billing is disabled", a
   assert.equal(response.ok, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
-    ["status", "error", "Database billing is suspended."],
+    ["status", "error", "Database credits are suspended."],
     ["badge", "ERR"],
     ["settings"]
   ]);
