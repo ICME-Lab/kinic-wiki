@@ -83,6 +83,8 @@ test("generateDraft calls DeepSeek chat completions", async () => {
     assert.ok(isRecord(requestBody));
     assert.equal(requestBody.model, "deepseek-v4-flash");
     assert.deepEqual(requestBody.response_format, { type: "json_object" });
+    assert.match(JSON.stringify(requestBody.messages), /pattern/);
+    assert.match(JSON.stringify(requestBody.messages), /non-empty single-line strings/);
     assert.equal(draft.slug, "project-notes");
   } finally {
     globalThis.fetch = originalFetch;

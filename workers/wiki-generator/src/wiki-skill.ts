@@ -10,6 +10,7 @@ const WIKI_RULES = [
   "Keep only claims directly supported by the source.",
   "Prefer omission over low-confidence pseudo-facts.",
   "Write title, slug, section labels, summary, and generated prose in the source material's primary language.",
+  "Section labels must be non-empty single-line strings.",
   "Preserve exact values, names, dates, money, and spelling from the source when they matter.",
   "Use the schema sections only when supported.",
   "Every generated item must cite the provided source_path.",

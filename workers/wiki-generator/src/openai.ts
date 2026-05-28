@@ -85,7 +85,7 @@ function wikiDraftSchema(): object {
       source_path: { type: "string" }
     }
   };
-  const label = { type: "string", minLength: 1 };
+  const label = { type: "string", minLength: 1, pattern: "^(?!\\s*$)[^\\r\\n]+$" };
   const labels = {
     type: "object",
     additionalProperties: false,

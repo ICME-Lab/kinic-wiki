@@ -84,6 +84,49 @@ test("generated slug is normalized as a single safe filename segment", () => {
   );
 });
 
+test("generated slug normalizes Unicode and strips bidi controls", () => {
+  assert.equal(
+    slugForGeneratedPage(
+      {
+        ...draft,
+        title: "ignored",
+        slug: "Cafe\u0301"
+      },
+      "web-abc123"
+    ),
+    "café"
+  );
+  assert.equal(
+    slugForGeneratedPage(
+      {
+        ...draft,
+        title: "ignored",
+        slug: "safe\u202Eevil"
+      },
+      "web-abc123"
+    ),
+    "safeevil"
+  );
+});
+
+test("VFS path links are escaped for Markdown destinations", () => {
+  const markdown = renderGeneratedMarkdown(
+    {
+      ...draft,
+      key_facts: [{ text: "Fact", source_path: "/Sources/raw/web/a]b.md" }]
+    },
+    { ...source, path: "/Sources/raw/web/a]b.md" },
+    [
+      { path: "/Wiki/conversations/日本語 記事).md", kind: "file", previewExcerpt: null, snippet: null },
+      { path: "/Wiki/space name.md", kind: "file", previewExcerpt: null, snippet: null }
+    ]
+  );
+  assert.match(markdown, /Source: \[\/Sources\/raw\/web\/a\\\]b\.md\]\(<\/Sources\/raw\/web\/a%5Db\.md>\)/);
+  assert.match(markdown, /\[source\]\(<\/Sources\/raw\/web\/a%5Db\.md>\)/);
+  assert.match(markdown, /\[\/Wiki\/conversations\/日本語 記事\)\.md\]\(<\/Wiki\/conversations\/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E8%A8%98%E4%BA%8B\)\.md>\)/);
+  assert.match(markdown, /\[\/Wiki\/space name\.md\]\(<\/Wiki\/space%20name\.md>\)/);
+});
+
 test("draft-provided labels are rendered without worker language detection", () => {
   const markdown = renderGeneratedMarkdown(
     {
