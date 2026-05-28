@@ -29,6 +29,56 @@ export const expectedTypes = {
     kind: "record",
     fields: { block_index: "nat64", balance_credits: "nat64" }
   },
+  Icrc21ConsentMessageMetadata: {
+    kind: "record",
+    fields: { utc_offset_minutes: "opt int16", language: "text" }
+  },
+  Icrc21DeviceSpec: { kind: "variant", cases: { GenericDisplay: "null", FieldsDisplay: "null" } },
+  Icrc21ConsentMessageSpec: {
+    kind: "record",
+    fields: {
+      metadata: "Icrc21ConsentMessageMetadata",
+      device_spec: "opt Icrc21DeviceSpec"
+    }
+  },
+  Icrc21ConsentMessageRequest: {
+    kind: "record",
+    fields: {
+      arg: "blob",
+      method: "text",
+      user_preferences: "Icrc21ConsentMessageSpec"
+    }
+  },
+  Icrc21ConsentMessage: { kind: "variant", cases: { GenericDisplayMessage: "text" } },
+  Icrc21ConsentInfo: {
+    kind: "record",
+    fields: {
+      metadata: "Icrc21ConsentMessageMetadata",
+      consent_message: "Icrc21ConsentMessage"
+    }
+  },
+  Icrc21ErrorInfo: { kind: "record", fields: { description: "text" } },
+  Icrc21GenericError: {
+    kind: "record",
+    fields: { description: "text", error_code: "nat" }
+  },
+  Icrc21Error: {
+    kind: "variant",
+    cases: {
+      GenericError: "Icrc21GenericError",
+      InsufficientPayment: "Icrc21ErrorInfo",
+      UnsupportedCanisterCall: "Icrc21ErrorInfo",
+      ConsentMessageUnavailable: "Icrc21ErrorInfo"
+    }
+  },
+  Icrc21ConsentMessageResponse: {
+    kind: "variant",
+    cases: { Ok: "Icrc21ConsentInfo", Err: "Icrc21Error" }
+  },
+  Icrc10SupportedStandard: {
+    kind: "record",
+    fields: { url: "text", name: "text" }
+  },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
@@ -402,6 +452,8 @@ export const expectedMethods = {
   rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },
+  icrc10_supported_standards: { input: [], output: "vec Icrc10SupportedStandard", mode: "query" },
+  icrc21_canister_call_consent_message: { input: ["Icrc21ConsentMessageRequest"], output: "Icrc21ConsentMessageResponse", mode: "update" },
   incoming_links: { input: ["IncomingLinksRequest"], output: "ResultLinks", mode: "query" },
   list_children: { input: ["ListChildrenRequest"], output: "ResultChildren", mode: "query" },
   list_database_credit_entries: { input: ["text", "opt nat64", "nat32"], output: "ResultCreditsEntries", mode: "query" },

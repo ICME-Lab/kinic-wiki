@@ -170,6 +170,84 @@ struct ExpectedLedgerTransfer {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentMessageRequest {
+    arg: Vec<u8>,
+    method: String,
+    user_preferences: Icrc21ConsentMessageSpec,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentMessageSpec {
+    metadata: Icrc21ConsentMessageMetadata,
+    device_spec: Option<Icrc21DeviceSpec>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentMessageMetadata {
+    utc_offset_minutes: Option<i16>,
+    language: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21DeviceSpec {
+    GenericDisplay,
+    FieldsDisplay,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21ConsentMessage {
+    GenericDisplayMessage(String),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentInfo {
+    metadata: Icrc21ConsentMessageMetadata,
+    consent_message: Icrc21ConsentMessage,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ErrorInfo {
+    description: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21GenericError {
+    description: String,
+    error_code: Nat,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21Error {
+    GenericError(Icrc21GenericError),
+    InsufficientPayment(Icrc21ErrorInfo),
+    UnsupportedCanisterCall(Icrc21ErrorInfo),
+    ConsentMessageUnavailable(Icrc21ErrorInfo),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21ConsentMessageResponse {
+    Ok(Icrc21ConsentInfo),
+    Err(Icrc21Error),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc10SupportedStandard {
+    name: String,
+    url: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
 enum TransferError {
     BadFee { expected_fee: Nat },
     BadBurn { min_burn_amount: Nat },
@@ -363,6 +441,61 @@ fn preview_database_credit_purchase(database_id: String, credits: u64) -> Result
     with_service(|service| service.validate_database_credit_purchase(&database_id, credits))
 }
 
+#[query]
+fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
+    vec![Icrc10SupportedStandard {
+        name: "ICRC-21".to_string(),
+        url: "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-21/ICRC-21.md".to_string(),
+    }]
+}
+
+#[update]
+fn icrc21_canister_call_consent_message(
+    request: Icrc21ConsentMessageRequest,
+) -> Icrc21ConsentMessageResponse {
+    if request.method != "purchase_database_credits" {
+        return icrc21_unsupported(format!("unsupported canister call: {}", request.method));
+    }
+    let (database_id, credits) = match Decode!(&request.arg, String, u64) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            return icrc21_unavailable(format!(
+                "purchase_database_credits argument decode failed: {error}"
+            ));
+        }
+    };
+    if let Err(error) =
+        with_service(|service| service.validate_database_credit_purchase(&database_id, credits))
+    {
+        return icrc21_unsupported(error);
+    }
+    let config = match with_service(|service| service.credits_config()) {
+        Ok(config) => config,
+        Err(error) => return icrc21_unavailable(error),
+    };
+    let payment_amount_e8s = match payment_amount_e8s_for_credits(credits, &config) {
+        Ok(amount) => amount,
+        Err(error) => return icrc21_unsupported(error),
+    };
+    let language = if request.user_preferences.metadata.language.trim().is_empty() {
+        "en".to_string()
+    } else {
+        request.user_preferences.metadata.language
+    };
+    Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+        metadata: Icrc21ConsentMessageMetadata {
+            language,
+            utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
+        },
+        consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+            "# Purchase Kinic database credits\n\nDatabase: `{database_id}`\n\nCredits: `{credits}`\n\nPayment: `{}` KINIC\n\nLedger transfer fee in allowance: `{}` KINIC\n\nSpender canister: `{}`",
+            format_e8s(payment_amount_e8s),
+            format_e8s(KINIC_LEDGER_FEE_E8S),
+            canister_principal().to_text()
+        )),
+    })
+}
+
 #[update]
 async fn purchase_database_credits(
     database_id: String,
@@ -501,7 +634,6 @@ async fn repair_database_credit_purchase_complete(
     ledger_block_index: u64,
 ) -> Result<CreditsPurchaseResult, String> {
     require_authenticated_caller()?;
-    let caller = caller_text();
     let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
@@ -519,7 +651,6 @@ async fn repair_database_credit_purchase_complete(
             &database_id,
             operation_id,
             ledger_block_index,
-            &caller,
             now,
         )
     })
@@ -1065,6 +1196,7 @@ thread_local! {
     static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
     static TEST_LEDGER_TRANSACTIONS: RefCell<Vec<(u64, LedgerTransaction)>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
 }
 
@@ -1109,13 +1241,28 @@ fn record_test_ledger_memo(memo: &[u8]) {
 }
 
 #[cfg(test)]
+fn record_test_ledger_from(from: &IcrcAccount) {
+    TEST_LAST_LEDGER_FROM.with(|slot| {
+        slot.replace(Some(from.clone()));
+    });
+}
+
+#[cfg(test)]
 fn last_ledger_memo_for_test() -> Option<Vec<u8>> {
     TEST_LAST_LEDGER_MEMO.with(|slot| slot.borrow().clone())
 }
 
 #[cfg(test)]
+fn last_ledger_from_for_test() -> Option<IcrcAccount> {
+    TEST_LAST_LEDGER_FROM.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
 fn clear_last_ledger_memo_for_test() {
     TEST_LAST_LEDGER_MEMO.with(|slot| {
+        slot.replace(None);
+    });
+    TEST_LAST_LEDGER_FROM.with(|slot| {
         slot.replace(None);
     });
 }
@@ -1125,6 +1272,31 @@ fn database_create_error(error: String, cleanup_error: Option<String>) -> String
         Some(cleanup_error) => format!("{error}; cleanup failed: {cleanup_error}"),
         None => error,
     }
+}
+
+fn icrc21_unsupported(description: String) -> Icrc21ConsentMessageResponse {
+    Icrc21ConsentMessageResponse::Err(Icrc21Error::UnsupportedCanisterCall(Icrc21ErrorInfo {
+        description,
+    }))
+}
+
+fn icrc21_unavailable(description: String) -> Icrc21ConsentMessageResponse {
+    Icrc21ConsentMessageResponse::Err(Icrc21Error::ConsentMessageUnavailable(Icrc21ErrorInfo {
+        description,
+    }))
+}
+
+fn format_e8s(amount_e8s: u64) -> String {
+    let whole = amount_e8s / 100_000_000;
+    let fractional = amount_e8s % 100_000_000;
+    if fractional == 0 {
+        return whole.to_string();
+    }
+    let mut fraction = format!("{fractional:08}");
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("{whole}.{fraction}")
 }
 
 fn caller_text() -> String {
@@ -1368,14 +1540,8 @@ async fn ledger_transfer_from(
     let memo = credit_operation_memo("credit_purchase", operation_id);
     #[cfg(test)]
     {
-        let _ = (
-            ledger,
-            from,
-            to,
-            amount_e8s,
-            ledger_fee_e8s,
-            created_at_time_ns,
-        );
+        record_test_ledger_from(&from);
+        let _ = (ledger, to, amount_e8s, ledger_fee_e8s, created_at_time_ns);
         record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
             outcome

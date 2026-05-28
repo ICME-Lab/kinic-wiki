@@ -1707,7 +1707,7 @@ fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
         .expect("credit purchase ambiguity should record");
 
     let balance = service
-        .repair_database_credit_purchase_complete("complete", complete, 77, "owner", 4)
+        .repair_database_credit_purchase_complete("complete", complete, 77, 4)
         .expect("authenticated caller should complete verified credit purchase");
     assert_eq!(balance, 500);
     service
@@ -1733,6 +1733,8 @@ fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
         .list_database_credit_entries("complete", "owner", None, 10)
         .expect("credits entries should load")
         .entries;
+    assert_eq!(entries[0].caller, "payer");
+    assert_eq!(entries[1].caller, "payer");
     assert_eq!(entries[1].ledger_block_index, Some(77));
 }
 

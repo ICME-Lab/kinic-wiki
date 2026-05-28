@@ -73,7 +73,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 ## Working Rules
 
 - Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
-- Runtime `facts.md` extraction policy currently lives in [facts_policy.rs](../../crates/vfs_cli_app/src/facts_policy.rs). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
+- Runtime `facts.md` extraction policy follows [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
 - Treat local `Wiki/` content as the human review surface.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.

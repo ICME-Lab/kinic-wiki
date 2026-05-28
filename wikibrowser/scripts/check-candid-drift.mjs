@@ -132,10 +132,10 @@ function parseIdlFields(body) {
 function parseIdlMethods(source) {
   const service = source.match(/return\s+idl\.Service\(\{([^]*?)\n\s*\}\);/m)?.[1] ?? "";
   const methods = {};
-  for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*(\w+)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
+  for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*([^\]]+?)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
     methods[match[1]] = {
       input: splitIdlInputs(match[2]),
-      output: match[3],
+      output: normalizeIdlShape(match[3]),
       mode: match[4] ?? "update"
     };
   }
@@ -168,6 +168,7 @@ function normalizeIdlShape(value) {
     .trim()
     .replace(/^idl\./, "")
     .replace(/^Text$/, "text")
+    .replace(/^Int16$/, "int16")
     .replace(/^Int64$/, "int64")
     .replace(/^Nat64$/, "nat64")
     .replace(/^Nat32$/, "nat32")

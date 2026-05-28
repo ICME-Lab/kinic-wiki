@@ -30,6 +30,17 @@ const typeOrder = [
   "DatabaseSummary",
   "CreditsConfig",
   "CreditsPurchaseResult",
+  "Icrc21ConsentMessageMetadata",
+  "Icrc21DeviceSpec",
+  "Icrc21ConsentMessageSpec",
+  "Icrc21ConsentMessageRequest",
+  "Icrc21ConsentMessage",
+  "Icrc21ConsentInfo",
+  "Icrc21ErrorInfo",
+  "Icrc21GenericError",
+  "Icrc21Error",
+  "Icrc21ConsentMessageResponse",
+  "Icrc10SupportedStandard",
   "CreateDatabaseRequest",
   "CreateDatabaseResult",
   "RenameDatabaseRequest",
@@ -121,6 +132,8 @@ const methodOrder = [
   "grant_database_access",
   "graph_links",
   "graph_neighborhood",
+  "icrc10_supported_standards",
+  "icrc21_canister_call_consent_message",
   "incoming_links",
   "list_database_credit_entries",
   "list_database_credit_pending_operations",
@@ -220,7 +233,7 @@ function renderMethod(name) {
   const method = expectedMethods[name];
   const inputs = method.input.map(shapeToIdl).join(", ");
   const mode = method.mode === "query" ? '"query"' : "";
-  return `${name}: idl.Func([${inputs}], [${method.output}], [${mode}])`;
+  return `${name}: idl.Func([${inputs}], [${shapeToIdl(method.output)}], [${mode}])`;
 }
 
 function shapeToIdl(shape) {
@@ -237,6 +250,7 @@ function shapeToIdl(shape) {
   const primitives = {
     bool: "idl.Bool",
     float32: "idl.Float32",
+    int16: "idl.Int16",
     int64: "idl.Int64",
     nat: "idl.Nat",
     nat8: "idl.Nat8",

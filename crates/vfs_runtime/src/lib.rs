@@ -532,10 +532,15 @@ impl VfsService {
             if status != DatabaseStatus::Pending {
                 return Ok(None);
             }
-            let existing =
-                load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])?;
-            if existing.is_some() {
-                return Ok(existing);
+            let active_mount_id: Option<i64> = tx
+                .query_row(
+                    "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+                    params![database_id],
+                    |row| crate::sqlite::row_get(row, 0),
+                )
+                .map_err(|error| error.to_string())?;
+            if active_mount_id.is_some() {
+                return load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending]);
             }
             let mount_id = allocate_mount_id(tx)?;
             let db_file_name = self.database_file_name(database_id, mount_id)?;
@@ -869,7 +874,6 @@ impl VfsService {
         database_id: &str,
         operation_id: u64,
         ledger_block_index: u64,
-        caller: &str,
         now: i64,
     ) -> Result<u64, String> {
         let config = self.credits_config()?;
@@ -889,7 +893,7 @@ impl VfsService {
                     amount_credits: operation.credits,
                     balance_after_credits: next,
                     payment_amount_e8s: Some(operation.payment_amount_e8s),
-                    caller,
+                    caller: &operation.caller,
                     method: Some("repair_database_credit_purchase_complete"),
                     cycles_delta: None,
                     config: None,

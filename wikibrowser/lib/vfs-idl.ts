@@ -34,6 +34,32 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     sns_governance_id: idl.Text
   });
   const CreditsPurchaseResult = idl.Record({ block_index: idl.Nat64, balance_credits: idl.Nat64 });
+  const Icrc21ConsentMessageMetadata = idl.Record({ utc_offset_minutes: idl.Opt(idl.Int16), language: idl.Text });
+  const Icrc21DeviceSpec = idl.Variant({ GenericDisplay: idl.Null, FieldsDisplay: idl.Null });
+  const Icrc21ConsentMessageSpec = idl.Record({
+    metadata: Icrc21ConsentMessageMetadata,
+    device_spec: idl.Opt(Icrc21DeviceSpec)
+  });
+  const Icrc21ConsentMessageRequest = idl.Record({
+    arg: idl.Vec(idl.Nat8),
+    method: idl.Text,
+    user_preferences: Icrc21ConsentMessageSpec
+  });
+  const Icrc21ConsentMessage = idl.Variant({ GenericDisplayMessage: idl.Text });
+  const Icrc21ConsentInfo = idl.Record({
+    metadata: Icrc21ConsentMessageMetadata,
+    consent_message: Icrc21ConsentMessage
+  });
+  const Icrc21ErrorInfo = idl.Record({ description: idl.Text });
+  const Icrc21GenericError = idl.Record({ description: idl.Text, error_code: idl.Nat });
+  const Icrc21Error = idl.Variant({
+    GenericError: Icrc21GenericError,
+    InsufficientPayment: Icrc21ErrorInfo,
+    UnsupportedCanisterCall: Icrc21ErrorInfo,
+    ConsentMessageUnavailable: Icrc21ErrorInfo
+  });
+  const Icrc21ConsentMessageResponse = idl.Variant({ Ok: Icrc21ConsentInfo, Err: Icrc21Error });
+  const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
@@ -283,6 +309,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
+    icrc10_supported_standards: idl.Func([], [idl.Vec(Icrc10SupportedStandard)], ["query"]),
+    icrc21_canister_call_consent_message: idl.Func([Icrc21ConsentMessageRequest], [Icrc21ConsentMessageResponse], []),
     incoming_links: idl.Func([IncomingLinksRequest], [ResultLinks], ["query"]),
     list_database_credit_entries: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCreditsEntries], ["query"]),
     list_database_credit_pending_operations: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCreditsPending], ["query"]),

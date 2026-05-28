@@ -977,14 +977,6 @@ mod tests {
     use vfs_cli::cli::VfsCommand;
 
     #[test]
-    fn main_cli_help_does_not_list_beam_bench() {
-        let mut command = Cli::command();
-        let help = command.render_long_help().to_string();
-
-        assert!(!help.contains("beam-bench"));
-    }
-
-    #[test]
     fn main_cli_help_describes_agent_entrypoints() {
         let mut command = Cli::command();
         let help = command.render_long_help().to_string();

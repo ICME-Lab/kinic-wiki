@@ -101,7 +101,7 @@ Pending operations block DB delete until they are resolved:
 - `repair_database_credit_purchase_complete(database_id, operation_id, ledger_block_index)`
 - `repair_database_credit_purchase_cancel(database_id, operation_id)`
 
-Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. Any authenticated caller may complete a pending purchase when the ledger block proves the payment. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is a governance-only escape hatch for cases where governance has verified that the original ledger transfer did not execute. DB owner and SNS governance can inspect pending operations.
+Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is a governance-only escape hatch for cases where governance has verified that the original ledger transfer did not execute. DB owner and SNS governance can inspect pending operations.
 
 ## Delete
 

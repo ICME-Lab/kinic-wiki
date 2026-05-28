@@ -21,13 +21,16 @@ use vfs_types::{
 };
 
 use super::{
-    IcrcAccount, LedgerTransaction, LedgerTransfer, LedgerTransferFromOutcome, SERVICE,
-    TransferFromError, append_node, begin_database_archive, begin_database_restore,
-    cancel_database_archive, check_database_write_credits, clear_last_ledger_memo_for_test,
+    Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
+    Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransaction,
+    LedgerTransfer, LedgerTransferFromOutcome, SERVICE, TransferFromError, append_node,
+    begin_database_archive, begin_database_restore, cancel_database_archive,
+    check_database_write_credits, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
-    incoming_links, last_ledger_memo_for_test, list_children, list_database_credit_entries,
+    icrc21_canister_call_consent_message, incoming_links, last_ledger_from_for_test,
+    last_ledger_memo_for_test, list_children, list_database_credit_entries,
     list_database_credit_pending_operations, list_database_members, list_databases, list_nodes,
     memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
     parse_upgrade_credits_config_arg, preview_database_credit_purchase, purchase_database_credits,
@@ -104,6 +107,20 @@ fn block_on_ready<T>(future: impl Future<Output = T>) -> T {
     match future.as_mut().poll(&mut context) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("test future unexpectedly pending"),
+    }
+}
+
+fn consent_request(method: &str, arg: Vec<u8>) -> Icrc21ConsentMessageRequest {
+    Icrc21ConsentMessageRequest {
+        arg,
+        method: method.to_string(),
+        user_preferences: Icrc21ConsentMessageSpec {
+            metadata: Icrc21ConsentMessageMetadata {
+                language: "en".to_string(),
+                utc_offset_minutes: None,
+            },
+            device_spec: None,
+        },
     }
 }
 
@@ -559,6 +576,7 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
     install_empty_test_service();
     let database_id;
     let operation_id;
+    let payer;
     {
         let _owner = AuthenticatedCallerGuard::install();
         let database = create_database(CreateDatabaseRequest {
@@ -566,6 +584,7 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
         })
         .expect("database should create");
         database_id = database.database_id;
+        payer = Principal::management_canister().to_text();
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
             "icrc2_transfer_from decode failed".to_string(),
         ));
@@ -581,11 +600,10 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
         set_ledger_transaction_for_test(77, pending_credit_purchase_transaction(&pending[0]));
     }
 
+    let repair_caller = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
+        .expect("non-governance principal should parse");
     {
-        let _authenticated = AuthenticatedCallerGuard::install_principal(
-            Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
-                .expect("non-governance principal should parse"),
-        );
+        let _authenticated = AuthenticatedCallerGuard::install_principal(repair_caller);
         let result = block_on_ready(repair_database_credit_purchase_complete(
             database_id.clone(),
             operation_id,
@@ -610,6 +628,8 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
         .entries;
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
     assert_eq!(entries[1].kind, "credit_purchase_repair_complete");
+    assert_eq!(entries[1].caller, payer);
+    assert_ne!(entries[1].caller, repair_caller.to_text());
     assert_eq!(entries[1].ledger_block_index, Some(77));
 
     let error = block_on_ready(repair_database_credit_purchase_complete(
@@ -733,6 +753,7 @@ fn purchase_database_credits_allows_non_owner_payer() {
     let payer = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
         .expect("test payer principal should parse");
     let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    clear_last_ledger_memo_for_test();
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(43));
 
     let result = block_on_ready(purchase_database_credits(database_id, 700))
@@ -740,6 +761,66 @@ fn purchase_database_credits_allows_non_owner_payer() {
 
     assert_eq!(result.block_index, 43);
     assert_eq!(result.balance_credits, 700);
+    assert_eq!(
+        last_ledger_from_for_test().expect("ledger from should be recorded"),
+        IcrcAccount {
+            owner: payer,
+            subaccount: None,
+        }
+    );
+}
+
+#[test]
+fn icrc21_purchase_database_credits_returns_consent_message() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Consent".to_string(),
+    })
+    .expect("database should create");
+    let arg = Encode!(&database.database_id, &500_u64).expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("purchase_database_credits", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("consent message should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains(&database.database_id));
+    assert!(message.contains("Credits: `500`"));
+    assert!(message.contains("Payment: `0.5` KINIC"));
+    assert!(message.contains("Ledger transfer fee in allowance: `0.0001` KINIC"));
+    assert!(message.contains("Spender canister:"));
+}
+
+#[test]
+fn icrc21_rejects_unsupported_credit_consent_method() {
+    install_empty_test_service();
+    let response = icrc21_canister_call_consent_message(consent_request("write_node", Vec::new()));
+
+    assert!(matches!(
+        response,
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(_))
+    ));
+}
+
+#[test]
+fn icrc21_rejects_malformed_credit_consent_arg() {
+    install_empty_test_service();
+    let response = icrc21_canister_call_consent_message(consent_request(
+        "purchase_database_credits",
+        Vec::new(),
+    ));
+
+    assert!(matches!(
+        response,
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::ConsentMessageUnavailable(_))
+    ));
 }
 
 #[test]

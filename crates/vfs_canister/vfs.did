@@ -190,6 +190,38 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
+type Icrc10SupportedStandard = record { url : text; name : text };
+type Icrc21ConsentInfo = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  consent_message : Icrc21ConsentMessage;
+};
+type Icrc21ConsentMessage = variant { GenericDisplayMessage : text };
+type Icrc21ConsentMessageMetadata = record {
+  utc_offset_minutes : opt int16;
+  language : text;
+};
+type Icrc21ConsentMessageRequest = record {
+  arg : blob;
+  method : text;
+  user_preferences : Icrc21ConsentMessageSpec;
+};
+type Icrc21ConsentMessageResponse = variant {
+  Ok : Icrc21ConsentInfo;
+  Err : Icrc21Error;
+};
+type Icrc21ConsentMessageSpec = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  device_spec : opt Icrc21DeviceSpec;
+};
+type Icrc21DeviceSpec = variant { GenericDisplay; FieldsDisplay };
+type Icrc21Error = variant {
+  GenericError : Icrc21GenericError;
+  InsufficientPayment : Icrc21ErrorInfo;
+  UnsupportedCanisterCall : Icrc21ErrorInfo;
+  ConsentMessageUnavailable : Icrc21ErrorInfo;
+};
+type Icrc21ErrorInfo = record { description : text };
+type Icrc21GenericError = record { description : text; error_code : nat };
 type IncomingLinksRequest = record {
   path : text;
   limit : nat32;
@@ -457,6 +489,10 @@ service : (CreditsConfig) -> {
   graph_links : (GraphLinksRequest) -> (Result_11) query;
   graph_neighborhood : (GraphNeighborhoodRequest) -> (Result_11) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
+  icrc10_supported_standards : () -> (vec Icrc10SupportedStandard) query;
+  icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
+      Icrc21ConsentMessageResponse,
+    );
   incoming_links : (IncomingLinksRequest) -> (Result_11) query;
   list_children : (ListChildrenRequest) -> (Result_12) query;
   list_database_credit_entries : (text, opt nat64, nat32) -> (Result_13) query;

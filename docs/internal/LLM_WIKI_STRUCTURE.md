@@ -190,12 +190,12 @@ sequenceDiagram
 | --- | --- | --- |
 | build | `build-vfs-canister.sh`, `build-vfs-canister-canbench.sh` | canister build |
 | canbench | `run_canbench_guard.sh`, `run_canbench_scale.sh`, `canbench/*.py` | canbench 集計・比較 |
-| bench | `bench/run_beam_bench.sh`, `bench/run_canister_vfs_*.sh` | beam / canister workload |
+| bench | `bench/run_canister_vfs_*.sh` | canister workload |
 | env | `setup_canbench_ci.sh` | 実行環境補助 |
 
 ### 8.3 `fixtures/`
 
-- `fixtures/beam/`: beam sample 入力
+- 現在、永続 fixture はない
 
 ### 8.4 `artifacts/`
 
