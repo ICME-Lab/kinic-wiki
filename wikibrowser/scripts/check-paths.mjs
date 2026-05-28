@@ -132,7 +132,15 @@ assert.equal(
 );
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/100%25.md"),
-  "/alpha/Wiki/100%2525.md"
+  "/alpha/Wiki/100%25.md"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/a%23b.md"),
+  "/alpha/Wiki/a%23b.md"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/a%3Fb.md"),
+  "/alpha/Wiki/a%3Fb.md"
 );
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/demo/index.md", "https://example.com"),
