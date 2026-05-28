@@ -386,6 +386,7 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
         "database_mount_history",
         "url_ingest_trigger_sessions",
         "ops_answer_sessions",
+        "source_run_sessions",
         "database_restore_sessions",
     ] {
         let table_exists: i64 = conn
@@ -418,6 +419,10 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(&root, "database_index:011_source_run_sessions"),
+        1
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
         1
     );
@@ -443,6 +448,10 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:008_restore_sessions"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:011_source_run_sessions"),
         1
     );
     assert_eq!(
@@ -1079,6 +1088,10 @@ fn old_index_schema_migrates_database_name_from_id() {
 
     assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:011_source_run_sessions"),
         1
     );
     assert_eq!(database_name(&root, "alpha"), "alpha");

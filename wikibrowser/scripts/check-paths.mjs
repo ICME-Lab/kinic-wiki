@@ -30,6 +30,10 @@ assert.equal(
   "/alpha/Wiki/space%20name.md?view=edit"
 );
 assert.equal(
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/conversations/日本語記事.md"),
+  "/alpha/Wiki/conversations/%E6%97%A5%E6%9C%AC%E8%AA%9E%E8%A8%98%E4%BA%8B.md"
+);
+assert.equal(
   hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "recent", undefined, undefined, "anonymous"),
   "/alpha/Wiki?tab=recent&read=anonymous"
 );
@@ -121,6 +125,22 @@ assert.equal(
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "/Wiki/demo.md#evidence", "anonymous"),
   "/alpha/Wiki/demo.md?read=anonymous#evidence"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/space name.md"),
+  "/alpha/Wiki/space%20name.md"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/100%25.md"),
+  "/alpha/Wiki/100%25.md"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/a%23b.md"),
+  "/alpha/Wiki/a%23b.md"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/a%3Fb.md"),
+  "/alpha/Wiki/a%3Fb.md"
 );
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/demo/index.md", "https://example.com"),

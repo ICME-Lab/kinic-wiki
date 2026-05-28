@@ -9,8 +9,10 @@ const WIKI_RULES = [
   "Do not paste raw page text or transcript dumps into wiki pages.",
   "Keep only claims directly supported by the source.",
   "Prefer omission over low-confidence pseudo-facts.",
+  "Write title, slug, section labels, summary, and generated prose in the source material's primary language.",
+  "Section labels must be non-empty single-line strings.",
   "Preserve exact values, names, dates, money, and spelling from the source when they matter.",
-  "Use Summary, Key Facts, Decisions, Open Questions, Follow-ups, and Provenance only when supported.",
+  "Use the schema sections only when supported.",
   "Every generated item must cite the provided source_path.",
   "Do not invent follow-ups or decisions.",
   "Keep the generated page concise enough for human review."
