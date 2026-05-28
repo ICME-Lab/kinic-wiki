@@ -82,5 +82,5 @@ function markdownLinkText(value: string): string {
 }
 
 function markdownLinkDestination(path: string): string {
-  return `<${encodeURI(path).replace(/</g, "%3C").replace(/>/g, "%3E")}>`;
+  return `<${encodeURI(path).replace(/#/g, "%23").replace(/\?/g, "%3F").replace(/</g, "%3C").replace(/>/g, "%3E")}>`;
 }
