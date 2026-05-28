@@ -9,7 +9,7 @@ import type { BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 
 export function DatabaseDangerZone(props: {
-  creditsBalanceE8s: string;
+  creditsBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;

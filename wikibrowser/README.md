@@ -57,7 +57,6 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Create URL ingest requests under `/Sources/ingest-requests` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
-- Show recent nodes
 - Show incoming backlinks and a lightweight graph view
 - Show lightweight lint hints
 - Inspect path, etag, update time, size, role, outgoing links, and inferred raw sources
@@ -158,7 +157,6 @@ Covered methods:
 - `memory_manifest`
 - `query_context`
 - `source_evidence`
-- `recent_nodes`
 - `search_node_paths`
 - `search_nodes`
 

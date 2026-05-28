@@ -33,7 +33,7 @@ assert.match(diff, /permission_gate/);
 assert.match(diff, /proposal\.metricsPath/);
 assert.equal((diff.match(/proposal\.metricsPath/g) ?? []).length, 2);
 assert.match(operations, /kinic.skill_evolution_proposal_status/);
-assert.match(types, /DatabaseStatus = "pending" \| "active" \| "restoring" \| "archiving" \| "archived" \| "deleted"/);
+assert.match(types, /DatabaseStatus = "pending" \| "active" \| "restoring" \| "archiving" \| "archived"/);
 assert.match(vfsIdl, /Hot: idl\.Null/);
 assert.match(vfsIdl, /Pending: idl\.Null/);
 assert.match(vfsIdl, /Active: idl\.Null/);

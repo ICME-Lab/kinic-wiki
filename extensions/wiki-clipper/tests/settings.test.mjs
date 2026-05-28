@@ -139,9 +139,9 @@ test("database dropdown options include only active owner and writer databases",
     rawDatabase("writer-db", "Writer", "Active", 20_000n),
     rawDatabase("reader-db", "Reader", "Active", 20_000n),
     rawDatabase("archived-db", "Owner", "Archived", 20_000n)
-  ], { minUpdateBalanceE8s: "10000" });
+  ], { minUpdateCredits: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.billable]),
+    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCreditsAvailable]),
     [
       ["owner-db", "owner-db name", "Owner", "Active", true],
       ["legacy-owner-db", "legacy-owner-db name", "Owner", "Active", true],
@@ -155,12 +155,12 @@ test("database dropdown keeps credits-disabled writer databases with reasons", (
     rawDatabase("active-db", "Owner", "Active", 20_000n),
     rawDatabase("low-db", "Writer", "Active", 9_999n),
     rawDatabase("suspended-db", "Writer", "Active", 20_000n, 1n)
-  ], { minUpdateBalanceE8s: "10000" });
+  ], { minUpdateCredits: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.billable, database.creditsReason]),
+    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
     [
       ["active-db", true, null],
-      ["low-db", false, "Database balance is below the minimum update balance."],
+      ["low-db", false, "Database credits balance is below the minimum update balance."],
       ["suspended-db", false, "Database credits are suspended."]
     ]
   );
@@ -171,7 +171,7 @@ test("database dropdown disables writer databases when credits config is unavail
     rawDatabase("owner-db", "Owner", "Active", 20_000n)
   ]);
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.billable, database.creditsReason]),
+    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
     [["owner-db", false, "Credits config unavailable."]]
   );
 });
@@ -252,16 +252,15 @@ test("settings docs describe automatic database save", () => {
 
 function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, creditsSuspendedAtMs = null) {
   const name = typeof nameOrBalance === "string" ? nameOrBalance : `${databaseId} name`;
-  const creditsBalanceE8s = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
+  const creditsBalance = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
   return {
     database_id: databaseId,
     name,
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    credit_balance_e8s: [creditsBalanceE8s],
+    credits_balance: [creditsBalance],
     credits_suspended_at_ms: creditsSuspendedAtMs === null ? [] : [creditsSuspendedAtMs],
-    archived_at_ms: [],
-    deleted_at_ms: []
+    archived_at_ms: []
   };
 }

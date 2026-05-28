@@ -1420,10 +1420,9 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
       role: "reader",
       status: "active",
       logicalSizeBytes: "0",
-      creditsBalanceE8s: "0",
+      creditsBalance: "0",
       creditsSuspendedAtMs: null,
-      archivedAtMs: null,
-      deletedAtMs: null
+      archivedAtMs: null
     },
     ...databases
   ];

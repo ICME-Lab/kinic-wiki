@@ -16,8 +16,8 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, RecentNodesRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
+    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -47,8 +47,8 @@ pub async fn run_vfs_command(
         command => command,
     };
     let database_id = require_database_id(database_id)?;
-    if command_requires_billable_database(&command) {
-        require_billable_database(client, database_id).await?;
+    if command_requires_write_credits_available(&command) {
+        require_write_credits_available(client, database_id).await?;
     }
     match command {
         VfsCommand::Credits { .. } => {
@@ -322,22 +322,6 @@ pub async fn run_vfs_command(
                 }
             }
         }
-        VfsCommand::RecentNodes { limit, path, json } => {
-            let hits = client
-                .recent_nodes(RecentNodesRequest {
-                    database_id: database_id.to_string(),
-                    limit,
-                    path: Some(path),
-                })
-                .await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&hits)?);
-            } else {
-                for hit in hits {
-                    println!("{}\t{}\t{}", hit.updated_at, hit.path, hit.etag);
-                }
-            }
-        }
         VfsCommand::ReadNodeContext {
             path,
             link_limit,
@@ -488,7 +472,7 @@ pub async fn run_vfs_command(
     Ok(())
 }
 
-fn command_requires_billable_database(command: &VfsCommand) -> bool {
+fn command_requires_write_credits_available(command: &VfsCommand) -> bool {
     matches!(
         command,
         VfsCommand::WriteNode { .. }
@@ -502,7 +486,7 @@ fn command_requires_billable_database(command: &VfsCommand) -> bool {
     )
 }
 
-async fn require_billable_database(client: &impl VfsApi, database_id: &str) -> Result<()> {
+async fn require_write_credits_available(client: &impl VfsApi, database_id: &str) -> Result<()> {
     let config = client
         .get_credits_config()
         .await
@@ -525,17 +509,17 @@ fn database_credits_disabled_reason(
     database: &DatabaseSummary,
     config: &CreditsConfig,
 ) -> Option<String> {
-    let balance = database.credit_balance_e8s.unwrap_or(0);
+    let balance = database.credits_balance.unwrap_or(0);
     if database.credits_suspended_at_ms.is_some() {
         return Some(format!(
             "database credits are suspended: {}",
             database.database_id
         ));
     }
-    if balance < config.min_update_balance_e8s {
+    if balance < config.min_update_credits {
         return Some(format!(
-            "database credits balance is below minimum: {} balance_e8s={} min_update_balance_e8s={}",
-            database.database_id, balance, config.min_update_balance_e8s
+            "database credits balance is below minimum: {} balance_credits={} min_update_credits={}",
+            database.database_id, balance, config.min_update_credits
         ));
     }
     None
@@ -678,7 +662,7 @@ async fn run_database_command(
                         database.role,
                         database.status,
                         database.logical_size_bytes,
-                        database.credit_balance_e8s.unwrap_or(0),
+                        database.credits_balance.unwrap_or(0),
                         database
                             .credits_suspended_at_ms
                             .map(|value| value.to_string())
@@ -689,14 +673,14 @@ async fn run_database_command(
         }
         DatabaseCommand::PurchaseCredits {
             database_id,
-            amount_e8s,
+            credits,
         } => {
             let result = client
-                .purchase_database_credits(&database_id, amount_e8s)
+                .purchase_database_credits(&database_id, credits)
                 .await?;
             println!(
                 "{database_id}\t{}\t{}",
-                result.block_index, result.balance_e8s
+                result.block_index, result.balance_credits
             );
         }
         DatabaseCommand::CreditsHistory { database_id, json } => {
@@ -711,8 +695,8 @@ async fn run_database_command(
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                         entry.entry_id,
                         entry.kind,
-                        entry.amount_e8s,
-                        entry.balance_after_e8s,
+                        entry.amount_credits,
+                        entry.balance_after_credits,
                         entry.caller,
                         entry.method.unwrap_or_else(|| "-".to_string()),
                         entry
@@ -742,8 +726,8 @@ async fn run_database_command(
                         operation.database_id,
                         operation.kind,
                         operation.caller,
-                        operation.amount_e8s,
-                        operation.fee_e8s,
+                        operation.credits,
+                        operation.payment_amount_e8s,
                         operation.from_owner.unwrap_or_else(|| "-".to_string()),
                         operation.to_owner.unwrap_or_else(|| "-".to_string()),
                         operation
@@ -769,7 +753,7 @@ async fn run_database_command(
                 .await?;
             println!(
                 "{database_id}\t{operation_id}\t{}\t{}",
-                result.block_index, result.balance_e8s
+                result.block_index, result.balance_credits
             );
         }
         DatabaseCommand::RepairCreditPurchaseCancel {
@@ -790,19 +774,19 @@ async fn run_database_command(
                 .await?;
             println!(
                 "{database_id}\t{operation_id}\t{}\t{}",
-                result.block_index, result.balance_e8s
+                result.block_index, result.balance_credits
             );
         }
         DatabaseCommand::Credits {
             database_id,
-            amount_e8s,
+            credits,
             browser_origin,
         } => {
             let url = database_credits_url(
                 browser_origin.as_deref(),
                 &connection.canister_id,
                 &database_id,
-                amount_e8s,
+                credits,
             )?;
             open_browser_url(&url)?;
             println!("{url}");
@@ -892,7 +876,7 @@ fn database_credits_url(
     browser_origin: Option<&str>,
     canister_id: &str,
     database_id: &str,
-    amount_e8s: u64,
+    credits: u64,
 ) -> Result<String> {
     let origin = browser_origin
         .map(str::to_string)
@@ -903,10 +887,10 @@ fn database_credits_url(
         return Err(anyhow!("browser origin must not be empty"));
     }
     Ok(format!(
-        "{origin}/credits?canisterId={}&databaseId={}&amountE8s={}",
+        "{origin}/credits?canisterId={}&databaseId={}&credits={}",
         query_encode(canister_id),
         query_encode(database_id),
-        amount_e8s
+        credits
     ))
 }
 
@@ -976,10 +960,9 @@ async fn run_credits_command(client: &impl VfsApi, command: CreditsCommand) -> R
 struct CreditsConfigOutput {
     kinic_ledger_canister_id: String,
     sns_governance_id: String,
-    rate_numerator_e8s: u64,
-    rate_denominator_cycles: u64,
-    fixed_update_fee_e8s: u64,
-    min_update_balance_e8s: u64,
+    credits_per_kinic: u64,
+    cycles_per_credit: u64,
+    min_update_credits: u64,
     ledger_fee_e8s: u64,
 }
 
@@ -988,10 +971,9 @@ impl CreditsConfigOutput {
         Self {
             kinic_ledger_canister_id: config.kinic_ledger_canister_id,
             sns_governance_id: config.sns_governance_id,
-            rate_numerator_e8s: config.rate_numerator_e8s,
-            rate_denominator_cycles: config.rate_denominator_cycles,
-            fixed_update_fee_e8s: config.fixed_update_fee_e8s,
-            min_update_balance_e8s: config.min_update_balance_e8s,
+            credits_per_kinic: config.credits_per_kinic,
+            cycles_per_credit: config.cycles_per_credit,
+            min_update_credits: config.min_update_credits,
             ledger_fee_e8s,
         }
     }
@@ -1004,13 +986,9 @@ fn credits_config_lines(config: &CreditsConfig, ledger_fee_e8s: u64) -> Vec<Stri
             config.kinic_ledger_canister_id
         ),
         format!("sns_governance_id\t{}", config.sns_governance_id),
-        format!("min_update_balance_e8s\t{}", config.min_update_balance_e8s),
-        format!("rate_numerator_e8s\t{}", config.rate_numerator_e8s),
-        format!(
-            "rate_denominator_cycles\t{}",
-            config.rate_denominator_cycles
-        ),
-        format!("fixed_update_fee_e8s\t{}", config.fixed_update_fee_e8s),
+        format!("credits_per_kinic\t{}", config.credits_per_kinic),
+        format!("cycles_per_credit\t{}", config.cycles_per_credit),
+        format!("min_update_credits\t{}", config.min_update_credits),
         format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
     ]
 }
@@ -1408,7 +1386,7 @@ fn default_metadata_json() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_requires_billable_database, run_vfs_command};
+    use super::{command_requires_write_credits_available, run_vfs_command};
     use crate::cli::{CreditsCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
     use anyhow::{Result, anyhow};
@@ -1504,7 +1482,7 @@ mod tests {
 
     fn database_summary(
         database_id: &str,
-        balance_e8s: Option<u64>,
+        balance_credits: Option<u64>,
         suspended_at_ms: Option<i64>,
     ) -> DatabaseSummary {
         DatabaseSummary {
@@ -1513,10 +1491,9 @@ mod tests {
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 42,
-            credit_balance_e8s: balance_e8s,
+            credits_balance: balance_credits,
             credits_suspended_at_ms: suspended_at_ms,
             archived_at_ms: None,
-            deleted_at_ms: None,
         }
     }
 
@@ -1536,15 +1513,15 @@ mod tests {
         async fn purchase_database_credits(
             &self,
             database_id: &str,
-            amount_e8s: u64,
+            credits: u64,
         ) -> Result<CreditsPurchaseResult> {
             self.database_credit_purchases
                 .lock()
                 .unwrap()
-                .push((database_id.to_string(), amount_e8s));
+                .push((database_id.to_string(), credits));
             Ok(CreditsPurchaseResult {
                 block_index: 7,
-                balance_e8s: amount_e8s,
+                balance_credits: credits,
             })
         }
         async fn list_database_credit_entries(
@@ -1562,14 +1539,14 @@ mod tests {
                     entry_id: 1,
                     database_id: database_id.to_string(),
                     kind: "credit_purchase".to_string(),
-                    amount_e8s: 500_000,
-                    balance_after_e8s: 500_000,
+                    amount_credits: 500_000,
+                    balance_after_credits: 500_000,
+                    payment_amount_e8s: Some(50_000_000_000),
                     caller: "caller".to_string(),
                     method: Some("purchase_database_credits".to_string()),
                     cycles_delta: None,
-                    rate_numerator_e8s: None,
-                    rate_denominator_cycles: None,
-                    fixed_update_fee_e8s: None,
+                    credits_per_kinic: None,
+                    cycles_per_credit: None,
                     usage_event_id: None,
                     ledger_block_index: Some(7),
                     created_at_ms: 1,
@@ -1593,8 +1570,8 @@ mod tests {
                     database_id: database_id.to_string(),
                     kind: "credit_purchase".to_string(),
                     caller: "caller".to_string(),
-                    amount_e8s: 500_000,
-                    fee_e8s: 0,
+                    credits: 500_000,
+                    payment_amount_e8s: 50_000_000_000,
                     from_owner: Some("caller".to_string()),
                     from_subaccount: None,
                     to_owner: Some("canister".to_string()),
@@ -1618,7 +1595,7 @@ mod tests {
                 .push((database_id.to_string(), operation_id, ledger_block_index));
             Ok(CreditsPurchaseResult {
                 block_index: ledger_block_index,
-                balance_e8s: 500_000,
+                balance_credits: 500_000,
             })
         }
         async fn repair_database_credit_purchase_cancel(
@@ -1641,10 +1618,9 @@ mod tests {
             Ok(CreditsConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-                rate_numerator_e8s: 200,
-                rate_denominator_cycles: 1_000_000,
-                fixed_update_fee_e8s: 100,
-                min_update_balance_e8s: 10_000,
+                credits_per_kinic: 1_000,
+                cycles_per_credit: 1_000_000_000,
+                min_update_credits: 1,
             })
         }
         async fn kinic_ledger_fee_e8s(&self, ledger_canister_id: &str) -> Result<u64> {
@@ -1673,10 +1649,9 @@ mod tests {
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
-                credit_balance_e8s: Some(10_000),
+                credits_balance: Some(10_000),
                 credits_suspended_at_ms: None,
                 archived_at_ms: None,
-                deleted_at_ms: None,
             }])
         }
         async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {
@@ -1849,9 +1824,6 @@ mod tests {
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
             unreachable!()
         }
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-            unreachable!()
-        }
         async fn graph_neighborhood(
             &self,
             request: GraphNeighborhoodRequest,
@@ -2021,15 +1993,17 @@ mod tests {
 
     #[test]
     fn credits_gate_covers_content_mutation_commands_only() {
-        assert!(command_requires_billable_database(&VfsCommand::WriteNode {
-            path: "/Wiki/a.md".to_string(),
-            kind: NodeKindArg::File,
-            input: PathBuf::from("a.md"),
-            metadata_json: "{}".to_string(),
-            expected_etag: None,
-            json: false,
-        }));
-        assert!(command_requires_billable_database(
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::WriteNode {
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKindArg::File,
+                input: PathBuf::from("a.md"),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
             &VfsCommand::AppendNode {
                 path: "/Wiki/a.md".to_string(),
                 input: PathBuf::from("a.md"),
@@ -2040,15 +2014,17 @@ mod tests {
                 json: false,
             }
         ));
-        assert!(command_requires_billable_database(&VfsCommand::EditNode {
-            path: "/Wiki/a.md".to_string(),
-            old_text: "a".to_string(),
-            new_text: "b".to_string(),
-            expected_etag: None,
-            replace_all: false,
-            json: false,
-        }));
-        assert!(command_requires_billable_database(
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::EditNode {
+                path: "/Wiki/a.md".to_string(),
+                old_text: "a".to_string(),
+                new_text: "b".to_string(),
+                expected_etag: None,
+                replace_all: false,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
             &VfsCommand::DeleteNode {
                 path: "/Wiki/a.md".to_string(),
                 expected_etag: None,
@@ -2056,24 +2032,28 @@ mod tests {
                 json: false,
             }
         ));
-        assert!(command_requires_billable_database(
+        assert!(command_requires_write_credits_available(
             &VfsCommand::DeleteTree {
                 path: "/Wiki/a".to_string(),
                 json: false,
             }
         ));
-        assert!(command_requires_billable_database(&VfsCommand::MkdirNode {
-            path: "/Wiki/a".to_string(),
-            json: false,
-        }));
-        assert!(command_requires_billable_database(&VfsCommand::MoveNode {
-            from_path: "/Wiki/a.md".to_string(),
-            to_path: "/Wiki/b.md".to_string(),
-            expected_etag: None,
-            overwrite: false,
-            json: false,
-        }));
-        assert!(command_requires_billable_database(
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::MkdirNode {
+                path: "/Wiki/a".to_string(),
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::MoveNode {
+                from_path: "/Wiki/a.md".to_string(),
+                to_path: "/Wiki/b.md".to_string(),
+                expected_etag: None,
+                overwrite: false,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
             &VfsCommand::MultiEditNode {
                 path: "/Wiki/a.md".to_string(),
                 edits_file: PathBuf::from("edits.json"),
@@ -2081,18 +2061,22 @@ mod tests {
                 json: false,
             }
         ));
-        assert!(!command_requires_billable_database(&VfsCommand::ReadNode {
-            path: "/Wiki/a.md".to_string(),
-            metadata_only: false,
-            fields: None,
-            json: false,
-        }));
-        assert!(!command_requires_billable_database(&VfsCommand::Database {
-            command: super::DatabaseCommand::PurchaseCredits {
-                database_id: "alpha".to_string(),
-                amount_e8s: 1,
-            },
-        }));
+        assert!(!command_requires_write_credits_available(
+            &VfsCommand::ReadNode {
+                path: "/Wiki/a.md".to_string(),
+                metadata_only: false,
+                fields: None,
+                json: false,
+            }
+        ));
+        assert!(!command_requires_write_credits_available(
+            &VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCredits {
+                    database_id: "alpha".to_string(),
+                    credits: 1,
+                },
+            }
+        ));
     }
 
     #[tokio::test]
@@ -2369,7 +2353,7 @@ mod tests {
             VfsCommand::Database {
                 command: super::DatabaseCommand::PurchaseCredits {
                     database_id: "db_alpha".to_string(),
-                    amount_e8s: 500_000,
+                    credits: 500_000,
                 },
             },
         )
@@ -2393,7 +2377,7 @@ mod tests {
             VfsCommand::Database {
                 command: super::DatabaseCommand::PurchaseCredits {
                     database_id: "db_alpha".to_string(),
-                    amount_e8s: 500_000,
+                    credits: 500_000,
                 },
             },
         )
@@ -2489,7 +2473,7 @@ mod tests {
 
         assert_eq!(
             url,
-            "http://127.0.0.1:3000/credits?canisterId=aaaaa-aa&databaseId=db%20alpha&amountE8s=500000"
+            "http://127.0.0.1:3000/credits?canisterId=aaaaa-aa&databaseId=db%20alpha&credits=500000"
         );
     }
 
@@ -2542,10 +2526,9 @@ mod tests {
             &CreditsConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-                rate_numerator_e8s: 200,
-                rate_denominator_cycles: 1_000_000,
-                fixed_update_fee_e8s: 100,
-                min_update_balance_e8s: 10_000,
+                credits_per_kinic: 1_000,
+                cycles_per_credit: 1_000_000_000,
+                min_update_credits: 1,
             },
             12_345,
         );

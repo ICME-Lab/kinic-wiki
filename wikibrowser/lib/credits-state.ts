@@ -2,7 +2,6 @@
 // What: maps canister credits data into display state and purchase links.
 // Why: purchase amount is selected on the purchase screen, not encoded in dashboard URLs.
 import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
-import { formatTokenAmountFromE8s } from "@/lib/credit-amount";
 
 export type DatabaseCreditState = "active" | "low-balance" | "suspended" | "unknown";
 
@@ -10,27 +9,27 @@ export type DatabaseCreditView = {
   state: DatabaseCreditState;
   label: string;
   summary: string;
-  balanceE8s: bigint;
-  minUpdateBalanceE8s: bigint;
+  balanceCredits: bigint;
+  minUpdateCredits: bigint;
   configAvailable: boolean;
   purchaseAvailable: boolean;
-  billable: boolean;
+  writeCreditsAvailable: boolean;
   reason: string | null;
 };
 
 export function databaseCreditsView(database: DatabaseSummary | null, config: CreditsConfig | null): DatabaseCreditView {
-  const balance = parseOptionalE8s(database?.creditsBalanceE8s);
-  const minimum = parseOptionalE8s(config?.minUpdateBalanceE8s);
+  const balance = parseOptionalCredits(database?.creditsBalance);
+  const minimum = parseOptionalCredits(config?.minUpdateCredits);
   if (!database || !config) {
     return {
       state: "unknown",
       label: "Credits unavailable",
       summary: "-",
-      balanceE8s: balance,
-      minUpdateBalanceE8s: minimum,
+      balanceCredits: balance,
+      minUpdateCredits: minimum,
       configAvailable: false,
       purchaseAvailable: false,
-      billable: false,
+      writeCreditsAvailable: false,
       reason: "Credits config unavailable."
     };
   }
@@ -38,12 +37,12 @@ export function databaseCreditsView(database: DatabaseSummary | null, config: Cr
     return {
       state: "suspended",
       label: "Pending",
-      summary: `Pending / ${formatTokenAmountFromE8s(balance)}`,
-      balanceE8s: balance,
-      minUpdateBalanceE8s: minimum,
+      summary: `Pending / ${formatCredits(balance)}`,
+      balanceCredits: balance,
+      minUpdateCredits: minimum,
       configAvailable: true,
       purchaseAvailable: true,
-      billable: false,
+      writeCreditsAvailable: false,
       reason: "Database activation is pending until its first credit purchase completes."
     };
   }
@@ -51,12 +50,12 @@ export function databaseCreditsView(database: DatabaseSummary | null, config: Cr
     return {
       state: "suspended",
       label: "Suspended",
-      summary: `Suspended / ${formatTokenAmountFromE8s(balance)}`,
-      balanceE8s: balance,
-      minUpdateBalanceE8s: minimum,
+      summary: `Suspended / ${formatCredits(balance)}`,
+      balanceCredits: balance,
+      minUpdateCredits: minimum,
       configAvailable: true,
       purchaseAvailable: true,
-      billable: false,
+      writeCreditsAvailable: false,
       reason: "Database credits are suspended."
     };
   }
@@ -64,31 +63,31 @@ export function databaseCreditsView(database: DatabaseSummary | null, config: Cr
     return {
       state: "low-balance",
       label: "Low balance",
-      summary: `Low balance / ${formatTokenAmountFromE8s(balance)}`,
-      balanceE8s: balance,
-      minUpdateBalanceE8s: minimum,
+      summary: `Low balance / ${formatCredits(balance)}`,
+      balanceCredits: balance,
+      minUpdateCredits: minimum,
       configAvailable: true,
       purchaseAvailable: true,
-      billable: false,
-      reason: "Database balance is below the minimum update balance."
+      writeCreditsAvailable: false,
+      reason: "Database credits balance is below the minimum update balance."
     };
   }
   return {
     state: "active",
     label: "Active",
-    summary: `Active / ${formatTokenAmountFromE8s(balance)}`,
-    balanceE8s: balance,
-    minUpdateBalanceE8s: minimum,
+    summary: `Active / ${formatCredits(balance)}`,
+    balanceCredits: balance,
+    minUpdateCredits: minimum,
     configAvailable: true,
     purchaseAvailable: true,
-    billable: true,
+    writeCreditsAvailable: true,
     reason: null
   };
 }
 
 export function databaseCanWrite(database: DatabaseSummary | null, config: CreditsConfig | null): boolean {
   const role = database?.role;
-  return (role === "writer" || role === "owner") && databaseCreditsView(database, config).billable;
+  return (role === "writer" || role === "owner") && databaseCreditsView(database, config).writeCreditsAvailable;
 }
 
 export function databaseCreditsDisabledReason(database: DatabaseSummary | null, config: CreditsConfig | null): string | null {
@@ -101,7 +100,11 @@ export function databaseCreditsHref(database: DatabaseSummary): string {
   return `/credits?${params.toString()}`;
 }
 
-function parseOptionalE8s(value: string | null | undefined): bigint {
+function parseOptionalCredits(value: string | null | undefined): bigint {
   if (!value || !/^[0-9]+$/.test(value)) return 0n;
   return BigInt(value);
+}
+
+function formatCredits(value: bigint): string {
+  return `${value.toString()} credits`;
 }

@@ -34,8 +34,6 @@ pub enum DatabaseStatus {
     Archiving,
     #[serde(alias = "Archived")]
     Archived,
-    #[serde(alias = "Deleted")]
-    Deleted,
     #[serde(alias = "Restoring")]
     Restoring,
 }
@@ -50,7 +48,6 @@ pub struct DatabaseInfo {
     pub logical_size_bytes: u64,
     pub snapshot_hash: Option<Vec<u8>>,
     pub archived_at_ms: Option<i64>,
-    pub deleted_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -60,34 +57,31 @@ pub struct DatabaseSummary {
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
-    pub credit_balance_e8s: Option<u64>,
+    pub credits_balance: Option<u64>,
     pub credits_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
-    pub deleted_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreditsConfig {
     pub kinic_ledger_canister_id: String,
     pub sns_governance_id: String,
-    pub rate_numerator_e8s: u64,
-    pub rate_denominator_cycles: u64,
-    pub fixed_update_fee_e8s: u64,
-    pub min_update_balance_e8s: u64,
+    pub credits_per_kinic: u64,
+    pub cycles_per_credit: u64,
+    pub min_update_credits: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreditsConfigUpdate {
-    pub rate_numerator_e8s: u64,
-    pub rate_denominator_cycles: u64,
-    pub fixed_update_fee_e8s: u64,
-    pub min_update_balance_e8s: u64,
+    pub credits_per_kinic: u64,
+    pub cycles_per_credit: u64,
+    pub min_update_credits: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreditsPurchaseResult {
     pub block_index: u64,
-    pub balance_e8s: u64,
+    pub balance_credits: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -95,14 +89,14 @@ pub struct DatabaseCreditEntry {
     pub entry_id: u64,
     pub database_id: String,
     pub kind: String,
-    pub amount_e8s: i64,
-    pub balance_after_e8s: u64,
+    pub amount_credits: i64,
+    pub balance_after_credits: u64,
+    pub payment_amount_e8s: Option<u64>,
     pub caller: String,
     pub method: Option<String>,
     pub cycles_delta: Option<u64>,
-    pub rate_numerator_e8s: Option<u64>,
-    pub rate_denominator_cycles: Option<u64>,
-    pub fixed_update_fee_e8s: Option<u64>,
+    pub credits_per_kinic: Option<u64>,
+    pub cycles_per_credit: Option<u64>,
     pub usage_event_id: Option<u64>,
     pub ledger_block_index: Option<u64>,
     pub created_at_ms: i64,
@@ -120,8 +114,8 @@ pub struct DatabaseCreditPendingOperation {
     pub database_id: String,
     pub kind: String,
     pub caller: String,
-    pub amount_e8s: i64,
-    pub fee_e8s: i64,
+    pub credits: i64,
+    pub payment_amount_e8s: i64,
     pub from_owner: Option<String>,
     pub from_subaccount: Option<Vec<u8>>,
     pub to_owner: Option<String>,
@@ -425,21 +419,6 @@ pub struct GlobNodeHit {
     pub path: String,
     pub kind: NodeEntryKind,
     pub has_children: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct RecentNodesRequest {
-    pub database_id: String,
-    pub limit: u32,
-    pub path: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct RecentNodeHit {
-    pub path: String,
-    pub kind: NodeKind,
-    pub updated_at: i64,
-    pub etag: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

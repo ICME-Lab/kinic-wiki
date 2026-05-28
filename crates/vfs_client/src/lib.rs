@@ -21,9 +21,9 @@ use vfs_types::{
     ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
     MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 #[async_trait]
@@ -48,7 +48,7 @@ pub trait VfsApi: Sync {
     async fn purchase_database_credits(
         &self,
         _database_id: &str,
-        _amount_e8s: u64,
+        _amount_credits: u64,
     ) -> Result<CreditsPurchaseResult> {
         Err(anyhow!(
             "purchase_database_credits is not implemented by this client"
@@ -57,7 +57,7 @@ pub trait VfsApi: Sync {
     async fn preview_database_credit_purchase(
         &self,
         _database_id: &str,
-        _amount_e8s: u64,
+        _amount_credits: u64,
     ) -> Result<()> {
         Err(anyhow!(
             "preview_database_credit_purchase is not implemented by this client"
@@ -227,7 +227,6 @@ pub trait VfsApi: Sync {
     async fn move_node(&self, request: MoveNodeRequest) -> Result<MoveNodeResult>;
     async fn mkdir_node(&self, request: MkdirNodeRequest) -> Result<MkdirNodeResult>;
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>>;
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>>;
     async fn graph_links(&self, _request: GraphLinksRequest) -> Result<Vec<LinkEdge>> {
         Err(anyhow!("graph_links is not implemented by this client"))
     }
@@ -498,13 +497,13 @@ impl VfsApi for CanisterVfsClient {
     async fn purchase_database_credits(
         &self,
         database_id: &str,
-        amount_e8s: u64,
+        amount_credits: u64,
     ) -> Result<CreditsPurchaseResult> {
         let result: Result<CreditsPurchaseResult, String> = self
             .update2(
                 "purchase_database_credits",
                 &database_id.to_string(),
-                &amount_e8s,
+                &amount_credits,
             )
             .await?;
         result.map_err(|error| anyhow!(error))
@@ -513,13 +512,13 @@ impl VfsApi for CanisterVfsClient {
     async fn preview_database_credit_purchase(
         &self,
         database_id: &str,
-        amount_e8s: u64,
+        amount_credits: u64,
     ) -> Result<()> {
         let result: Result<(), String> = self
             .query2(
                 "preview_database_credit_purchase",
                 &database_id.to_string(),
-                &amount_e8s,
+                &amount_credits,
             )
             .await?;
         result.map_err(|error| anyhow!(error))
@@ -826,12 +825,6 @@ impl VfsApi for CanisterVfsClient {
 
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         let result: Result<Vec<GlobNodeHit>, String> = self.query("glob_nodes", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        let result: Result<Vec<RecentNodeHit>, String> =
-            self.query("recent_nodes", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

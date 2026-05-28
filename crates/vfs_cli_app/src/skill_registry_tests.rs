@@ -25,9 +25,9 @@ use vfs_types::{
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
-    WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeItem, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[derive(Default)]
@@ -172,31 +172,6 @@ impl VfsApi for SkillMockClient {
 
     async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         Ok(Vec::new())
-    }
-
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        let prefix = request.path.unwrap_or_default();
-        let mut hits = self
-            .nodes
-            .lock()
-            .expect("nodes lock")
-            .values()
-            .filter(|node| node.path.starts_with(&prefix))
-            .map(|node| RecentNodeHit {
-                path: node.path.clone(),
-                kind: node.kind.clone(),
-                updated_at: node.updated_at,
-                etag: node.etag.clone(),
-            })
-            .collect::<Vec<_>>();
-        hits.sort_by(|left, right| {
-            right
-                .updated_at
-                .cmp(&left.updated_at)
-                .then_with(|| left.path.cmp(&right.path))
-        });
-        hits.truncate(request.limit as usize);
-        Ok(hits)
     }
 
     async fn multi_edit_node(&self, _request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {

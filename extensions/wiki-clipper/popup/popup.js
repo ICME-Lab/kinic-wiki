@@ -155,12 +155,12 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
     const option = document.createElement("option");
     option.value = database.databaseId;
     const label = databaseOptionLabel(database, nameCounts.get(databaseNameKey(database.name)) || 1);
-    option.disabled = !database.billable;
-    option.textContent = database.billable ? label : `${label} - ${database.creditsReason}`;
+    option.disabled = !database.writeCreditsAvailable;
+    option.textContent = database.writeCreditsAvailable ? label : `${label} - ${database.creditsReason}`;
     option.title = database.databaseId;
     databaseSelect.append(option);
   }
-  const selectable = databases.filter((database) => database.billable);
+  const selectable = databases.filter((database) => database.writeCreditsAvailable);
   if (selectable.length === 0) {
     databaseSelect.value = "";
     databaseSelect.disabled = true;

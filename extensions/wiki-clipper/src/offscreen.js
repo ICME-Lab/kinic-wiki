@@ -7,7 +7,7 @@ import {
   createVfsActor as defaultCreateVfsActor,
   getCreditsConfigOrNull,
   normalizeWritableDatabases,
-  requireDatabaseBillable
+  requireDatabaseWriteCreditsAvailable
 } from "./vfs-actor.js";
 
 const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
@@ -50,7 +50,7 @@ export async function queueUrlIngest(tab, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  await requireDatabaseBillable(actor, config.databaseId);
+  await requireDatabaseWriteCreditsAvailable(actor, config.databaseId);
   const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
   const request = buildUrlIngestRequest({
     url: tab.url,
@@ -86,7 +86,7 @@ export async function saveRawSource(rawSource, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  await requireDatabaseBillable(actor, config.databaseId);
+  await requireDatabaseWriteCreditsAvailable(actor, config.databaseId);
   const existing = await actor.read_node(config.databaseId, rawSource.path);
   if ("Err" in existing) throw new Error(existing.Err);
   const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];

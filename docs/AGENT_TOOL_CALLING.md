@@ -51,7 +51,6 @@ Current tool names:
 - `mkdir`
 - `mv`
 - `glob`
-- `recent`
 - `graph_neighborhood`
 - `graph_links`
 - `incoming_links`
@@ -75,7 +74,6 @@ Read-only tools are:
 - `skill_find`
 - `skill_inspect`
 - `skill_read`
-- `recent`
 - `graph_neighborhood`
 - `graph_links`
 - `incoming_links`

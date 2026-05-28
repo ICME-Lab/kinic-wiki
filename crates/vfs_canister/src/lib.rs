@@ -28,7 +28,7 @@ use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::{
     CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
-    RequiredRole, UsageEvent, VfsService,
+    RequiredRole, UsageEvent, VfsService, payment_amount_e8s_for_credits,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
@@ -43,12 +43,11 @@ use vfs_types::{
     MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,7 +162,7 @@ struct ExpectedLedgerTransfer {
     from: IcrcAccount,
     to: IcrcAccount,
     amount_e8s: u64,
-    fee_e8s: u64,
+    ledger_fee_e8s: u64,
     memo: Vec<u8>,
     created_at_time_ns: u64,
 }
@@ -364,16 +363,16 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[query]
-fn preview_database_credit_purchase(database_id: String, amount_e8s: u64) -> Result<(), String> {
+fn preview_database_credit_purchase(database_id: String, credits: u64) -> Result<(), String> {
     with_service(|service| {
-        service.validate_database_credit_purchase(&database_id, &caller_text(), amount_e8s)
+        service.validate_database_credit_purchase(&database_id, &caller_text(), credits)
     })
 }
 
 #[update]
 async fn purchase_database_credits(
     database_id: String,
-    amount_e8s: u64,
+    credits: u64,
 ) -> Result<CreditsPurchaseResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
@@ -381,7 +380,8 @@ async fn purchase_database_credits(
     let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let fee_e8s = ledger_fee(ledger).await?;
+    let ledger_fee_e8s = ledger_fee(ledger).await?;
+    let payment_amount_e8s = payment_amount_e8s_for_credits(credits, &config)?;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
     let operation_id = match with_service(|service| {
@@ -389,13 +389,13 @@ async fn purchase_database_credits(
             DatabaseCreditPurchaseWithLedgerDetails {
                 database_id: &database_id,
                 caller: &caller,
-                amount_e8s,
+                credits,
                 ledger: CreditsPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
                     to_owner: &canister_owner,
                     to_subaccount: None,
-                    ledger_fee_e8s: fee_e8s,
+                    ledger_fee_e8s,
                     ledger_created_at_time_ns,
                 },
                 now,
@@ -415,8 +415,8 @@ async fn purchase_database_credits(
             owner: canister_principal(),
             subaccount: None,
         },
-        amount_e8s,
-        fee_e8s,
+        payment_amount_e8s,
+        ledger_fee_e8s,
         operation_id,
         ledger_created_at_time_ns,
     )
@@ -429,14 +429,14 @@ async fn purchase_database_credits(
                     operation_id,
                     &database_id,
                     &caller,
-                    amount_e8s,
+                    credits,
                     block_index,
                     now,
                 )
             })?;
             Ok(CreditsPurchaseResult {
                 block_index,
-                balance_e8s: balance,
+                balance_credits: balance,
             })
         }
         LedgerTransferFromOutcome::LedgerErr(error) => {
@@ -445,7 +445,7 @@ async fn purchase_database_credits(
                     operation_id,
                     &database_id,
                     &caller,
-                    amount_e8s,
+                    credits,
                 )
             });
             Err(error)
@@ -456,7 +456,7 @@ async fn purchase_database_credits(
                     operation_id,
                     &database_id,
                     &caller,
-                    amount_e8s,
+                    credits,
                     now,
                 )
             });
@@ -528,7 +528,7 @@ async fn repair_database_credit_purchase_complete(
     })?;
     Ok(CreditsPurchaseResult {
         block_index: ledger_block_index,
-        balance_e8s: balance,
+        balance_credits: balance,
     })
 }
 
@@ -555,7 +555,7 @@ async fn repair_database_credit_purchase_retry(
         expected.from,
         expected.to,
         expected.amount_e8s,
-        expected.fee_e8s,
+        expected.ledger_fee_e8s,
         operation_id,
         expected.created_at_time_ns,
     )
@@ -575,7 +575,7 @@ async fn repair_database_credit_purchase_retry(
             })?;
             Ok(CreditsPurchaseResult {
                 block_index,
-                balance_e8s: balance,
+                balance_credits: balance,
             })
         }
         LedgerTransferFromOutcome::LedgerErr(error)
@@ -626,14 +626,6 @@ fn repair_database_credit_purchase_cancel(
 #[query]
 fn get_credits_config() -> Result<CreditsConfig, String> {
     with_service(|service| service.credits_config())
-}
-
-#[update]
-fn validate_update_credits_config(payload: Vec<u8>) -> Result<(), String> {
-    require_authenticated_caller()?;
-    let update = Decode!(&payload, CreditsConfigUpdate)
-        .map_err(|error| format!("invalid credits config payload: {error}"))?;
-    with_service(|service| service.validate_credits_config_update(&update))
 }
 
 #[update]
@@ -935,11 +927,6 @@ fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
 #[query]
 fn glob_nodes(request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>, String> {
     with_service(|service| service.glob_nodes(&caller_text(), request))
-}
-
-#[query]
-fn recent_nodes(request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>, String> {
-    with_service(|service| service.recent_nodes(&caller_text(), request))
 }
 
 #[query]
@@ -1305,8 +1292,8 @@ fn expected_ledger_transfer(
 ) -> Result<ExpectedLedgerTransfer, String> {
     let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
     let to_owner = pending_principal(operation.to_owner.as_deref(), "to_owner")?;
-    let amount_e8s = pending_i64_to_u64(operation.amount_e8s, "amount_e8s")?;
-    let fee_e8s = pending_i64_to_u64(
+    let amount_e8s = pending_i64_to_u64(operation.payment_amount_e8s, "payment_amount_e8s")?;
+    let ledger_fee_e8s = pending_i64_to_u64(
         operation
             .ledger_fee_e8s
             .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())?,
@@ -1328,7 +1315,7 @@ fn expected_ledger_transfer(
             subaccount: operation.to_subaccount.clone(),
         },
         amount_e8s,
-        fee_e8s,
+        ledger_fee_e8s,
         memo: credit_operation_memo(memo_kind, operation.operation_id),
         created_at_time_ns,
     })
@@ -1371,7 +1358,7 @@ async fn validate_ledger_transfer_block(
         .fee
         .as_ref()
         .ok_or_else(|| "ledger transaction missing fee".to_string())?;
-    if nat_to_u64(fee)? != expected.fee_e8s {
+    if nat_to_u64(fee)? != expected.ledger_fee_e8s {
         return Err("ledger transaction fee mismatch".to_string());
     }
     if transfer.memo.as_deref() != Some(expected.memo.as_slice()) {
@@ -1440,14 +1427,21 @@ async fn ledger_transfer_from(
     from: IcrcAccount,
     to: IcrcAccount,
     amount_e8s: u64,
-    fee_e8s: u64,
+    ledger_fee_e8s: u64,
     operation_id: u64,
     created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
     let memo = credit_operation_memo("credit_purchase", operation_id);
     #[cfg(test)]
     {
-        let _ = (ledger, from, to, amount_e8s, fee_e8s, created_at_time_ns);
+        let _ = (
+            ledger,
+            from,
+            to,
+            amount_e8s,
+            ledger_fee_e8s,
+            created_at_time_ns,
+        );
         record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
             outcome
@@ -1463,7 +1457,7 @@ async fn ledger_transfer_from(
             from,
             to,
             amount: Nat::from(amount_e8s),
-            fee: Some(Nat::from(fee_e8s)),
+            fee: Some(Nat::from(ledger_fee_e8s)),
             memo: Some(memo),
             created_at_time: Some(created_at_time_ns),
         };
@@ -1632,7 +1626,7 @@ where
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
         authorize(service, &caller)?;
         if let Some(database_id) = database_id.as_deref() {
-            service.require_database_billable(database_id)?;
+            service.require_database_write_credits_available(database_id)?;
         }
         let result = f(service, &caller, now);
         let after_cycles = cycle_balance();
@@ -1699,7 +1693,6 @@ fn memory_capabilities() -> Vec<MemoryCapability> {
             "graph_neighborhood",
             "Auxiliary local link graph around one node",
         ),
-        ("recent_nodes", "Auxiliary recent live-node listing"),
     ]
     .into_iter()
     .map(|(name, description)| MemoryCapability {

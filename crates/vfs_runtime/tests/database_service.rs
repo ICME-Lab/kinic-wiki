@@ -3,7 +3,7 @@
 // Why: The canister mount layer depends on runtime index and role semantics being deterministic.
 use std::path::PathBuf;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
@@ -102,7 +102,7 @@ fn index_migration_adds_credits_to_existing_database_index() {
     let conn = Connection::open(index_path).expect("index should reopen");
     let balance: i64 = conn
         .query_row(
-            "SELECT balance_e8s FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            "SELECT balance_credits FROM database_credit_accounts WHERE database_id = 'db_existing'",
             params![],
             |row| row.get(0),
         )
@@ -212,6 +212,18 @@ fn database_index_row(
     .expect("database index row should exist")
 }
 
+fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT 1 FROM databases WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .expect("database row check should load")
+    .is_some()
+}
+
 fn database_name(root: &std::path::Path, database_id: &str) -> String {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -257,7 +269,7 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
 fn database_credits_balance(root: &std::path::Path, database_id: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT balance_e8s FROM database_credit_accounts WHERE database_id = ?1",
+        "SELECT balance_credits FROM database_credit_accounts WHERE database_id = ?1",
         params![database_id],
         |row| row.get(0),
     )
@@ -288,19 +300,19 @@ fn credit_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    amount_e8s: u64,
+    amount_credits: u64,
     block_index: u64,
     now: i64,
 ) -> u64 {
     let operation_id = service
-        .begin_database_credit_purchase(database_id, caller, amount_e8s, now)
+        .begin_database_credit_purchase(database_id, caller, amount_credits, now)
         .expect("database credit purchase should begin");
     service
         .credit_database_purchase(
             operation_id,
             database_id,
             caller,
-            amount_e8s,
+            amount_credits,
             block_index,
             now,
         )
@@ -891,7 +903,7 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
 }
 
 #[test]
-fn url_ingest_trigger_session_check_requires_billable_database() {
+fn url_ingest_trigger_session_check_requires_write_credits_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -1142,7 +1154,7 @@ fn ops_answer_session_rejects_anonymous_and_non_members() {
 }
 
 #[test]
-fn ops_answer_session_check_requires_billable_database() {
+fn ops_answer_session_check_requires_write_credits_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -1179,22 +1191,22 @@ fn check_database_write_credits_requires_writer_and_funded_database() {
     credit_database(&service, "alpha", "owner", 1_000_000, 1, 4);
     service
         .check_database_write_credits("alpha", "owner")
-        .expect("owner should pass billable check");
+        .expect("owner should pass write credits check");
     service
         .check_database_write_credits("alpha", "writer")
-        .expect("writer should pass billable check");
+        .expect("writer should pass write credits check");
 
     let reader = service
         .check_database_write_credits("alpha", "reader")
-        .expect_err("reader should fail billable check");
+        .expect_err("reader should fail write credits check");
     assert!(reader.contains("principal lacks required database role"));
     let anonymous = service
         .check_database_write_credits("alpha", "2vxsx-fae")
-        .expect_err("anonymous should fail billable check");
+        .expect_err("anonymous should fail write credits check");
     assert!(anonymous.contains("anonymous caller not allowed"));
     let missing = service
         .check_database_write_credits("alpha", "missing")
-        .expect_err("non-member should fail billable check");
+        .expect_err("non-member should fail write credits check");
     assert!(missing.contains("principal has no access"));
 }
 
@@ -1769,7 +1781,7 @@ fn pending_database_credit_purchase_blocks_delete_until_resolved() {
 }
 
 #[test]
-fn delete_database_discards_remaining_credits() {
+fn delete_database_removes_index_rows_and_discards_remaining_credits() {
     let (service, root) = service_with_root();
     service
         .create_database("funded", "owner", 1)
@@ -1779,12 +1791,10 @@ fn delete_database_discards_remaining_credits() {
     service
         .delete_database(delete_request("funded"), "owner", 3)
         .expect("remaining credits should be discarded on delete");
-    assert_eq!(database_credits_balance(&root, "funded"), 0);
-    assert_eq!(
-        database_ledger_kinds(&root, "funded"),
-        vec!["credit_purchase", "delete_credit_discard"]
-    );
-    assert_eq!(database_index_row(&root, "funded").0, "deleted");
+    assert!(!database_index_row_exists(&root, "funded"));
+    assert_eq!(database_member_count(&root, "funded"), 0);
+    assert_eq!(database_pending_operation_count(&root, "funded"), 0);
+    assert!(database_ledger_kinds(&root, "funded").is_empty());
 }
 
 #[test]
@@ -2283,13 +2293,10 @@ fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
     service
         .delete_database(delete_request("alpha"), "owner", 3)
         .expect("delete should succeed");
-    assert_restore_size(&root, "alpha", None);
-    assert!(
-        service
-            .read_node("alpha", "owner", "/Wiki/a.md")
-            .expect_err("deleted DB should reject reads")
-            .contains("database is deleted")
-    );
+    assert!(!database_index_row_exists(&root, "alpha"));
+    service
+        .read_node("alpha", "owner", "/Wiki/a.md")
+        .expect_err("deleted DB should reject reads");
 
     let beta = service
         .create_database("beta", "owner", 4)
@@ -2322,7 +2329,7 @@ fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
     service
         .delete_database(delete_request("missing_file"), "owner", 2)
         .expect("missing file should not block delete");
-    assert_eq!(database_index_row(&root, "missing_file").0, "deleted");
+    assert!(!database_index_row_exists(&root, "missing_file"));
 
     service
         .create_database("remove_error", "owner", 3)
@@ -2626,7 +2633,6 @@ fn archives_and_restores_database_bytes() {
     assert_eq!(info.status, DatabaseStatus::Active);
     assert_eq!(info.snapshot_hash, Some(snapshot_hash));
     assert_eq!(info.archived_at_ms, None);
-    assert_eq!(info.deleted_at_ms, None);
     assert_restore_size(&root, "alpha", None);
     assert_eq!(
         database_index_row(&root, "alpha").1,
@@ -2874,12 +2880,9 @@ fn cancel_database_archive_rejects_invalid_statuses_and_non_owner() {
     service
         .delete_database(delete_request("deleted_db"), "owner", 13)
         .expect("delete should succeed");
-    assert!(
-        service
-            .cancel_database_archive("deleted_db", "owner", 14)
-            .expect_err("deleted cancel should fail")
-            .contains("database is deleted")
-    );
+    service
+        .cancel_database_archive("deleted_db", "owner", 14)
+        .expect_err("deleted cancel should fail");
 }
 
 #[test]
@@ -3206,7 +3209,7 @@ fn cancel_database_restore_returns_archived_database_and_removes_partial_state()
 }
 
 #[test]
-fn cancel_database_restore_returns_deleted_database_and_removes_partial_state() {
+fn deleted_database_cannot_begin_restore() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -3241,24 +3244,10 @@ fn cancel_database_restore_returns_deleted_database_and_removes_partial_state() 
 
     service
         .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 6)
-        .expect("restore should begin");
-    service
-        .write_database_restore_chunk("alpha", "owner", 0, &bytes)
-        .expect("restore chunk should write");
-    let restoring_file = database_file_path(&root, "alpha");
-    assert!(!restoring_file.exists());
-
-    service
-        .cancel_database_restore("alpha", "owner", 7)
-        .expect("restore cancel should succeed");
-
-    assert_eq!(
-        database_index_row(&root, "alpha"),
-        ("deleted".to_string(), None, 0, None)
-    );
+        .expect_err("deleted database should not restore");
+    assert!(!database_index_row_exists(&root, "alpha"));
     assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
     assert_eq!(database_restore_session_count(&root, "alpha"), 0);
-    assert!(!restoring_file.exists());
 }
 
 #[test]

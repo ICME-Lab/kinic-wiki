@@ -227,7 +227,7 @@ test("credits-disabled save-source opens settings once", async () => {
   const settingsTabs = [];
   resetSettingsOpenThrottleForTest();
   const restore = installChromeForSettings(syncStorage, settingsTabs);
-  setOffscreenBridgeForTest(async () => ({ ok: false, error: "Database balance is below the minimum update balance." }));
+  setOffscreenBridgeForTest(async () => ({ ok: false, error: "Database credits balance is below the minimum update balance." }));
   try {
     const message = {
       type: "save-source",

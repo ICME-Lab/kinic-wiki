@@ -15,9 +15,8 @@ use vfs_types::{
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
     MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    QueryContextRequest, RecentNodesRequest, RenameDatabaseRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
@@ -32,7 +31,7 @@ use super::{
     memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
     parse_upgrade_credits_config_arg, preview_database_credit_purchase, purchase_database_credits,
     query_context, query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    recent_nodes, rename_database, repair_database_credit_purchase_cancel,
+    rename_database, repair_database_credit_purchase_cancel,
     repair_database_credit_purchase_complete, repair_database_credit_purchase_retry,
     revoke_database_access, search_node_paths, search_nodes, set_ledger_transaction_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
@@ -63,7 +62,7 @@ fn install_test_service() {
                 1_700_000_000_001,
             )
         })
-        .expect("default database should be billable");
+        .expect("default database should have write credits available");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -112,7 +111,7 @@ fn ledger_transfer_transaction(
     from: IcrcAccount,
     to: IcrcAccount,
     amount_e8s: u64,
-    fee_e8s: u64,
+    ledger_fee_e8s: u64,
     memo: Vec<u8>,
     created_at_time: u64,
 ) -> LedgerTransaction {
@@ -122,7 +121,7 @@ fn ledger_transfer_transaction(
             from,
             to,
             amount: Nat::from(amount_e8s),
-            fee: Some(Nat::from(fee_e8s)),
+            fee: Some(Nat::from(ledger_fee_e8s)),
             memo: Some(memo),
             created_at_time: Some(created_at_time),
             spender: None,
@@ -144,7 +143,10 @@ fn pending_credit_purchase_transaction(
                 .expect("to owner should parse"),
             subaccount: operation.to_subaccount.clone(),
         },
-        operation.amount_e8s.try_into().expect("amount should fit"),
+        operation
+            .payment_amount_e8s
+            .try_into()
+            .expect("amount should fit"),
         operation
             .ledger_fee_e8s
             .expect("ledger fee")
@@ -163,10 +165,9 @@ fn explicit_credits_config() -> CreditsConfig {
     CreditsConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-        rate_numerator_e8s: 200,
-        rate_denominator_cycles: 1_000_000,
-        fixed_update_fee_e8s: 100,
-        min_update_balance_e8s: 10_000,
+        credits_per_kinic: 1_000,
+        cycles_per_credit: 1_000_000_000,
+        min_update_credits: 1,
     }
 }
 
@@ -191,7 +192,7 @@ fn controller_can_query_index_sql_json() {
     set_test_caller_principal_for_test(Principal::management_canister());
 
     let result = query_index_sql_json(
-        "SELECT json_object('credit_purchase_e8s', COALESCE(SUM(amount_e8s), 0)) FROM database_credit_ledger WHERE kind = 'credit_purchase' LIMIT 1".to_string(),
+        "SELECT json_object('credit_purchase_credits', COALESCE(SUM(amount_credits), 0)) FROM database_credit_ledger WHERE kind = 'credit_purchase' LIMIT 1".to_string(),
         10,
     )
     .expect("controller should query index SQL");
@@ -200,7 +201,7 @@ fn controller_can_query_index_sql_json() {
     assert_eq!(result.row_count, 1);
     assert_eq!(
         result.rows,
-        vec![r#"{"credit_purchase_e8s":1000000}"#.to_string()]
+        vec![r#"{"credit_purchase_credits":1000000}"#.to_string()]
     );
 }
 
@@ -234,7 +235,7 @@ fn index_sql_json_rejects_mutating_and_multi_statement_sql() {
     set_test_caller_principal_for_test(Principal::management_canister());
 
     for sql in [
-        "UPDATE database_credit_accounts SET balance_e8s = 0",
+        "UPDATE database_credit_accounts SET balance_credits = 0",
         "DELETE FROM database_credit_ledger",
         "INSERT INTO database_credit_ledger (database_id) VALUES ('x')",
         "CREATE TABLE x (id INTEGER)",
@@ -262,13 +263,18 @@ fn index_sql_json_requires_text_json_first_column() {
     assert!(error.contains("one non-null TEXT JSON column"));
 }
 
-fn fund_database(database_id: &str, amount_e8s: u64, ledger_block_index: u64) {
+fn fund_database(database_id: &str, amount_credits: u64, ledger_block_index: u64) {
     let principal = Principal::management_canister().to_text();
     SERVICE.with(|slot| {
         let service = slot.borrow();
         let service = service.as_ref().expect("service should be installed");
         let operation_id = service
-            .begin_database_credit_purchase(database_id, &principal, amount_e8s, 1_700_000_000_000)
+            .begin_database_credit_purchase(
+                database_id,
+                &principal,
+                amount_credits,
+                1_700_000_000_000,
+            )
             .expect("database credit purchase should begin");
         if service
             .activate_pending_database_for_credit_purchase(database_id, 1_700_000_000_000)
@@ -284,7 +290,7 @@ fn fund_database(database_id: &str, amount_e8s: u64, ledger_block_index: u64) {
                 operation_id,
                 database_id,
                 &principal,
-                amount_e8s,
+                amount_credits,
                 ledger_block_index,
                 1_700_000_000_000,
             )
@@ -374,7 +380,7 @@ fn purchase_database_credits_credits_completed_transfer_from() {
         .expect("completed transfer-from should credit database");
 
     assert_eq!(result.block_index, 42);
-    assert_eq!(result.balance_e8s, 500);
+    assert_eq!(result.balance_credits, 500);
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -401,7 +407,10 @@ fn preview_database_credit_purchase_rejects_invalid_target_before_approve() {
         .expect("preview should accept");
     let zero = preview_database_credit_purchase(database.database_id.clone(), 0)
         .expect_err("zero amount should reject");
-    assert!(zero.contains("credit purchase amount must be positive"));
+    assert!(zero.contains("credit purchase credits must be positive"));
+    let overflow = preview_database_credit_purchase(database.database_id.clone(), i64::MAX as u64)
+        .expect_err("payment amount overflow should reject before approve");
+    assert!(overflow.contains("credit purchase payment amount overflow"));
     let missing = preview_database_credit_purchase("missing".to_string(), 500)
         .expect_err("missing database should reject");
     assert!(missing.contains("database not found"));
@@ -415,6 +424,20 @@ fn purchase_database_credits_rejects_balance_overflow_before_ledger_call() {
         name: "Overflow".to_string(),
     })
     .expect("database should create");
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .update_credits_config(
+                CreditsConfigUpdate {
+                    credits_per_kinic: 100_000_000,
+                    cycles_per_credit: 1_000_000_000,
+                    min_update_credits: 1,
+                },
+                &test_governance_principal().to_text(),
+            )
+            .expect("credits config should update");
+    });
     fund_database(&database.database_id, i64::MAX as u64, 41);
     clear_last_ledger_memo_for_test();
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -473,8 +496,8 @@ fn purchase_database_credits_records_ambiguous_transfer_from() {
         .entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
-    assert_eq!(entries[0].amount_e8s, 500);
-    assert_eq!(entries[0].balance_after_e8s, 0);
+    assert_eq!(entries[0].amount_credits, 500);
+    assert_eq!(entries[0].balance_after_credits, 0);
     assert_eq!(entries[0].usage_event_id, None);
     assert_eq!(entries[0].ledger_block_index, None);
     assert_eq!(
@@ -522,7 +545,7 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
     ))
     .expect("repair complete should retry mount and credit");
 
-    assert_eq!(result.balance_e8s, 500);
+    assert_eq!(result.balance_credits, 500);
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -577,7 +600,7 @@ fn governance_can_repair_ambiguous_credit_purchase() {
         ))
         .expect("governance should repair credit purchase");
         assert_eq!(result.block_index, 77);
-        assert_eq!(result.balance_e8s, 500);
+        assert_eq!(result.balance_credits, 500);
         assert_eq!(
             database_status_and_mount(&database_id).0,
             DatabaseStatus::Active
@@ -672,7 +695,7 @@ fn repair_credit_purchase_retry_uses_original_ledger_args() {
     ))
     .expect("retry should complete");
     assert_eq!(result.block_index, 79);
-    assert_eq!(result.balance_e8s, 500);
+    assert_eq!(result.balance_credits, 500);
     let memo = last_ledger_memo_for_test().expect("retry should send memo");
     assert!(String::from_utf8_lossy(&memo).starts_with("kinic:vfs:credit_purchase:"));
     let pending = list_database_credit_pending_operations(database_id, None, 10)
@@ -747,7 +770,7 @@ fn purchase_database_credits_allows_non_owner_payer() {
         .expect("non-owner payer should fund DB");
 
     assert_eq!(result.block_index, 43);
-    assert_eq!(result.balance_e8s, 700);
+    assert_eq!(result.balance_credits, 700);
 }
 
 #[test]
@@ -788,7 +811,7 @@ fn purchase_database_credits_rejects_unknown_and_deleted_database() {
 
     let deleted = block_on_ready(purchase_database_credits(database.database_id, 500))
         .expect_err("deleted database should reject");
-    assert!(deleted.contains("database is deleted"));
+    assert!(deleted.contains("database not found"));
 }
 
 fn usage_event_count() -> u64 {
@@ -857,6 +880,16 @@ fn install_suspended_default_service() {
             )
         })
         .expect("default database should become suspended");
+    service
+        .charge_database_update(
+            "default",
+            "2vxsx-fae",
+            "test_suspend",
+            1_000_000_000,
+            None,
+            1_700_000_000_002,
+        )
+        .expect("default database should be charged to suspension");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -895,10 +928,9 @@ fn install_low_balance_default_service() {
     service
         .update_credits_config(
             CreditsConfigUpdate {
-                rate_numerator_e8s: 200,
-                rate_denominator_cycles: 1_000_000,
-                fixed_update_fee_e8s: 100,
-                min_update_balance_e8s: 2_000_000,
+                credits_per_kinic: 1_000,
+                cycles_per_credit: 1_000_000_000,
+                min_update_credits: 2_000_000,
             },
             &test_governance_principal().to_text(),
         )
@@ -1177,7 +1209,7 @@ fn check_database_write_credits_requires_authenticated_writer() {
     let database_id = {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         create_database(CreateDatabaseRequest {
-            name: "Billable check".to_string(),
+            name: "Write credits check".to_string(),
         })
         .expect("database should create")
         .database_id
@@ -1216,7 +1248,7 @@ fn check_database_write_credits_requires_authenticated_writer() {
     assert!(reader_error.contains("principal lacks required database role"));
 
     let _caller = AuthenticatedCallerGuard::install_principal(owner);
-    check_database_write_credits(database_id).expect("owner should pass billable check");
+    check_database_write_credits(database_id).expect("owner should pass write credits check");
 }
 
 #[test]
@@ -1235,7 +1267,7 @@ fn write_nodes_rejects_reader_role() {
         .and_then(|operation_id| {
             service.credit_database_purchase(operation_id, "public", "owner", 1_000_000, 1, 2)
         })
-        .expect("database should be billable");
+        .expect("database should have write credits available");
     service
         .grant_database_access("public", "owner", "2vxsx-fae", DatabaseRole::Reader, 3)
         .expect("anonymous reader should grant");
@@ -1949,7 +1981,7 @@ fn fs_entrypoints_search_cover_fts_recall_cjk_and_delete_sync() {
 }
 
 #[test]
-fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
+fn fs_entrypoints_cover_move_glob_and_multi_edit() {
     install_test_service();
     ensure_parent_folders("/Wiki/work/item.md");
     ensure_parent_folders("/Wiki/archive/item.md");
@@ -1986,18 +2018,6 @@ fn fs_entrypoints_cover_move_glob_recent_and_multi_edit() {
         globbed
             .iter()
             .any(|hit| hit.path == "/Wiki/archive" && hit.kind == NodeEntryKind::Folder)
-    );
-
-    let recent = recent_nodes(RecentNodesRequest {
-        database_id: "default".to_string(),
-        limit: 5,
-        path: Some("/Wiki".to_string()),
-    })
-    .expect("recent should succeed");
-    assert!(
-        recent
-            .iter()
-            .any(|node| node.path == "/Wiki/archive/item.md")
     );
 
     let edited = multi_edit_node(MultiEditNodeRequest {
@@ -2309,7 +2329,7 @@ fn cancel_database_archive_entrypoint_rejects_non_owner() {
                 1_700_000_000_001,
             )
         })
-        .expect("database should be billable");
+        .expect("database should have write credits available");
     service
         .begin_database_archive("default", "owner", 1_700_000_000_002)
         .expect("archive should begin");

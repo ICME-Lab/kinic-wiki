@@ -29,9 +29,9 @@ use vfs_types::{
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult,
 };
@@ -58,6 +58,7 @@ const INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX: &str =
 const INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS: &str =
     "database_index:015_credits_pending_ledger_details";
 const INDEX_SCHEMA_VERSION_ACTIVE_STATUS: &str = "database_index:016_active_status";
+const INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES: &str = "database_index:017_hard_delete_databases";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -73,10 +74,10 @@ const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
 const SHA256_DIGEST_BYTES: usize = 32;
 const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
-pub const DEFAULT_RATE_NUMERATOR_E8S: u64 = 200;
-pub const DEFAULT_RATE_DENOMINATOR_CYCLES: u64 = 1_000_000;
-pub const DEFAULT_FIXED_UPDATE_FEE_E8S: u64 = 100;
-pub const DEFAULT_MIN_UPDATE_BALANCE_E8S: u64 = 10_000;
+pub const KINIC_E8S_PER_TOKEN: u64 = 100_000_000;
+pub const DEFAULT_CREDITS_PER_KINIC: u64 = 1_000;
+pub const DEFAULT_CYCLES_PER_CREDIT: u64 = 1_000_000_000;
+pub const DEFAULT_MIN_UPDATE_CREDITS: u64 = 1;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -107,7 +108,6 @@ pub struct DatabaseRestoreRollback {
     active_mount_id: Option<u16>,
     snapshot_hash: Option<Vec<u8>>,
     archived_at_ms: Option<i64>,
-    deleted_at_ms: Option<i64>,
     restore_size_bytes: Option<u64>,
 }
 
@@ -140,7 +140,7 @@ pub struct CreditsPendingLedgerDetailsInput<'a> {
 pub struct DatabaseCreditPurchaseWithLedgerDetails<'a> {
     pub database_id: &'a str,
     pub caller: &'a str,
-    pub amount_e8s: u64,
+    pub credits: u64,
     pub ledger: CreditsPendingLedgerDetailsInput<'a>,
     pub now: i64,
 }
@@ -305,21 +305,6 @@ impl VfsService {
         self.read_index(load_credits_config)
     }
 
-    pub fn validate_credits_config_update(
-        &self,
-        update: &CreditsConfigUpdate,
-    ) -> Result<(), String> {
-        let current = self.credits_config()?;
-        validate_credits_config(&CreditsConfig {
-            kinic_ledger_canister_id: current.kinic_ledger_canister_id,
-            sns_governance_id: current.sns_governance_id,
-            rate_numerator_e8s: update.rate_numerator_e8s,
-            rate_denominator_cycles: update.rate_denominator_cycles,
-            fixed_update_fee_e8s: update.fixed_update_fee_e8s,
-            min_update_balance_e8s: update.min_update_balance_e8s,
-        })
-    }
-
     pub fn update_credits_config(
         &self,
         update: CreditsConfigUpdate,
@@ -332,17 +317,15 @@ impl VfsService {
         let next = CreditsConfig {
             kinic_ledger_canister_id: current.kinic_ledger_canister_id,
             sns_governance_id: current.sns_governance_id,
-            rate_numerator_e8s: update.rate_numerator_e8s,
-            rate_denominator_cycles: update.rate_denominator_cycles,
-            fixed_update_fee_e8s: update.fixed_update_fee_e8s,
-            min_update_balance_e8s: update.min_update_balance_e8s,
+            credits_per_kinic: update.credits_per_kinic,
+            cycles_per_credit: update.cycles_per_credit,
+            min_update_credits: update.min_update_credits,
         };
         validate_credits_config(&next)?;
         self.write_index(|tx| {
-            set_credits_config_value(tx, "rate_numerator_e8s", next.rate_numerator_e8s)?;
-            set_credits_config_value(tx, "rate_denominator_cycles", next.rate_denominator_cycles)?;
-            set_credits_config_value(tx, "fixed_update_fee_e8s", next.fixed_update_fee_e8s)?;
-            set_credits_config_value(tx, "min_update_balance_e8s", next.min_update_balance_e8s)
+            set_credits_config_value(tx, "credits_per_kinic", next.credits_per_kinic)?;
+            set_credits_config_value(tx, "cycles_per_credit", next.cycles_per_credit)?;
+            set_credits_config_value(tx, "min_update_credits", next.min_update_credits)
         })?;
         Ok(next)
     }
@@ -457,7 +440,7 @@ impl VfsService {
         caller: &str,
         now: i64,
         mount_id: u16,
-        initial_balance_e8s: i64,
+        initial_credits_balance: i64,
     ) -> Result<DatabaseMeta, String> {
         let db_file_name = self.database_file_name(database_id, mount_id)?;
         tx.execute(
@@ -477,18 +460,18 @@ impl VfsService {
         .map_err(|error| error.to_string())?;
         record_mount_history(tx, database_id, mount_id, "create", now)?;
         insert_initial_database_members(tx, database_id, caller, now)?;
-        let suspended_at_ms = if initial_balance_e8s == 0 {
+        let suspended_at_ms = if initial_credits_balance == 0 {
             Some(now)
         } else {
             None
         };
         tx.execute(
             "INSERT INTO database_credit_accounts
-             (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
+             (database_id, balance_credits, suspended_at_ms, created_at_ms, updated_at_ms)
              VALUES (?1, ?2, ?3, ?4, ?4)",
             params![
                 database_id,
-                initial_balance_e8s,
+                initial_credits_balance,
                 crate::sqlite::nullable_integer_value(suspended_at_ms),
                 now
             ],
@@ -529,7 +512,7 @@ impl VfsService {
         insert_initial_database_members(tx, database_id, caller, now)?;
         tx.execute(
             "INSERT INTO database_credit_accounts
-             (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
+             (database_id, balance_credits, suspended_at_ms, created_at_ms, updated_at_ms)
              VALUES (?1, 0, ?2, ?2, ?2)",
             params![database_id, now],
         )
@@ -641,15 +624,14 @@ impl VfsService {
         &self,
         database_id: &str,
         caller: &str,
-        amount_e8s: u64,
+        credits: u64,
     ) -> Result<(), String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        if amount <= 0 {
-            return Err("credit purchase amount must be positive".to_string());
-        }
+        let credits = credits_to_i64(credits)?;
+        let config = self.credits_config()?;
+        payment_amount_e8s_for_credits(credits as u64, &config).and_then(amount_to_i64)?;
         let _ = caller;
         self.read_index(|conn| {
-            validate_database_credit_purchase_for_conn(conn, database_id, amount)?;
+            validate_database_credit_purchase_for_conn(conn, database_id, credits)?;
             Ok(())
         })
     }
@@ -658,14 +640,14 @@ impl VfsService {
         &self,
         database_id: &str,
         caller: &str,
-        amount_e8s: u64,
+        credits: u64,
         now: i64,
     ) -> Result<u64, String> {
         self.begin_database_credit_purchase_with_ledger_details(
             DatabaseCreditPurchaseWithLedgerDetails {
                 database_id,
                 caller,
-                amount_e8s,
+                credits,
                 ledger: CreditsPendingLedgerDetailsInput {
                     from_owner: caller,
                     from_subaccount: None,
@@ -683,20 +665,23 @@ impl VfsService {
         &self,
         request: DatabaseCreditPurchaseWithLedgerDetails<'_>,
     ) -> Result<u64, String> {
-        let amount = amount_to_i64(request.amount_e8s)?;
+        let credits = credits_to_i64(request.credits)?;
+        let config = self.credits_config()?;
+        let payment_amount_e8s =
+            payment_amount_e8s_for_credits(request.credits, &config).and_then(amount_to_i64)?;
         let ledger_fee = amount_to_i64(request.ledger.ledger_fee_e8s)?;
         let ledger_created_at_time = i64::try_from(request.ledger.ledger_created_at_time_ns)
             .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
         self.write_index(|tx| {
-            validate_database_credit_purchase_for_conn(tx, request.database_id, amount)?;
+            validate_database_credit_purchase_for_conn(tx, request.database_id, credits)?;
             insert_pending_credits_operation(
                 tx,
                 PendingCreditsOperationInsert {
                     database_id: request.database_id,
                     kind: "credit_purchase",
                     caller: request.caller,
-                    amount_e8s: amount,
-                    fee_e8s: 0,
+                    credits,
+                    payment_amount_e8s,
                     ledger: PendingCreditsLedgerDetails {
                         from_owner: request.ledger.from_owner,
                         from_subaccount: request.ledger.from_subaccount,
@@ -715,14 +700,11 @@ impl VfsService {
         operation_id: u64,
         database_id: &str,
         caller: &str,
-        amount_e8s: u64,
+        credits: u64,
         ledger_block_index: u64,
         now: i64,
     ) -> Result<u64, String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        if amount <= 0 {
-            return Err("credit purchase amount must be positive".to_string());
-        }
+        let credits = credits_to_i64(credits)?;
         let config = self.credits_config()?;
         self.write_index(|tx| {
             require_pending_credits_operation(
@@ -732,25 +714,23 @@ impl VfsService {
                     database_id,
                     kind: "credit_purchase",
                     caller,
-                    amount_e8s: amount,
-                    fee_e8s: 0,
+                    credits,
                 },
             )?;
-            let status = load_database_status(tx, database_id)?;
-            if status == DatabaseStatus::Deleted {
-                return Err(format!("database is deleted: {database_id}"));
-            }
+            let operation = load_pending_credits_operation(tx, operation_id)?;
+            load_database_status(tx, database_id)?;
             complete_pending_database_activation(tx, database_id, now)?;
             let db_balance = database_balance_for_update(tx, database_id, now)?;
-            let next_database = checked_balance_add(db_balance, amount)?;
+            let next_database = checked_balance_add(db_balance, credits)?;
             update_database_credits_balance(tx, database_id, next_database, &config, now)?;
             insert_database_ledger(
                 tx,
                 DatabaseLedgerInsert {
                     database_id,
                     kind: "credit_purchase",
-                    amount_e8s: amount,
-                    balance_after_e8s: next_database,
+                    amount_credits: credits,
+                    balance_after_credits: next_database,
+                    payment_amount_e8s: Some(operation.payment_amount_e8s),
                     caller,
                     method: Some("purchase_database_credits"),
                     cycles_delta: None,
@@ -770,13 +750,10 @@ impl VfsService {
         operation_id: u64,
         database_id: &str,
         caller: &str,
-        amount_e8s: u64,
+        credits: u64,
         now: i64,
     ) -> Result<u64, String> {
-        let amount = amount_to_i64(amount_e8s)?;
-        if amount <= 0 {
-            return Err("credit purchase amount must be positive".to_string());
-        }
+        let credits = credits_to_i64(credits)?;
         self.write_index(|tx| {
             require_pending_credits_operation(
                 tx,
@@ -785,22 +762,20 @@ impl VfsService {
                     database_id,
                     kind: "credit_purchase",
                     caller,
-                    amount_e8s: amount,
-                    fee_e8s: 0,
+                    credits,
                 },
             )?;
-            let status = load_database_status(tx, database_id)?;
-            if status == DatabaseStatus::Deleted {
-                return Err(format!("database is deleted: {database_id}"));
-            }
+            let operation = load_pending_credits_operation(tx, operation_id)?;
+            load_database_status(tx, database_id)?;
             let balance = database_balance_for_update(tx, database_id, now)?;
             insert_database_ledger(
                 tx,
                 DatabaseLedgerInsert {
                     database_id,
                     kind: "credit_purchase_ambiguous",
-                    amount_e8s: amount,
-                    balance_after_e8s: balance,
+                    amount_credits: credits,
+                    balance_after_credits: balance,
+                    payment_amount_e8s: Some(operation.payment_amount_e8s),
                     caller,
                     method: Some("purchase_database_credits"),
                     cycles_delta: None,
@@ -819,9 +794,9 @@ impl VfsService {
         operation_id: u64,
         database_id: &str,
         caller: &str,
-        amount_e8s: u64,
+        credits: u64,
     ) -> Result<(), String> {
-        let amount = amount_to_i64(amount_e8s)?;
+        let credits = credits_to_i64(credits)?;
         self.write_index(|tx| {
             require_pending_credits_operation(
                 tx,
@@ -830,8 +805,7 @@ impl VfsService {
                     database_id,
                     kind: "credit_purchase",
                     caller,
-                    amount_e8s: amount,
-                    fee_e8s: 0,
+                    credits,
                 },
             )?;
             delete_pending_credits_operation(tx, operation_id)
@@ -864,9 +838,9 @@ impl VfsService {
             };
             let mut stmt = conn
                 .prepare(
-                    "SELECT entry_id, database_id, kind, amount_e8s, balance_after_e8s,
-                            caller, method, cycles_delta, rate_numerator_e8s,
-                            rate_denominator_cycles, fixed_update_fee_e8s, usage_event_id,
+                    "SELECT entry_id, database_id, kind, amount_credits, balance_after_credits,
+                            payment_amount_e8s, caller, method, cycles_delta, credits_per_kinic,
+                            cycles_per_credit, usage_event_id,
                             ledger_block_index, created_at_ms
                      FROM database_credit_ledger
                      WHERE database_id = ?1 AND entry_id > ?2
@@ -909,10 +883,7 @@ impl VfsService {
         let limit = page_limit(limit);
         let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
         self.read_index(|conn| {
-            let status = load_database_status(conn, database_id)?;
-            if status == DatabaseStatus::Deleted {
-                return Err(format!("database is deleted: {database_id}"));
-            }
+            load_database_status(conn, database_id)?;
             if caller != config.sns_governance_id {
                 let role = load_member_role(conn, database_id, caller)?
                     .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
@@ -924,7 +895,7 @@ impl VfsService {
             }
             let mut stmt = conn
                 .prepare(
-                    "SELECT operation_id, database_id, kind, caller, amount_e8s, fee_e8s,
+                    "SELECT operation_id, database_id, kind, caller, credits, payment_amount_e8s,
                             from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
                             ledger_created_at_time_ns, created_at_ms
                      FROM database_credit_pending_operations
@@ -981,21 +952,19 @@ impl VfsService {
         self.write_index(|tx| {
             let operation = load_pending_credits_operation(tx, operation_id)?;
             require_pending_database_kind(&operation, database_id, "credit_purchase")?;
-            let status = load_database_status(tx, database_id)?;
-            if status == DatabaseStatus::Deleted {
-                return Err(format!("database is deleted: {database_id}"));
-            }
+            load_database_status(tx, database_id)?;
             complete_pending_database_activation(tx, database_id, now)?;
             let balance = database_balance_for_update(tx, database_id, now)?;
-            let next = checked_balance_add(balance, operation.amount_e8s)?;
+            let next = checked_balance_add(balance, operation.credits)?;
             update_database_credits_balance(tx, database_id, next, &config, now)?;
             insert_database_ledger(
                 tx,
                 DatabaseLedgerInsert {
                     database_id,
                     kind: "credit_purchase_repair_complete",
-                    amount_e8s: operation.amount_e8s,
-                    balance_after_e8s: next,
+                    amount_credits: operation.credits,
+                    balance_after_credits: next,
+                    payment_amount_e8s: Some(operation.payment_amount_e8s),
                     caller,
                     method: Some("repair_database_credit_purchase_complete"),
                     cycles_delta: None,
@@ -1022,9 +991,6 @@ impl VfsService {
             let operation = load_pending_credits_operation(tx, operation_id)?;
             require_pending_database_kind(&operation, database_id, "credit_purchase")?;
             let status = load_database_status(tx, database_id)?;
-            if status == DatabaseStatus::Deleted {
-                return Err(format!("database is deleted: {database_id}"));
-            }
             let active_mount_id: Option<i64> = tx
                 .query_row(
                     "SELECT active_mount_id FROM databases WHERE database_id = ?1",
@@ -1044,11 +1010,14 @@ impl VfsService {
         })
     }
 
-    pub fn require_database_billable(&self, database_id: &str) -> Result<(), String> {
+    pub fn require_database_write_credits_available(
+        &self,
+        database_id: &str,
+    ) -> Result<(), String> {
         let config = self.credits_config()?;
         let (balance, suspended_at_ms): (i64, Option<i64>) = self.read_index(|conn| {
             conn.query_row(
-                "SELECT balance_e8s, suspended_at_ms
+                "SELECT balance_credits, suspended_at_ms
                      FROM database_credit_accounts
                      WHERE database_id = ?1",
                 params![database_id],
@@ -1066,7 +1035,7 @@ impl VfsService {
         if suspended_at_ms.is_some() {
             return Err(format!("database credits are suspended: {database_id}"));
         }
-        if balance < amount_to_i64(config.min_update_balance_e8s)? {
+        if balance < credits_to_i64(config.min_update_credits)? {
             return Err(format!(
                 "database credits balance is too low: {database_id}"
             ));
@@ -1083,7 +1052,7 @@ impl VfsService {
             return Err("anonymous caller not allowed".to_string());
         }
         self.require_role(database_id, caller, RequiredRole::Writer)?;
-        self.require_database_billable(database_id)
+        self.require_database_write_credits_available(database_id)
     }
 
     pub fn charge_database_update(
@@ -1107,8 +1076,9 @@ impl VfsService {
                 DatabaseLedgerInsert {
                     database_id,
                     kind: "charge",
-                    amount_e8s: -charge,
-                    balance_after_e8s: next,
+                    amount_credits: -charge,
+                    balance_after_credits: next,
+                    payment_amount_e8s: None,
                     caller,
                     method: Some(method),
                     cycles_delta: Some(cycles_delta),
@@ -1124,8 +1094,9 @@ impl VfsService {
                     DatabaseLedgerInsert {
                         database_id,
                         kind: "suspend",
-                        amount_e8s: 0,
-                        balance_after_e8s: next,
+                        amount_credits: 0,
+                        balance_after_credits: next,
+                        payment_amount_e8s: None,
                         caller,
                         method: Some(method),
                         cycles_delta: Some(cycles_delta),
@@ -1170,7 +1141,7 @@ impl VfsService {
         &self,
         request: DeleteDatabaseRequest,
         caller: &str,
-        now: i64,
+        _now: i64,
     ) -> Result<(), String> {
         let database_id = request.database_id.as_str();
         self.require_role(database_id, caller, RequiredRole::Owner)?;
@@ -1182,17 +1153,6 @@ impl VfsService {
                 status_to_db(status)
             ));
         }
-        let config = self.credits_config()?;
-        let balance: i64 = self.read_index(|conn| {
-            conn.query_row(
-                "SELECT balance_e8s FROM database_credit_accounts WHERE database_id = ?1",
-                params![database_id],
-                |row| crate::sqlite::row_get(row, 0),
-            )
-            .optional()
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("database credits account not found: {database_id}"))
-        })?;
         let meta = self.database_meta(database_id).ok();
         #[cfg(target_arch = "wasm32")]
         let _ = &meta;
@@ -1204,37 +1164,7 @@ impl VfsService {
             return Err(error.to_string());
         }
         self.write_index(|conn| {
-            if balance > 0 {
-                update_database_credits_balance(conn, database_id, 0, &config, now)?;
-                insert_database_ledger(
-                    conn,
-                    DatabaseLedgerInsert {
-                        database_id,
-                        kind: "delete_credit_discard",
-                        amount_e8s: -balance,
-                        balance_after_e8s: 0,
-                        caller,
-                        method: Some("delete_database"),
-                        cycles_delta: None,
-                        config: None,
-                        usage_event_id: None,
-                        ledger_block_index: None,
-                        now,
-                    },
-                )?;
-            }
-            conn.execute(
-                "UPDATE databases
-             SET status = 'deleted',
-                 active_mount_id = NULL,
-                 logical_size_bytes = 0,
-                 restore_size_bytes = NULL,
-                 deleted_at_ms = ?2,
-                 updated_at_ms = ?2
-             WHERE database_id = ?1",
-                params![database_id, now],
-            )
-            .map_err(|error| error.to_string())?;
+            delete_database_index_rows(conn, database_id)?;
             Ok(())
         })
     }
@@ -1397,13 +1327,8 @@ impl VfsService {
             ));
         }
         let rollback = self.database_restore_rollback(database_id)?;
-        if !matches!(
-            rollback.status,
-            DatabaseStatus::Archived | DatabaseStatus::Deleted
-        ) {
-            return Err(
-                "database restore can only begin from archived or deleted status".to_string(),
-            );
+        if rollback.status != DatabaseStatus::Archived {
+            return Err("database restore can only begin from archived status".to_string());
         }
         self.write_index(|tx| {
             let mount_id = allocate_mount_id(tx)?;
@@ -1416,13 +1341,12 @@ impl VfsService {
             .map_err(|error| error.to_string())?;
             tx.execute(
                 "UPDATE databases
-             SET status = 'restoring',
-                 active_mount_id = ?2,
-                 snapshot_hash = ?3,
-                 archived_at_ms = NULL,
-                 deleted_at_ms = NULL,
-                 restore_size_bytes = ?4,
-                 updated_at_ms = ?5
+	             SET status = 'restoring',
+	                 active_mount_id = ?2,
+	                 snapshot_hash = ?3,
+	                 archived_at_ms = NULL,
+	                 restore_size_bytes = ?4,
+	                 updated_at_ms = ?5
              WHERE database_id = ?1",
                 params![
                     database_id,
@@ -1783,7 +1707,7 @@ impl VfsService {
             .read_node(&request.database_id, &principal, &request.request_path)?
             .ok_or_else(|| format!("url ingest request not found: {}", request.request_path))?;
         validate_url_ingest_request_node(&node, &principal)?;
-        self.require_database_billable(&request.database_id)
+        self.require_database_write_credits_available(&request.database_id)
     }
 
     pub fn authorize_ops_answer_session(
@@ -1841,7 +1765,7 @@ impl VfsService {
             .ok_or_else(|| "ops answer session is missing or expired".to_string())
         })?;
         self.require_role(&request.database_id, &principal, RequiredRole::Reader)?;
-        self.require_database_billable(&request.database_id)?;
+        self.require_database_write_credits_available(&request.database_id)?;
         Ok(OpsAnswerSessionCheckResult { principal })
     }
 
@@ -2104,17 +2028,6 @@ impl VfsService {
         })
     }
 
-    pub fn recent_nodes(
-        &self,
-        caller: &str,
-        request: RecentNodesRequest,
-    ) -> Result<Vec<RecentNodeHit>, String> {
-        let database_id = request.database_id.clone();
-        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.recent_nodes(request)
-        })
-    }
-
     pub fn incoming_links(
         &self,
         caller: &str,
@@ -2282,6 +2195,7 @@ impl VfsService {
         required_role: RequiredRole,
     ) -> Result<(), String> {
         let role = self.read_index(|conn| {
+            load_database_status(conn, database_id)?;
             load_member_role(conn, database_id, caller)?
                 .ok_or_else(|| format!("principal has no access to database: {database_id}"))
         })?;
@@ -2341,20 +2255,19 @@ impl VfsService {
         self.read_index(|conn| {
             conn.query_row(
                 "SELECT database_id, status, active_mount_id, snapshot_hash, archived_at_ms,
-                    deleted_at_ms, restore_size_bytes
-             FROM databases
-             WHERE database_id = ?1",
+                    restore_size_bytes
+	             FROM databases
+	             WHERE database_id = ?1",
                 params![database_id],
                 |row| {
                     let active_mount_id: Option<i64> = crate::sqlite::row_get(row, 2)?;
-                    let restore_size_bytes: Option<i64> = crate::sqlite::row_get(row, 6)?;
+                    let restore_size_bytes: Option<i64> = crate::sqlite::row_get(row, 5)?;
                     Ok(DatabaseRestoreRollback {
                         database_id: crate::sqlite::row_get(row, 0)?,
                         status: status_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
                         active_mount_id: active_mount_id.map(mount_id_from_db).transpose()?,
                         snapshot_hash: crate::sqlite::row_get(row, 3)?,
                         archived_at_ms: crate::sqlite::row_get(row, 4)?,
-                        deleted_at_ms: crate::sqlite::row_get(row, 5)?,
                         restore_size_bytes: restore_size_bytes.map(|size| size.max(0) as u64),
                     })
                 },
@@ -2372,20 +2285,19 @@ impl VfsService {
         self.read_index(|conn| {
             conn.query_row(
                 "SELECT database_id, status, active_mount_id, snapshot_hash, archived_at_ms,
-                    deleted_at_ms, restore_size_bytes
-             FROM database_restore_sessions
-             WHERE database_id = ?1",
+                    restore_size_bytes
+	             FROM database_restore_sessions
+	             WHERE database_id = ?1",
                 params![database_id],
                 |row| {
                     let active_mount_id: Option<i64> = crate::sqlite::row_get(row, 2)?;
-                    let restore_size_bytes: Option<i64> = crate::sqlite::row_get(row, 6)?;
+                    let restore_size_bytes: Option<i64> = crate::sqlite::row_get(row, 5)?;
                     Ok(DatabaseRestoreRollback {
                         database_id: crate::sqlite::row_get(row, 0)?,
                         status: status_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
                         active_mount_id: active_mount_id.map(mount_id_from_db).transpose()?,
                         snapshot_hash: crate::sqlite::row_get(row, 3)?,
                         archived_at_ms: crate::sqlite::row_get(row, 4)?,
-                        deleted_at_ms: crate::sqlite::row_get(row, 5)?,
                         restore_size_bytes: restore_size_bytes.map(|size| size.max(0) as u64),
                     })
                 },
@@ -2663,6 +2575,9 @@ fn run_index_migrations(conn: &mut Connection, config: &CreditsConfig) -> Result
         if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
             apply_active_status_index_migration(&tx)?;
         }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
+            apply_hard_delete_database_index_migration(&tx)?;
+        }
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2709,6 +2624,8 @@ fn run_index_migrations(conn: &mut Connection, config: &CreditsConfig) -> Result
         apply_credits_pending_index_migration(&tx)?;
         apply_credit_ledger_block_index_migration(&tx)?;
         apply_credit_pending_ledger_details_index_migration(&tx)?;
+        apply_active_status_index_migration(&tx)?;
+        apply_hard_delete_database_index_migration(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2734,7 +2651,7 @@ fn run_index_migrations_for_upgrade(
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")?
         && migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)?
     {
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
             return Ok(());
         }
         let tx = conn.transaction().map_err(|error| error.to_string())?;
@@ -2749,6 +2666,9 @@ fn run_index_migrations_for_upgrade(
         }
         if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
             apply_active_status_index_migration(&tx)?;
+        }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
+            apply_hard_delete_database_index_migration(&tx)?;
         }
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
@@ -2955,6 +2875,7 @@ fn run_index_migrations_for_upgrade(
     apply_credit_ledger_block_index_migration(&tx)?;
     apply_credit_pending_ledger_details_index_migration(&tx)?;
     apply_active_status_index_migration(&tx)?;
+    apply_hard_delete_database_index_migration(&tx)?;
     tx.commit().map_err(|error| error.to_string())
 }
 
@@ -2979,6 +2900,7 @@ fn run_index_migrations_in_tx(
             apply_credit_ledger_block_index_migration(conn)?;
             apply_credit_pending_ledger_details_index_migration(conn)?;
             apply_active_status_index_migration(conn)?;
+            apply_hard_delete_database_index_migration(conn)?;
         }
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
             apply_credits_pending_index_migration(conn)?;
@@ -2992,6 +2914,9 @@ fn run_index_migrations_in_tx(
         }
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
             apply_active_status_index_migration(conn)?;
+        }
+        if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
+            apply_hard_delete_database_index_migration(conn)?;
         }
         validate_wasm_index_schema(conn)?;
         for &version in INDEX_SCHEMA_VERSIONS {
@@ -3034,7 +2959,7 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&CreditsConfig>,
 ) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
+        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
             validate_wasm_index_schema(conn)?;
             for &version in INDEX_SCHEMA_VERSIONS {
                 if !wasm_index_migration_exists(conn, version)? {
@@ -3061,6 +2986,9 @@ fn run_index_migrations_in_tx_for_upgrade(
             }
             if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
                 apply_active_status_index_migration(conn)?;
+            }
+            if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
+                apply_hard_delete_database_index_migration(conn)?;
             }
             validate_wasm_index_schema(conn)?;
             return Ok(());
@@ -3098,7 +3026,7 @@ fn apply_credits_index_migration(
     conn.execute_batch(
         "CREATE TABLE database_credit_accounts (
            database_id TEXT PRIMARY KEY,
-           balance_e8s INTEGER NOT NULL,
+           balance_credits INTEGER NOT NULL,
            suspended_at_ms INTEGER,
            created_at_ms INTEGER NOT NULL,
            updated_at_ms INTEGER NOT NULL,
@@ -3108,14 +3036,14 @@ fn apply_credits_index_migration(
            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
            database_id TEXT NOT NULL,
            kind TEXT NOT NULL,
-           amount_e8s INTEGER NOT NULL,
-           balance_after_e8s INTEGER NOT NULL,
+           amount_credits INTEGER NOT NULL,
+           balance_after_credits INTEGER NOT NULL,
+           payment_amount_e8s INTEGER,
            caller TEXT NOT NULL,
            method TEXT,
            cycles_delta INTEGER,
-           rate_numerator_e8s INTEGER,
-           rate_denominator_cycles INTEGER,
-           fixed_update_fee_e8s INTEGER,
+           credits_per_kinic INTEGER,
+           cycles_per_credit INTEGER,
            usage_event_id INTEGER,
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
@@ -3130,7 +3058,7 @@ fn apply_credits_index_migration(
     .map_err(|error| error.to_string())?;
     conn.execute(
         "INSERT INTO database_credit_accounts
-         (database_id, balance_e8s, suspended_at_ms, created_at_ms, updated_at_ms)
+         (database_id, balance_credits, suspended_at_ms, created_at_ms, updated_at_ms)
          SELECT database_id, 0, 0, 0, 0 FROM databases",
         params![],
     )
@@ -3151,8 +3079,8 @@ fn apply_credits_pending_index_migration(conn: &Transaction<'_>) -> Result<(), S
            database_id TEXT NOT NULL,
            kind TEXT NOT NULL,
            caller TEXT NOT NULL,
-           amount_e8s INTEGER NOT NULL,
-           fee_e8s INTEGER NOT NULL,
+           credits INTEGER NOT NULL,
+           payment_amount_e8s INTEGER NOT NULL,
            created_at_ms INTEGER NOT NULL,
            FOREIGN KEY (database_id) REFERENCES databases(database_id)
          );
@@ -3232,6 +3160,16 @@ fn apply_active_status_index_migration(conn: &Transaction<'_>) -> Result<(), Str
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
         params![INDEX_SCHEMA_VERSION_ACTIVE_STATUS],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn apply_hard_delete_database_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    purge_hard_deleted_database_rows(conn)?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -3348,7 +3286,7 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
          );
          CREATE TABLE database_credit_accounts (
            database_id TEXT PRIMARY KEY,
-           balance_e8s INTEGER NOT NULL,
+           balance_credits INTEGER NOT NULL,
            suspended_at_ms INTEGER,
            created_at_ms INTEGER NOT NULL,
            updated_at_ms INTEGER NOT NULL,
@@ -3358,14 +3296,14 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
            database_id TEXT NOT NULL,
            kind TEXT NOT NULL,
-           amount_e8s INTEGER NOT NULL,
-           balance_after_e8s INTEGER NOT NULL,
+           amount_credits INTEGER NOT NULL,
+           balance_after_credits INTEGER NOT NULL,
+           payment_amount_e8s INTEGER,
            caller TEXT NOT NULL,
            method TEXT,
            cycles_delta INTEGER,
-           rate_numerator_e8s INTEGER,
-           rate_denominator_cycles INTEGER,
-           fixed_update_fee_e8s INTEGER,
+           credits_per_kinic INTEGER,
+           cycles_per_credit INTEGER,
            usage_event_id INTEGER,
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
@@ -3377,8 +3315,8 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
            database_id TEXT NOT NULL,
            kind TEXT NOT NULL,
            caller TEXT NOT NULL,
-           amount_e8s INTEGER NOT NULL,
-           fee_e8s INTEGER NOT NULL,
+           credits INTEGER NOT NULL,
+           payment_amount_e8s INTEGER NOT NULL,
            from_owner TEXT,
            from_subaccount BLOB,
            to_owner TEXT,
@@ -3402,29 +3340,30 @@ fn default_credits_config() -> CreditsConfig {
     CreditsConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-        rate_numerator_e8s: DEFAULT_RATE_NUMERATOR_E8S,
-        rate_denominator_cycles: DEFAULT_RATE_DENOMINATOR_CYCLES,
-        fixed_update_fee_e8s: DEFAULT_FIXED_UPDATE_FEE_E8S,
-        min_update_balance_e8s: DEFAULT_MIN_UPDATE_BALANCE_E8S,
+        credits_per_kinic: DEFAULT_CREDITS_PER_KINIC,
+        cycles_per_credit: DEFAULT_CYCLES_PER_CREDIT,
+        min_update_credits: DEFAULT_MIN_UPDATE_CREDITS,
     }
 }
 
 fn validate_credits_config(config: &CreditsConfig) -> Result<(), String> {
     validate_principal_text(&config.kinic_ledger_canister_id)?;
     validate_principal_text(&config.sns_governance_id)?;
-    if config.rate_numerator_e8s == 0 {
-        return Err("rate_numerator_e8s must be positive".to_string());
+    if config.credits_per_kinic == 0 {
+        return Err("credits_per_kinic must be positive".to_string());
     }
-    if config.rate_denominator_cycles == 0 {
-        return Err("rate_denominator_cycles must be positive".to_string());
+    if config.cycles_per_credit == 0 {
+        return Err("cycles_per_credit must be positive".to_string());
     }
-    amount_to_i64(config.rate_numerator_e8s)?;
-    amount_to_i64(config.rate_denominator_cycles)?;
-    amount_to_i64(config.fixed_update_fee_e8s)?;
-    amount_to_i64(config.min_update_balance_e8s)?;
-    if config.min_update_balance_e8s < config.fixed_update_fee_e8s {
-        return Err("min_update_balance_e8s must be >= fixed_update_fee_e8s".to_string());
+    if config.min_update_credits == 0 {
+        return Err("min_update_credits must be positive".to_string());
     }
+    if KINIC_E8S_PER_TOKEN % config.credits_per_kinic != 0 {
+        return Err("credits_per_kinic must divide 100000000".to_string());
+    }
+    amount_to_i64(config.credits_per_kinic)?;
+    amount_to_i64(config.cycles_per_credit)?;
+    amount_to_i64(config.min_update_credits)?;
     Ok(())
 }
 
@@ -3448,18 +3387,9 @@ fn insert_credits_config(conn: &Transaction<'_>, config: &CreditsConfig) -> Resu
         params!["sns_governance_id", config.sns_governance_id],
     )
     .map_err(|error| error.to_string())?;
-    set_credits_config_value(conn, "rate_numerator_e8s", config.rate_numerator_e8s)?;
-    set_credits_config_value(
-        conn,
-        "rate_denominator_cycles",
-        config.rate_denominator_cycles,
-    )?;
-    set_credits_config_value(conn, "fixed_update_fee_e8s", config.fixed_update_fee_e8s)?;
-    set_credits_config_value(
-        conn,
-        "min_update_balance_e8s",
-        config.min_update_balance_e8s,
-    )?;
+    set_credits_config_value(conn, "credits_per_kinic", config.credits_per_kinic)?;
+    set_credits_config_value(conn, "cycles_per_credit", config.cycles_per_credit)?;
+    set_credits_config_value(conn, "min_update_credits", config.min_update_credits)?;
     Ok(())
 }
 
@@ -3492,6 +3422,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
     INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
     INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
+    INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3552,7 +3483,7 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         ),
         (
             "database_credit_accounts",
-            &["database_id", "balance_e8s", "suspended_at_ms"][..],
+            &["database_id", "balance_credits", "suspended_at_ms"][..],
         ),
         (
             "database_credit_ledger",
@@ -3560,10 +3491,14 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "entry_id",
                 "database_id",
                 "kind",
-                "amount_e8s",
-                "balance_after_e8s",
+                "amount_credits",
+                "balance_after_credits",
+                "payment_amount_e8s",
                 "caller",
                 "method",
+                "cycles_delta",
+                "credits_per_kinic",
+                "cycles_per_credit",
                 "usage_event_id",
                 "ledger_block_index",
                 "created_at_ms",
@@ -3576,8 +3511,8 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "database_id",
                 "kind",
                 "caller",
-                "amount_e8s",
-                "fee_e8s",
+                "credits",
+                "payment_amount_e8s",
                 "from_owner",
                 "from_subaccount",
                 "to_owner",
@@ -3721,10 +3656,9 @@ fn load_credits_config(conn: &Connection) -> Result<CreditsConfig, String> {
     Ok(CreditsConfig {
         kinic_ledger_canister_id: load_credits_config_text(conn, "kinic_ledger_canister_id")?,
         sns_governance_id: load_credits_config_text(conn, "sns_governance_id")?,
-        rate_numerator_e8s: load_credits_config_u64(conn, "rate_numerator_e8s")?,
-        rate_denominator_cycles: load_credits_config_u64(conn, "rate_denominator_cycles")?,
-        fixed_update_fee_e8s: load_credits_config_u64(conn, "fixed_update_fee_e8s")?,
-        min_update_balance_e8s: load_credits_config_u64(conn, "min_update_balance_e8s")?,
+        credits_per_kinic: load_credits_config_u64(conn, "credits_per_kinic")?,
+        cycles_per_credit: load_credits_config_u64(conn, "cycles_per_credit")?,
+        min_update_credits: load_credits_config_u64(conn, "min_update_credits")?,
     })
 }
 
@@ -3785,6 +3719,23 @@ fn amount_to_i64(amount: u64) -> Result<i64, String> {
     i64::try_from(amount).map_err(|_| "amount exceeds i64 limit".to_string())
 }
 
+fn credits_to_i64(credits: u64) -> Result<i64, String> {
+    let credits = i64::try_from(credits).map_err(|_| "credits exceeds i64 limit".to_string())?;
+    if credits <= 0 {
+        return Err("credit purchase credits must be positive".to_string());
+    }
+    Ok(credits)
+}
+
+pub fn payment_amount_e8s_for_credits(credits: u64, config: &CreditsConfig) -> Result<u64, String> {
+    let e8s_per_credit = KINIC_E8S_PER_TOKEN
+        .checked_div(config.credits_per_kinic)
+        .ok_or_else(|| "credits_per_kinic must be positive".to_string())?;
+    credits
+        .checked_mul(e8s_per_credit)
+        .ok_or_else(|| "credit purchase payment amount overflow".to_string())
+}
+
 fn millis_to_nanos(value: i64) -> Result<u64, String> {
     let value = u64::try_from(value).map_err(|_| "timestamp must be non-negative".to_string())?;
     value
@@ -3805,18 +3756,15 @@ fn checked_balance_add(balance: i64, amount: i64) -> Result<i64, String> {
 fn validate_database_credit_purchase_for_conn(
     conn: &Connection,
     database_id: &str,
-    amount: i64,
+    credits: i64,
 ) -> Result<(), String> {
     let status = load_database_status(conn, database_id)?;
-    if status == DatabaseStatus::Deleted {
-        return Err(format!("database is deleted: {database_id}"));
-    }
     if !database_has_owner(conn, database_id)? {
         return Err(format!("database has no owner: {database_id}"));
     }
     let balance: i64 = conn
         .query_row(
-            "SELECT balance_e8s FROM database_credit_accounts WHERE database_id = ?1",
+            "SELECT balance_credits FROM database_credit_accounts WHERE database_id = ?1",
             params![database_id],
             |row| crate::sqlite::row_get(row, 0),
         )
@@ -3825,7 +3773,7 @@ fn validate_database_credit_purchase_for_conn(
         .ok_or_else(|| format!("database credits account not found: {database_id}"))?;
     let pending_credit_purchase: i64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(amount_e8s), 0)
+            "SELECT COALESCE(SUM(credits), 0)
              FROM database_credit_pending_operations
              WHERE database_id = ?1 AND kind = 'credit_purchase'",
             params![database_id],
@@ -3836,7 +3784,41 @@ fn validate_database_credit_purchase_for_conn(
         return Err(format!("database activation is pending: {database_id}"));
     }
     let reserved = checked_balance_add(balance, pending_credit_purchase)?;
-    checked_balance_add(reserved, amount)?;
+    checked_balance_add(reserved, credits)?;
+    Ok(())
+}
+
+fn purge_hard_deleted_database_rows(conn: &Connection) -> Result<(), String> {
+    let mut stmt = conn
+        .prepare("SELECT database_id FROM databases WHERE status = 'deleted'")
+        .map_err(|error| error.to_string())?;
+    let database_ids = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        crate::sqlite::row_get::<String>(row, 0)
+    })
+    .map_err(|error| error.to_string())?;
+    for database_id in database_ids {
+        delete_database_index_rows(conn, &database_id)?;
+    }
+    Ok(())
+}
+
+fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<(), String> {
+    for table in [
+        "database_credit_pending_operations",
+        "database_credit_ledger",
+        "database_credit_accounts",
+        "database_members",
+        "database_restore_chunks",
+        "database_restore_sessions",
+        "url_ingest_trigger_sessions",
+        "ops_answer_sessions",
+        "source_run_sessions",
+        "databases",
+    ] {
+        let sql = format!("DELETE FROM {table} WHERE database_id = ?1");
+        conn.execute(&sql, params![database_id])
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -3879,7 +3861,7 @@ fn database_balance_for_update(
 ) -> Result<i64, String> {
     let _ = now;
     conn.query_row(
-        "SELECT balance_e8s FROM database_credit_accounts WHERE database_id = ?1",
+        "SELECT balance_credits FROM database_credit_accounts WHERE database_id = ?1",
         params![database_id],
         |row| crate::sqlite::row_get(row, 0),
     )
@@ -3895,7 +3877,7 @@ fn update_database_credits_balance(
     config: &CreditsConfig,
     now: i64,
 ) -> Result<(), String> {
-    let min = amount_to_i64(config.min_update_balance_e8s)?;
+    let min = credits_to_i64(config.min_update_credits)?;
     let suspended_at_ms = if balance >= min { None } else { Some(now) };
     let values = vec![
         crate::sqlite::text_value(database_id),
@@ -3906,7 +3888,7 @@ fn update_database_credits_balance(
     crate::sqlite::execute_values(
         conn,
         "UPDATE database_credit_accounts
-         SET balance_e8s = ?2, suspended_at_ms = ?3, updated_at_ms = ?4
+         SET balance_credits = ?2, suspended_at_ms = ?3, updated_at_ms = ?4
          WHERE database_id = ?1",
         &values,
     )
@@ -3919,8 +3901,8 @@ struct PendingCreditsOperation {
     database_id: String,
     kind: String,
     caller: String,
-    amount_e8s: i64,
-    fee_e8s: i64,
+    credits: i64,
+    payment_amount_e8s: i64,
     from_owner: Option<String>,
     from_subaccount: Option<Vec<u8>>,
     to_owner: Option<String>,
@@ -3943,8 +3925,8 @@ struct PendingCreditsOperationInsert<'a> {
     database_id: &'a str,
     kind: &'a str,
     caller: &'a str,
-    amount_e8s: i64,
-    fee_e8s: i64,
+    credits: i64,
+    payment_amount_e8s: i64,
     ledger: PendingCreditsLedgerDetails<'a>,
     now: i64,
 }
@@ -3954,8 +3936,7 @@ struct PendingCreditsOperationMatch<'a> {
     database_id: &'a str,
     kind: &'a str,
     caller: &'a str,
-    amount_e8s: i64,
-    fee_e8s: i64,
+    credits: i64,
 }
 
 fn insert_pending_credits_operation(
@@ -3966,8 +3947,8 @@ fn insert_pending_credits_operation(
         crate::sqlite::text_value(operation.database_id),
         crate::sqlite::text_value(operation.kind),
         crate::sqlite::text_value(operation.caller),
-        crate::sqlite::integer_value(operation.amount_e8s),
-        crate::sqlite::integer_value(operation.fee_e8s),
+        crate::sqlite::integer_value(operation.credits),
+        crate::sqlite::integer_value(operation.payment_amount_e8s),
         crate::sqlite::text_value(operation.ledger.from_owner),
         crate::sqlite::nullable_blob_value(operation.ledger.from_subaccount.map(Vec::from)),
         crate::sqlite::text_value(operation.ledger.to_owner),
@@ -3979,7 +3960,7 @@ fn insert_pending_credits_operation(
     crate::sqlite::execute_values(
         conn,
         "INSERT INTO database_credit_pending_operations
-         (database_id, kind, caller, amount_e8s, fee_e8s, from_owner, from_subaccount,
+         (database_id, kind, caller, credits, payment_amount_e8s, from_owner, from_subaccount,
           to_owner, to_subaccount, ledger_fee_e8s, ledger_created_at_time_ns, created_at_ms)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         &values,
@@ -3995,7 +3976,7 @@ fn load_pending_credits_operation(
 ) -> Result<PendingCreditsOperation, String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT operation_id, database_id, kind, caller, amount_e8s, fee_e8s,
+        "SELECT operation_id, database_id, kind, caller, credits, payment_amount_e8s,
                 from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
                 ledger_created_at_time_ns, created_at_ms
          FROM database_credit_pending_operations
@@ -4027,8 +4008,7 @@ fn require_pending_credits_operation(
     if operation.database_id != expected.database_id
         || operation.kind != expected.kind
         || operation.caller != expected.caller
-        || operation.amount_e8s != expected.amount_e8s
-        || operation.fee_e8s != expected.fee_e8s
+        || operation.credits != expected.credits
     {
         return Err("pending credit operation mismatch".to_string());
     }
@@ -4057,8 +4037,8 @@ fn map_pending_credits_operation(
         database_id: crate::sqlite::row_get(row, 1)?,
         kind: crate::sqlite::row_get(row, 2)?,
         caller: crate::sqlite::row_get(row, 3)?,
-        amount_e8s: crate::sqlite::row_get(row, 4)?,
-        fee_e8s: crate::sqlite::row_get(row, 5)?,
+        credits: crate::sqlite::row_get(row, 4)?,
+        payment_amount_e8s: crate::sqlite::row_get(row, 5)?,
         from_owner: crate::sqlite::row_get(row, 6)?,
         from_subaccount: crate::sqlite::row_get(row, 7)?,
         to_owner: crate::sqlite::row_get(row, 8)?,
@@ -4084,8 +4064,8 @@ fn pending_credits_operation_to_public(
         database_id: operation.database_id,
         kind: operation.kind,
         caller: operation.caller,
-        amount_e8s: operation.amount_e8s,
-        fee_e8s: operation.fee_e8s,
+        credits: operation.credits,
+        payment_amount_e8s: operation.payment_amount_e8s,
         from_owner: operation.from_owner,
         from_subaccount: operation.from_subaccount,
         to_owner: operation.to_owner,
@@ -4099,8 +4079,9 @@ fn pending_credits_operation_to_public(
 struct DatabaseLedgerInsert<'a> {
     database_id: &'a str,
     kind: &'a str,
-    amount_e8s: i64,
-    balance_after_e8s: i64,
+    amount_credits: i64,
+    balance_after_credits: i64,
+    payment_amount_e8s: Option<i64>,
     caller: &'a str,
     method: Option<&'a str>,
     cycles_delta: Option<u128>,
@@ -4117,8 +4098,9 @@ fn insert_database_ledger(
     let values = vec![
         crate::sqlite::text_value(entry.database_id),
         crate::sqlite::text_value(entry.kind),
-        crate::sqlite::integer_value(entry.amount_e8s),
-        crate::sqlite::integer_value(entry.balance_after_e8s),
+        crate::sqlite::integer_value(entry.amount_credits),
+        crate::sqlite::integer_value(entry.balance_after_credits),
+        crate::sqlite::nullable_integer_value(entry.payment_amount_e8s),
         crate::sqlite::text_value(entry.caller),
         entry
             .method
@@ -4132,17 +4114,12 @@ fn insert_database_ledger(
         crate::sqlite::nullable_integer_value(
             entry
                 .config
-                .map(|config| i64::try_from(config.rate_numerator_e8s).unwrap_or(i64::MAX)),
+                .map(|config| i64::try_from(config.credits_per_kinic).unwrap_or(i64::MAX)),
         ),
         crate::sqlite::nullable_integer_value(
             entry
                 .config
-                .map(|config| i64::try_from(config.rate_denominator_cycles).unwrap_or(i64::MAX)),
-        ),
-        crate::sqlite::nullable_integer_value(
-            entry
-                .config
-                .map(|config| i64::try_from(config.fixed_update_fee_e8s).unwrap_or(i64::MAX)),
+                .map(|config| i64::try_from(config.cycles_per_credit).unwrap_or(i64::MAX)),
         ),
         crate::sqlite::nullable_integer_value(
             entry
@@ -4159,8 +4136,8 @@ fn insert_database_ledger(
     crate::sqlite::execute_values(
         conn,
         "INSERT INTO database_credit_ledger
-         (database_id, kind, amount_e8s, balance_after_e8s, caller, method, cycles_delta,
-          rate_numerator_e8s, rate_denominator_cycles, fixed_update_fee_e8s, usage_event_id,
+         (database_id, kind, amount_credits, balance_after_credits, payment_amount_e8s,
+          caller, method, cycles_delta, credits_per_kinic, cycles_per_credit, usage_event_id,
           ledger_block_index, created_at_ms)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         &values,
@@ -4170,16 +4147,8 @@ fn insert_database_ledger(
 }
 
 fn compute_update_charge(config: &CreditsConfig, cycles_delta: u128) -> Result<i64, String> {
-    let numerator = u128::from(config.rate_numerator_e8s);
-    let denominator = u128::from(config.rate_denominator_cycles);
-    let variable = cycles_delta
-        .checked_mul(numerator)
-        .ok_or_else(|| "cycle charge overflow".to_string())?
-        .div_ceil(denominator);
-    let total = variable
-        .checked_add(u128::from(config.fixed_update_fee_e8s))
-        .ok_or_else(|| "cycle charge overflow".to_string())?;
-    i64::try_from(total).map_err(|_| "cycle charge exceeds i64 limit".to_string())
+    let charge = cycles_delta.div_ceil(u128::from(config.cycles_per_credit));
+    i64::try_from(charge).map_err(|_| "cycle charge exceeds i64 limit".to_string())
 }
 
 fn page_limit(limit: u32) -> u32 {
@@ -4191,24 +4160,24 @@ fn map_database_credits_entry(
 ) -> crate::sqlite::Result<DatabaseCreditEntry> {
     let entry_id: i64 = crate::sqlite::row_get(row, 0)?;
     let balance_after: i64 = crate::sqlite::row_get(row, 4)?;
-    let cycles_delta: Option<i64> = crate::sqlite::row_get(row, 7)?;
-    let rate_numerator: Option<i64> = crate::sqlite::row_get(row, 8)?;
-    let rate_denominator: Option<i64> = crate::sqlite::row_get(row, 9)?;
-    let fixed_fee: Option<i64> = crate::sqlite::row_get(row, 10)?;
+    let payment_amount_e8s: Option<i64> = crate::sqlite::row_get(row, 5)?;
+    let cycles_delta: Option<i64> = crate::sqlite::row_get(row, 8)?;
+    let credits_per_kinic: Option<i64> = crate::sqlite::row_get(row, 9)?;
+    let cycles_per_credit: Option<i64> = crate::sqlite::row_get(row, 10)?;
     let usage_event_id: Option<i64> = crate::sqlite::row_get(row, 11)?;
     let ledger_block_index: Option<i64> = crate::sqlite::row_get(row, 12)?;
     Ok(DatabaseCreditEntry {
         entry_id: entry_id.max(0) as u64,
         database_id: crate::sqlite::row_get(row, 1)?,
         kind: crate::sqlite::row_get(row, 2)?,
-        amount_e8s: crate::sqlite::row_get(row, 3)?,
-        balance_after_e8s: balance_after.max(0) as u64,
-        caller: crate::sqlite::row_get(row, 5)?,
-        method: crate::sqlite::row_get(row, 6)?,
+        amount_credits: crate::sqlite::row_get(row, 3)?,
+        balance_after_credits: balance_after.max(0) as u64,
+        payment_amount_e8s: payment_amount_e8s.map(|value| value.max(0) as u64),
+        caller: crate::sqlite::row_get(row, 6)?,
+        method: crate::sqlite::row_get(row, 7)?,
         cycles_delta: cycles_delta.map(|value| value.max(0) as u64),
-        rate_numerator_e8s: rate_numerator.map(|value| value.max(0) as u64),
-        rate_denominator_cycles: rate_denominator.map(|value| value.max(0) as u64),
-        fixed_update_fee_e8s: fixed_fee.map(|value| value.max(0) as u64),
+        credits_per_kinic: credits_per_kinic.map(|value| value.max(0) as u64),
+        cycles_per_credit: cycles_per_credit.map(|value| value.max(0) as u64),
         usage_event_id: usage_event_id.map(|value| value.max(0) as u64),
         ledger_block_index: ledger_block_index.map(|value| value.max(0) as u64),
         created_at_ms: crate::sqlite::row_get(row, 13)?,
@@ -4469,7 +4438,6 @@ fn record_database_restore_session(
         crate::sqlite::nullable_integer_value(rollback.active_mount_id.map(i64::from)),
         crate::sqlite::nullable_blob_value(rollback.snapshot_hash.clone()),
         crate::sqlite::nullable_integer_value(rollback.archived_at_ms),
-        crate::sqlite::nullable_integer_value(rollback.deleted_at_ms),
         crate::sqlite::nullable_integer_value(
             rollback
                 .restore_size_bytes
@@ -4483,8 +4451,8 @@ fn record_database_restore_session(
         conn,
         "INSERT INTO database_restore_sessions
          (database_id, status, active_mount_id, snapshot_hash, archived_at_ms,
-          deleted_at_ms, restore_size_bytes, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+          restore_size_bytes, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -4507,7 +4475,6 @@ fn restore_database_state(
         crate::sqlite::nullable_integer_value(rollback.active_mount_id.map(i64::from)),
         crate::sqlite::nullable_blob_value(rollback.snapshot_hash.clone()),
         crate::sqlite::nullable_integer_value(rollback.archived_at_ms),
-        crate::sqlite::nullable_integer_value(rollback.deleted_at_ms),
         crate::sqlite::nullable_integer_value(
             rollback
                 .restore_size_bytes
@@ -4520,14 +4487,13 @@ fn restore_database_state(
     crate::sqlite::execute_values(
         conn,
         "UPDATE databases
-         SET status = ?2,
-             active_mount_id = ?3,
-             snapshot_hash = ?4,
-             archived_at_ms = ?5,
-             deleted_at_ms = ?6,
-             restore_size_bytes = ?7,
-             updated_at_ms = ?8
-        WHERE database_id = ?1",
+	         SET status = ?2,
+	             active_mount_id = ?3,
+	             snapshot_hash = ?4,
+	             archived_at_ms = ?5,
+	             restore_size_bytes = ?6,
+	             updated_at_ms = ?7
+	        WHERE database_id = ?1",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -4761,8 +4727,7 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
                 || status == "pending"
                 || status == "archived"
                 || status == "archiving"
-                || status == "restoring"
-                || status == "deleted" =>
+                || status == "restoring" =>
         {
             format!("database is {status}: {database_id}")
         }
@@ -4817,7 +4782,7 @@ fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT database_id, name, status, active_mount_id, schema_version, logical_size_bytes,
-                snapshot_hash, archived_at_ms, deleted_at_ms
+                snapshot_hash, archived_at_ms
          FROM databases
          ORDER BY database_id ASC",
         )
@@ -4834,7 +4799,6 @@ fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
             logical_size_bytes: logical_size_bytes.max(0) as u64,
             snapshot_hash: crate::sqlite::row_get(row, 6)?,
             archived_at_ms: crate::sqlite::row_get(row, 7)?,
-            deleted_at_ms: crate::sqlite::row_get(row, 8)?,
         })
     })
     .map_err(|error| error.to_string())
@@ -4847,28 +4811,27 @@ fn load_database_summaries_for_caller(
     let mut stmt = conn
         .prepare(
             "SELECT d.database_id, d.name, d.status, m.role, d.logical_size_bytes,
-                COALESCE(b.balance_e8s, 0), b.suspended_at_ms,
-                d.archived_at_ms, d.deleted_at_ms
+                COALESCE(b.balance_credits, 0), b.suspended_at_ms,
+                d.archived_at_ms
          FROM databases d
          INNER JOIN database_members m ON m.database_id = d.database_id
          LEFT JOIN database_credit_accounts b ON b.database_id = d.database_id
-         WHERE m.principal = ?1 AND d.status != 'deleted'
+         WHERE m.principal = ?1
          ORDER BY d.database_id ASC",
         )
         .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![caller], |row| {
         let logical_size_bytes: i64 = crate::sqlite::row_get(row, 4)?;
-        let credit_balance_e8s: i64 = crate::sqlite::row_get(row, 5)?;
+        let credits_balance: i64 = crate::sqlite::row_get(row, 5)?;
         Ok(DatabaseSummary {
             database_id: crate::sqlite::row_get(row, 0)?,
             name: crate::sqlite::row_get(row, 1)?,
             status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
             role: role_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
             logical_size_bytes: logical_size_bytes.max(0) as u64,
-            credit_balance_e8s: Some(credit_balance_e8s.max(0) as u64),
+            credits_balance: Some(credits_balance.max(0) as u64),
             credits_suspended_at_ms: crate::sqlite::row_get(row, 6)?,
             archived_at_ms: crate::sqlite::row_get(row, 7)?,
-            deleted_at_ms: crate::sqlite::row_get(row, 8)?,
         })
     })
     .map_err(|error| error.to_string())
@@ -4941,7 +4904,6 @@ fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
         "active" => Ok(DatabaseStatus::Active),
         "archiving" => Ok(DatabaseStatus::Archiving),
         "archived" => Ok(DatabaseStatus::Archived),
-        "deleted" => Ok(DatabaseStatus::Deleted),
         "restoring" => Ok(DatabaseStatus::Restoring),
         _ => Err(crate::sqlite::invalid_query()),
     }
@@ -4953,7 +4915,6 @@ fn status_to_db(status: DatabaseStatus) -> &'static str {
         DatabaseStatus::Active => "active",
         DatabaseStatus::Archiving => "archiving",
         DatabaseStatus::Archived => "archived",
-        DatabaseStatus::Deleted => "deleted",
         DatabaseStatus::Restoring => "restoring",
     }
 }
@@ -4988,10 +4949,9 @@ mod tests {
         CreditsConfig {
             kinic_ledger_canister_id: "aaaaa-aa".to_string(),
             sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-            rate_numerator_e8s: DEFAULT_RATE_NUMERATOR_E8S,
-            rate_denominator_cycles: DEFAULT_RATE_DENOMINATOR_CYCLES,
-            fixed_update_fee_e8s: DEFAULT_FIXED_UPDATE_FEE_E8S,
-            min_update_balance_e8s: DEFAULT_MIN_UPDATE_BALANCE_E8S,
+            credits_per_kinic: DEFAULT_CREDITS_PER_KINIC,
+            cycles_per_credit: DEFAULT_CYCLES_PER_CREDIT,
+            min_update_credits: DEFAULT_MIN_UPDATE_CREDITS,
         }
     }
 
@@ -5209,7 +5169,7 @@ mod tests {
 
         let result = service
             .query_index_sql_json(
-                "SELECT json_object('credit_purchase_e8s', COALESCE(SUM(amount_e8s), 0)) FROM database_credit_ledger WHERE kind = 'credit_purchase' LIMIT 1",
+                "SELECT json_object('credit_purchase_credits', COALESCE(SUM(amount_credits), 0)) FROM database_credit_ledger WHERE kind = 'credit_purchase' LIMIT 1",
                 10,
             )
             .expect("index SQL should query");
@@ -5218,7 +5178,7 @@ mod tests {
         assert_eq!(result.row_count, 1);
         assert_eq!(
             result.rows,
-            vec![r#"{"credit_purchase_e8s":1000000}"#.to_string()]
+            vec![r#"{"credit_purchase_credits":1000000}"#.to_string()]
         );
     }
 
@@ -5268,7 +5228,7 @@ mod tests {
     #[test]
     fn index_sql_json_rejects_mutating_sql() {
         for sql in [
-            "UPDATE database_credit_accounts SET balance_e8s = 0",
+            "UPDATE database_credit_accounts SET balance_credits = 0",
             "DELETE FROM database_credit_ledger",
             "INSERT INTO database_credit_ledger (database_id) VALUES ('x')",
             "CREATE TABLE x (id INTEGER)",

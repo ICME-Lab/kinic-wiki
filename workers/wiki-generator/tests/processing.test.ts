@@ -65,7 +65,7 @@ test("worker log append failure is non-fatal", async () => {
   }
 });
 
-test("source queue billable check failure does not call DeepSeek", async () => {
+test("source queue write credits check failure does not call DeepSeek", async () => {
   const originalFetch = globalThis.fetch;
   let deepSeekCalls = 0;
   globalThis.fetch = async (): Promise<Response> => {
@@ -76,7 +76,7 @@ test("source queue billable check failure does not call DeepSeek", async () => {
     await processSourceQueueMessageForTest(
       testEnv(new TestQueue()),
       { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source" },
-      { config: workerConfig(), vfs: sourceVfs({ failBillable: true }) }
+      { config: workerConfig(), vfs: sourceVfs({ failWriteCredits: true }) }
     );
 
     assert.equal(deepSeekCalls, 0);
@@ -126,10 +126,10 @@ function failingLogVfs(): VfsClient {
   };
 }
 
-function sourceVfs(options: { failBillable?: boolean; failDraftWrite?: boolean } = {}): VfsClient {
+function sourceVfs(options: { failWriteCredits?: boolean; failDraftWrite?: boolean } = {}): VfsClient {
   return {
     checkDatabaseWriteCredits: async (): Promise<void> => {
-      if (options.failBillable) throw new Error("database credits are suspended");
+      if (options.failWriteCredits) throw new Error("database credits are suspended");
     },
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => {

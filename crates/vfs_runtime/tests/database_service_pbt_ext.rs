@@ -9,14 +9,11 @@ use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{
-    DEFAULT_FIXED_UPDATE_FEE_E8S, DEFAULT_MIN_UPDATE_BALANCE_E8S, DEFAULT_RATE_DENOMINATOR_CYCLES,
-    DEFAULT_RATE_NUMERATOR_E8S, VfsService,
-};
+use vfs_runtime::{DEFAULT_CYCLES_PER_CREDIT, DEFAULT_MIN_UPDATE_CREDITS, VfsService};
 use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
-const DEPOSIT_E8S: u64 = 1_000_000;
+const DEPOSIT_CREDITS: u64 = 1_000;
 
 #[derive(Clone, Debug)]
 enum CreditsOp {
@@ -71,7 +68,7 @@ fn create_billed_database(service: &VfsService, name: &str, now: i64) -> String 
         service,
         &database_id,
         OWNER,
-        DEPOSIT_E8S,
+        DEPOSIT_CREDITS,
         now as u64,
         now + 2,
     )
@@ -89,26 +86,18 @@ fn credit_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    amount_e8s: u64,
+    credits: u64,
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id =
-        service.begin_database_credit_purchase(database_id, caller, amount_e8s, now)?;
-    service.credit_database_purchase(
-        operation_id,
-        database_id,
-        caller,
-        amount_e8s,
-        block_index,
-        now,
-    )
+    let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
+    service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
 }
 
 fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT balance_e8s, suspended_at_ms
+        "SELECT balance_credits, suspended_at_ms
          FROM database_credit_accounts
          WHERE database_id = ?1",
         params![database_id],
@@ -132,17 +121,15 @@ fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus,
 }
 
 fn charge_amount(cycles_delta: u128) -> u64 {
-    let variable = cycles_delta
-        .saturating_mul(u128::from(DEFAULT_RATE_NUMERATOR_E8S))
-        .div_ceil(u128::from(DEFAULT_RATE_DENOMINATOR_CYCLES));
-    u64::try_from(variable).expect("generated charge fits u64") + DEFAULT_FIXED_UPDATE_FEE_E8S
+    let variable = cycles_delta.div_ceil(u128::from(DEFAULT_CYCLES_PER_CREDIT));
+    u64::try_from(variable).expect("generated charge fits u64")
 }
 
 fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance: u64) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     let mut stmt = conn
         .prepare(
-            "SELECT kind, amount_e8s, balance_after_e8s, method, cycles_delta
+            "SELECT kind, amount_credits, balance_after_credits, method, cycles_delta
              FROM database_credit_ledger
              WHERE database_id = ?1
              ORDER BY entry_id ASC",
@@ -294,7 +281,7 @@ proptest! {
         let env = service_with_root();
         let service = &env.service;
         let database_id = create_billed_database(service, "credits-pbt", 1);
-        let mut database_balance = DEPOSIT_E8S;
+        let mut database_balance = DEPOSIT_CREDITS;
 
         for (index, operation) in operations.into_iter().enumerate() {
             let now = index as i64 + 100;
@@ -324,10 +311,10 @@ proptest! {
 
             let (stored_balance, suspended_at_ms) = db_account(&env.root, &database_id);
             assert_eq!(stored_balance, database_balance);
-            assert_eq!(suspended_at_ms.is_some(), database_balance < DEFAULT_MIN_UPDATE_BALANCE_E8S);
+            assert_eq!(suspended_at_ms.is_some(), database_balance < DEFAULT_MIN_UPDATE_CREDITS);
             assert_eq!(
-                service.require_database_billable(&database_id).is_ok(),
-                database_balance >= DEFAULT_MIN_UPDATE_BALANCE_E8S
+                service.require_database_write_credits_available(&database_id).is_ok(),
+                database_balance >= DEFAULT_MIN_UPDATE_CREDITS
             );
             assert_database_ledger_chain(&env.root, &database_id, database_balance);
         }
@@ -373,7 +360,14 @@ proptest! {
             service
                 .delete_database(delete_request(&database_id), OWNER, 23)
                 .expect("active database should delete");
-            assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Deleted);
+            assert!(
+                service
+                    .list_database_infos()
+                    .expect("database infos should load")
+                    .iter()
+                    .all(|info| info.database_id != database_id)
+            );
+            return Ok(());
         } else {
             service
                 .finalize_database_archive(&database_id, OWNER, hash.clone(), 22)
@@ -413,7 +407,7 @@ proptest! {
                 .expect("partial restore should cancel");
             assert!(matches!(
                 status_and_mount(service, &database_id).0,
-                DatabaseStatus::Archived | DatabaseStatus::Deleted
+                DatabaseStatus::Archived
             ));
         }
 

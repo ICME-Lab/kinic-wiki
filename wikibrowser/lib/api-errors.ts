@@ -51,7 +51,7 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
   if (/method .*not found|no (query|update) method|does not expose|Cannot find field|subtype|type mismatch|Candid|IDL/i.test(raw)) {
     return {
       error: "This canister does not expose the Wiki VFS API",
-      hint: "Use a Kinic Wiki canister with read_node_context, list_children, graph_neighborhood, search, and recent_nodes methods.",
+      hint: "Use a Kinic Wiki canister with read_node_context, list_children, graph_neighborhood, and search methods.",
       code: "wiki_api_missing"
     };
   }

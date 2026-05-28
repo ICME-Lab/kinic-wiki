@@ -22,8 +22,7 @@ function idlFactory({ IDL: idl }) {
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null,
-    Deleted: idl.Null
+    Archived: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -31,18 +30,16 @@ function idlFactory({ IDL: idl }) {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    credit_balance_e8s: idl.Opt(idl.Nat64),
+    credits_balance: idl.Opt(idl.Nat64),
     credits_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64),
-    deleted_at_ms: idl.Opt(idl.Int64)
+    archived_at_ms: idl.Opt(idl.Int64)
   });
   const CreditsConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
     sns_governance_id: idl.Text,
-    rate_numerator_e8s: idl.Nat64,
-    rate_denominator_cycles: idl.Nat64,
-    fixed_update_fee_e8s: idl.Nat64,
-    min_update_balance_e8s: idl.Nat64
+    credits_per_kinic: idl.Nat64,
+    cycles_per_credit: idl.Nat64,
+    min_update_credits: idl.Nat64
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
@@ -78,13 +75,13 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     session_nonce: idl.Text
   });
-  const RecentNodeHit = idl.Record({
+  const NodeMutationAck = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
     kind: NodeKind,
     path: idl.Text
   });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const WriteSourceForGenerationResult = idl.Record({
     write: WriteNodeResult,
     session_nonce: idl.Text
@@ -126,7 +123,7 @@ export async function listWritableDatabases(config) {
   return normalizeWritableDatabases(databaseResult.Ok, creditsConfig);
 }
 
-export async function requireDatabaseBillable(actor, databaseId) {
+export async function requireDatabaseWriteCreditsAvailable(actor, databaseId) {
   const [databaseResult, creditsConfigResult] = await Promise.all([
     actor.list_databases(),
     actor.get_credits_config()
@@ -148,7 +145,7 @@ export function normalizeWritableDatabases(rawDatabases, creditsConfig = null) {
     const reason = databaseCreditsDisabledReason(database, creditsConfig);
     return {
       ...database,
-      billable: !reason,
+      writeCreditsAvailable: !reason,
       creditsReason: reason
     };
   });
@@ -168,7 +165,7 @@ function normalizeDatabaseSummary(raw) {
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
-    creditsBalanceE8s: raw.credit_balance_e8s?.[0]?.toString?.() ?? "0",
+    creditsBalance: raw.credits_balance?.[0]?.toString?.() ?? "0",
     creditsSuspendedAtMs: raw.credits_suspended_at_ms?.[0]?.toString?.() ?? null
   };
 }
@@ -186,21 +183,21 @@ export async function getCreditsConfigOrNull(actor) {
 
 function normalizeCreditsConfig(raw) {
   return {
-    minUpdateBalanceE8s: raw.min_update_balance_e8s?.toString?.() ?? String(raw.min_update_balance_e8s ?? "0")
+    minUpdateCredits: raw.min_update_credits?.toString?.() ?? String(raw.min_update_credits ?? "0")
   };
 }
 
 function databaseCreditsDisabledReason(database, config) {
-  const balance = parseE8s(database.creditsBalanceE8s);
-  const minimum = parseE8s(config?.minUpdateBalanceE8s);
+  const balance = parseCredits(database.creditsBalance);
+  const minimum = parseCredits(config?.minUpdateCredits);
   if (!config) return "Credits config unavailable.";
   if (database.status === "Pending") return "Database activation is pending until its first credit purchase completes.";
   if (database.creditsSuspendedAtMs) return "Database credits are suspended.";
-  if (balance < minimum) return "Database balance is below the minimum update balance.";
+  if (balance < minimum) return "Database credits balance is below the minimum update balance.";
   return null;
 }
 
-function parseE8s(value) {
+function parseCredits(value) {
   return typeof value === "string" && /^[0-9]+$/.test(value) ? BigInt(value) : 0n;
 }
 

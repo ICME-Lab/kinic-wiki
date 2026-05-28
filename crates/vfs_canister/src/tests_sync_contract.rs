@@ -37,7 +37,7 @@ fn install_test_service() {
                 1_700_000_000_001,
             )
         })
-        .expect("default database should be billable");
+        .expect("default database should have write credits available");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 

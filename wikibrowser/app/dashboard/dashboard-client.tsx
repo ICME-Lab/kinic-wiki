@@ -295,7 +295,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {database ? (
           canManage ? (
             <OwnerPanel
-              creditsBalanceE8s={database.creditsBalanceE8s}
+              creditsBalance={database.creditsBalance}
               busy={busy}
               busyAction={busyAction}
               databaseId={databaseId}

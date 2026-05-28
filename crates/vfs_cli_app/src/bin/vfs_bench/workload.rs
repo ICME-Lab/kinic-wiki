@@ -14,7 +14,7 @@ use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeKind,
-    RecentNodesRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 use crate::vfs_bench::common::{
@@ -225,14 +225,6 @@ where
         )
         .await?
         .len(),
-        WorkloadOperation::Recent => seed_nodes(
-            &client,
-            args,
-            &make_payload(args.payload_size_bytes),
-            node_count(args)?,
-        )
-        .await?
-        .len(),
         WorkloadOperation::MultiEdit => seed_nodes(
             &client,
             args,
@@ -342,7 +334,6 @@ where
         WorkloadOperation::Search => run_search(client, args).await,
         WorkloadOperation::Mkdir => run_mkdir(client, args).await,
         WorkloadOperation::Glob => run_glob(client, args).await,
-        WorkloadOperation::Recent => run_recent(client, args).await,
         WorkloadOperation::MultiEdit => run_multi_edit(client, args).await,
     }
 }
@@ -367,7 +358,6 @@ where
         WorkloadOperation::Search => run_search_from_seed(client, args).await,
         WorkloadOperation::Mkdir => run_mkdir_from_seed(client, args).await,
         WorkloadOperation::Glob => run_glob_from_seed(client, args).await,
-        WorkloadOperation::Recent => run_recent_from_seed(client, args).await,
         WorkloadOperation::MultiEdit => run_multi_edit_from_seed(client, args).await,
     }
 }
@@ -1078,61 +1068,6 @@ where
     .await
 }
 
-async fn run_recent<C>(client: &Arc<C>, args: &WorkloadBenchArgs) -> Result<Vec<CallMetric>>
-where
-    C: VfsApi + Send + Sync + 'static,
-{
-    let node_count = node_count(args)?;
-    let payload = make_payload(args.payload_size_bytes);
-    seed_nodes(client, args, &payload, node_count).await?;
-    let limit = (node_count as u32).clamp(1, 10);
-    let database_id = args.database_id.clone();
-    let request = RecentNodesRequest {
-        database_id: database_id.clone(),
-        limit,
-        path: Some(args.prefix.clone()),
-    };
-    let client = Arc::clone(client);
-    run_parallel(args.iterations, args.concurrent_clients, move |_| {
-        let client = Arc::clone(&client);
-        let request = request.clone();
-        async move {
-            let started_at = Instant::now();
-            let result = client.recent_nodes(request.clone()).await?;
-            metric(started_at, &request, &result)
-        }
-    })
-    .await
-}
-
-async fn run_recent_from_seed<C>(
-    client: &Arc<C>,
-    args: &WorkloadBenchArgs,
-) -> Result<Vec<CallMetric>>
-where
-    C: VfsApi + Send + Sync + 'static,
-{
-    let node_count = node_count(args)?;
-    let limit = (node_count as u32).clamp(1, 10);
-    let database_id = args.database_id.clone();
-    let request = RecentNodesRequest {
-        database_id: database_id.clone(),
-        limit,
-        path: Some(args.prefix.clone()),
-    };
-    let client = Arc::clone(client);
-    run_parallel(args.iterations, args.concurrent_clients, move |_| {
-        let client = Arc::clone(&client);
-        let request = request.clone();
-        async move {
-            let started_at = Instant::now();
-            let result = client.recent_nodes(request.clone()).await?;
-            metric(started_at, &request, &result)
-        }
-    })
-    .await
-}
-
 async fn run_multi_edit<C>(client: &Arc<C>, args: &WorkloadBenchArgs) -> Result<Vec<CallMetric>>
 where
     C: VfsApi + Send + Sync + 'static,
@@ -1473,8 +1408,7 @@ mod tests {
     use vfs_types::{
         DeleteNodeResult, EditNodeResult, GlobNodeHit, GlobNodesRequest, MkdirNodeRequest,
         MkdirNodeResult, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node,
-        NodeEntry, NodeMutationAck, RecentNodeHit, RecentNodesRequest, SearchNodeHit,
-        SearchNodePathsRequest, Status, WriteNodeResult,
+        NodeEntry, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, Status, WriteNodeResult,
     };
 
     #[derive(Default)]
@@ -1639,13 +1573,6 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(format!("glob:{}", request.pattern));
-            Ok(Vec::new())
-        }
-        async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-            self.ops
-                .lock()
-                .unwrap()
-                .push(format!("recent:{}", request.limit));
             Ok(Vec::new())
         }
         async fn multi_edit_node(
@@ -2005,31 +1932,6 @@ mod tests {
         assert_eq!(
             ops.iter()
                 .filter(|entry| entry == &&"glob:**/node-*.md".to_string())
-                .count(),
-            4
-        );
-    }
-
-    #[tokio::test]
-    async fn isolated_recent_measurement_does_not_reseed() {
-        let client = Arc::new(MockClient::default());
-        let mut workload = args(WorkloadOperation::Recent);
-        workload.measurement_mode = MeasurementMode::IsolatedSingleOp;
-        super::setup_workload_with_client(Arc::clone(&client), &workload)
-            .await
-            .unwrap();
-        client.take_ops();
-
-        let result = super::measure_workload_with_client(Arc::clone(&client), workload)
-            .await
-            .unwrap();
-        let ops = client.take_ops();
-
-        assert_eq!(result.request_count, 4);
-        assert!(ops.iter().all(|entry| !entry.starts_with("write:")));
-        assert_eq!(
-            ops.iter()
-                .filter(|entry| entry == &&"recent:4".to_string())
                 .count(),
             4
         );

@@ -90,7 +90,7 @@ export function CreditsClient({ canisterId, databaseId }: CreditsClientProps) {
     setProvider(selectedProvider);
     setMessage(null);
     try {
-      const request = { canisterId, databaseId: parsedTarget.databaseId, amountE8s: parsedAmount };
+      const request = { canisterId, databaseId: parsedTarget.databaseId, credits: parsedAmount };
       const result =
         selectedProvider === "oisy" && activeOisyWallet
           ? await purchaseCreditsWithOisy(request, activeOisyWallet)
@@ -98,9 +98,9 @@ export function CreditsClient({ canisterId, databaseId }: CreditsClientProps) {
             ? await purchaseCreditsWithPlug(request, activePlugWallet)
             : null;
       if (!result) return;
-      const balance = result.balanceE8s ? `credits balance ${formatTokenAmountFromE8s(result.balanceE8s)}` : "credits purchase accepted";
+      const balance = result.balanceCredits ? `credits balance ${result.balanceCredits}` : "credits purchase accepted";
       setMessage(
-        `${result.provider} approve block ${result.approveBlockIndex}; purchased credits ${formatTokenAmountFromE8s(result.creditedAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
+        `${result.provider} approve block ${result.approveBlockIndex}; purchased credits ${result.creditedCredits}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} KINIC; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
       );
       if (selectedProvider === "oisy") setOisyWallet(null);
       setStatus("success");

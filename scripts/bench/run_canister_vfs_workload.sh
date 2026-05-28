@@ -89,14 +89,14 @@ node -e '
   const pickIterations = (operation, size) => {
     if (operation === "list") return Number(process.env.WORKLOAD_LIST_ITERATIONS || 100);
     if (operation === "search") return Number(process.env.WORKLOAD_SEARCH_ITERATIONS || 50);
-    if (operation === "mkdir" || operation === "glob" || operation === "recent") {
+    if (operation === "mkdir" || operation === "glob") {
       return Number(process.env.WORKLOAD_QUERY_ITERATIONS || process.env.WORKLOAD_LIST_ITERATIONS || 100);
     }
     return size.iterations;
   };
   const defaultOperations = [
     "create", "update", "append", "edit", "move_same_dir", "move_cross_dir", "delete", "read", "list", "search",
-    "mkdir", "glob", "recent", "multi_edit"
+    "mkdir", "glob", "multi_edit"
   ];
   const operations = parseList(process.env.WORKLOAD_OPERATIONS, defaultOperations);
   const directoryShapes = parseList(process.env.WORKLOAD_DIRECTORY_SHAPES, ["flat"]);
@@ -244,7 +244,6 @@ write_failed_raw() {
       search: { openai_tool: "search", openai_tool_variant: null },
       mkdir: { openai_tool: "mkdir", openai_tool_variant: null },
       glob: { openai_tool: "glob", openai_tool_variant: null },
-      recent: { openai_tool: "recent", openai_tool_variant: null },
       multi_edit: { openai_tool: "multi_edit", openai_tool_variant: null }
     };
     const oa = openaiMap[op] ?? { openai_tool: op, openai_tool_variant: null };

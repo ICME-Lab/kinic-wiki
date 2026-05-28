@@ -2,7 +2,6 @@ use crate::cli::{Cli, Command, ConnectionArgs, IdentityModeArg, NodeKindArg};
 use crate::commands::run_command;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use std::cmp::Reverse;
 use std::collections::HashSet;
 use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
@@ -13,8 +12,8 @@ use vfs_types::{
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeKind,
-    NodeMutationAck, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+    NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 #[derive(Default)]
@@ -32,7 +31,6 @@ pub(crate) struct MockClient {
     pub(crate) mkdirs: std::sync::Mutex<Vec<MkdirNodeRequest>>,
     pub(crate) moves: std::sync::Mutex<Vec<MoveNodeRequest>>,
     pub(crate) globs: std::sync::Mutex<Vec<GlobNodesRequest>>,
-    pub(crate) recents: std::sync::Mutex<Vec<RecentNodesRequest>>,
     pub(crate) multi_edits: std::sync::Mutex<Vec<MultiEditNodeRequest>>,
     pub(crate) searches: std::sync::Mutex<Vec<SearchNodesRequest>>,
     pub(crate) path_searches: std::sync::Mutex<Vec<SearchNodePathsRequest>>,
@@ -64,10 +62,9 @@ impl VfsApi for MockClient {
         Ok(CreditsConfig {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
             sns_governance_id: "aaaaa-aa".to_string(),
-            rate_numerator_e8s: 1,
-            rate_denominator_cycles: 1,
-            fixed_update_fee_e8s: 0,
-            min_update_balance_e8s: 1,
+            credits_per_kinic: 1_000,
+            cycles_per_credit: 1_000_000_000,
+            min_update_credits: 1,
         })
     }
 
@@ -78,10 +75,9 @@ impl VfsApi for MockClient {
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 0,
-            credit_balance_e8s: Some(10),
+            credits_balance: Some(10),
             credits_suspended_at_ms: None,
             archived_at_ms: None,
-            deleted_at_ms: None,
         }])
     }
 
@@ -226,30 +222,6 @@ impl VfsApi for MockClient {
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         self.globs.lock().expect("globs should lock").push(request);
         Ok(Vec::new())
-    }
-
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        self.recents
-            .lock()
-            .expect("recents should lock")
-            .push(request.clone());
-        let mut hits = self
-            .nodes
-            .iter()
-            .filter(|node| match &request.path {
-                Some(path) => node.path.starts_with(path),
-                None => true,
-            })
-            .map(|node| RecentNodeHit {
-                path: node.path.clone(),
-                kind: node.kind.clone(),
-                updated_at: node.updated_at,
-                etag: node.etag.clone(),
-            })
-            .collect::<Vec<_>>();
-        hits.sort_by_key(|right| Reverse(right.updated_at));
-        hits.truncate(request.limit as usize);
-        Ok(hits)
     }
 
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {

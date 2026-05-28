@@ -197,9 +197,7 @@ function DatabaseSection({
                       <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
                         Registry
                       </Link>
-                      {database.status !== "deleted" ? (
-                        <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
-                      ) : null}
+                      <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
                     </div>
                   </td>
                 ) : null}
@@ -241,7 +239,7 @@ function DatabaseMobileCard({ creditsConfig, database, mode }: { creditsConfig: 
             Registry
           </Link>
         ) : null}
-        {mode === "member" && database.status !== "deleted" ? (
+        {mode === "member" ? (
           <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
         ) : null}
         {database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : null}

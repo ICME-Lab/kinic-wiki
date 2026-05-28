@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -10,26 +10,24 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
-      credit_balance_e8s: "opt nat64",
+      credits_balance: "opt nat64",
       credits_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      archived_at_ms: "opt int64"
     }
   },
   CreditsConfig: {
     kind: "record",
     fields: {
-      min_update_balance_e8s: "nat64",
-      fixed_update_fee_e8s: "nat64",
-      rate_denominator_cycles: "nat64",
+      credits_per_kinic: "nat64",
+      min_update_credits: "nat64",
+      cycles_per_credit: "nat64",
       kinic_ledger_canister_id: "text",
-      rate_numerator_e8s: "nat64",
       sns_governance_id: "text"
     }
   },
   CreditsPurchaseResult: {
     kind: "record",
-    fields: { block_index: "nat64", balance_e8s: "nat64" }
+    fields: { block_index: "nat64", balance_credits: "nat64" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
@@ -48,15 +46,15 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       method: "opt text",
-      fixed_update_fee_e8s: "opt nat64",
+      credits_per_kinic: "opt nat64",
+      payment_amount_e8s: "opt nat64",
       kind: "text",
-      rate_denominator_cycles: "opt nat64",
+      cycles_per_credit: "opt nat64",
       created_at_ms: "int64",
-      amount_e8s: "int64",
-      rate_numerator_e8s: "opt nat64",
+      amount_credits: "int64",
       ledger_block_index: "opt nat64",
       database_id: "text",
-      balance_after_e8s: "nat64",
+      balance_after_credits: "nat64",
       caller: "text",
       cycles_delta: "opt nat64",
       entry_id: "nat64",
@@ -70,15 +68,15 @@ export const expectedTypes = {
   DatabaseCreditPendingOperation: {
     kind: "record",
     fields: {
+      credits: "int64",
+      payment_amount_e8s: "int64",
       to_owner: "opt text",
       to_subaccount: "opt blob",
       from_owner: "opt text",
       kind: "text",
-      fee_e8s: "int64",
       operation_id: "nat64",
       from_subaccount: "opt blob",
       created_at_ms: "int64",
-      amount_e8s: "int64",
       ledger_fee_e8s: "opt int64",
       ledger_created_at_time_ns: "opt int64",
       database_id: "text",
@@ -137,7 +135,7 @@ export const expectedTypes = {
   },
   WriteNodeResult: {
     kind: "record",
-    fields: { created: "bool", node: "RecentNodeHit" }
+    fields: { created: "bool", node: "NodeMutationAck" }
   },
   WriteSourceForGenerationRequest: {
     kind: "record",
@@ -257,11 +255,6 @@ export const expectedTypes = {
       namespace: "opt text"
     }
   },
-  RecentNodeHit: {
-    kind: "record",
-    fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
-  },
-  RecentNodesRequest: { kind: "record", fields: { path: "opt text", limit: "nat32", database_id: "text" } },
   GraphLinksRequest: { kind: "record", fields: { limit: "nat32", database_id: "text", prefix: "text" } },
   GraphNeighborhoodRequest: { kind: "record", fields: { center_path: "text", limit: "nat32", database_id: "text", depth: "nat32" } },
   IncomingLinksRequest: { kind: "record", fields: { path: "text", limit: "nat32", database_id: "text" } },
@@ -299,7 +292,6 @@ export const expectedTypes = {
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
-  ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
   ResultOpsAnswerSessionCheck: {
@@ -389,11 +381,10 @@ export const didTypeAliases = {
   ResultNode: "Result_24",
   ResultNodeContext: "Result_25",
   ResultQueryContext: "Result_21",
-  ResultRecent: "Result_26",
-  ResultSearch: "Result_27",
-  ResultSourceEvidence: "Result_28",
+  ResultSearch: "Result_26",
+  ResultSourceEvidence: "Result_27",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_30"
+  ResultWriteSourceForGeneration: "Result_29"
 };
 
 export const expectedMethods = {
@@ -426,7 +417,6 @@ export const expectedMethods = {
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
-  recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
   repair_database_credit_purchase_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
   repair_database_credit_purchase_complete: { input: ["text", "nat64", "nat64"], output: "ResultCreditsPurchase", mode: "update" },
   repair_database_credit_purchase_retry: { input: ["text", "nat64"], output: "ResultCreditsPurchase", mode: "update" },

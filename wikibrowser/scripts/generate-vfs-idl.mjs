@@ -18,8 +18,7 @@ const browserExpectedTypes = {
       Active: "null",
       Restoring: "null",
       Archiving: "null",
-      Archived: "null",
-      Deleted: "null"
+      Archived: "null"
     }
   }
 };
@@ -44,7 +43,6 @@ const typeOrder = [
   "NodeEntryKind",
   "Node",
   "ChildNode",
-  "RecentNodeHit",
   "NodeMutationAck",
   "LinkEdge",
   "NodeContext",
@@ -60,7 +58,6 @@ const typeOrder = [
   "SourceEvidence",
   "QueryContext",
   "ListChildrenRequest",
-  "RecentNodesRequest",
   "IncomingLinksRequest",
   "OutgoingLinksRequest",
   "GraphLinksRequest",
@@ -83,7 +80,6 @@ const typeOrder = [
   "SourceEvidenceRequest",
   "ResultNode",
   "ResultChildren",
-  "ResultRecent",
   "ResultLinks",
   "ResultNodeContext",
   "ResultSearch",
@@ -139,7 +135,6 @@ const methodOrder = [
   "list_children",
   "outgoing_links",
   "preview_database_credit_purchase",
-  "recent_nodes",
   "repair_database_credit_purchase_cancel",
   "repair_database_credit_purchase_complete",
   "repair_database_credit_purchase_retry",
@@ -363,12 +358,10 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_21") return "ResultQueryContext";
   if (normalized === "Result_24") return "ResultNode";
   if (normalized === "Result_25") return "ResultNodeContext";
-  if (normalized === "Result_26") return "ResultRecent";
-  if (normalized === "Result_27") return "ResultSearch";
-  if (normalized === "Result_28") return "ResultSourceEvidence";
-  if (normalized === "Result_29") return "ResultWriteNodes";
+  if (normalized === "Result_26") return "ResultSearch";
+  if (normalized === "Result_27") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

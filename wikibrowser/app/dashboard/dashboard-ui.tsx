@@ -52,7 +52,7 @@ export function SummaryPanel({
   const routable = isRoutableDatabaseId(databaseId);
   const openHref = routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
   const credits = databaseCreditsView(database, creditsConfig);
-  const purchaseHref = database && database.status !== "deleted" ? databaseCreditsHref(database) : null;
+  const purchaseHref = database ? databaseCreditsHref(database) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
@@ -80,7 +80,7 @@ export function SummaryPanel({
 }
 
 export function OwnerPanel(props: {
-  creditsBalanceE8s: string;
+  creditsBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
@@ -242,7 +242,7 @@ export function OwnerPanel(props: {
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
       <DatabaseDangerZone
-        creditsBalanceE8s={props.creditsBalanceE8s}
+        creditsBalance={props.creditsBalance}
         busy={props.busy}
         busyAction={props.busyAction}
         databaseId={props.databaseId}
@@ -383,7 +383,6 @@ function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): str
     pending: "Pending",
     archived: "Archived",
     archiving: "Archiving",
-    deleted: "Deleted",
     active: "Active",
     restoring: "Restoring"
   };

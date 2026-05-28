@@ -9,7 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", fields: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", fields: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -18,10 +18,9 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      credit_balance_e8s: "opt nat64",
+      credits_balance: "opt nat64",
       credits_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      archived_at_ms: "opt int64"
     }
   },
   CreditsConfig: {
@@ -29,10 +28,9 @@ const expectedTypes = {
     fields: {
       kinic_ledger_canister_id: "text",
       sns_governance_id: "text",
-      rate_numerator_e8s: "nat64",
-      rate_denominator_cycles: "nat64",
-      fixed_update_fee_e8s: "nat64",
-      min_update_balance_e8s: "nat64"
+      credits_per_kinic: "nat64",
+      cycles_per_credit: "nat64",
+      min_update_credits: "nat64"
     }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
@@ -75,13 +73,13 @@ const expectedTypes = {
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
   UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
-  RecentNodeHit: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
-  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } },
+  NodeMutationAck: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
+  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "NodeMutationAck" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 const actorExpectedTypes = {
   ...expectedTypes,
-  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } }
+  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
 };
 
 const expectedMethods = {
@@ -200,7 +198,7 @@ function normalizeDidResult(value) {
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_24") return "ResultNode";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

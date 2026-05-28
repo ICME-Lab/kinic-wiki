@@ -7,11 +7,11 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{DEFAULT_FIXED_UPDATE_FEE_E8S, VfsService};
-use vfs_types::{DatabaseStatus, DeleteDatabaseRequest};
+use vfs_runtime::{DEFAULT_CYCLES_PER_CREDIT, VfsService};
+use vfs_types::DatabaseStatus;
 
 const OWNER: &str = "owner";
-const INITIAL_DATABASE_E8S: u64 = 1_000_000;
+const INITIAL_DATABASE_CREDITS: u64 = 1_000;
 
 #[derive(Clone, Debug)]
 enum RuntimeOp {
@@ -19,12 +19,11 @@ enum RuntimeOp {
     Charge { cycles_delta: u128 },
     ArchiveFinalize,
     RestoreArchived,
-    Delete,
 }
 
 #[derive(Debug)]
 struct Model {
-    database_e8s: u64,
+    database_credits: u64,
     status: DatabaseStatus,
     archive_bytes: Option<Vec<u8>>,
     archive_hash: Option<Vec<u8>>,
@@ -54,7 +53,6 @@ fn operation_strategy() -> impl Strategy<Value = RuntimeOp> {
         4 => (0_u128..=20_000_u128).prop_map(|cycles_delta| RuntimeOp::Charge { cycles_delta }),
         2 => Just(RuntimeOp::ArchiveFinalize),
         2 => Just(RuntimeOp::RestoreArchived),
-        1 => Just(RuntimeOp::Delete),
     ]
 }
 
@@ -80,7 +78,7 @@ fn create_seeded_database(service: &VfsService) -> String {
         service,
         &meta.database_id,
         OWNER,
-        INITIAL_DATABASE_E8S,
+        INITIAL_DATABASE_CREDITS,
         1,
         3,
     )
@@ -88,30 +86,16 @@ fn create_seeded_database(service: &VfsService) -> String {
     meta.database_id
 }
 
-fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
-    DeleteDatabaseRequest {
-        database_id: database_id.to_string(),
-    }
-}
-
 fn credit_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    amount_e8s: u64,
+    credits: u64,
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id =
-        service.begin_database_credit_purchase(database_id, caller, amount_e8s, now)?;
-    service.credit_database_purchase(
-        operation_id,
-        database_id,
-        caller,
-        amount_e8s,
-        block_index,
-        now,
-    )
+    let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
+    service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
@@ -159,12 +143,10 @@ fn database_bytes(root: &Path, service: &VfsService, database_id: &str) -> (Vec<
 }
 
 fn charge_amount(cycles_delta: u128) -> u64 {
-    let variable: u64 = cycles_delta
-        .saturating_mul(200)
-        .div_ceil(1_000_000)
+    cycles_delta
+        .div_ceil(u128::from(DEFAULT_CYCLES_PER_CREDIT))
         .try_into()
-        .expect("generated charge fits u64");
-    variable + DEFAULT_FIXED_UPDATE_FEE_E8S
+        .expect("generated charge fits u64")
 }
 
 fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
@@ -175,12 +157,12 @@ fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
     let database_after = database_entries
         .last()
         .expect("database ledger should not be empty")
-        .balance_after_e8s;
-    assert_eq!(database_after, model.database_e8s);
+        .balance_after_credits;
+    assert_eq!(database_after, model.database_credits);
 
     let (status, mount_id) = status_and_mount(service, database_id);
     assert_eq!(status, model.status);
-    if matches!(status, DatabaseStatus::Archived | DatabaseStatus::Deleted) {
+    if matches!(status, DatabaseStatus::Archived) {
         assert_eq!(mount_id, None);
     } else {
         assert!(mount_id.is_some());
@@ -209,16 +191,10 @@ fn apply_operation(
 ) {
     match operation {
         RuntimeOp::PurchaseDatabaseCredits { amount } => {
-            let before = model.database_e8s;
             let result =
                 credit_database(service, database_id, OWNER, amount, step as u64 + 10, step);
-            if model.status != DatabaseStatus::Deleted {
-                result.expect("database credit purchase should succeed");
-                model.database_e8s += amount;
-            } else {
-                assert!(result.is_err());
-                assert_eq!(model.database_e8s, before);
-            }
+            result.expect("database credit purchase should succeed");
+            model.database_credits += amount;
         }
         RuntimeOp::Charge { cycles_delta } => {
             let result = service.charge_database_update(
@@ -230,8 +206,8 @@ fn apply_operation(
                 step,
             );
             result.expect("database charge should record against credit account");
-            let charge = model.database_e8s.min(charge_amount(cycles_delta));
-            model.database_e8s -= charge;
+            let charge = model.database_credits.min(charge_amount(cycles_delta));
+            model.database_credits -= charge;
         }
         RuntimeOp::ArchiveFinalize => {
             if model.status == DatabaseStatus::Active {
@@ -249,10 +225,7 @@ fn apply_operation(
             }
         }
         RuntimeOp::RestoreArchived => {
-            if matches!(
-                model.status,
-                DatabaseStatus::Archived | DatabaseStatus::Deleted
-            ) {
+            if matches!(model.status, DatabaseStatus::Archived) {
                 let (Some(bytes), Some(hash), Some(size)) = (
                     model.archive_bytes.as_ref(),
                     model.archive_hash.as_ref(),
@@ -291,25 +264,12 @@ fn apply_operation(
                     .finalize_database_restore(database_id, OWNER, step + 2)
                     .expect("restore should finalize");
                 model.status = DatabaseStatus::Active;
-            } else if !matches!(
-                model.status,
-                DatabaseStatus::Archived | DatabaseStatus::Deleted
-            ) {
+            } else if !matches!(model.status, DatabaseStatus::Archived) {
                 assert!(
                     service
                         .begin_database_restore(database_id, OWNER, vec![1_u8; 32], 1, step)
                         .is_err()
                 );
-            }
-        }
-        RuntimeOp::Delete => {
-            let result = service.delete_database(delete_request(database_id), OWNER, step);
-            if model.status == DatabaseStatus::Active {
-                result.expect("active database should delete");
-                model.status = DatabaseStatus::Deleted;
-                model.database_e8s = 0;
-            } else {
-                assert!(result.is_err());
             }
         }
     }
@@ -324,7 +284,7 @@ proptest! {
         let service = &env.service;
         let database_id = create_seeded_database(service);
         let mut model = Model {
-            database_e8s: INITIAL_DATABASE_E8S,
+            database_credits: INITIAL_DATABASE_CREDITS,
             status: DatabaseStatus::Active,
             archive_bytes: None,
             archive_hash: None,

@@ -17,7 +17,7 @@ test("queueUrlIngest writes request and triggers via wiki route", async () => {
     createVfsActor: async (config) => {
       calls.push(["create", config.identity, config.databaseId]);
       return {
-        ...billableActorMethods(),
+        ...writeCreditsActorMethods(),
         async authorize_url_ingest_trigger_session(request) {
           calls.push(["session", request.database_id, request.session_nonce]);
           return { Ok: null };
@@ -68,7 +68,7 @@ test("queueUrlIngest keeps request result when trigger fails", async () => {
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     fetch: async () => new Response("nope", { status: 502 }),
     createVfsActor: async () => ({
-      ...billableActorMethods(),
+      ...writeCreditsActorMethods(),
       async mkdir_node(request) {
         return { Ok: { created: true, path: request.path } };
       },
@@ -101,7 +101,7 @@ test("queueUrlIngest rejects before writing when session authorize fails", async
       return Response.json({ accepted: true });
     },
     createVfsActor: async () => ({
-      ...billableActorMethods(),
+      ...writeCreditsActorMethods(),
       async write_node() {
         calls.push(["write"]);
         return { Ok: { created: true, node: { etag: "etag-request" } } };
@@ -135,7 +135,7 @@ test("queueUrlIngest reuses session nonce inside ttl", async () => {
       return Response.json({ accepted: true });
     },
     createVfsActor: async () => ({
-      ...billableActorMethods(),
+      ...writeCreditsActorMethods(),
       async authorize_url_ingest_trigger_session(request) {
         calls.push(["session", request.session_nonce]);
         return { Ok: null };
@@ -175,7 +175,7 @@ test("saveRawSource writes with authenticated identity", async () => {
     createVfsActor: async (config) => {
       calls.push(["create", config.identity, config.databaseId]);
       return {
-        ...billableActorMethods(),
+        ...writeCreditsActorMethods(),
         async read_node(databaseId, path) {
           calls.push(["read", databaseId, path]);
           return { Ok: [{ etag: "etag-1" }] };
@@ -235,7 +235,7 @@ test("queueUrlIngest rejects low credit balance before writing", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
-      ...billableActorMethods({ balanceE8s: 9_999n }),
+      ...writeCreditsActorMethods({ balanceCredits: 9_999n }),
       async authorize_url_ingest_trigger_session() {
         calls.push(["session"]);
         return { Ok: null };
@@ -267,7 +267,7 @@ test("saveRawSource rejects suspended credits before writing", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
-      ...billableActorMethods({ suspendedAtMs: 1n }),
+      ...writeCreditsActorMethods({ suspendedAtMs: 1n }),
       async read_node() {
         calls.push(["read"]);
         return { Ok: [] };
@@ -350,10 +350,9 @@ test("listWritableDatabases returns active writable database summaries", async (
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            rate_numerator_e8s: 1n,
-            rate_denominator_cycles: 1n,
-            fixed_update_fee_e8s: 1n,
-            min_update_balance_e8s: 10_000n
+            credits_per_kinic: 1n,
+            cycles_per_credit: 1n,
+          min_update_credits: 10_000n
           }
         };
       }
@@ -367,9 +366,9 @@ test("listWritableDatabases returns active writable database summaries", async (
         role: "Writer",
         status: "Active",
         logicalSizeBytes: "0",
-        creditsBalanceE8s: "20000",
+        creditsBalance: "20000",
         creditsSuspendedAtMs: null,
-        billable: true,
+        writeCreditsAvailable: true,
         creditsReason: null
       }
     ]);
@@ -395,7 +394,7 @@ function config() {
   };
 }
 
-function billableActorMethods({ databaseId = "team-db", balanceE8s = 20_000n, suspendedAtMs = null } = {}) {
+function writeCreditsActorMethods({ databaseId = "team-db", balanceCredits = 20_000n, suspendedAtMs = null } = {}) {
   return {
     async list_databases() {
       return {
@@ -406,10 +405,9 @@ function billableActorMethods({ databaseId = "team-db", balanceE8s = 20_000n, su
             role: { Writer: null },
             status: { Active: null },
             logical_size_bytes: 0n,
-            credit_balance_e8s: [balanceE8s],
+            credits_balance: [balanceCredits],
             credits_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
-            archived_at_ms: [],
-            deleted_at_ms: []
+            archived_at_ms: []
           }
         ]
       };
@@ -419,10 +417,9 @@ function billableActorMethods({ databaseId = "team-db", balanceE8s = 20_000n, su
         Ok: {
           kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
           sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
-          rate_numerator_e8s: 1n,
-          rate_denominator_cycles: 1n,
-          fixed_update_fee_e8s: 1n,
-          min_update_balance_e8s: 10_000n
+          credits_per_kinic: 1n,
+          cycles_per_credit: 1n,
+          min_update_credits: 10_000n
         }
       };
     }
@@ -436,9 +433,8 @@ function rawDatabase(databaseId, name, role, status) {
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    credit_balance_e8s: [20_000n],
+    credits_balance: [20_000n],
     credits_suspended_at_ms: [],
-    archived_at_ms: [],
-    deleted_at_ms: []
+    archived_at_ms: []
   };
 }

@@ -60,10 +60,9 @@ type RawCanisterHealth = {
 type RawCreditsConfig = {
   kinic_ledger_canister_id: string;
   sns_governance_id: string;
-  rate_numerator_e8s: bigint;
-  rate_denominator_cycles: bigint;
-  fixed_update_fee_e8s: bigint;
-  min_update_balance_e8s: bigint;
+  credits_per_kinic: bigint;
+  cycles_per_credit: bigint;
+  min_update_credits: bigint;
 };
 
 type RawDatabaseSummary = {
@@ -72,10 +71,9 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
-  credit_balance_e8s: [] | [bigint];
+  credits_balance: [] | [bigint];
   credits_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
-  deleted_at_ms: [] | [bigint];
 };
 
 type RawDeleteDatabaseRequest = {
@@ -98,8 +96,8 @@ type RawDatabaseCreditPendingOperation = {
   operation_id: bigint;
   database_id: string;
   kind: string;
-  amount_e8s: bigint;
-  fee_e8s: bigint;
+  credits: bigint;
+  payment_amount_e8s: bigint;
   created_at_ms: bigint;
 };
 
@@ -263,12 +261,9 @@ type VfsActor = {
   rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
-  recent_nodes: (request: { database_id: string; path: [] | [string]; limit: number }) => Promise<
-    { Ok: RawRecent[] } | { Err: string }
-  >;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
-  preview_database_credit_purchase: (databaseId: string, amountE8s: bigint) => Promise<{ Ok: null } | { Err: string }>;
+  preview_database_credit_purchase: (databaseId: string, credits: bigint) => Promise<{ Ok: null } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
@@ -416,10 +411,10 @@ export async function getCreditsConfig(canisterId: string): Promise<CreditsConfi
   });
 }
 
-export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, amountE8s: bigint): Promise<void> {
+export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, credits: bigint): Promise<void> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.preview_database_credit_purchase(databaseId, amountE8s);
+    const result = await actor.preview_database_credit_purchase(databaseId, credits);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -741,19 +736,6 @@ export async function listChildren(canisterId: string, databaseId: string, path:
   });
 }
 
-export async function recentNodes(canisterId: string, databaseId: string, limit: number, identity?: Identity, path: string | null = null): Promise<RecentNode[]> {
-  return callVfs(async () => {
-    const actor = await createReadActor(canisterId, identity);
-    const result = await actor.recent_nodes({ database_id: databaseId, path: path ? [path] : [], limit });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return result.Ok.map((node) => ({
-      ...normalizeRecentNode(node)
-    }));
-  });
-}
-
 export async function incomingLinks(canisterId: string, databaseId: string, path: string, limit: number, identity?: Identity): Promise<LinkEdge[]> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
@@ -894,10 +876,9 @@ function normalizeCreditsConfig(raw: RawCreditsConfig): CreditsConfig {
   return {
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
     snsGovernanceId: raw.sns_governance_id,
-    rateNumeratorE8s: raw.rate_numerator_e8s.toString(),
-    rateDenominatorCycles: raw.rate_denominator_cycles.toString(),
-    fixedUpdateFeeE8s: raw.fixed_update_fee_e8s.toString(),
-    minUpdateBalanceE8s: raw.min_update_balance_e8s.toString()
+    creditsPerKinic: raw.credits_per_kinic.toString(),
+    cyclesPerCredit: raw.cycles_per_credit.toString(),
+    minUpdateCredits: raw.min_update_credits.toString()
   };
 }
 
@@ -908,10 +889,9 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
-    creditsBalanceE8s: raw.credit_balance_e8s[0]?.toString() ?? "0",
+    creditsBalance: raw.credits_balance[0]?.toString() ?? "0",
     creditsSuspendedAtMs: raw.credits_suspended_at_ms[0]?.toString() ?? null,
-    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
-    deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
+    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null
   };
 }
 
@@ -929,8 +909,8 @@ function normalizeDatabaseCreditPendingOperation(raw: RawDatabaseCreditPendingOp
     operationId: raw.operation_id.toString(),
     databaseId: raw.database_id,
     kind: raw.kind,
-    amountE8s: raw.amount_e8s.toString(),
-    feeE8s: raw.fee_e8s.toString(),
+    credits: raw.credits.toString(),
+    paymentAmountE8s: raw.payment_amount_e8s.toString(),
     createdAtMs: raw.created_at_ms.toString()
   };
 }
@@ -1084,9 +1064,6 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   }
   if ("Archived" in status) {
     return "archived";
-  }
-  if ("Deleted" in status) {
-    return "deleted";
   }
   throw new ApiError(`Unknown database status variant: ${Object.keys(status).join(",")}`, 502);
 }

@@ -111,7 +111,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived";
 
 export type DatabaseSummary = {
   databaseId: string;
@@ -119,10 +119,9 @@ export type DatabaseSummary = {
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
-  creditsBalanceE8s: string;
+  creditsBalance: string;
   creditsSuspendedAtMs: string | null;
   archivedAtMs: string | null;
-  deletedAtMs: string | null;
 };
 
 export type DeleteDatabaseRequest = {
@@ -132,15 +131,14 @@ export type DeleteDatabaseRequest = {
 export type CreditsConfig = {
   kinicLedgerCanisterId: string;
   snsGovernanceId: string;
-  rateNumeratorE8s: string;
-  rateDenominatorCycles: string;
-  fixedUpdateFeeE8s: string;
-  minUpdateBalanceE8s: string;
+  creditsPerKinic: string;
+  cyclesPerCredit: string;
+  minUpdateCredits: string;
 };
 
 export type CreditsPurchaseResult = {
   blockIndex: string;
-  balanceE8s: string;
+  balanceCredits: string;
 };
 
 export type DatabaseMember = {
@@ -154,8 +152,8 @@ export type DatabaseCreditPendingOperation = {
   operationId: string;
   databaseId: string;
   kind: string;
-  amountE8s: string;
-  feeE8s: string;
+  credits: string;
+  paymentAmountE8s: string;
   createdAtMs: string;
 };
 
