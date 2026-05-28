@@ -67,14 +67,12 @@ pub struct CreditsConfig {
     pub kinic_ledger_canister_id: String,
     pub sns_governance_id: String,
     pub credits_per_kinic: u64,
-    pub cycles_per_credit: u64,
     pub min_update_credits: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreditsConfigUpdate {
     pub credits_per_kinic: u64,
-    pub cycles_per_credit: u64,
     pub min_update_credits: u64,
 }
 
@@ -96,7 +94,6 @@ pub struct DatabaseCreditEntry {
     pub method: Option<String>,
     pub cycles_delta: Option<u64>,
     pub credits_per_kinic: Option<u64>,
-    pub cycles_per_credit: Option<u64>,
     pub ledger_block_index: Option<u64>,
     pub created_at_ms: i64,
 }

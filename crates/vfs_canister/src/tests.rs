@@ -183,7 +183,6 @@ fn explicit_credits_config() -> CreditsConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         credits_per_kinic: 1_000,
-        cycles_per_credit: 1_000_000_000,
         min_update_credits: 1,
     }
 }
@@ -447,7 +446,6 @@ fn purchase_database_credits_rejects_balance_overflow_before_ledger_call() {
             .update_credits_config(
                 CreditsConfigUpdate {
                     credits_per_kinic: 100_000_000,
-                    cycles_per_credit: 1_000_000_000,
                     min_update_credits: 1,
                 },
                 &test_governance_principal().to_text(),
@@ -962,7 +960,6 @@ fn install_low_balance_default_service() {
         .update_credits_config(
             CreditsConfigUpdate {
                 credits_per_kinic: 1_000,
-                cycles_per_credit: 1_000_000_000,
                 min_update_credits: 2_000_000,
             },
             &test_governance_principal().to_text(),

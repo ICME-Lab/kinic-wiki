@@ -59,6 +59,8 @@ const INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS: &str =
 const INDEX_SCHEMA_VERSION_ACTIVE_STATUS: &str = "database_index:016_active_status";
 const INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES: &str = "database_index:017_hard_delete_databases";
 const INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY: &str = "database_index:018_credit_ledger_only";
+const INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT: &str =
+    "database_index:019_fixed_cycles_per_credit";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -74,7 +76,7 @@ const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
 pub const KINIC_E8S_PER_TOKEN: u64 = 100_000_000;
 pub const DEFAULT_CREDITS_PER_KINIC: u64 = 1_000;
-pub const DEFAULT_CYCLES_PER_CREDIT: u64 = 1_000_000_000;
+pub const CYCLES_PER_CREDIT: u128 = 1_000_000_000;
 pub const DEFAULT_MIN_UPDATE_CREDITS: u64 = 1;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -252,13 +254,11 @@ impl VfsService {
             kinic_ledger_canister_id: current.kinic_ledger_canister_id,
             sns_governance_id: current.sns_governance_id,
             credits_per_kinic: update.credits_per_kinic,
-            cycles_per_credit: update.cycles_per_credit,
             min_update_credits: update.min_update_credits,
         };
         validate_credits_config(&next)?;
         self.write_index(|tx| {
             set_credits_config_value(tx, "credits_per_kinic", next.credits_per_kinic)?;
-            set_credits_config_value(tx, "cycles_per_credit", next.cycles_per_credit)?;
             set_credits_config_value(tx, "min_update_credits", next.min_update_credits)
         })?;
         Ok(next)
@@ -773,7 +773,7 @@ impl VfsService {
                 .prepare(
                     "SELECT entry_id, database_id, kind, amount_credits, balance_after_credits,
                             payment_amount_e8s, caller, method, cycles_delta, credits_per_kinic,
-                            cycles_per_credit, ledger_block_index, created_at_ms
+                            ledger_block_index, created_at_ms
                      FROM database_credit_ledger
                      WHERE database_id = ?1 AND entry_id > ?2
                      ORDER BY entry_id ASC
@@ -990,7 +990,7 @@ impl VfsService {
         cycles_delta: u128,
         now: i64,
     ) -> Result<(), String> {
-        let computed_charge = compute_update_charge(config, cycles_delta)?;
+        let computed_charge = compute_update_charge(cycles_delta)?;
         if computed_charge == 0 {
             return Ok(());
         }
@@ -2488,7 +2488,7 @@ fn run_index_migrations_for_upgrade(
     config: Option<&CreditsConfig>,
 ) -> Result<(), String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY)? {
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT)? {
             return Ok(());
         }
         let tx = conn.transaction().map_err(|error| error.to_string())?;
@@ -2549,7 +2549,7 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&CreditsConfig>,
 ) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY)? {
+        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT)? {
             validate_wasm_index_schema(conn)?;
             for &version in INDEX_SCHEMA_VERSIONS {
                 if !wasm_index_migration_exists(conn, version)? {
@@ -2608,6 +2608,9 @@ fn apply_existing_index_migrations(
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY)? {
         apply_credit_ledger_only_index_migration(conn)?;
     }
+    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT)? {
+        apply_fixed_cycles_per_credit_index_migration(conn)?;
+    }
     Ok(())
 }
 
@@ -2655,7 +2658,6 @@ fn apply_credits_index_migration(
            method TEXT,
            cycles_delta INTEGER,
            credits_per_kinic INTEGER,
-           cycles_per_credit INTEGER,
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
          );
@@ -2780,6 +2782,51 @@ fn apply_credit_ledger_only_index_migration(conn: &Transaction<'_>) -> Result<()
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
         params![INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn apply_fixed_cycles_per_credit_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    if index_column_exists(conn, "database_credit_ledger", "cycles_per_credit")? {
+        conn.execute_batch(
+            "ALTER TABLE database_credit_ledger RENAME TO database_credit_ledger_old;
+             CREATE TABLE database_credit_ledger (
+               entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+               database_id TEXT NOT NULL,
+               kind TEXT NOT NULL,
+               amount_credits INTEGER NOT NULL,
+               balance_after_credits INTEGER NOT NULL,
+               payment_amount_e8s INTEGER,
+               caller TEXT NOT NULL,
+               method TEXT,
+               cycles_delta INTEGER,
+               credits_per_kinic INTEGER,
+               ledger_block_index INTEGER,
+               created_at_ms INTEGER NOT NULL
+             );
+             INSERT INTO database_credit_ledger
+               (entry_id, database_id, kind, amount_credits, balance_after_credits,
+                payment_amount_e8s, caller, method, cycles_delta, credits_per_kinic,
+                ledger_block_index, created_at_ms)
+             SELECT entry_id, database_id, kind, amount_credits, balance_after_credits,
+                    payment_amount_e8s, caller, method, cycles_delta, credits_per_kinic,
+                    ledger_block_index, created_at_ms
+             FROM database_credit_ledger_old;
+             DROP TABLE database_credit_ledger_old;
+             CREATE INDEX database_credit_ledger_database_idx
+               ON database_credit_ledger(database_id, entry_id);",
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    conn.execute(
+        "DELETE FROM credits_config WHERE key = 'cycles_per_credit'",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
@@ -2925,7 +2972,6 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
            method TEXT,
            cycles_delta INTEGER,
            credits_per_kinic INTEGER,
-           cycles_per_credit INTEGER,
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
          );
@@ -2962,7 +3008,6 @@ fn default_credits_config() -> CreditsConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         credits_per_kinic: DEFAULT_CREDITS_PER_KINIC,
-        cycles_per_credit: DEFAULT_CYCLES_PER_CREDIT,
         min_update_credits: DEFAULT_MIN_UPDATE_CREDITS,
     }
 }
@@ -2973,9 +3018,6 @@ fn validate_credits_config(config: &CreditsConfig) -> Result<(), String> {
     if config.credits_per_kinic == 0 {
         return Err("credits_per_kinic must be positive".to_string());
     }
-    if config.cycles_per_credit == 0 {
-        return Err("cycles_per_credit must be positive".to_string());
-    }
     if config.min_update_credits == 0 {
         return Err("min_update_credits must be positive".to_string());
     }
@@ -2983,7 +3025,6 @@ fn validate_credits_config(config: &CreditsConfig) -> Result<(), String> {
         return Err("credits_per_kinic must divide 100000000".to_string());
     }
     amount_to_i64(config.credits_per_kinic)?;
-    amount_to_i64(config.cycles_per_credit)?;
     amount_to_i64(config.min_update_credits)?;
     Ok(())
 }
@@ -3009,7 +3050,6 @@ fn insert_credits_config(conn: &Transaction<'_>, config: &CreditsConfig) -> Resu
     )
     .map_err(|error| error.to_string())?;
     set_credits_config_value(conn, "credits_per_kinic", config.credits_per_kinic)?;
-    set_credits_config_value(conn, "cycles_per_credit", config.cycles_per_credit)?;
     set_credits_config_value(conn, "min_update_credits", config.min_update_credits)?;
     Ok(())
 }
@@ -3044,6 +3084,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
     INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
     INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY,
+    INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3118,7 +3159,6 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "method",
                 "cycles_delta",
                 "credits_per_kinic",
-                "cycles_per_credit",
                 "ledger_block_index",
                 "created_at_ms",
             ][..],
@@ -3263,7 +3303,6 @@ fn load_credits_config(conn: &Connection) -> Result<CreditsConfig, String> {
         kinic_ledger_canister_id: load_credits_config_text(conn, "kinic_ledger_canister_id")?,
         sns_governance_id: load_credits_config_text(conn, "sns_governance_id")?,
         credits_per_kinic: load_credits_config_u64(conn, "credits_per_kinic")?,
-        cycles_per_credit: load_credits_config_u64(conn, "cycles_per_credit")?,
         min_update_credits: load_credits_config_u64(conn, "min_update_credits")?,
     })
 }
@@ -3768,11 +3807,6 @@ fn insert_database_ledger(
         ),
         crate::sqlite::nullable_integer_value(
             entry
-                .config
-                .map(|config| i64::try_from(config.cycles_per_credit).unwrap_or(i64::MAX)),
-        ),
-        crate::sqlite::nullable_integer_value(
-            entry
                 .ledger_block_index
                 .map(|value| i64::try_from(value).unwrap_or(i64::MAX)),
         ),
@@ -3782,9 +3816,8 @@ fn insert_database_ledger(
         conn,
         "INSERT INTO database_credit_ledger
          (database_id, kind, amount_credits, balance_after_credits, payment_amount_e8s,
-          caller, method, cycles_delta, credits_per_kinic, cycles_per_credit,
-          ledger_block_index, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          caller, method, cycles_delta, credits_per_kinic, ledger_block_index, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -3836,8 +3869,8 @@ fn charge_database_update_in_tx(
     Ok(())
 }
 
-fn compute_update_charge(config: &CreditsConfig, cycles_delta: u128) -> Result<i64, String> {
-    let charge = cycles_delta.div_ceil(u128::from(config.cycles_per_credit));
+fn compute_update_charge(cycles_delta: u128) -> Result<i64, String> {
+    let charge = cycles_delta.div_ceil(CYCLES_PER_CREDIT);
     i64::try_from(charge).map_err(|_| "cycle charge exceeds i64 limit".to_string())
 }
 
@@ -3853,8 +3886,7 @@ fn map_database_credits_entry(
     let payment_amount_e8s: Option<i64> = crate::sqlite::row_get(row, 5)?;
     let cycles_delta: Option<i64> = crate::sqlite::row_get(row, 8)?;
     let credits_per_kinic: Option<i64> = crate::sqlite::row_get(row, 9)?;
-    let cycles_per_credit: Option<i64> = crate::sqlite::row_get(row, 10)?;
-    let ledger_block_index: Option<i64> = crate::sqlite::row_get(row, 11)?;
+    let ledger_block_index: Option<i64> = crate::sqlite::row_get(row, 10)?;
     Ok(DatabaseCreditEntry {
         entry_id: entry_id.max(0) as u64,
         database_id: crate::sqlite::row_get(row, 1)?,
@@ -3866,9 +3898,8 @@ fn map_database_credits_entry(
         method: crate::sqlite::row_get(row, 7)?,
         cycles_delta: cycles_delta.map(|value| value.max(0) as u64),
         credits_per_kinic: credits_per_kinic.map(|value| value.max(0) as u64),
-        cycles_per_credit: cycles_per_credit.map(|value| value.max(0) as u64),
         ledger_block_index: ledger_block_index.map(|value| value.max(0) as u64),
-        created_at_ms: crate::sqlite::row_get(row, 12)?,
+        created_at_ms: crate::sqlite::row_get(row, 11)?,
     })
 }
 
@@ -4626,7 +4657,6 @@ mod tests {
             kinic_ledger_canister_id: "aaaaa-aa".to_string(),
             sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
             credits_per_kinic: DEFAULT_CREDITS_PER_KINIC,
-            cycles_per_credit: DEFAULT_CYCLES_PER_CREDIT,
             min_update_credits: DEFAULT_MIN_UPDATE_CREDITS,
         }
     }

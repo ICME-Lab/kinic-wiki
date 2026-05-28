@@ -29,7 +29,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CreditsConfig = idl.Record({
     credits_per_kinic: idl.Nat64,
     min_update_credits: idl.Nat64,
-    cycles_per_credit: idl.Nat64,
     kinic_ledger_canister_id: idl.Text,
     sns_governance_id: idl.Text
   });
@@ -75,7 +74,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     credits_per_kinic: idl.Opt(idl.Nat64),
     payment_amount_e8s: idl.Opt(idl.Nat64),
     kind: idl.Text,
-    cycles_per_credit: idl.Opt(idl.Nat64),
     created_at_ms: idl.Int64,
     amount_credits: idl.Int64,
     ledger_block_index: idl.Opt(idl.Nat64),

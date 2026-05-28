@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local}"
-KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-73mez-iiaaa-aaaaq-aaasq-cai}"
+KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID:-}"
 
 case "${ICP_ENVIRONMENT}" in
@@ -51,7 +51,6 @@ cat >"${ARGS_FILE}" <<EOF
   kinic_ledger_canister_id = "${KINIC_LEDGER_CANISTER_ID}";
   sns_governance_id = "${SNS_GOVERNANCE_ID}";
   credits_per_kinic = 1_000 : nat64;
-  cycles_per_credit = 1_000_000_000 : nat64;
   min_update_credits = 1 : nat64;
 })
 EOF

@@ -29,7 +29,6 @@ const expectedTypes = {
       kinic_ledger_canister_id: "text",
       sns_governance_id: "text",
       credits_per_kinic: "nat64",
-      cycles_per_credit: "nat64",
       min_update_credits: "nat64"
     }
   },

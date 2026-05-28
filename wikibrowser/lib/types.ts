@@ -132,7 +132,6 @@ export type CreditsConfig = {
   kinicLedgerCanisterId: string;
   snsGovernanceId: string;
   creditsPerKinic: string;
-  cyclesPerCredit: string;
   minUpdateCredits: string;
 };
 

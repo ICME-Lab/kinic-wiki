@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{DEFAULT_CYCLES_PER_CREDIT, VfsService};
+use vfs_runtime::{CYCLES_PER_CREDIT, VfsService};
 use vfs_types::DatabaseStatus;
 
 const OWNER: &str = "owner";
@@ -144,7 +144,7 @@ fn database_bytes(root: &Path, service: &VfsService, database_id: &str) -> (Vec<
 
 fn charge_amount(cycles_delta: u128) -> u64 {
     cycles_delta
-        .div_ceil(u128::from(DEFAULT_CYCLES_PER_CREDIT))
+        .div_ceil(CYCLES_PER_CREDIT)
         .try_into()
         .expect("generated charge fits u64")
 }

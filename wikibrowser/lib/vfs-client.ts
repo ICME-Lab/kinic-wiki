@@ -61,7 +61,6 @@ type RawCreditsConfig = {
   kinic_ledger_canister_id: string;
   sns_governance_id: string;
   credits_per_kinic: bigint;
-  cycles_per_credit: bigint;
   min_update_credits: bigint;
 };
 
@@ -877,7 +876,6 @@ function normalizeCreditsConfig(raw: RawCreditsConfig): CreditsConfig {
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
     snsGovernanceId: raw.sns_governance_id,
     creditsPerKinic: raw.credits_per_kinic.toString(),
-    cyclesPerCredit: raw.cycles_per_credit.toString(),
     minUpdateCredits: raw.min_update_credits.toString()
   };
 }

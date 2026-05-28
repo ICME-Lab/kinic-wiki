@@ -92,7 +92,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.m
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`credits config` prints the KINIC ledger canister, SNS governance principal, `credits_per_kinic`, `cycles_per_credit`, `min_update_credits`, and fixed ledger transfer fee `10_000 e8s`.
+`credits config` prints the KINIC ledger canister, SNS governance principal, `credits_per_kinic`, `min_update_credits`, and fixed ledger transfer fee `10_000 e8s`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`.
 `database create <database-name>` creates a generated pending database ID with zero DB credits balance and prints it on success. It does not allocate a DB mount until the first successful credit purchase.
 `database purchase-credits <database-id> <credits>` pulls the required KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds credits to the DB credits balance. Any authenticated payer can purchase credits for an existing DB. The allowance must include the fixed `10_000 e8s` ledger transfer fee.
 `database credits <database-id> <credits>` opens `https://wiki.kinic.xyz/credits?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, previews the DB credit purchase before approve, approves `credits * (100_000_000 / credits_per_kinic) + ledger transfer fee` with a 30 minute expiry, and the wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.

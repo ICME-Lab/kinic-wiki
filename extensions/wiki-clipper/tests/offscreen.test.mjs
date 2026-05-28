@@ -351,8 +351,7 @@ test("listWritableDatabases returns active writable database summaries", async (
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
             credits_per_kinic: 1n,
-            cycles_per_credit: 1n,
-          min_update_credits: 10_000n
+            min_update_credits: 10_000n
           }
         };
       }
@@ -418,7 +417,6 @@ function writeCreditsActorMethods({ databaseId = "team-db", balanceCredits = 20_
           kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
           sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
           credits_per_kinic: 1n,
-          cycles_per_credit: 1n,
           min_update_credits: 10_000n
         }
       };

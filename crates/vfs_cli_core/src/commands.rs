@@ -936,7 +936,6 @@ struct CreditsConfigOutput {
     kinic_ledger_canister_id: String,
     sns_governance_id: String,
     credits_per_kinic: u64,
-    cycles_per_credit: u64,
     min_update_credits: u64,
     ledger_fee_e8s: u64,
 }
@@ -947,7 +946,6 @@ impl CreditsConfigOutput {
             kinic_ledger_canister_id: config.kinic_ledger_canister_id,
             sns_governance_id: config.sns_governance_id,
             credits_per_kinic: config.credits_per_kinic,
-            cycles_per_credit: config.cycles_per_credit,
             min_update_credits: config.min_update_credits,
             ledger_fee_e8s,
         }
@@ -962,7 +960,6 @@ fn credits_config_lines(config: &CreditsConfig, ledger_fee_e8s: u64) -> Vec<Stri
         ),
         format!("sns_governance_id\t{}", config.sns_governance_id),
         format!("credits_per_kinic\t{}", config.credits_per_kinic),
-        format!("cycles_per_credit\t{}", config.cycles_per_credit),
         format!("min_update_credits\t{}", config.min_update_credits),
         format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
     ]
@@ -1519,7 +1516,6 @@ mod tests {
                     method: Some("purchase_database_credits".to_string()),
                     cycles_delta: None,
                     credits_per_kinic: None,
-                    cycles_per_credit: None,
                     ledger_block_index: Some(7),
                     created_at_ms: 1,
                 }],
@@ -1591,7 +1587,6 @@ mod tests {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 credits_per_kinic: 1_000,
-                cycles_per_credit: 1_000_000_000,
                 min_update_credits: 1,
             })
         }
@@ -2461,7 +2456,6 @@ mod tests {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
                 sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 credits_per_kinic: 1_000,
-                cycles_per_credit: 1_000_000_000,
                 min_update_credits: 1,
             },
             KINIC_LEDGER_FEE_E8S,

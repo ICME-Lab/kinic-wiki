@@ -20,7 +20,6 @@ export const expectedTypes = {
     fields: {
       credits_per_kinic: "nat64",
       min_update_credits: "nat64",
-      cycles_per_credit: "nat64",
       kinic_ledger_canister_id: "text",
       sns_governance_id: "text"
     }
@@ -99,7 +98,6 @@ export const expectedTypes = {
       credits_per_kinic: "opt nat64",
       payment_amount_e8s: "opt nat64",
       kind: "text",
-      cycles_per_credit: "opt nat64",
       created_at_ms: "int64",
       amount_credits: "int64",
       ledger_block_index: "opt nat64",

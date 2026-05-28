@@ -38,7 +38,6 @@ function idlFactory({ IDL: idl }) {
     kinic_ledger_canister_id: idl.Text,
     sns_governance_id: idl.Text,
     credits_per_kinic: idl.Nat64,
-    cycles_per_credit: idl.Nat64,
     min_update_credits: idl.Nat64
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });

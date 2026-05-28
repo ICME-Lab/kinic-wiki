@@ -63,7 +63,6 @@ impl VfsApi for MockClient {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
             sns_governance_id: "aaaaa-aa".to_string(),
             credits_per_kinic: 1_000,
-            cycles_per_credit: 1_000_000_000,
             min_update_credits: 1,
         })
     }

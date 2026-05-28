@@ -9,7 +9,7 @@ use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{DEFAULT_CYCLES_PER_CREDIT, DEFAULT_MIN_UPDATE_CREDITS, VfsService};
+use vfs_runtime::{CYCLES_PER_CREDIT, DEFAULT_MIN_UPDATE_CREDITS, VfsService};
 use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
@@ -121,7 +121,7 @@ fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus,
 }
 
 fn charge_amount(cycles_delta: u128) -> u64 {
-    let variable = cycles_delta.div_ceil(u128::from(DEFAULT_CYCLES_PER_CREDIT));
+    let variable = cycles_delta.div_ceil(CYCLES_PER_CREDIT);
     u64::try_from(variable).expect("generated charge fits u64")
 }
 

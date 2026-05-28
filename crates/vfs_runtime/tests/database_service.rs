@@ -124,6 +124,21 @@ fn old_index_with_schema_migrations_upgrades_to_credit_ledger_only() {
             |row| row.get(0),
         )
         .expect("ledger usage column count should load");
+    let ledger_cycles_column_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
+             WHERE name = 'cycles_per_credit'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("ledger cycles column count should load");
+    let config_cycles_row_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM credits_config WHERE key = 'cycles_per_credit'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("config cycles row count should load");
     let usage_table_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master
@@ -135,17 +150,140 @@ fn old_index_with_schema_migrations_upgrades_to_credit_ledger_only() {
     let marker: String = conn
         .query_row(
             "SELECT version FROM schema_migrations
-             WHERE version = 'database_index:018_credit_ledger_only'",
+             WHERE version = 'database_index:019_fixed_cycles_per_credit'",
             params![],
             |row| row.get(0),
         )
-        .expect("credit ledger only marker should exist");
+        .expect("fixed cycles marker should exist");
 
     assert_eq!(balance, 0);
     assert_eq!(pending_details_columns, 6);
     assert_eq!(ledger_usage_column_count, 0);
+    assert_eq!(ledger_cycles_column_count, 0);
+    assert_eq!(config_cycles_row_count, 0);
     assert_eq!(usage_table_count, 0);
-    assert_eq!(marker, "database_index:018_credit_ledger_only");
+    assert_eq!(marker, "database_index:019_fixed_cycles_per_credit");
+}
+
+#[test]
+fn fixed_cycles_per_credit_migration_preserves_credit_ledger_rows() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let index_path = root.join("index.sqlite3");
+    let conn = Connection::open(&index_path).expect("index should open");
+    conn.execute_batch(
+        "CREATE TABLE schema_migrations (
+           version TEXT PRIMARY KEY,
+           applied_at INTEGER NOT NULL
+         );
+         CREATE TABLE database_credit_ledger (
+           entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+           database_id TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           amount_credits INTEGER NOT NULL,
+           balance_after_credits INTEGER NOT NULL,
+           payment_amount_e8s INTEGER,
+           caller TEXT NOT NULL,
+           method TEXT,
+           cycles_delta INTEGER,
+           credits_per_kinic INTEGER,
+           cycles_per_credit INTEGER,
+           ledger_block_index INTEGER,
+           created_at_ms INTEGER NOT NULL
+         );
+         CREATE INDEX database_credit_ledger_database_idx
+           ON database_credit_ledger(database_id, entry_id);
+         CREATE TABLE credits_config (
+           key TEXT PRIMARY KEY,
+           value TEXT NOT NULL
+         );
+         INSERT INTO database_credit_ledger
+           (database_id, kind, amount_credits, balance_after_credits, payment_amount_e8s,
+            caller, method, cycles_delta, credits_per_kinic, cycles_per_credit,
+            ledger_block_index, created_at_ms)
+         VALUES
+           ('alpha', 'charge', -2, 8, null, 'owner', 'write_node',
+            1000000001, 1000, 1000000000, null, 7);
+         INSERT INTO credits_config (key, value) VALUES
+           ('kinic_ledger_canister_id', 'aaaaa-aa'),
+           ('sns_governance_id', 'rrkah-fqaaa-aaaaa-aaaaq-cai'),
+           ('credits_per_kinic', '1000'),
+           ('cycles_per_credit', '1000000000'),
+           ('min_update_credits', '1');",
+    )
+    .expect("legacy credits schema should create");
+    for version in [
+        "database_index:000_initial",
+        "database_index:001_lifecycle",
+        "database_index:002_restore_size",
+        "database_index:003_restore_chunks",
+        "database_index:005_mount_history",
+        "database_index:006_url_ingest_trigger_sessions",
+        "database_index:007_ops_answer_sessions",
+        "database_index:008_restore_sessions",
+        "database_index:009_restore_chunk_bytes",
+        "database_index:010_database_name_breaking",
+        "database_index:011_source_run_sessions",
+        "database_index:012_credits_initial",
+        "database_index:013_credits_pending",
+        "database_index:014_credits_ledger_block_index",
+        "database_index:015_credits_pending_ledger_details",
+        "database_index:016_active_status",
+        "database_index:017_hard_delete_databases",
+        "database_index:018_credit_ledger_only",
+    ] {
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+            params![version],
+        )
+        .expect("migration marker should insert");
+    }
+    drop(conn);
+
+    let service = VfsService::new(index_path.clone(), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("fixed cycles migration should run");
+
+    let conn = Connection::open(index_path).expect("index should reopen");
+    let preserved: (String, i64, i64, Option<i64>, i64) = conn
+        .query_row(
+            "SELECT kind, amount_credits, balance_after_credits, ledger_block_index, created_at_ms
+             FROM database_credit_ledger
+             WHERE database_id = 'alpha'",
+            params![],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("ledger row should survive migration");
+    let ledger_cycles_column_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
+             WHERE name = 'cycles_per_credit'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("ledger cycles column count should load");
+    let config_cycles_row_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM credits_config WHERE key = 'cycles_per_credit'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("config cycles row count should load");
+    let marker = schema_migration_count(&root, "database_index:019_fixed_cycles_per_credit");
+
+    assert_eq!(preserved, ("charge".to_string(), -2, 8, None, 7));
+    assert_eq!(ledger_cycles_column_count, 0);
+    assert_eq!(config_cycles_row_count, 0);
+    assert_eq!(marker, 1);
 }
 
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
@@ -1790,12 +1928,20 @@ fn zero_cycle_charge_skips_credit_ledger() {
         .expect("charged update should record credit ledger");
 
     assert_eq!(database_credits_balance(&root, "alpha"), 499);
+    service
+        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000_001, 5)
+        .expect("rounded-up update should record credit ledger");
+
+    assert_eq!(database_credits_balance(&root, "alpha"), 497);
     let entries = service
         .list_database_credit_entries("alpha", "owner", None, 10)
         .expect("credit entries should load")
         .entries;
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 3);
     assert_eq!(entries[1].kind, "charge");
+    assert_eq!(entries[1].amount_credits, -1);
+    assert_eq!(entries[2].kind, "charge");
+    assert_eq!(entries[2].amount_credits, -2);
 }
 
 #[test]

@@ -67,10 +67,10 @@ Any authenticated caller can credit purchase an existing DB that still has an ow
 Successful DB update calls are charged after execution. The charge is:
 
 ```text
-ceil(cycles_delta / cycles_per_credit)
+ceil(cycles_delta / 1_000_000_000)
 ```
 
-The default conversion is `1 KINIC = 1000 credits` and `1 credit = 1_000_000_000 cycles`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credits` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+The default purchase rate is `1 KINIC = 1000 credits`, controlled by `credits_per_kinic`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credits` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
 
 `database_credit_ledger` is the credits source of truth. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
 
