@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "release:check": "node scripts/release-check.mjs",
+    "release:listing-check": "node scripts/release-check.mjs --store-listing",
     "release:package": "npm run build && npm run release:check && node scripts/release-package.mjs",
     "store-assets:generate": "node scripts/generate-store-assets.mjs",
     "test": "node scripts/check-candid-drift.mjs && node --test tests/*.test.mjs"

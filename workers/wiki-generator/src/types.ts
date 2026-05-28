@@ -99,6 +99,7 @@ export type ManualRunInput = {
   databaseId: string;
   sourcePath: string;
   sourceEtag: string;
+  sessionNonce?: string;
   dryRun: boolean;
 };
 

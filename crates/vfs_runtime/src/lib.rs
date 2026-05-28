@@ -1707,6 +1707,7 @@ impl VfsService {
         if source.etag != request.source_etag {
             return Err("source run session source etag is stale".to_string());
         }
+        self.require_database_write_credits_available(&request.database_id)?;
         Ok(())
     }
 

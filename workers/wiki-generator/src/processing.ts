@@ -15,6 +15,14 @@ export type ManualRunContext = {
   vfs: VfsClient;
 };
 
+type ExternalCostGateInput = {
+  databaseId: string;
+  sourcePath?: string;
+  sourceEtag?: string;
+  requestPath?: string;
+  sessionNonce?: string;
+};
+
 export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
   const config = loadConfig(env);
   validateCanonicalSourcePath(input.sourcePath, config.sourcePrefix);
@@ -29,13 +37,19 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
       kind: "source",
       databaseId: input.databaseId,
       sourcePath: input.sourcePath,
-      sourceEtag: input.sourceEtag
+      sourceEtag: input.sourceEtag,
+      sessionNonce: input.sessionNonce
     });
     return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: input.sourceEtag }, 202);
   }
 
   const generated = await generateFromSource(env, vfs, config, input.databaseId, source, () =>
-    ensureExternalCostAllowed(vfs, input.databaseId)
+    ensureExternalCostAllowed(vfs, {
+      databaseId: input.databaseId,
+      sourcePath: input.sourcePath,
+      sourceEtag: input.sourceEtag,
+      sessionNonce: input.sessionNonce
+    })
   );
   return jsonResponse(
     {
@@ -87,7 +101,14 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
       config,
       message.databaseId,
       source,
-      () => ensureExternalCostAllowed(vfs, message.databaseId, message.requestPath, message.sessionNonce),
+      () =>
+        ensureExternalCostAllowed(vfs, {
+          databaseId: message.databaseId,
+          sourcePath: message.sourcePath,
+          sourceEtag: message.sourceEtag,
+          requestPath: message.requestPath,
+          sessionNonce: message.sessionNonce
+        }),
       () => {
         deepSeekAttempted = true;
       }
@@ -115,13 +136,17 @@ class ExternalCostGateError extends Error {
   }
 }
 
-async function ensureExternalCostAllowed(vfs: VfsClient, databaseId: string, requestPath?: string, sessionNonce?: string): Promise<void> {
+async function ensureExternalCostAllowed(vfs: VfsClient, input: ExternalCostGateInput): Promise<void> {
   try {
-    if (requestPath && sessionNonce) {
-      await vfs.checkUrlIngestTriggerSession(databaseId, requestPath, sessionNonce);
+    if (input.requestPath && input.sessionNonce) {
+      await vfs.checkUrlIngestTriggerSession(input.databaseId, input.requestPath, input.sessionNonce);
       return;
     }
-    await vfs.checkDatabaseWriteCredits(databaseId);
+    if (input.sessionNonce && input.sourcePath && input.sourceEtag) {
+      await vfs.checkSourceRunSession(input.databaseId, input.sourcePath, input.sourceEtag, input.sessionNonce);
+      return;
+    }
+    await vfs.checkDatabaseWriteCredits(input.databaseId);
   } catch (error) {
     throw new ExternalCostGateError(errorMessage(error));
   }
@@ -157,12 +182,23 @@ export function parseManualRunInput(value: unknown): ManualRunInput | string {
   const databaseId = value.databaseId;
   const sourcePath = value.sourcePath;
   const sourceEtag = value.sourceEtag;
+  const sessionNonce = value.sessionNonce;
   const dryRun = value.dryRun;
   if (typeof databaseId !== "string" || databaseId.length === 0) return "databaseId is required";
   if (typeof sourcePath !== "string" || sourcePath.length === 0) return "sourcePath is required";
   if (typeof sourceEtag !== "string" || sourceEtag.length === 0) return "sourceEtag is required";
+  if (sessionNonce !== undefined && (typeof sessionNonce !== "string" || sessionNonce.length === 0)) {
+    return "sessionNonce must be a non-empty string";
+  }
+  if (typeof sessionNonce === "string" && sessionNonce.length > 128) return "sessionNonce is too long";
   if (dryRun !== undefined && typeof dryRun !== "boolean") return "dryRun must be a boolean";
-  return { databaseId, sourcePath, sourceEtag, dryRun: dryRun ?? false };
+  return {
+    databaseId,
+    sourcePath,
+    sourceEtag,
+    sessionNonce: typeof sessionNonce === "string" ? sessionNonce : undefined,
+    dryRun: dryRun ?? false
+  };
 }
 
 export function parseQueueMessage(value: unknown): QueueMessage | null {

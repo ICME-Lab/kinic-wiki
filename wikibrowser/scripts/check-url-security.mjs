@@ -158,6 +158,7 @@ await withEnv(
         databaseId: "db_1",
         sourcePath: "/Sources/raw/web/abc.md",
         sourceEtag: "etag-source",
+        sessionNonce: "session-1",
         dryRun: false
       });
       return Response.json({ queued: true }, { status: 202 });

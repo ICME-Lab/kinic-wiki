@@ -22,12 +22,13 @@ const requiredStoreImages = [
 
 const errors = [];
 const warnings = [];
+const checkStoreListing = process.argv.includes("--store-listing");
 
 const manifest = await readJson("manifest.json");
 checkManifest(manifest);
 await checkIcons(manifest);
 await checkStoreDocs();
-await checkStoreImages();
+if (checkStoreListing) await checkStoreImages();
 
 if (warnings.length) {
   for (const warning of warnings) console.warn(`warning: ${warning}`);
@@ -36,7 +37,9 @@ if (errors.length) {
   for (const error of errors) console.error(`error: ${error}`);
   process.exitCode = 1;
 } else {
-  console.log("Chrome Web Store release inputs OK");
+  console.log(
+    checkStoreListing ? "Chrome Web Store listing inputs OK" : "Chrome extension package inputs OK"
+  );
 }
 
 async function readJson(path) {

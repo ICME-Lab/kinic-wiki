@@ -67,6 +67,7 @@ export class TestVfsClient implements VfsClient {
   requestNode: WikiNode | null = null;
   failSessionCheck = false;
   sessionChecks: { databaseId: string; requestPath: string; sessionNonce: string }[] = [];
+  sourceSessionChecks: { databaseId: string; sourcePath: string; sourceEtag: string; sessionNonce: string }[] = [];
   writeCreditChecks: string[] = [];
   failExpectedEtagOnce = false;
   sourceAckKind: NodeKind = "source";
@@ -79,6 +80,10 @@ export class TestVfsClient implements VfsClient {
 
   async checkDatabaseWriteCredits(databaseId: string): Promise<void> {
     this.writeCreditChecks.push(databaseId);
+  }
+
+  async checkSourceRunSession(databaseId: string, sourcePath: string, sourceEtag: string, sessionNonce: string): Promise<void> {
+    this.sourceSessionChecks.push({ databaseId, sourcePath, sourceEtag, sessionNonce });
   }
 
   async checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void> {

@@ -17,6 +17,7 @@ test("manual source run queues the validated source etag", async () => {
     databaseId: "db_1",
     sourcePath: "/Sources/raw/web/abc.md",
     sourceEtag: "etag-authorized",
+    sessionNonce: "session-1",
     dryRun: false
   }, { vfs });
 
@@ -26,6 +27,7 @@ test("manual source run queues the validated source etag", async () => {
   const message = queue.messages[0];
   if (message?.kind !== "source") throw new Error("source queue message expected");
   assert.equal(message.sourceEtag, "etag-authorized");
+  assert.equal(message.sessionNonce, "session-1");
 });
 
 test("manual source run rejects etag mismatch without queueing", async () => {
@@ -102,6 +104,18 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
 
 test("manual source run input requires source etag", () => {
   assert.equal(parseManualRunInput({ databaseId: "db_1", sourcePath: "/Sources/raw/web/abc.md" }), "sourceEtag is required");
+  assert.deepEqual(parseManualRunInput({
+    databaseId: "db_1",
+    sourcePath: "/Sources/raw/web/abc.md",
+    sourceEtag: "etag-source",
+    sessionNonce: "session-1"
+  }), {
+    databaseId: "db_1",
+    sourcePath: "/Sources/raw/web/abc.md",
+    sourceEtag: "etag-source",
+    sessionNonce: "session-1",
+    dryRun: false
+  });
 });
 
 test("worker log append failure is non-fatal", async () => {
@@ -140,6 +154,54 @@ test("source queue write credits check failure does not call DeepSeek", async ()
   }
 });
 
+test("source queue source run session check failure does not call DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  const sourceSessionChecks: SourceSessionCheck[] = [];
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({});
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      testEnv(new TestQueue()),
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { config: workerConfig(), vfs: sourceVfs({ failSourceRunSession: true, sourceSessionChecks }) }
+    );
+
+    assert.deepEqual(sourceSessionChecks, [
+      { databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
+    ]);
+    assert.equal(deepSeekCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("source queue uses source run session before DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  const sourceSessionChecks: SourceSessionCheck[] = [];
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      testEnv(new TestQueue()),
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { config: workerConfig(), vfs: sourceVfs({ sourceSessionChecks }) }
+    );
+
+    assert.deepEqual(sourceSessionChecks, [
+      { databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
+    ]);
+    assert.equal(deepSeekCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("failed status write after DeepSeek is non-retry", async () => {
   const originalFetch = globalThis.fetch;
   let deepSeekCalls = 0;
@@ -163,6 +225,7 @@ test("failed status write after DeepSeek is non-retry", async () => {
 function failingLogVfs(): VfsClient {
   return {
     checkDatabaseWriteCredits: async (): Promise<void> => {},
+    checkSourceRunSession: async (): Promise<void> => {},
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => ({
       path,
@@ -181,10 +244,21 @@ function failingLogVfs(): VfsClient {
   };
 }
 
-function sourceVfs(options: { failWriteCredits?: boolean; failDraftWrite?: boolean } = {}): VfsClient {
+type SourceSessionCheck = {
+  databaseId: string;
+  sourcePath: string;
+  sourceEtag: string;
+  sessionNonce: string;
+};
+
+function sourceVfs(options: { failWriteCredits?: boolean; failDraftWrite?: boolean; failSourceRunSession?: boolean; sourceSessionChecks?: SourceSessionCheck[] } = {}): VfsClient {
   return {
     checkDatabaseWriteCredits: async (): Promise<void> => {
       if (options.failWriteCredits) throw new Error("database credits are suspended");
+    },
+    checkSourceRunSession: async (databaseId, sourcePath, sourceEtag, sessionNonce): Promise<void> => {
+      options.sourceSessionChecks?.push({ databaseId, sourcePath, sourceEtag, sessionNonce });
+      if (options.failSourceRunSession) throw new Error("source run session denied");
     },
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => {

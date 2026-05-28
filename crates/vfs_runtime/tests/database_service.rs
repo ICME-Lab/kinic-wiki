@@ -917,6 +917,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
+    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
         .expect("writer grant should succeed");
@@ -1002,6 +1003,31 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         )
         .expect_err("revoked writer should fail even before ttl");
     assert!(revoked.contains("principal has no access"));
+}
+
+#[test]
+fn source_run_session_requires_funded_database() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let path = "/Sources/raw/web/abc.md";
+    ensure_parent_folders(&service, "owner", "alpha", path, 2);
+    let written = service
+        .write_source_for_generation(
+            "owner",
+            write_source_for_generation_request("alpha", path, "session-1"),
+            100,
+        )
+        .expect("source run session should be authorized");
+
+    let error = service
+        .check_source_run_session(
+            source_run_session_check_request("alpha", path, &written.write.node.etag, "session-1"),
+            101,
+        )
+        .expect_err("suspended database should reject source run session");
+    assert!(error.contains("database credits are suspended"));
 }
 
 #[test]
@@ -1659,7 +1685,7 @@ fn credits_history_redacts_principals_for_non_owner_readers() {
 }
 
 #[test]
-fn governance_repairs_pending_credit_purchase_operations() {
+fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
     let (service, root) = service_with_root();
     service
         .create_database("complete", "owner", 1)
@@ -1680,20 +1706,9 @@ fn governance_repairs_pending_credit_purchase_operations() {
         .mark_database_credit_purchase_ambiguous(cancel, "cancel", "payer", 700, 3)
         .expect("credit purchase ambiguity should record");
 
-    let non_governance_error = service
-        .repair_database_credit_purchase_complete("complete", complete, 77, "owner", 4)
-        .expect_err("owner repair should reject");
-    assert!(non_governance_error.contains("caller is not SNS governance"));
-
     let balance = service
-        .repair_database_credit_purchase_complete(
-            "complete",
-            complete,
-            77,
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            4,
-        )
-        .expect("governance should complete credit purchase");
+        .repair_database_credit_purchase_complete("complete", complete, 77, "owner", 4)
+        .expect("authenticated caller should complete verified credit purchase");
     assert_eq!(balance, 500);
     service
         .repair_database_credit_purchase_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)

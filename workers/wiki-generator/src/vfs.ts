@@ -78,6 +78,12 @@ type Result<T> = { Ok: T } | { Err: string };
 
 type VfsActor = {
   check_database_write_credits: (databaseId: string) => Promise<Result<null>>;
+  check_source_run_session: (request: {
+    database_id: string;
+    source_path: string;
+    source_etag: string;
+    session_nonce: string;
+  }) => Promise<Result<null>>;
   check_url_ingest_trigger_session: (request: {
     database_id: string;
     request_path: string;
@@ -113,6 +119,7 @@ type VfsActor = {
 
 export type VfsClient = {
   checkDatabaseWriteCredits(databaseId: string): Promise<void>;
+  checkSourceRunSession(databaseId: string, sourcePath: string, sourceEtag: string, sessionNonce: string): Promise<void>;
   checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void>;
   readNode(databaseId: string, path: string): Promise<WikiNode | null>;
   mkdirNode(request: MkdirNodeRequest): Promise<void>;
@@ -135,6 +142,16 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
   return {
     checkDatabaseWriteCredits: async (databaseId) => {
       await unwrap(actor.check_database_write_credits(databaseId));
+    },
+    checkSourceRunSession: async (databaseId, sourcePath, sourceEtag, sessionNonce) => {
+      await unwrap(
+        actor.check_source_run_session({
+          database_id: databaseId,
+          source_path: sourcePath,
+          source_etag: sourceEtag,
+          session_nonce: sessionNonce
+        })
+      );
     },
     checkUrlIngestTriggerSession: async (databaseId, requestPath, sessionNonce) => {
       await unwrap(

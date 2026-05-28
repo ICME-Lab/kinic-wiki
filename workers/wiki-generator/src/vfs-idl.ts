@@ -87,6 +87,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     request_path: idl.Text,
     session_nonce: idl.Text
   });
+  const SourceRunSessionCheckRequest = idl.Record({
+    source_path: idl.Text,
+    source_etag: idl.Text,
+    session_nonce: idl.Text,
+    database_id: idl.Text
+  });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const MkdirNodeResult = idl.Record({ created: idl.Bool, path: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
@@ -99,6 +105,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
 
   return idl.Service({
     check_database_write_credits: idl.Func([idl.Text], [ResultUnit], ["query"]),
+    check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
