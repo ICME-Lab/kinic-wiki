@@ -127,6 +127,14 @@ assert.equal(
   "/alpha/Wiki/demo.md?read=anonymous#evidence"
 );
 assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/space name.md"),
+  "/alpha/Wiki/space%20name.md"
+);
+assert.equal(
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/100%25.md"),
+  "/alpha/Wiki/100%2525.md"
+);
+assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/demo/index.md", "https://example.com"),
   null
 );

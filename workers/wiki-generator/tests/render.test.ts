@@ -120,15 +120,17 @@ test("VFS path links are escaped for Markdown destinations", () => {
       { path: "/Wiki/conversations/日本語 記事).md", kind: "file", previewExcerpt: null, snippet: null },
       { path: "/Wiki/space name.md", kind: "file", previewExcerpt: null, snippet: null },
       { path: "/Wiki/a#b.md", kind: "file", previewExcerpt: null, snippet: null },
-      { path: "/Wiki/a?b.md", kind: "file", previewExcerpt: null, snippet: null }
+      { path: "/Wiki/a?b.md", kind: "file", previewExcerpt: null, snippet: null },
+      { path: "/Wiki/100%.md", kind: "file", previewExcerpt: null, snippet: null }
     ]
   );
-  assert.match(markdown, /Source: \[\/Sources\/raw\/web\/a\\\]b\.md\]\(<\/Sources\/raw\/web\/a%5Db\.md>\)/);
-  assert.match(markdown, /\[source\]\(<\/Sources\/raw\/web\/a%5Db\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/conversations\/日本語 記事\)\.md\]\(<\/Wiki\/conversations\/%E6%97%A5%E6%9C%AC%E8%AA%9E%20%E8%A8%98%E4%BA%8B\)\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/space name\.md\]\(<\/Wiki\/space%20name\.md>\)/);
+  assert.match(markdown, /Source: \[\/Sources\/raw\/web\/a\\\]b\.md\]\(<\/Sources\/raw\/web\/a]b\.md>\)/);
+  assert.match(markdown, /\[source\]\(<\/Sources\/raw\/web\/a]b\.md>\)/);
+  assert.match(markdown, /\[\/Wiki\/conversations\/日本語 記事\)\.md\]\(<\/Wiki\/conversations\/日本語 記事\)\.md>\)/);
+  assert.match(markdown, /\[\/Wiki\/space name\.md\]\(<\/Wiki\/space name\.md>\)/);
   assert.match(markdown, /\[\/Wiki\/a#b\.md\]\(<\/Wiki\/a%23b\.md>\)/);
   assert.match(markdown, /\[\/Wiki\/a\?b\.md\]\(<\/Wiki\/a%3Fb\.md>\)/);
+  assert.match(markdown, /\[\/Wiki\/100%\.md\]\(<\/Wiki\/100%25\.md>\)/);
 });
 
 test("draft-provided labels are rendered without worker language detection", () => {
