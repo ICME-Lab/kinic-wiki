@@ -28,7 +28,7 @@ use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::{
     CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
-    RequiredRole, UsageEvent, VfsService, payment_amount_e8s_for_credits,
+    RequiredRole, VfsService, payment_amount_e8s_for_credits,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
@@ -39,15 +39,16 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
-    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
+    IndexSqlJsonQueryResult, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -291,18 +292,13 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 #[update]
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
-    with_usage_derived_database_id(
-        "create_database",
-        None,
-        |service, caller, now| {
-            let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
-            Ok(CreateDatabaseResult {
-                database_id: meta.database_id,
-                name: meta.name,
-            })
-        },
-        |result| Some(result.database_id.clone()),
-    )
+    with_unmetered_update("create_database", None, |service, caller, now| {
+        let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
+        Ok(CreateDatabaseResult {
+            database_id: meta.database_id,
+            name: meta.name,
+        })
+    })
 }
 
 #[update]
@@ -364,9 +360,7 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 
 #[query]
 fn preview_database_credit_purchase(database_id: String, credits: u64) -> Result<(), String> {
-    with_service(|service| {
-        service.validate_database_credit_purchase(&database_id, &caller_text(), credits)
-    })
+    with_service(|service| service.validate_database_credit_purchase(&database_id, credits))
 }
 
 #[update]
@@ -380,7 +374,8 @@ async fn purchase_database_credits(
     let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let ledger_fee_e8s = ledger_fee(ledger).await?;
+    with_service(|service| service.validate_database_credit_purchase(&database_id, credits))?;
+    let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
     let payment_amount_e8s = payment_amount_e8s_for_credits(credits, &config)?;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
@@ -423,7 +418,10 @@ async fn purchase_database_credits(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
-            activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)?;
+            activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)
+                .map_err(|error| {
+                    credit_purchase_local_apply_error(operation_id, block_index, error)
+                })?;
             let balance = with_service(|service| {
                 service.credit_database_purchase(
                     operation_id,
@@ -433,7 +431,8 @@ async fn purchase_database_credits(
                     block_index,
                     now,
                 )
-            })?;
+            })
+            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
             Ok(CreditsPurchaseResult {
                 block_index,
                 balance_credits: balance,
@@ -507,16 +506,14 @@ async fn repair_database_credit_purchase_complete(
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let operation = with_service(|service| {
-        service.get_database_credit_pending_operation_for_repair(
-            &database_id,
-            operation_id,
-            &caller,
-        )
+        service.get_database_credit_pending_operation_for_complete(&database_id, operation_id)
     })?;
     let expected = expected_credit_purchase_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
     let now = now_millis();
-    activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)?;
+    activate_pending_database_after_credit_purchase_ledger_success(&database_id, now).map_err(
+        |error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error),
+    )?;
     let balance = with_service(|service| {
         service.repair_database_credit_purchase_complete(
             &database_id,
@@ -525,64 +522,12 @@ async fn repair_database_credit_purchase_complete(
             &caller,
             now,
         )
-    })?;
+    })
+    .map_err(|error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error))?;
     Ok(CreditsPurchaseResult {
         block_index: ledger_block_index,
         balance_credits: balance,
     })
-}
-
-#[update]
-async fn repair_database_credit_purchase_retry(
-    database_id: String,
-    operation_id: u64,
-) -> Result<CreditsPurchaseResult, String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    let config = with_service(|service| service.credits_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let operation = with_service(|service| {
-        service.get_database_credit_pending_operation_for_repair(
-            &database_id,
-            operation_id,
-            &caller,
-        )
-    })?;
-    let expected = expected_credit_purchase_transfer(&operation)?;
-    match ledger_transfer_from(
-        ledger,
-        expected.from,
-        expected.to,
-        expected.amount_e8s,
-        expected.ledger_fee_e8s,
-        operation_id,
-        expected.created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferFromOutcome::Completed(block_index) => {
-            let now = now_millis();
-            activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)?;
-            let balance = with_service(|service| {
-                service.repair_database_credit_purchase_complete(
-                    &database_id,
-                    operation_id,
-                    block_index,
-                    &caller,
-                    now,
-                )
-            })?;
-            Ok(CreditsPurchaseResult {
-                block_index,
-                balance_credits: balance,
-            })
-        }
-        LedgerTransferFromOutcome::LedgerErr(error)
-        | LedgerTransferFromOutcome::Ambiguous(error) => {
-            Err(format!("credit purchase retry still pending: {error}"))
-        }
-    }
 }
 
 fn activate_pending_database_after_credit_purchase_ledger_success(
@@ -604,6 +549,12 @@ fn activate_pending_database_after_credit_purchase_ledger_success(
         }
     }
     Ok(())
+}
+
+fn credit_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+    format!(
+        "credit purchase payment completed but local credit application failed; pending operation {operation_id} can be completed with verified ledger block {block_index}: {cause}"
+    )
 }
 
 #[update]
@@ -1405,23 +1356,6 @@ async fn ledger_transaction(
     }
 }
 
-async fn ledger_fee(ledger: Principal) -> Result<u64, String> {
-    #[cfg(test)]
-    {
-        let _ = ledger;
-        Ok(10)
-    }
-    #[cfg(not(test))]
-    {
-        let fee: Nat = Call::bounded_wait(ledger, "icrc1_fee")
-            .await
-            .map_err(|error| format!("icrc1_fee call failed: {error:?}"))?
-            .candid()
-            .map_err(|error| format!("icrc1_fee decode failed: {error}"))?;
-        nat_to_u64(&fee)
-    }
-}
-
 async fn ledger_transfer_from(
     ledger: Principal,
     from: IcrcAccount,
@@ -1519,43 +1453,15 @@ fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) 
 where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
-    with_usage_derived_database_id(method, database_id, f, |_| None)
-}
-
-fn with_usage_derived_database_id<T, F, D>(
-    method: &str,
-    database_id: Option<String>,
-    f: F,
-    database_id_from_success: D,
-) -> Result<T, String>
-where
-    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
-    D: FnOnce(&T) -> Option<String>,
-{
+    let _ = (method, database_id);
     let caller = caller_text();
     let now = now_millis();
-    let before_cycles = cycle_balance();
     SERVICE.with(|slot| {
         let borrowed = slot.borrow();
         let service = borrowed
             .as_ref()
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
-        let result = f(service, &caller, now);
-        let after_cycles = cycle_balance();
-        let cycles_delta = before_cycles.saturating_sub(after_cycles);
-        let error = result.as_ref().err().map(String::as_str);
-        let derived_database_id = result.as_ref().ok().and_then(database_id_from_success);
-        let usage_database_id = database_id.as_deref().or(derived_database_id.as_deref());
-        let _ = service.record_usage_event(UsageEvent {
-            method,
-            database_id: usage_database_id,
-            caller: &caller,
-            success: result.is_ok(),
-            cycles_delta,
-            error,
-            now,
-        });
-        result
+        f(service, &caller, now)
     })
 }
 
@@ -1576,7 +1482,7 @@ where
             let database_id = authorization_database_id
                 .as_deref()
                 .ok_or_else(|| "database_id is required for role metering".to_string())?;
-            service.require_database_role(database_id, caller, required_role)
+            service.prepare_metered_update(database_id, caller, required_role)
         },
         f,
     )
@@ -1592,18 +1498,13 @@ where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
     let authorization_database_id = database_id.clone();
-    with_usage_derived_database_id(
-        method,
-        database_id,
-        |service, caller, now| {
-            let database_id = authorization_database_id
-                .as_deref()
-                .ok_or_else(|| "database_id is required for role check".to_string())?;
-            service.require_database_role(database_id, caller, required_role)?;
-            f(service, caller, now)
-        },
-        |_| None,
-    )
+    with_unmetered_update(method, database_id, |service, caller, now| {
+        let database_id = authorization_database_id
+            .as_deref()
+            .ok_or_else(|| "database_id is required for role check".to_string())?;
+        service.require_database_role(database_id, caller, required_role)?;
+        f(service, caller, now)
+    })
 }
 
 fn with_authorized_metered_update<T, A, F>(
@@ -1613,7 +1514,7 @@ fn with_authorized_metered_update<T, A, F>(
     f: F,
 ) -> Result<T, String>
 where
-    A: FnOnce(&VfsService, &str) -> Result<(), String>,
+    A: FnOnce(&VfsService, &str) -> Result<CreditsConfig, String>,
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
     let caller = caller_text();
@@ -1624,33 +1525,18 @@ where
         let service = borrowed
             .as_ref()
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
-        authorize(service, &caller)?;
-        if let Some(database_id) = database_id.as_deref() {
-            service.require_database_write_credits_available(database_id)?;
-        }
+        let credits_config = authorize(service, &caller)?;
         let result = f(service, &caller, now);
         let after_cycles = cycle_balance();
         let cycles_delta = before_cycles.saturating_sub(after_cycles);
-        let error = result.as_ref().err().map(String::as_str);
-        let usage_event_id = service
-            .record_usage_event(UsageEvent {
-                method,
-                database_id: database_id.as_deref(),
-                caller: &caller,
-                success: result.is_ok(),
-                cycles_delta,
-                error,
-                now,
-            })
-            .ok();
         if result.is_ok()
             && let Some(database_id) = database_id.as_deref()
             && let Err(error) = service.charge_database_update(
+                &credits_config,
                 database_id,
                 &caller,
                 method,
                 cycles_delta,
-                usage_event_id,
                 now,
             )
         {

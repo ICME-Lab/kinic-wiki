@@ -1,6 +1,6 @@
 // Where: /credits client UI.
 // What: collects a KINIC amount locally, then submits wallet approval and credits purchase.
-// Why: purchase amount is user input, not a query parameter.
+// Why: CLI/query can seed credits, and the final purchase amount remains user-editable.
 "use client";
 
 import Link from "next/link";
@@ -16,13 +16,14 @@ type CreditsProvider = "oisy" | "plug";
 type CreditsClientProps = {
   canisterId: string;
   databaseId: string;
+  initialCredits?: string;
 };
 
-export function CreditsClient({ canisterId, databaseId }: CreditsClientProps) {
+export function CreditsClient({ canisterId, databaseId, initialCredits }: CreditsClientProps) {
   const [status, setStatus] = useState<CreditsStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [provider, setProvider] = useState<CreditsProvider | null>(null);
-  const [amount, setAmount] = useState("1");
+  const [amount, setAmount] = useState(() => (initialCredits?.trim() ? initialCredits : "1"));
   const [oisyWallet, setOisyWallet] = useState<ConnectedOisyWallet | null>(null);
   const [plugWallet, setPlugWallet] = useState<ConnectedPlugWallet | null>(null);
   const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";

@@ -293,8 +293,18 @@ proptest! {
                 }
                 CreditsOp::Charge { cycles_delta } => {
                     let before = database_balance;
+                    let config = service
+                        .credits_config()
+                        .expect("credits config should load");
                     service
-                        .charge_database_update(&database_id, OWNER, "pbt_charge", cycles_delta, Some(now as u64), now)
+                        .charge_database_update(
+                            &config,
+                            &database_id,
+                            OWNER,
+                            "pbt_charge",
+                            cycles_delta,
+                            now,
+                        )
                         .expect("charge should record");
                     let computed = charge_amount(cycles_delta);
                     database_balance = database_balance.saturating_sub(computed);

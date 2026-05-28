@@ -97,7 +97,6 @@ pub struct DatabaseCreditEntry {
     pub cycles_delta: Option<u64>,
     pub credits_per_kinic: Option<u64>,
     pub cycles_per_credit: Option<u64>,
-    pub usage_event_id: Option<u64>,
     pub ledger_block_index: Option<u64>,
     pub created_at_ms: i64,
 }

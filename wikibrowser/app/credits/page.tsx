@@ -1,6 +1,6 @@
 // Where: /credits route.
 // What: passes the configured canister and target database into the client.
-// Why: amount is entered on the page, and canister selection must not come from URL input.
+// Why: CLI/query can seed credits, but canister selection must not come from URL input.
 import type { Metadata } from "next";
 import { CreditsClient } from "./credits-client";
 
@@ -17,6 +17,7 @@ export default async function CreditsPage({ searchParams }: { searchParams: Page
     <CreditsClient
       canisterId={process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID || ""}
       databaseId={first(params.database_id ?? params.databaseId)}
+      initialCredits={first(params.credits)}
     />
   );
 }

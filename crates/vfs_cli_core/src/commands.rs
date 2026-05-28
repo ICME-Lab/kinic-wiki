@@ -14,10 +14,10 @@ use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, CreditsConfig, DatabaseRestoreChunkRequest, DatabaseSummary,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
+    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -692,17 +692,13 @@ async fn run_database_command(
             } else {
                 for entry in page.entries {
                     println!(
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                         entry.entry_id,
                         entry.kind,
                         entry.amount_credits,
                         entry.balance_after_credits,
                         entry.caller,
                         entry.method.unwrap_or_else(|| "-".to_string()),
-                        entry
-                            .usage_event_id
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "-".to_string()),
                         entry
                             .ledger_block_index
                             .map(|value| value.to_string())
@@ -764,18 +760,6 @@ async fn run_database_command(
                 .repair_database_credit_purchase_cancel(&database_id, operation_id)
                 .await?;
             println!("{database_id}\t{operation_id}");
-        }
-        DatabaseCommand::RepairCreditPurchaseRetry {
-            database_id,
-            operation_id,
-        } => {
-            let result = client
-                .repair_database_credit_purchase_retry(&database_id, operation_id)
-                .await?;
-            println!(
-                "{database_id}\t{operation_id}\t{}\t{}",
-                result.block_index, result.balance_credits
-            );
         }
         DatabaseCommand::Credits {
             database_id,
@@ -929,25 +913,16 @@ async fn run_credits_command(client: &impl VfsApi, command: CreditsCommand) -> R
     match command {
         CreditsCommand::Config { json } => {
             let config = client.get_credits_config().await?;
-            let ledger_fee_e8s = client
-                .kinic_ledger_fee_e8s(&config.kinic_ledger_canister_id)
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to query icrc1_fee from ledger {}",
-                        config.kinic_ledger_canister_id
-                    )
-                })?;
             if json {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&CreditsConfigOutput::new(
                         config,
-                        ledger_fee_e8s
+                        KINIC_LEDGER_FEE_E8S
                     ))?
                 );
             } else {
-                for line in credits_config_lines(&config, ledger_fee_e8s) {
+                for line in credits_config_lines(&config, KINIC_LEDGER_FEE_E8S) {
                     println!("{line}");
                 }
             }
@@ -1413,8 +1388,6 @@ mod tests {
         database_summaries: Mutex<Vec<DatabaseSummary>>,
         credits_configs: Mutex<u32>,
         fail_credits_config: Mutex<bool>,
-        ledger_fee_queries: Mutex<Vec<String>>,
-        fail_ledger_fee_query: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
         write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
@@ -1547,7 +1520,6 @@ mod tests {
                     cycles_delta: None,
                     credits_per_kinic: None,
                     cycles_per_credit: None,
-                    usage_event_id: None,
                     ledger_block_index: Some(7),
                     created_at_ms: 1,
                 }],
@@ -1622,16 +1594,6 @@ mod tests {
                 cycles_per_credit: 1_000_000_000,
                 min_update_credits: 1,
             })
-        }
-        async fn kinic_ledger_fee_e8s(&self, ledger_canister_id: &str) -> Result<u64> {
-            self.ledger_fee_queries
-                .lock()
-                .unwrap()
-                .push(ledger_canister_id.to_string());
-            if *self.fail_ledger_fee_query.lock().unwrap() {
-                return Err(anyhow!("ledger unavailable"));
-            }
-            Ok(12_345)
         }
         async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
             Ok(())
@@ -1889,7 +1851,7 @@ mod tests {
         let input = PathBuf::from(dir.path()).join("source.md");
         std::fs::write(&input, "# Source").expect("input should write");
         let client = MockClient {
-            database_summaries: Mutex::new(vec![database_summary("alpha", Some(9_999), None)]),
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(0), None)]),
             ..MockClient::default()
         };
 
@@ -2490,34 +2452,6 @@ mod tests {
         .await
         .expect("credits config should succeed");
         assert_eq!(*client.credits_configs.lock().unwrap(), 1);
-        assert_eq!(
-            *client.ledger_fee_queries.lock().unwrap(),
-            vec!["ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()]
-        );
-    }
-
-    #[tokio::test]
-    async fn credits_config_fails_when_ledger_fee_query_fails() {
-        let client = MockClient::default();
-        *client.fail_ledger_fee_query.lock().unwrap() = true;
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Credits {
-                command: CreditsCommand::Config { json: false },
-            },
-        )
-        .await
-        .expect_err("ledger fee query failure should fail command");
-
-        let message = format!("{error:#}");
-        assert!(message.contains("icrc1_fee"));
-        assert!(message.contains("ryjl3-tyaaa-aaaaa-aaaba-cai"));
-        assert_eq!(*client.credits_configs.lock().unwrap(), 1);
-        assert_eq!(
-            *client.ledger_fee_queries.lock().unwrap(),
-            vec!["ryjl3-tyaaa-aaaaa-aaaba-cai".to_string()]
-        );
     }
 
     #[test]
@@ -2530,11 +2464,11 @@ mod tests {
                 cycles_per_credit: 1_000_000_000,
                 min_update_credits: 1,
             },
-            12_345,
+            KINIC_LEDGER_FEE_E8S,
         );
 
         assert!(lines.contains(&"sns_governance_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
-        assert!(lines.contains(&"ledger_fee_e8s\t12345".to_string()));
+        assert!(lines.contains(&"ledger_fee_e8s\t10000".to_string()));
     }
 
     #[tokio::test]

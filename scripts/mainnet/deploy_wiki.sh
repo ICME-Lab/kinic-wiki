@@ -36,10 +36,9 @@ cat >"${ARGS_FILE}" <<EOF
 (record {
   kinic_ledger_canister_id = "${KINIC_LEDGER_CANISTER_ID}";
   sns_governance_id = "${SNS_GOVERNANCE_ID}";
-  rate_numerator_e8s = 200 : nat64;
-  rate_denominator_cycles = 1_000_000 : nat64;
-  fixed_update_fee_e8s = 100 : nat64;
-  min_update_balance_e8s = 10_000 : nat64;
+  credits_per_kinic = 1_000 : nat64;
+  cycles_per_credit = 1_000_000_000 : nat64;
+  min_update_credits = 1 : nat64;
 })
 EOF
 

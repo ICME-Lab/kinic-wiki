@@ -197,12 +197,15 @@ fn apply_operation(
             model.database_credits += amount;
         }
         RuntimeOp::Charge { cycles_delta } => {
+            let config = service
+                .credits_config()
+                .expect("credits config should load");
             let result = service.charge_database_update(
+                &config,
                 database_id,
                 OWNER,
                 "pbt_write",
                 cycles_delta,
-                None,
                 step,
             );
             result.expect("database charge should record against credit account");

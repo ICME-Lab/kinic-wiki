@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
     DEFAULT_LLM_WRITER_PRINCIPAL, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
-    MAX_RESTORE_CHUNK_BYTES, USAGE_EVENTS_RETENTION_LIMIT, UsageEvent, VfsService,
+    MAX_RESTORE_CHUNK_BYTES, VfsService,
 };
 use vfs_types::{
     AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest,
@@ -39,7 +39,7 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
 }
 
 #[test]
-fn index_migration_adds_credits_to_existing_database_index() {
+fn old_index_with_schema_migrations_upgrades_to_credit_ledger_only() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let index_path = root.join("index.sqlite3");
@@ -78,13 +78,13 @@ fn index_migration_adds_credits_to_existing_database_index() {
         "database_index:001_lifecycle",
         "database_index:002_restore_size",
         "database_index:003_restore_chunks",
-        "database_index:004_usage_events",
         "database_index:005_mount_history",
         "database_index:006_url_ingest_trigger_sessions",
         "database_index:007_ops_answer_sessions",
         "database_index:008_restore_sessions",
         "database_index:009_restore_chunk_bytes",
         "database_index:010_database_name_breaking",
+        "database_index:011_source_run_sessions",
     ] {
         conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
@@ -97,7 +97,7 @@ fn index_migration_adds_credits_to_existing_database_index() {
     let service = VfsService::new(index_path.clone(), root.join("databases"));
     service
         .run_index_migrations()
-        .expect("credits migration should apply");
+        .expect("old index should upgrade");
 
     let conn = Connection::open(index_path).expect("index should reopen");
     let balance: i64 = conn
@@ -107,69 +107,45 @@ fn index_migration_adds_credits_to_existing_database_index() {
             |row| row.get(0),
         )
         .expect("database credits account should exist");
-    let suspended_at_ms: Option<i64> = conn
+    let pending_details_columns: i64 = conn
         .query_row(
-            "SELECT suspended_at_ms FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_pending_operations')
+             WHERE name IN ('from_owner', 'from_subaccount', 'to_owner', 'to_subaccount',
+                            'ledger_fee_e8s', 'ledger_created_at_time_ns')",
             params![],
             |row| row.get(0),
         )
-        .expect("database credits account should load");
-    let ledger_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM database_credit_ledger WHERE database_id = 'db_existing'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("database credits ledger count should load");
-    let marker: String = conn
-        .query_row(
-            "SELECT version FROM schema_migrations WHERE version = 'database_index:012_credits_initial'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("credits migration marker should exist");
-    let pending_marker: String = conn
-        .query_row(
-            "SELECT version FROM schema_migrations WHERE version = 'database_index:013_credits_pending'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("pending credits migration marker should exist");
-    let pending_table_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'table' AND name = 'database_credit_pending_operations'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("pending credits table count should load");
-    let block_index_marker: String = conn
-        .query_row(
-            "SELECT version FROM schema_migrations
-             WHERE version = 'database_index:014_credits_ledger_block_index'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("credits ledger block index migration marker should exist");
-    let block_index_column_count: i64 = conn
+        .expect("pending details columns should load");
+    let ledger_usage_column_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
-             WHERE name = 'ledger_block_index'",
+             WHERE name = 'usage_event_id'",
             params![],
             |row| row.get(0),
         )
-        .expect("credits ledger block index column count should load");
+        .expect("ledger usage column count should load");
+    let usage_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'usage_events'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("usage table count should load");
+    let marker: String = conn
+        .query_row(
+            "SELECT version FROM schema_migrations
+             WHERE version = 'database_index:018_credit_ledger_only'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("credit ledger only marker should exist");
+
     assert_eq!(balance, 0);
-    assert_eq!(suspended_at_ms, Some(0));
-    assert_eq!(ledger_count, 0);
-    assert_eq!(marker, "database_index:012_credits_initial");
-    assert_eq!(pending_marker, "database_index:013_credits_pending");
-    assert_eq!(
-        block_index_marker,
-        "database_index:014_credits_ledger_block_index"
-    );
-    assert_eq!(pending_table_count, 1);
-    assert_eq!(block_index_column_count, 1);
+    assert_eq!(pending_details_columns, 6);
+    assert_eq!(ledger_usage_column_count, 0);
+    assert_eq!(usage_table_count, 0);
+    assert_eq!(marker, "database_index:018_credit_ledger_only");
 }
 
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
@@ -222,16 +198,6 @@ fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool 
     .optional()
     .expect("database row check should load")
     .is_some()
-}
-
-fn database_name(root: &std::path::Path, database_id: &str) -> String {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT name FROM databases WHERE database_id = ?1",
-        params![database_id],
-        |row| row.get(0),
-    )
-    .expect("database name should load")
 }
 
 fn database_updated_at_ms(root: &std::path::Path, database_id: &str) -> i64 {
@@ -539,40 +505,6 @@ fn database_file_path(root: &std::path::Path, database_id: &str) -> PathBuf {
     PathBuf::from(db_file_name)
 }
 
-type UsageEventTuple = (
-    String,
-    Option<String>,
-    String,
-    i64,
-    i64,
-    Option<String>,
-    i64,
-);
-
-fn usage_event_rows(root: &std::path::Path) -> Vec<UsageEventTuple> {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.prepare(
-        "SELECT method, database_id, caller, success, cycles_delta, error, created_at_ms
-         FROM usage_events
-         ORDER BY event_id ASC",
-    )
-    .expect("usage query should prepare")
-    .query_map([], |row| {
-        Ok((
-            row.get(0)?,
-            row.get(1)?,
-            row.get(2)?,
-            row.get(3)?,
-            row.get(4)?,
-            row.get(5)?,
-            row.get(6)?,
-        ))
-    })
-    .expect("usage query should run")
-    .collect::<Result<Vec<_>, _>>()
-    .expect("usage rows should collect")
-}
-
 fn read_archive_in_chunks(
     service: &VfsService,
     database_id: &str,
@@ -608,18 +540,11 @@ fn archive_bytes_for_chunk_size(
 }
 
 #[test]
-fn index_migrations_create_usage_events_and_mount_history_once() {
+fn index_migrations_create_credit_ledger_only_schema_once() {
     let (service, root) = service_with_root();
 
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    for table_name in [
-        "usage_events",
-        "database_mount_history",
-        "url_ingest_trigger_sessions",
-        "ops_answer_sessions",
-        "source_run_sessions",
-        "database_restore_sessions",
-    ] {
+    for table_name in ["database_mount_history", "database_credit_ledger"] {
         let table_exists: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -629,8 +554,25 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
             .expect("table lookup should work");
         assert_eq!(table_exists, 1);
     }
+    let usage_table_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'usage_events'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("usage table lookup should work");
+    assert_eq!(usage_table_exists, 0);
+    let usage_column_exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
+             WHERE name = 'usage_event_id'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("credit ledger column lookup should work");
+    assert_eq!(usage_column_exists, 0);
     assert_eq!(
-        schema_migration_count(&root, "database_index:004_usage_events"),
+        schema_migration_count(&root, "database_index:018_credit_ledger_only"),
         1
     );
     assert_eq!(
@@ -662,7 +604,7 @@ fn index_migrations_create_usage_events_and_mount_history_once() {
         .run_index_migrations()
         .expect("index migrations should be idempotent");
     assert_eq!(
-        schema_migration_count(&root, "database_index:004_usage_events"),
+        schema_migration_count(&root, "database_index:018_credit_ledger_only"),
         1
     );
     assert_eq!(
@@ -1345,7 +1287,7 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
             .contains("database is pending")
     );
     service
-        .validate_database_credit_purchase(&pending.database_id, "2vxsx-fae", 500)
+        .validate_database_credit_purchase(&pending.database_id, 500)
         .expect("anonymous preview should accept pending DB credit purchase");
 
     let operation_id = service
@@ -1453,188 +1395,6 @@ fn pending_database_credit_purchase_cancel_rejects_after_activation_started() {
     assert_eq!(
         database_index_row(&root, &pending.database_id),
         ("pending".to_string(), Some(11), 0, None)
-    );
-}
-
-#[test]
-fn old_index_schema_migrates_database_name_from_id() {
-    let dir = tempdir().expect("tempdir should create");
-    let root = dir.keep();
-    let index_path = root.join("index.sqlite3");
-    let conn = Connection::open(&index_path).expect("index should open");
-    conn.execute_batch(
-        "CREATE TABLE schema_migrations (
-           version TEXT PRIMARY KEY,
-           applied_at INTEGER NOT NULL
-         );
-         CREATE TABLE databases (
-           database_id TEXT PRIMARY KEY,
-           db_file_name TEXT NOT NULL,
-           mount_id INTEGER NOT NULL,
-           active_mount_id INTEGER,
-           status TEXT NOT NULL DEFAULT 'active',
-           schema_version TEXT NOT NULL,
-           logical_size_bytes INTEGER NOT NULL DEFAULT 0,
-           snapshot_hash BLOB,
-           archived_at_ms INTEGER,
-           deleted_at_ms INTEGER,
-           restore_size_bytes INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL
-         );
-         CREATE UNIQUE INDEX databases_active_mount_id_idx
-           ON databases(active_mount_id)
-           WHERE active_mount_id IS NOT NULL;
-         CREATE TABLE database_members (
-           database_id TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           role TEXT NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, principal),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE TABLE database_restore_chunks (
-           database_id TEXT NOT NULL,
-           offset_bytes INTEGER NOT NULL,
-           end_bytes INTEGER NOT NULL,
-           bytes BLOB,
-           PRIMARY KEY (database_id, offset_bytes, end_bytes),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX database_restore_chunks_database_id_idx
-           ON database_restore_chunks(database_id, offset_bytes);
-         CREATE TABLE usage_events (
-           event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           method TEXT NOT NULL,
-           database_id TEXT,
-           caller TEXT NOT NULL,
-           success INTEGER NOT NULL,
-           cycles_delta INTEGER NOT NULL,
-           error TEXT,
-           created_at_ms INTEGER NOT NULL
-         );
-         CREATE INDEX usage_events_database_id_created_at_idx
-           ON usage_events(database_id, created_at_ms);
-         CREATE INDEX usage_events_caller_created_at_idx
-           ON usage_events(caller, created_at_ms);
-         CREATE TABLE database_mount_history (
-           database_id TEXT NOT NULL,
-           mount_id INTEGER NOT NULL,
-           reason TEXT NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (mount_id)
-         );
-         CREATE TABLE url_ingest_trigger_sessions (
-           database_id TEXT NOT NULL,
-           session_nonce TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           expires_at_ms INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           refreshed_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, session_nonce),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX url_ingest_trigger_sessions_expiry_idx
-           ON url_ingest_trigger_sessions(expires_at_ms);
-         CREATE TABLE ops_answer_sessions (
-           database_id TEXT NOT NULL,
-           session_nonce TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           expires_at_ms INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           refreshed_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, session_nonce),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX ops_answer_sessions_expiry_idx
-           ON ops_answer_sessions(expires_at_ms);
-         CREATE TABLE database_restore_sessions (
-           database_id TEXT PRIMARY KEY,
-           status TEXT NOT NULL,
-           active_mount_id INTEGER,
-           snapshot_hash BLOB,
-           archived_at_ms INTEGER,
-           deleted_at_ms INTEGER,
-           restore_size_bytes INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         INSERT INTO schema_migrations (version, applied_at)
-         VALUES
-           ('database_index:000_initial', 0),
-           ('database_index:001_lifecycle', 0),
-           ('database_index:002_restore_size', 0),
-           ('database_index:003_restore_chunks', 0),
-           ('database_index:004_usage_events', 0),
-           ('database_index:005_mount_history', 0),
-           ('database_index:006_url_ingest_trigger_sessions', 0),
-           ('database_index:007_ops_answer_sessions', 0),
-           ('database_index:008_restore_sessions', 0),
-           ('database_index:009_restore_chunk_bytes', 0);
-         INSERT INTO databases
-           (database_id, db_file_name, mount_id, active_mount_id, status, schema_version,
-            logical_size_bytes, created_at_ms, updated_at_ms)
-         VALUES ('alpha', 'alpha.sqlite3', 11, 11, 'active', 'vfs_store:current', 0, 1, 1);
-         INSERT INTO database_members (database_id, principal, role, created_at_ms)
-         VALUES ('alpha', 'owner', 'owner', 1);",
-    )
-    .expect("old schema should create");
-
-    let service = VfsService::new(index_path, root.join("databases"));
-    service
-        .run_index_migrations()
-        .expect("old index schema should migrate");
-
-    assert_eq!(
-        schema_migration_count(&root, "database_index:010_database_name_breaking"),
-        1
-    );
-    assert_eq!(
-        schema_migration_count(&root, "database_index:011_source_run_sessions"),
-        1
-    );
-    assert_eq!(database_name(&root, "alpha"), "alpha");
-    let databases = service
-        .list_database_infos()
-        .expect("database infos should load after migration");
-    assert_eq!(databases[0].database_id, "alpha");
-    assert_eq!(databases[0].name, "alpha");
-
-    service
-        .run_index_migrations()
-        .expect("database name migration should be idempotent");
-    assert_eq!(
-        schema_migration_count(&root, "database_index:010_database_name_breaking"),
-        1
-    );
-}
-
-#[test]
-fn active_status_migration_rewrites_legacy_hot_rows() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("legacy_active", "owner", 1)
-        .expect("database should create");
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.execute(
-        "UPDATE databases SET status = 'hot' WHERE database_id = 'legacy_active'",
-        params![],
-    )
-    .expect("legacy status should write");
-    conn.execute(
-        "DELETE FROM schema_migrations WHERE version = 'database_index:016_active_status'",
-        params![],
-    )
-    .expect("active status marker should delete");
-
-    service
-        .run_index_migrations()
-        .expect("active status migration should run");
-
-    assert_eq!(database_index_row(&root, "legacy_active").0, "active");
-    assert_eq!(
-        schema_migration_count(&root, "database_index:016_active_status"),
-        1
     );
 }
 
@@ -1870,7 +1630,6 @@ fn credits_history_redacts_principals_for_non_owner_readers() {
         .remove(0);
     assert_eq!(reader_entry.caller, "redacted");
     assert_eq!(reader_entry.ledger_block_index, Some(42));
-    assert_eq!(reader_entry.usage_event_id, None);
 
     let writer_entry = service
         .list_database_credit_entries("alpha", "writer", None, 10)
@@ -1989,113 +1748,37 @@ fn database_rename_requires_owner() {
 }
 
 #[test]
-fn records_minimal_usage_events() {
+fn zero_cycle_charge_skips_credit_ledger() {
     let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    credit_database(&service, "alpha", "owner", 500, 7, 2);
+    let config = service
+        .credits_config()
+        .expect("credits config should load");
 
     service
-        .record_usage_event(UsageEvent {
-            method: "write_node",
-            database_id: Some("alpha"),
-            caller: "owner",
-            success: true,
-            cycles_delta: 12,
-            error: None,
-            now: 10,
-        })
-        .expect("success event should record");
-    service
-        .record_usage_event(UsageEvent {
-            method: "create_database",
-            database_id: None,
-            caller: "owner",
-            success: false,
-            cycles_delta: 34,
-            error: Some("database already exists"),
-            now: 11,
-        })
-        .expect("failure event should record");
+        .charge_database_update(&config, "alpha", "owner", "write_node", 0, 3)
+        .expect("zero-cycle update should skip charge");
 
-    let rows = usage_event_rows(&root);
-    assert_eq!(rows.len(), 2);
+    assert_eq!(database_credits_balance(&root, "alpha"), 500);
     assert_eq!(
-        rows[0],
-        (
-            "write_node".to_string(),
-            Some("alpha".to_string()),
-            "owner".to_string(),
-            1,
-            12,
-            None,
-            10
-        )
-    );
-    assert_eq!(
-        rows[1],
-        (
-            "create_database".to_string(),
-            None,
-            "owner".to_string(),
-            0,
-            34,
-            Some("database already exists".to_string()),
-            11
-        )
-    );
-}
-
-#[test]
-fn usage_events_keep_recent_retention_window() {
-    let (service, root) = service_with_root();
-    let mut conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    let tx = conn.transaction().expect("transaction should start");
-
-    for index in 0..USAGE_EVENTS_RETENTION_LIMIT + 98 {
-        tx.execute(
-            "INSERT INTO usage_events
-             (method, database_id, caller, success, cycles_delta, error, created_at_ms)
-             VALUES ('write_node', 'alpha', 'owner', 1, 1, NULL, ?1)",
-            params![i64::try_from(index).expect("index should fit")],
-        )
-        .expect("usage event should insert");
-    }
-    tx.commit().expect("transaction should commit");
-
-    service
-        .record_usage_event(UsageEvent {
-            method: "write_node",
-            database_id: Some("alpha"),
-            caller: "owner",
-            success: true,
-            cycles_delta: 1,
-            error: None,
-            now: i64::try_from(USAGE_EVENTS_RETENTION_LIMIT + 98).expect("index should fit"),
-        })
-        .expect("usage event should record");
-    assert_eq!(
-        service
-            .usage_event_count()
-            .expect("usage count should load"),
-        USAGE_EVENTS_RETENTION_LIMIT + 99
+        database_ledger_kinds(&root, "alpha"),
+        vec!["credit_purchase"]
     );
 
     service
-        .record_usage_event(UsageEvent {
-            method: "write_node",
-            database_id: Some("alpha"),
-            caller: "owner",
-            success: true,
-            cycles_delta: 1,
-            error: None,
-            now: i64::try_from(USAGE_EVENTS_RETENTION_LIMIT + 99).expect("index should fit"),
-        })
-        .expect("usage event should record");
+        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000_000, 4)
+        .expect("charged update should record credit ledger");
 
-    assert_eq!(
-        service
-            .usage_event_count()
-            .expect("usage count should load"),
-        USAGE_EVENTS_RETENTION_LIMIT
-    );
+    assert_eq!(database_credits_balance(&root, "alpha"), 499);
+    let entries = service
+        .list_database_credit_entries("alpha", "owner", None, 10)
+        .expect("credit entries should load")
+        .entries;
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].kind, "charge");
 }
 
 #[test]

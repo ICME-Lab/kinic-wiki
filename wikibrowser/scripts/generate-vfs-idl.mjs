@@ -137,7 +137,6 @@ const methodOrder = [
   "preview_database_credit_purchase",
   "repair_database_credit_purchase_cancel",
   "repair_database_credit_purchase_complete",
-  "repair_database_credit_purchase_retry",
   "revoke_database_access",
   "rename_database",
   "search_node_paths",

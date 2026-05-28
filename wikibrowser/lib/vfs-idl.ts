@@ -57,8 +57,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     balance_after_credits: idl.Nat64,
     caller: idl.Text,
     cycles_delta: idl.Opt(idl.Nat64),
-    entry_id: idl.Nat64,
-    usage_event_id: idl.Opt(idl.Nat64)
+    entry_id: idl.Nat64
   });
   const DatabaseCreditEntryPage = idl.Record({
     entries: idl.Vec(DatabaseCreditEntry),
@@ -300,7 +299,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     preview_database_credit_purchase: idl.Func([idl.Text, idl.Nat64], [ResultUnit], ["query"]),
     repair_database_credit_purchase_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
     repair_database_credit_purchase_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultCreditsPurchase], []),
-    repair_database_credit_purchase_retry: idl.Func([idl.Text, idl.Nat64], [ResultCreditsPurchase], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),

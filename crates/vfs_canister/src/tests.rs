@@ -13,10 +13,11 @@ use vfs_types::{
     DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
     DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    KINIC_LEDGER_FEE_E8S, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest,
+    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -32,11 +33,10 @@ use super::{
     parse_upgrade_credits_config_arg, preview_database_credit_purchase, purchase_database_credits,
     query_context, query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
     rename_database, repair_database_credit_purchase_cancel,
-    repair_database_credit_purchase_complete, repair_database_credit_purchase_retry,
-    revoke_database_access, search_node_paths, search_nodes, set_ledger_transaction_for_test,
-    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    source_evidence, status, transfer_from_error_outcome, write_database_restore_chunk, write_node,
-    write_nodes,
+    repair_database_credit_purchase_complete, revoke_database_access, search_node_paths,
+    search_nodes, set_ledger_transaction_for_test, set_next_ledger_transfer_from_outcome_for_test,
+    set_test_caller_principal_for_test, source_evidence, status, transfer_from_error_outcome,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -390,7 +390,6 @@ fn purchase_database_credits_credits_completed_transfer_from() {
         .entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "credit_purchase");
-    assert_eq!(entries[0].usage_event_id, None);
     assert_eq!(entries[0].ledger_block_index, Some(42));
 }
 
@@ -498,7 +497,6 @@ fn purchase_database_credits_records_ambiguous_transfer_from() {
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
     assert_eq!(entries[0].amount_credits, 500);
     assert_eq!(entries[0].balance_after_credits, 0);
-    assert_eq!(entries[0].usage_event_id, None);
     assert_eq!(entries[0].ledger_block_index, None);
     assert_eq!(
         database_status_and_mount(&database.database_id),
@@ -521,6 +519,9 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
         .expect_err("mount failure after ledger success should keep repair path");
 
     assert!(error.contains("test mount failure"));
+    assert!(error.contains("credit purchase payment completed"));
+    assert!(error.contains("verified ledger block"));
+    assert!(error.contains("block 42"));
     assert_eq!(
         database_status_and_mount(&database.database_id),
         (DatabaseStatus::Pending, Some(11))
@@ -529,6 +530,8 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
         .expect("pending should load")
         .entries;
     assert_eq!(pending.len(), 1);
+    assert!(error.contains(&format!("pending operation {}", pending[0].operation_id)));
+    assert_eq!(pending[0].ledger_fee_e8s, Some(KINIC_LEDGER_FEE_E8S as i64));
     assert!(
         list_database_credit_entries(database.database_id.clone(), None, 10)
             .expect("ledger should load")
@@ -537,13 +540,12 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
     );
 
     set_ledger_transaction_for_test(42, pending_credit_purchase_transaction(&pending[0]));
-    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
     let result = block_on_ready(repair_database_credit_purchase_complete(
         database.database_id.clone(),
         pending[0].operation_id,
         42,
     ))
-    .expect("repair complete should retry mount and credit");
+    .expect("verified complete should retry mount and credit");
 
     assert_eq!(result.balance_credits, 500);
     assert_eq!(
@@ -553,7 +555,7 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
 }
 
 #[test]
-fn governance_can_repair_ambiguous_credit_purchase() {
+fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
     install_empty_test_service();
     let database_id;
     let operation_id;
@@ -576,29 +578,20 @@ fn governance_can_repair_ambiguous_credit_purchase() {
             .entries;
         assert_eq!(pending.len(), 1);
         operation_id = pending[0].operation_id;
-
-        let error = block_on_ready(repair_database_credit_purchase_complete(
-            database_id.clone(),
-            operation_id,
-            77,
-        ))
-        .expect_err("owner repair should reject");
-        assert!(error.contains("caller is not SNS governance"));
+        set_ledger_transaction_for_test(77, pending_credit_purchase_transaction(&pending[0]));
     }
 
     {
-        let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
-        let pending = list_database_credit_pending_operations(database_id.clone(), None, 10)
-            .expect("governance should list pending operations")
-            .entries;
-        assert_eq!(pending.len(), 1);
-        set_ledger_transaction_for_test(77, pending_credit_purchase_transaction(&pending[0]));
+        let _authenticated = AuthenticatedCallerGuard::install_principal(
+            Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
+                .expect("non-governance principal should parse"),
+        );
         let result = block_on_ready(repair_database_credit_purchase_complete(
             database_id.clone(),
             operation_id,
             77,
         ))
-        .expect("governance should repair credit purchase");
+        .expect("authenticated caller should complete verified credit purchase");
         assert_eq!(result.block_index, 77);
         assert_eq!(result.balance_credits, 500);
         assert_eq!(
@@ -612,12 +605,24 @@ fn governance_can_repair_ambiguous_credit_purchase() {
         .expect("owner should list pending operations")
         .entries;
     assert!(pending.is_empty());
-    let entries = list_database_credit_entries(database_id, None, 10)
+    let entries = list_database_credit_entries(database_id.clone(), None, 10)
         .expect("database ledger should load")
         .entries;
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
     assert_eq!(entries[1].kind, "credit_purchase_repair_complete");
     assert_eq!(entries[1].ledger_block_index, Some(77));
+
+    let error = block_on_ready(repair_database_credit_purchase_complete(
+        database_id.clone(),
+        operation_id,
+        77,
+    ))
+    .expect_err("second complete should reject missing pending operation");
+    assert!(error.contains("pending credit operation not found"));
+    let entries = list_database_credit_entries(database_id, None, 10)
+        .expect("database ledger should load")
+        .entries;
+    assert_eq!(entries.len(), 2);
 }
 
 #[test]
@@ -643,7 +648,7 @@ fn repair_credit_purchase_complete_rejects_mismatched_ledger_block() {
             .operation_id;
     }
 
-    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let _owner = AuthenticatedCallerGuard::install();
     let pending = list_database_credit_pending_operations(database_id.clone(), None, 10)
         .expect("pending should load")
         .entries;
@@ -662,46 +667,6 @@ fn repair_credit_purchase_complete_rejects_mismatched_ledger_block() {
         .expect("pending should remain")
         .entries;
     assert_eq!(pending.len(), 1);
-}
-
-#[test]
-fn repair_credit_purchase_retry_uses_original_ledger_args() {
-    install_empty_test_service();
-    let operation_id;
-    let database_id;
-    {
-        let _owner = AuthenticatedCallerGuard::install();
-        let database = create_database(CreateDatabaseRequest {
-            name: "Retry credit purchase".to_string(),
-        })
-        .expect("database should create");
-        database_id = database.database_id;
-        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-            "icrc2_transfer_from decode failed".to_string(),
-        ));
-        let _ = block_on_ready(purchase_database_credits(database_id.clone(), 500))
-            .expect_err("ambiguous credit purchase should stay pending");
-        operation_id = list_database_credit_pending_operations(database_id.clone(), None, 10)
-            .expect("pending should load")
-            .entries[0]
-            .operation_id;
-    }
-
-    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(79));
-    let result = block_on_ready(repair_database_credit_purchase_retry(
-        database_id.clone(),
-        operation_id,
-    ))
-    .expect("retry should complete");
-    assert_eq!(result.block_index, 79);
-    assert_eq!(result.balance_credits, 500);
-    let memo = last_ledger_memo_for_test().expect("retry should send memo");
-    assert!(String::from_utf8_lossy(&memo).starts_with("kinic:vfs:credit_purchase:"));
-    let pending = list_database_credit_pending_operations(database_id, None, 10)
-        .expect("pending should load")
-        .entries;
-    assert!(pending.is_empty());
 }
 
 #[test]
@@ -725,6 +690,10 @@ fn repair_credit_purchase_cancel_removes_ambiguous_operation() {
             .expect("pending should load")
             .entries[0]
             .operation_id;
+
+        let error = repair_database_credit_purchase_cancel(database_id.clone(), operation_id)
+            .expect_err("owner cancel should reject");
+        assert!(error.contains("caller is not SNS governance"));
     }
 
     let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
@@ -814,26 +783,6 @@ fn purchase_database_credits_rejects_unknown_and_deleted_database() {
     assert!(deleted.contains("database not found"));
 }
 
-fn usage_event_count() -> u64 {
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .usage_event_count()
-            .expect("usage count should load")
-    })
-}
-
-fn usage_event_database_ids() -> Vec<Option<String>> {
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .usage_event_database_ids()
-            .expect("usage database ids should load")
-    })
-}
-
 fn database_charge_methods(database_id: &str) -> Vec<String> {
     list_database_credit_entries(database_id.to_string(), None, 20)
         .expect("database credits ledger should load")
@@ -880,13 +829,16 @@ fn install_suspended_default_service() {
             )
         })
         .expect("default database should become suspended");
+    let config = service
+        .credits_config()
+        .expect("credits config should load");
     service
         .charge_database_update(
+            &config,
             "default",
             "2vxsx-fae",
             "test_suspend",
             1_000_000_000,
-            None,
             1_700_000_000_002,
         )
         .expect("default database should be charged to suspension");
@@ -1017,30 +969,7 @@ fn canister_list_databases_hides_deleted_databases() {
 }
 
 #[test]
-fn update_entrypoints_record_usage_events() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    let database = create_database(CreateDatabaseRequest {
-        name: "Usage events".to_string(),
-    })
-    .expect("database should create");
-    fund_database(&database.database_id, 1_000_000, 90);
-    assert_eq!(usage_event_count(), 1);
-
-    let failed = write_node(WriteNodeRequest {
-        database_id: database.database_id,
-        path: "/Sources/not-raw.md".to_string(),
-        kind: NodeKind::Source,
-        content: "invalid source path".to_string(),
-        metadata_json: "{}".to_string(),
-        expected_etag: None,
-    });
-    assert!(failed.is_err());
-    assert_eq!(usage_event_count(), 2);
-}
-
-#[test]
-fn write_nodes_records_one_usage_event_and_writes_nodes() {
+fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
     install_test_service();
 
     let results = write_nodes(WriteNodesRequest {
@@ -1065,11 +994,7 @@ fn write_nodes_records_one_usage_event_and_writes_nodes() {
     .expect("batch write should succeed");
 
     assert_eq!(results.len(), 2);
-    assert_eq!(usage_event_count(), 1);
-    assert_eq!(
-        database_charge_methods("default"),
-        vec!["write_nodes".to_string()]
-    );
+    assert!(database_charge_methods("default").is_empty());
     assert!(
         read_node("default".to_string(), "/Wiki/batch-a.md".to_string())
             .expect("read should succeed")
@@ -1078,7 +1003,7 @@ fn write_nodes_records_one_usage_event_and_writes_nodes() {
 }
 
 #[test]
-fn write_node_and_write_nodes_use_same_credits_path() {
+fn write_node_and_write_nodes_skip_zero_charge_ledger() {
     install_test_service();
 
     write_node(WriteNodeRequest {
@@ -1102,10 +1027,7 @@ fn write_node_and_write_nodes_use_same_credits_path() {
     })
     .expect("batch write should succeed");
 
-    assert_eq!(
-        database_charge_methods("default"),
-        vec!["write_node".to_string(), "write_nodes".to_string()]
-    );
+    assert!(database_charge_methods("default").is_empty());
 }
 
 #[test]
@@ -1125,7 +1047,6 @@ fn write_nodes_rejects_low_database_credits_balance() {
     .expect_err("low balance database should reject batch write");
 
     assert!(error.contains("database credits are suspended"));
-    assert_eq!(usage_event_count(), 0);
 }
 
 #[test]
@@ -1305,11 +1226,11 @@ fn write_nodes_rejects_invalid_source_path() {
     .expect_err("invalid source path should fail");
 
     assert!(error.contains("source path"));
-    assert_eq!(usage_event_count(), 1);
+    assert!(database_charge_methods("default").is_empty());
 }
 
 #[test]
-fn create_database_records_usage_and_returns_result() {
+fn create_database_returns_result() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let result = create_database(CreateDatabaseRequest {
@@ -1319,11 +1240,6 @@ fn create_database_records_usage_and_returns_result() {
     assert!(result.database_id.starts_with("db_"));
     assert_eq!(result.database_id.len(), 15);
     assert_eq!(result.name, "Team skills");
-    assert_eq!(usage_event_count(), 1);
-    assert_eq!(
-        usage_event_database_ids(),
-        vec![Some(result.database_id.clone())]
-    );
 
     let summaries = list_databases().expect("database summaries should load");
     let summary = summaries
@@ -1367,25 +1283,6 @@ fn canister_rename_database_requires_owner() {
 
     let summaries = list_databases().expect("database summaries should load");
     assert_eq!(summaries[0].name, "Renamed default");
-}
-
-#[test]
-fn query_entrypoints_do_not_record_usage_events() {
-    install_test_service();
-
-    let current = status("default".to_string());
-    assert_eq!(current.file_count, 0);
-    let snapshot = export_snapshot(ExportSnapshotRequest {
-        database_id: "default".to_string(),
-        prefix: Some("/Wiki".to_string()),
-        limit: 100,
-        cursor: None,
-        snapshot_revision: None,
-        snapshot_session_id: None,
-    })
-    .expect("snapshot query should succeed");
-    assert_eq!(snapshot.snapshot_session_id, None);
-    assert_eq!(usage_event_count(), 0);
 }
 
 #[test]

@@ -283,7 +283,7 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Governance repair: complete a pending credit purchase")]
+    #[command(about = "Verified complete: complete a pending credit purchase with a ledger block")]
     RepairCreditPurchaseComplete {
         database_id: String,
         operation_id: u64,
@@ -291,13 +291,6 @@ pub enum DatabaseCommand {
     },
     #[command(about = "Governance repair: cancel a pending credit purchase")]
     RepairCreditPurchaseCancel {
-        database_id: String,
-        operation_id: u64,
-    },
-    #[command(
-        about = "Governance repair: retry a pending credit purchase with original ledger args"
-    )]
-    RepairCreditPurchaseRetry {
         database_id: String,
         operation_id: u64,
     },

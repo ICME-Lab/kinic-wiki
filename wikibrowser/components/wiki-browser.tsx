@@ -8,8 +8,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, X } from "lucide-react";
-import { CycleBattery } from "@/components/cycle-battery";
+import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -18,7 +17,7 @@ import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { databaseCreditsDisabledReason } from "@/lib/credits-state";
+import { databaseCreditsDisabledReason, databaseCreditsHref, databaseCreditsView } from "@/lib/credits-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
@@ -616,7 +615,9 @@ export function WikiBrowser() {
         graphCenter={graphCenter}
         readMode={readMode}
         databaseOptions={databaseOptions}
+        currentDatabase={currentDatabase}
         currentDatabaseName={currentDatabase?.name ?? databaseId}
+        creditsConfig={creditsConfig}
         publicReadable={publicDatabaseIds.has(databaseId)}
         databaseListError={databaseListError}
         selectedPath={selectedPath}
@@ -1241,7 +1242,9 @@ function TopBar({
   graphCenter,
   readMode,
   databaseOptions,
+  currentDatabase,
   currentDatabaseName,
+  creditsConfig,
   publicReadable,
   databaseListError,
   selectedPath,
@@ -1265,7 +1268,9 @@ function TopBar({
   graphCenter: string | null;
   readMode: "anonymous" | null;
   databaseOptions: DatabaseSummary[];
+  currentDatabase: DatabaseSummary | null;
   currentDatabaseName: string;
+  creditsConfig: CreditsConfig | null;
   publicReadable: boolean;
   databaseListError: string | null;
   selectedPath: string;
@@ -1282,6 +1287,7 @@ function TopBar({
     ? hrefForPath(canisterId, databaseId, graphLinkCenter ?? "/Wiki", undefined, undefined, undefined, undefined, readMode)
     : hrefForGraph(canisterId, databaseId, graphLinkCenter, undefined, readMode);
   const visibleError = authError ?? databaseListError;
+  const credits = databaseCreditsView(currentDatabase, creditsConfig);
 
   function switchDatabase(event: ChangeEvent<HTMLSelectElement>) {
     const nextDatabaseId = event.target.value;
@@ -1377,7 +1383,7 @@ function TopBar({
           <Network size={18} aria-hidden />
           <span className="sr-only sm:not-sr-only">Graph</span>
         </Link>
-        <CycleBattery canisterId={canisterId} />
+        <DatabaseCreditsBadge credits={credits} database={currentDatabase} />
         {principal ? (
           <button className="ml-auto rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink lg:ml-0" type="button" onClick={onLogout}>
             Logout
@@ -1396,6 +1402,39 @@ function TopBar({
       </div>
     </header>
   );
+}
+
+function DatabaseCreditsBadge({ credits, database }: { credits: ReturnType<typeof databaseCreditsView>; database: DatabaseSummary | null }) {
+  const title = database
+    ? `${database.name}: ${credits.label}; ${credits.balanceCredits.toString()} credits`
+    : "Database credits unavailable";
+  const content = (
+    <>
+      <Wallet aria-hidden size={15} />
+      <span className="hidden text-xs font-semibold sm:inline">{credits.label}</span>
+      <span className="font-mono text-xs">{credits.balanceCredits.toString()}</span>
+    </>
+  );
+  const className = `hidden h-[38px] shrink-0 items-center gap-2 rounded-lg border px-3 text-sm md:flex ${databaseCreditsToneClass(credits.state)}`;
+  if (!database) {
+    return (
+      <span className={className} title={title} aria-label={title}>
+        {content}
+      </span>
+    );
+  }
+  return (
+    <Link className={`${className} no-underline`} href={databaseCreditsHref(database)} title={title} aria-label={title}>
+      {content}
+    </Link>
+  );
+}
+
+function databaseCreditsToneClass(state: ReturnType<typeof databaseCreditsView>["state"]): string {
+  if (state === "active") return "border-infoLine bg-infoSoft text-infoText";
+  if (state === "low-balance") return "border-yellow-200 bg-yellow-50 text-yellow-800";
+  if (state === "suspended") return "border-red-200 bg-red-50 text-red-700";
+  return "border-line bg-white text-muted";
 }
 
 function mergeDatabaseSummaries(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseSummary[] {

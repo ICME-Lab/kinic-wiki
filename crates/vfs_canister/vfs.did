@@ -53,7 +53,6 @@ type DatabaseCreditEntry = record {
   caller : text;
   cycles_delta : opt nat64;
   entry_id : nat64;
-  usage_event_id : opt nat64;
 };
 type DatabaseCreditEntryPage = record {
   entries : vec DatabaseCreditEntry;
@@ -484,7 +483,6 @@ service : (CreditsConfig) -> {
   repair_database_credit_purchase_complete : (text, nat64, nat64) -> (
       Result_20,
     );
-  repair_database_credit_purchase_retry : (text, nat64) -> (Result_20);
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_26) query;
   search_nodes : (SearchNodesRequest) -> (Result_26) query;

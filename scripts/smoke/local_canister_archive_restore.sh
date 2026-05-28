@@ -63,12 +63,6 @@ canister_has_module() {
 
 approve_credits_allowance() {
   local canister_id="$1"
-  echo "checking KINIC ledger ${KINIC_LEDGER_CANISTER_ID}" >&2
-  if ! icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc1_fee '()' --query -e local-wiki -o candid >/dev/null; then
-    echo "KINIC local ledger is unavailable. Install an ICRC ledger at KINIC_LEDGER_CANISTER_ID=${KINIC_LEDGER_CANISTER_ID} and fund the current identity before running this smoke." >&2
-    exit 1
-  fi
-
   echo "approving ${SMOKE_CREDITS_ALLOWANCE_E8S} e8s for wiki canister ${canister_id}" >&2
   local approve_result
   if ! approve_result="$(icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc2_approve \

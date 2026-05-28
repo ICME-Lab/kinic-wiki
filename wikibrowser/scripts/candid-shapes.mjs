@@ -57,8 +57,7 @@ export const expectedTypes = {
       balance_after_credits: "nat64",
       caller: "text",
       cycles_delta: "opt nat64",
-      entry_id: "nat64",
-      usage_event_id: "opt nat64"
+      entry_id: "nat64"
     }
   },
   DatabaseCreditEntryPage: {
@@ -419,7 +418,6 @@ export const expectedMethods = {
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
   repair_database_credit_purchase_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
   repair_database_credit_purchase_complete: { input: ["text", "nat64", "nat64"], output: "ResultCreditsPurchase", mode: "update" },
-  repair_database_credit_purchase_retry: { input: ["text", "nat64"], output: "ResultCreditsPurchase", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },

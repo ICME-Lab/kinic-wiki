@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BusyAction } from "./access-control";
 import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { CreditsConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
@@ -283,7 +284,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             <h1 className="mt-2 text-3xl font-semibold text-ink">{database?.name ?? "Database access"}</h1>
             <p className="mt-1 font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
           </div>
-          <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
+          <div className="flex flex-wrap items-center gap-2">
+            {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
+            <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
+          </div>
         </header>
 
         {error ? <StatusPanel tone="error" message={error} /> : null}

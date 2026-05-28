@@ -24,8 +24,7 @@ Stable-memory mount IDs are partitioned by purpose:
 - `11..=32767`: user DB slots
 - `32768..=65534`: reserved
 
-The index DB tracks database metadata and membership. User DBs hold VFS node data, search data, and link data.
-The index DB also stores an internal `usage_events` ledger for update calls.
+The index DB tracks database metadata, membership, and credits history. User DBs hold VFS node data, search data, and link data.
 
 The credits index schema is a breaking initial schema. Existing index DBs with an older `schema_migrations` value are rejected with `fresh index required`; operators must install against a fresh index instead of relying on automatic migration.
 
@@ -51,14 +50,6 @@ It is updated after VFS mutations and restore finalization. It is useful for vis
 
 Deleting or archiving a DB releases the active mount. It does not imply that canister stable memory shrinks or that the stable-memory mount ID is reused.
 
-## Usage Ledger
-
-`usage_events` records update calls only. Query calls are not recorded.
-
-Each event stores method, database ID when present, caller principal, success flag, observed cycle delta, error text, and timestamp.
-The cycle delta is an operational observation from canister balance before and after the update, not a guaranteed one-to-one IC credits statement.
-Only the latest 100,000 events are retained. The ledger is internal operational material, not a guaranteed credits statement.
-
 ## Credits
 
 KINIC credits uses one internal DB-scoped balance:
@@ -69,9 +60,9 @@ DB creation uses `create_database(display_name)`. It creates a generated `databa
 
 External ledger calls are limited to DB credit purchase:
 
-- `purchase_database_credits(database_id, credits)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance; the approved allowance must cover `credits * (100_000_000 / credits_per_kinic) + icrc1_fee`
+- `purchase_database_credits(database_id, credits)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance; the approved allowance must cover `credits * (100_000_000 / credits_per_kinic) + 10_000 e8s`
 
-Any authenticated caller can credit purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_credit_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer credits history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, retry, or ambiguous recording resolves the started operation even if membership changes during the await.
+Any authenticated caller can credit purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_credit_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer credits history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
 
 Successful DB update calls are charged after execution. The charge is:
 
@@ -81,7 +72,7 @@ ceil(cycles_delta / cycles_per_credit)
 
 The default conversion is `1 KINIC = 1000 credits` and `1 credit = 1_000_000_000 cycles`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credits` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
 
-`database_credit_ledger` is the credits source of truth. `usage_events` remains an operational log only. Usage charges store their operational id in `usage_event_id`; ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
+`database_credit_ledger` is the credits source of truth. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
 
 Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
@@ -103,15 +94,14 @@ URL ingest and query-answer sessions can expire after issuance if the DB becomes
 
 Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented.
 
-If DB credit purchase receives an explicit ledger error, the credit purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `credit_purchase_ambiguous`. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so repair can validate or retry the exact transfer.
+If DB credit purchase receives an explicit ledger error, the credit purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `credit_purchase_ambiguous`. If the ledger transfer succeeds but local DB activation or credit application fails, the operation remains pending and the error returns the pending `operation_id` and `ledger_block_index` for verified completion. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so completion can validate the exact transfer.
 
-Pending operations block DB delete until SNS governance resolves them with a repair API:
+Pending operations block DB delete until they are resolved:
 
 - `repair_database_credit_purchase_complete(database_id, operation_id, ledger_block_index)`
-- `repair_database_credit_purchase_retry(database_id, operation_id)`
 - `repair_database_credit_purchase_cancel(database_id, operation_id)`
 
-Complete repair checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. Retry repair resends the original transfer arguments; duplicate ledger responses complete with the original block index. Cancel repair is a governance-only escape hatch for cases where governance has verified that the original ledger transfer did not execute. DB owner and SNS governance can inspect pending operations. Repair updates are governance-only.
+Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. Any authenticated caller may complete a pending purchase when the ledger block proves the payment. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is a governance-only escape hatch for cases where governance has verified that the original ledger transfer did not execute. DB owner and SNS governance can inspect pending operations.
 
 ## Delete
 

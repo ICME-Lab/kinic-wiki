@@ -43,7 +43,6 @@ type PlugVfsActor = {
 
 type LedgerActor = {
   icrc2_allowance: (request: LedgerAllowanceArgs) => Promise<LedgerAllowance>;
-  icrc1_fee: () => Promise<bigint>;
   icrc2_approve: (request: LedgerApproveArgs) => Promise<{ Ok: bigint } | { Err: unknown }>;
 };
 
@@ -100,6 +99,7 @@ const DEFAULT_OISY_SIGNER_URL = "https://oisy.com/sign";
 const CALL_TIMEOUT_MS = 120_000;
 const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
 const KINIC_E8S_PER_TOKEN = 100_000_000n;
+const KINIC_LEDGER_FEE_E8S = 10_000n;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
@@ -134,7 +134,7 @@ export async function purchaseCreditsWithOisy(request: CreditsPurchaseRequest, c
   assertConfiguredCreditsCanister(request.canisterId);
   const config = await getCreditsConfig(request.canisterId);
   await previewDatabaseCreditPurchase(request.canisterId, request.databaseId, request.credits);
-  const transferFeeE8s = await getLedgerTransferFee(config.kinicLedgerCanisterId);
+  const transferFeeE8s = KINIC_LEDGER_FEE_E8S;
   const paymentAmountE8s = paymentAmountE8sForCredits(request.credits, BigInt(config.creditsPerKinic));
   const approvedAllowanceE8s = allowanceForCreditPurchase(paymentAmountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
@@ -176,7 +176,7 @@ export async function purchaseCreditsWithPlug(request: CreditsPurchaseRequest, c
     canisterId: config.kinicLedgerCanisterId,
     interfaceFactory: ledgerIdlFactory
   });
-  const transferFeeE8s = await (ledgerActor as PlugLedgerActor).icrc1_fee();
+  const transferFeeE8s = KINIC_LEDGER_FEE_E8S;
   const paymentAmountE8s = paymentAmountE8sForCredits(request.credits, BigInt(config.creditsPerKinic));
   const approvedAllowanceE8s = allowanceForCreditPurchase(paymentAmountE8s, transferFeeE8s);
   const currentAllowance = await (ledgerActor as PlugLedgerActor).icrc2_allowance(allowanceArgs(principal.toText(), request.canisterId));
@@ -250,17 +250,6 @@ function assertConfiguredCreditsCanister(canisterId: string): void {
   if (Principal.fromText(canisterId).toText() !== Principal.fromText(configured).toText()) {
     throw new Error("VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
   }
-}
-
-async function getLedgerTransferFee(ledgerCanisterId: string): Promise<bigint> {
-  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
-  const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
-  if (agent.isLocal()) await agent.fetchRootKey();
-  const actor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
-    agent,
-    canisterId: Principal.fromText(ledgerCanisterId)
-  });
-  return actor.icrc1_fee();
 }
 
 async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spender: string): Promise<bigint> {
@@ -393,7 +382,6 @@ const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     InsufficientFunds: idl.Record({ balance: idl.Nat })
   });
   return idl.Service({
-    icrc1_fee: idl.Func([], [idl.Nat], ["query"]),
     icrc2_allowance: idl.Func([allowanceArgs], [allowance], ["query"]),
     icrc2_approve: idl.Func([approveArgs], [idl.Variant({ Ok: idl.Nat, Err: approveError })], [])
   });

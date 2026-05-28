@@ -15,6 +15,7 @@ const purchasePlug = sliceBetween(wallet, "export async function purchaseCredits
 assert.match(page, /\/credits/);
 assert.doesNotMatch(page, /canister_id \?\? params\.canisterId/);
 assert.doesNotMatch(page, /amount_e8s \?\? params\.amountE8s/);
+assert.match(page, /initialCredits=\{first\(params\.credits\)\}/);
 assert.match(client, /purchaseCreditsWithOisy/);
 assert.match(client, /purchaseCreditsWithPlug/);
 assert.match(client, /connectOisyWallet/);
@@ -29,6 +30,8 @@ assert.match(client, /onClick=\{\(\) => void purchase\(\)\}/);
 assert.doesNotMatch(client, /onCredits/);
 assert.match(client, /parseCreditsAmountInput/);
 assert.match(client, /parseCreditsTarget/);
+assert.match(client, /initialCredits\?: string/);
+assert.match(client, /useState\(\(\) => \(initialCredits\?\.trim\(\) \? initialCredits : "1"\)\)/);
 assert.match(client, /KINIC/);
 assert.match(wallet, /export async function connectOisyWallet/);
 assert.match(wallet, /export async function connectPlugWallet/);
@@ -46,8 +49,9 @@ assert.match(purchasePlug, /previewDatabaseCreditPurchase\(request\.canisterId, 
 assert.match(purchasePlug, /whitelist: \[request\.canisterId, config\.kinicLedgerCanisterId\]/);
 assert.match(wallet, /icrc2_approve/);
 assert.match(wallet, /icrc2_allowance/);
-assert.match(wallet, /icrc1_fee/);
-assert.match(wallet, /icrc1_fee: idl\.Func\(\[\], \[idl\.Nat\], \["query"\]\)/);
+assert.doesNotMatch(wallet, /icrc1_fee/);
+assert.match(wallet, /KINIC_LEDGER_FEE_E8S = 10_000n/);
+assert.match(wallet, /const transferFeeE8s = KINIC_LEDGER_FEE_E8S/);
 assert.match(wallet, /icrc2_allowance: idl\.Func\(\[allowanceArgs\], \[allowance\], \["query"\]\)/);
 assert.match(wallet, /icrc2_approve: idl\.Func\(\[approveArgs\], \[idl\.Variant\(\{ Ok: idl\.Nat, Err: approveError \}\)\], \[\]\)/);
 assert.match(wallet, /purchase_database_credits/);

@@ -3,7 +3,7 @@
 // Why: CLI and non-CLI consumers should share one transport implementation.
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use candid::{Decode, Encode, Nat};
+use candid::{Decode, Encode};
 use ic_agent::{
     Agent,
     export::Principal,
@@ -107,23 +107,9 @@ pub trait VfsApi: Sync {
             "repair_database_credit_purchase_cancel is not implemented by this client"
         ))
     }
-    async fn repair_database_credit_purchase_retry(
-        &self,
-        _database_id: &str,
-        _operation_id: u64,
-    ) -> Result<CreditsPurchaseResult> {
-        Err(anyhow!(
-            "repair_database_credit_purchase_retry is not implemented by this client"
-        ))
-    }
     async fn get_credits_config(&self) -> Result<CreditsConfig> {
         Err(anyhow!(
             "get_credits_config is not implemented by this client"
-        ))
-    }
-    async fn kinic_ledger_fee_e8s(&self, _ledger_canister_id: &str) -> Result<u64> {
-        Err(anyhow!(
-            "kinic_ledger_fee_e8s is not implemented by this client"
         ))
     }
     async fn grant_database_access(
@@ -443,14 +429,6 @@ pub fn identity_from_pem(identity_pem: &[u8]) -> Result<Box<dyn ic_agent::Identi
     Ok(Box::new(Secp256k1Identity::from_private_key(private_key)))
 }
 
-fn nat_to_u64(value: &Nat) -> Result<u64> {
-    value
-        .0
-        .to_string()
-        .parse::<u64>()
-        .map_err(|_| anyhow!("nat exceeds u64"))
-}
-
 #[async_trait]
 impl VfsApi for CanisterVfsClient {
     fn caller_principal(&self) -> Option<String> {
@@ -597,38 +575,9 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn repair_database_credit_purchase_retry(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-    ) -> Result<CreditsPurchaseResult> {
-        let result: Result<CreditsPurchaseResult, String> = self
-            .update2(
-                "repair_database_credit_purchase_retry",
-                &database_id.to_string(),
-                &operation_id,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
     async fn get_credits_config(&self) -> Result<CreditsConfig> {
         let result: Result<CreditsConfig, String> = self.query("get_credits_config", &()).await?;
         result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_ledger_fee_e8s(&self, ledger_canister_id: &str) -> Result<u64> {
-        let ledger = Principal::from_text(ledger_canister_id)
-            .with_context(|| format!("failed to parse ledger canister id: {ledger_canister_id}"))?;
-        let bytes = self
-            .agent
-            .query(&ledger, "icrc1_fee")
-            .with_arg(Encode!().context("failed to encode icrc1_fee args")?)
-            .call()
-            .await
-            .context("query failed for icrc1_fee")?;
-        let fee = Decode!(&bytes, Nat).context("failed to decode icrc1_fee response")?;
-        nat_to_u64(&fee).context("ledger fee exceeds u64")
     }
 
     async fn grant_database_access(
