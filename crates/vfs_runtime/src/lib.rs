@@ -2578,6 +2578,9 @@ fn run_index_migrations(conn: &mut Connection, config: &CreditsConfig) -> Result
         if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
             apply_hard_delete_database_index_migration(&tx)?;
         }
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
+            apply_source_run_sessions_index_migration(&tx)?;
+        }
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2651,10 +2654,15 @@ fn run_index_migrations_for_upgrade(
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")?
         && migration_applied(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)?
     {
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
+        if migration_applied(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)?
+            && migration_applied(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)?
+        {
             return Ok(());
         }
         let tx = conn.transaction().map_err(|error| error.to_string())?;
+        if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
+            apply_source_run_sessions_index_migration(&tx)?;
+        }
         if !migration_applied_tx(&tx, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
             apply_credits_pending_index_migration(&tx)?;
         }
@@ -2803,28 +2811,7 @@ fn run_index_migrations_for_upgrade(
     }
     if !migration_applied(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        tx.execute_batch(
-            "CREATE TABLE source_run_sessions (
-               database_id TEXT NOT NULL,
-               source_path TEXT NOT NULL,
-               source_etag TEXT NOT NULL,
-               session_nonce TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               expires_at_ms INTEGER NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               refreshed_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, session_nonce),
-               FOREIGN KEY (database_id) REFERENCES databases(database_id)
-             );
-             CREATE INDEX source_run_sessions_expiry_idx
-               ON source_run_sessions(expires_at_ms);",
-        )
-        .map_err(|error| error.to_string())?;
-        tx.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-            params![INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS],
-        )
-        .map_err(|error| error.to_string())?;
+        apply_source_run_sessions_index_migration(&tx)?;
         tx.commit().map_err(|error| error.to_string())?;
     }
     if !migration_applied(conn, INDEX_SCHEMA_VERSION_RESTORE_SESSIONS)? {
@@ -2917,6 +2904,9 @@ fn run_index_migrations_in_tx(
         }
         if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
             apply_hard_delete_database_index_migration(conn)?;
+        }
+        if !wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
+            apply_source_run_sessions_index_migration(conn)?;
         }
         validate_wasm_index_schema(conn)?;
         for &version in INDEX_SCHEMA_VERSIONS {
@@ -3399,6 +3389,32 @@ fn set_credits_config_value(conn: &Transaction<'_>, key: &str, value: u64) -> Re
          VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         params![key, value.to_string()],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn apply_source_run_sessions_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE source_run_sessions (
+           database_id TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           source_etag TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX source_run_sessions_expiry_idx
+           ON source_run_sessions(expires_at_ms);",
+    )
+    .map_err(|error| error.to_string())?;
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
+        params![INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS],
     )
     .map_err(|error| error.to_string())?;
     Ok(())

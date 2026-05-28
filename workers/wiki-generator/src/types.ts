@@ -58,9 +58,21 @@ export type WikiDraftItem = {
   source_path: string;
 };
 
+export type WikiDraftLabels = {
+  summary: string;
+  key_facts: string;
+  decisions: string;
+  open_questions: string;
+  follow_ups: string;
+  related_context: string;
+  provenance: string;
+  none: string;
+};
+
 export type WikiDraft = {
   title: string;
   slug: string;
+  labels: WikiDraftLabels;
   summary: string;
   key_facts: WikiDraftItem[];
   decisions: WikiDraftItem[];

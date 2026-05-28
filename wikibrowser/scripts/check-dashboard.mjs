@@ -90,7 +90,7 @@ assert.match(readFileSync(new URL("../README.md", import.meta.url), "utf8"), /no
 
 assert.equal(packageJson.scripts.preview, "opennextjs-cloudflare build && opennextjs-cloudflare preview");
 assert.equal(packageJson.scripts["build:worker"], "opennextjs-cloudflare build");
-assert.equal(packageJson.scripts.deploy, "opennextjs-cloudflare build && opennextjs-cloudflare deploy");
+assert.equal(packageJson.scripts.deploy, "opennextjs-cloudflare build && wrangler deploy --minify");
 assert.equal(packageJson.scripts["cf-typegen"], "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts");
 assert.equal(packageJson.scripts["e2e:ii"], "scripts/run-ii-e2e.sh");
 assert.equal(packageJson.scripts["e2e:ii:headed"], "scripts/run-ii-e2e.sh --headed");

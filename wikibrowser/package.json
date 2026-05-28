@@ -15,7 +15,7 @@
     "typecheck": "next typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
     "build:worker": "opennextjs-cloudflare build",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "deploy": "opennextjs-cloudflare build && wrangler deploy --minify",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "e2e:ii": "scripts/run-ii-e2e.sh",
     "e2e:ii:headed": "scripts/run-ii-e2e.sh --headed",
