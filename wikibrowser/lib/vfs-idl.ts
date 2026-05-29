@@ -22,26 +22,26 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     name: idl.Text,
-    credits_balance: idl.Opt(idl.Nat64),
+    credit_units_balance: idl.Opt(idl.Nat64),
     credits_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64)
   });
   const CreditsConfig = idl.Record({
-    credits_per_kinic: idl.Nat64,
-    min_update_credits: idl.Nat64,
+    credit_units_per_kinic: idl.Nat64,
+    min_update_credit_units: idl.Nat64,
     kinic_ledger_canister_id: idl.Text,
     sns_governance_id: idl.Text
   });
-  const CreditsPurchaseResult = idl.Record({ block_index: idl.Nat64, balance_credits: idl.Nat64 });
+  const CreditsPurchaseResult = idl.Record({ block_index: idl.Nat64, balance_credit_units: idl.Nat64 });
   const DatabaseCreditPurchasePreview = idl.Record({
     payment_amount_e8s: idl.Nat64,
     ledger_fee_e8s: idl.Nat64,
-    credits_per_kinic: idl.Nat64,
+    credit_units_per_kinic: idl.Nat64,
     config_version: idl.Nat64
   });
   const DatabaseCreditPurchaseRequest = idl.Record({
     database_id: idl.Text,
-    credits: idl.Nat64,
+    credit_units: idl.Nat64,
     expected_payment_amount_e8s: idl.Nat64,
     expected_config_version: idl.Nat64
   });
@@ -83,14 +83,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const DatabaseCreditEntry = idl.Record({
     method: idl.Opt(idl.Text),
-    credits_per_kinic: idl.Opt(idl.Nat64),
+    credit_units_per_kinic: idl.Opt(idl.Nat64),
     payment_amount_e8s: idl.Opt(idl.Nat64),
     kind: idl.Text,
     created_at_ms: idl.Int64,
-    amount_credits: idl.Int64,
+    amount_credit_units: idl.Int64,
     ledger_block_index: idl.Opt(idl.Nat64),
     database_id: idl.Text,
-    balance_after_credits: idl.Nat64,
+    balance_after_credit_units: idl.Nat64,
     caller: idl.Text,
     cycles_delta: idl.Opt(idl.Nat64),
     entry_id: idl.Nat64
@@ -100,7 +100,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     next_cursor: idl.Opt(idl.Nat64)
   });
   const DatabaseCreditPendingOperation = idl.Record({
-    credits: idl.Int64,
+    credit_units: idl.Int64,
     payment_amount_e8s: idl.Int64,
     to_owner: idl.Opt(idl.Text),
     to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
@@ -346,6 +346,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
+    settle_database_storage_charges: idl.Func([], [ResultUnit], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     purchase_database_credits: idl.Func([DatabaseCreditPurchaseRequest], [ResultCreditsPurchase], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),

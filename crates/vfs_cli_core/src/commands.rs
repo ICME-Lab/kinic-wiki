@@ -1193,11 +1193,12 @@ mod tests {
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
-                status: DatabaseStatus::Hot,
+                status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
+                credit_units_balance: Some(1_000_000),
+                credits_suspended_at_ms: None,
                 archived_at_ms: None,
-                deleted_at_ms: None,
             }])
         }
         async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {

@@ -61,20 +61,20 @@ type RawCanisterHealth = {
 type RawCreditsConfig = {
   kinic_ledger_canister_id: string;
   sns_governance_id: string;
-  credits_per_kinic: bigint;
-  min_update_credits: bigint;
+  credit_units_per_kinic: bigint;
+  min_update_credit_units: bigint;
 };
 
 type RawDatabaseCreditPurchasePreview = {
   payment_amount_e8s: bigint;
   ledger_fee_e8s: bigint;
-  credits_per_kinic: bigint;
+  credit_units_per_kinic: bigint;
   config_version: bigint;
 };
 
 export type DatabaseCreditPurchaseRequest = {
   database_id: string;
-  credits: bigint;
+  credit_units: bigint;
   expected_payment_amount_e8s: bigint;
   expected_config_version: bigint;
 };
@@ -85,7 +85,7 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
-  credits_balance: [] | [bigint];
+  credit_units_balance: [] | [bigint];
   credits_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
 };
@@ -110,7 +110,7 @@ type RawDatabaseCreditPendingOperation = {
   operation_id: bigint;
   database_id: string;
   kind: string;
-  credits: bigint;
+  credit_units: bigint;
   payment_amount_e8s: bigint;
   created_at_ms: bigint;
 };
@@ -280,7 +280,7 @@ type VfsActor = {
   >;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
-  preview_database_credit_purchase: (databaseId: string, credits: bigint) => Promise<{ Ok: RawDatabaseCreditPurchasePreview } | { Err: string }>;
+  preview_database_credit_purchase: (databaseId: string, creditUnits: bigint) => Promise<{ Ok: RawDatabaseCreditPurchasePreview } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
@@ -428,10 +428,10 @@ export async function getCreditsConfig(canisterId: string): Promise<CreditsConfi
   });
 }
 
-export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, credits: bigint): Promise<DatabaseCreditPurchasePreview> {
+export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, creditUnits: bigint): Promise<DatabaseCreditPurchasePreview> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.preview_database_credit_purchase(databaseId, credits);
+    const result = await actor.preview_database_credit_purchase(databaseId, creditUnits);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -907,8 +907,8 @@ function normalizeCreditsConfig(raw: RawCreditsConfig): CreditsConfig {
   return {
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
     snsGovernanceId: raw.sns_governance_id,
-    creditsPerKinic: raw.credits_per_kinic.toString(),
-    minUpdateCredits: raw.min_update_credits.toString()
+    creditsPerKinic: raw.credit_units_per_kinic.toString(),
+    minUpdateCredits: raw.min_update_credit_units.toString()
   };
 }
 
@@ -916,7 +916,7 @@ function normalizeDatabaseCreditPurchasePreview(raw: RawDatabaseCreditPurchasePr
   return {
     paymentAmountE8s: raw.payment_amount_e8s.toString(),
     ledgerFeeE8s: raw.ledger_fee_e8s.toString(),
-    creditsPerKinic: raw.credits_per_kinic.toString(),
+    creditsPerKinic: raw.credit_units_per_kinic.toString(),
     configVersion: raw.config_version.toString()
   };
 }
@@ -928,7 +928,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
-    creditsBalance: raw.credits_balance[0]?.toString() ?? "0",
+    creditsBalance: raw.credit_units_balance[0]?.toString() ?? "0",
     creditsSuspendedAtMs: raw.credits_suspended_at_ms[0]?.toString() ?? null,
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null
   };
@@ -948,7 +948,7 @@ function normalizeDatabaseCreditPendingOperation(raw: RawDatabaseCreditPendingOp
     operationId: raw.operation_id.toString(),
     databaseId: raw.database_id,
     kind: raw.kind,
-    credits: raw.credits.toString(),
+    credits: raw.credit_units.toString(),
     paymentAmountE8s: raw.payment_amount_e8s.toString(),
     createdAtMs: raw.created_at_ms.toString()
   };

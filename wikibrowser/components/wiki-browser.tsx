@@ -17,7 +17,7 @@ import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { databaseCreditsDisabledReason, databaseCreditsHref, databaseCreditsView } from "@/lib/credits-state";
+import { databaseCreditsDisabledReason, databaseCreditsHref, databaseCreditsView, formatCredits } from "@/lib/credits-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
@@ -1406,13 +1406,13 @@ function TopBar({
 
 function DatabaseCreditsBadge({ credits, database }: { credits: ReturnType<typeof databaseCreditsView>; database: DatabaseSummary | null }) {
   const title = database
-    ? `${database.name}: ${credits.label}; ${credits.balanceCredits.toString()} credits`
+    ? `${database.name}: ${credits.label}; ${formatCredits(credits.balanceCredits)}`
     : "Database credits unavailable";
   const content = (
     <>
       <Wallet aria-hidden size={15} />
       <span className="hidden text-xs font-semibold sm:inline">{credits.label}</span>
-      <span className="font-mono text-xs">{credits.balanceCredits.toString()}</span>
+      <span className="font-mono text-xs">{formatCredits(credits.balanceCredits)}</span>
     </>
   );
   const className = `hidden h-[38px] shrink-0 items-center gap-2 rounded-lg border px-3 text-sm md:flex ${databaseCreditsToneClass(credits.state)}`;

@@ -259,7 +259,7 @@ function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, creditsS
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    credits_balance: [creditsBalance],
+    credit_units_balance: [creditsBalance],
     credits_suspended_at_ms: creditsSuspendedAtMs === null ? [] : [creditsSuspendedAtMs],
     archived_at_ms: []
   };

@@ -30,15 +30,15 @@ function idlFactory({ IDL: idl }) {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    credits_balance: idl.Opt(idl.Nat64),
+    credit_units_balance: idl.Opt(idl.Nat64),
     credits_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64)
   });
   const CreditsConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
     sns_governance_id: idl.Text,
-    credits_per_kinic: idl.Nat64,
-    min_update_credits: idl.Nat64
+    credit_units_per_kinic: idl.Nat64,
+    min_update_credit_units: idl.Nat64
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
@@ -170,7 +170,7 @@ function normalizeDatabaseSummary(raw) {
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
-    creditsBalance: raw.credits_balance?.[0]?.toString?.() ?? "0",
+    creditsBalance: raw.credit_units_balance?.[0]?.toString?.() ?? "0",
     creditsSuspendedAtMs: raw.credits_suspended_at_ms?.[0]?.toString?.() ?? null
   };
 }
@@ -188,7 +188,7 @@ export async function getCreditsConfigOrNull(actor) {
 
 function normalizeCreditsConfig(raw) {
   return {
-    minUpdateCredits: raw.min_update_credits?.toString?.() ?? String(raw.min_update_credits ?? "0")
+    minUpdateCredits: raw.min_update_credit_units?.toString?.() ?? String(raw.min_update_credit_units ?? "0")
   };
 }
 

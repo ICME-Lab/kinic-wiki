@@ -91,7 +91,7 @@ export function CreditsClient({ canisterId, databaseId, initialCredits }: Credit
     setProvider(selectedProvider);
     setMessage(null);
     try {
-      const request = { canisterId, databaseId: parsedTarget.databaseId, credits: parsedAmount };
+      const request = { canisterId, databaseId: parsedTarget.databaseId, creditUnits: parsedAmount };
       const result =
         selectedProvider === "oisy" && activeOisyWallet
           ? await purchaseCreditsWithOisy(request, activeOisyWallet)

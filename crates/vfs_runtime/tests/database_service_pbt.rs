@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{CYCLES_PER_CREDIT, VfsService};
+use vfs_runtime::{CYCLES_PER_CREDIT_UNIT, VfsService};
 use vfs_types::DatabaseStatus;
 
 const OWNER: &str = "owner";
@@ -90,13 +90,26 @@ fn credit_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    credits: u64,
+    credit_units: u64,
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
-    service.mark_database_credit_purchase_completed(operation_id, database_id, caller, credits)?;
-    service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
+    let operation_id =
+        service.begin_database_credit_purchase(database_id, caller, credit_units, now)?;
+    service.mark_database_credit_purchase_completed(
+        operation_id,
+        database_id,
+        caller,
+        credit_units,
+    )?;
+    service.credit_database_purchase(
+        operation_id,
+        database_id,
+        caller,
+        credit_units,
+        block_index,
+        now,
+    )
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
@@ -145,7 +158,7 @@ fn database_bytes(root: &Path, service: &VfsService, database_id: &str) -> (Vec<
 
 fn charge_amount(cycles_delta: u128) -> u64 {
     cycles_delta
-        .div_ceil(CYCLES_PER_CREDIT)
+        .div_ceil(CYCLES_PER_CREDIT_UNIT)
         .try_into()
         .expect("generated charge fits u64")
 }
@@ -158,7 +171,7 @@ fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
     let database_after = database_entries
         .last()
         .expect("database ledger should not be empty")
-        .balance_after_credits;
+        .balance_after_credit_units;
     assert_eq!(database_after, model.database_credits);
 
     let (status, mount_id) = status_and_mount(service, database_id);

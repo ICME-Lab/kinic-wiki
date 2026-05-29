@@ -10,7 +10,7 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
-      credits_balance: "opt nat64",
+      credit_units_balance: "opt nat64",
       credits_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64"
     }
@@ -18,22 +18,22 @@ export const expectedTypes = {
   CreditsConfig: {
     kind: "record",
     fields: {
-      credits_per_kinic: "nat64",
-      min_update_credits: "nat64",
+      credit_units_per_kinic: "nat64",
+      min_update_credit_units: "nat64",
       kinic_ledger_canister_id: "text",
       sns_governance_id: "text"
     }
   },
   CreditsPurchaseResult: {
     kind: "record",
-    fields: { block_index: "nat64", balance_credits: "nat64" }
+    fields: { block_index: "nat64", balance_credit_units: "nat64" }
   },
   DatabaseCreditPurchasePreview: {
     kind: "record",
     fields: {
       payment_amount_e8s: "nat64",
       ledger_fee_e8s: "nat64",
-      credits_per_kinic: "nat64",
+      credit_units_per_kinic: "nat64",
       config_version: "nat64"
     }
   },
@@ -41,7 +41,7 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       database_id: "text",
-      credits: "nat64",
+      credit_units: "nat64",
       expected_payment_amount_e8s: "nat64",
       expected_config_version: "nat64"
     }
@@ -113,14 +113,14 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       method: "opt text",
-      credits_per_kinic: "opt nat64",
+      credit_units_per_kinic: "opt nat64",
       payment_amount_e8s: "opt nat64",
       kind: "text",
       created_at_ms: "int64",
-      amount_credits: "int64",
+      amount_credit_units: "int64",
       ledger_block_index: "opt nat64",
       database_id: "text",
-      balance_after_credits: "nat64",
+      balance_after_credit_units: "nat64",
       caller: "text",
       cycles_delta: "opt nat64",
       entry_id: "nat64"
@@ -133,7 +133,7 @@ export const expectedTypes = {
   DatabaseCreditPendingOperation: {
     kind: "record",
     fields: {
-      credits: "int64",
+      credit_units: "int64",
       payment_amount_e8s: "int64",
       to_owner: "opt text",
       to_subaccount: "opt blob",
@@ -503,6 +503,7 @@ export const expectedMethods = {
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
+  settle_database_storage_charges: { input: [], output: "ResultUnit", mode: "update" },
   purchase_database_credits: { input: ["DatabaseCreditPurchaseRequest"], output: "ResultCreditsPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }

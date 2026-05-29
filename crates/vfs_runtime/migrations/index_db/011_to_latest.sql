@@ -1,7 +1,8 @@
 CREATE TABLE database_credit_accounts (
   database_id TEXT PRIMARY KEY,
-  balance_credits INTEGER NOT NULL,
+  balance_credit_units INTEGER NOT NULL,
   suspended_at_ms INTEGER,
+  storage_charged_at_ms INTEGER,
   created_at_ms INTEGER NOT NULL,
   updated_at_ms INTEGER NOT NULL,
   FOREIGN KEY (database_id) REFERENCES databases(database_id)
@@ -11,13 +12,13 @@ CREATE TABLE database_credit_ledger (
   entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
   database_id TEXT NOT NULL,
   kind TEXT NOT NULL,
-  amount_credits INTEGER NOT NULL,
-  balance_after_credits INTEGER NOT NULL,
+  amount_credit_units INTEGER NOT NULL,
+  balance_after_credit_units INTEGER NOT NULL,
   payment_amount_e8s INTEGER,
   caller TEXT NOT NULL,
   method TEXT,
   cycles_delta INTEGER,
-  credits_per_kinic INTEGER,
+  credit_units_per_kinic INTEGER,
   ledger_block_index INTEGER,
   created_at_ms INTEGER NOT NULL
 );
@@ -30,7 +31,7 @@ CREATE TABLE database_credit_pending_operations (
   database_id TEXT NOT NULL,
   kind TEXT NOT NULL,
   caller TEXT NOT NULL,
-  credits INTEGER NOT NULL,
+  credit_units INTEGER NOT NULL,
   payment_amount_e8s INTEGER NOT NULL,
   from_owner TEXT,
   from_subaccount BLOB,

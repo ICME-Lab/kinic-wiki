@@ -9,7 +9,7 @@ use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{CYCLES_PER_CREDIT, DEFAULT_MIN_UPDATE_CREDITS, VfsService};
+use vfs_runtime::{CYCLES_PER_CREDIT_UNIT, DEFAULT_MIN_UPDATE_CREDIT_UNITS, VfsService};
 use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
@@ -86,19 +86,32 @@ fn credit_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    credits: u64,
+    credit_units: u64,
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
-    service.mark_database_credit_purchase_completed(operation_id, database_id, caller, credits)?;
-    service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
+    let operation_id =
+        service.begin_database_credit_purchase(database_id, caller, credit_units, now)?;
+    service.mark_database_credit_purchase_completed(
+        operation_id,
+        database_id,
+        caller,
+        credit_units,
+    )?;
+    service.credit_database_purchase(
+        operation_id,
+        database_id,
+        caller,
+        credit_units,
+        block_index,
+        now,
+    )
 }
 
 fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT balance_credits, suspended_at_ms
+        "SELECT balance_credit_units, suspended_at_ms
          FROM database_credit_accounts
          WHERE database_id = ?1",
         params![database_id],
@@ -122,7 +135,7 @@ fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus,
 }
 
 fn charge_amount(cycles_delta: u128) -> u64 {
-    let variable = cycles_delta.div_ceil(CYCLES_PER_CREDIT);
+    let variable = cycles_delta.div_ceil(CYCLES_PER_CREDIT_UNIT);
     u64::try_from(variable).expect("generated charge fits u64")
 }
 
@@ -130,7 +143,7 @@ fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     let mut stmt = conn
         .prepare(
-            "SELECT kind, amount_credits, balance_after_credits, method, cycles_delta
+            "SELECT kind, amount_credit_units, balance_after_credit_units, method, cycles_delta
              FROM database_credit_ledger
              WHERE database_id = ?1
              ORDER BY entry_id ASC",
@@ -322,10 +335,10 @@ proptest! {
 
             let (stored_balance, suspended_at_ms) = db_account(&env.root, &database_id);
             assert_eq!(stored_balance, database_balance);
-            assert_eq!(suspended_at_ms.is_some(), database_balance < DEFAULT_MIN_UPDATE_CREDITS);
+            assert_eq!(suspended_at_ms.is_some(), database_balance < DEFAULT_MIN_UPDATE_CREDIT_UNITS);
             assert_eq!(
                 service.require_database_write_credits_available(&database_id).is_ok(),
-                database_balance >= DEFAULT_MIN_UPDATE_CREDITS
+                database_balance >= DEFAULT_MIN_UPDATE_CREDIT_UNITS
             );
             assert_database_ledger_chain(&env.root, &database_id, database_balance);
         }

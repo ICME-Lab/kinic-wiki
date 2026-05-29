@@ -61,7 +61,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         .expect("database status should load");
     let balance: i64 = conn
         .query_row(
-            "SELECT balance_credits FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            "SELECT balance_credit_units FROM database_credit_accounts WHERE database_id = 'db_existing'",
             params![],
             |row| row.get(0),
         )
@@ -73,6 +73,22 @@ fn mainnet_011_index_upgrades_to_latest() {
             |row| row.get(0),
         )
         .expect("database credits suspension should exist");
+    let storage_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_accounts')
+             WHERE name = 'storage_charged_at_ms'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("storage charged cursor column should load");
+    let removed_storage_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_accounts')
+             WHERE name = 'storage_unbilled_cycles'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("removed storage column count should load");
     let pending_details_columns: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('database_credit_pending_operations')
@@ -102,6 +118,8 @@ fn mainnet_011_index_upgrades_to_latest() {
     assert_eq!(status, "active");
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
+    assert_eq!(storage_columns, 1);
+    assert_eq!(removed_storage_columns, 0);
     assert_eq!(pending_details_columns, 6);
     assert_eq!(ledger_cycles_column_count, 0);
     assert_eq!(usage_table_count, 0);
@@ -316,13 +334,13 @@ fn cycles_per_credit_ledger_schema_is_rejected() {
            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
            database_id TEXT NOT NULL,
            kind TEXT NOT NULL,
-           amount_credits INTEGER NOT NULL,
-           balance_after_credits INTEGER NOT NULL,
+           amount_credit_units INTEGER NOT NULL,
+           balance_after_credit_units INTEGER NOT NULL,
            payment_amount_e8s INTEGER,
            caller TEXT NOT NULL,
            method TEXT,
            cycles_delta INTEGER,
-           credits_per_kinic INTEGER,
+           credit_units_per_kinic INTEGER,
            cycles_per_credit INTEGER,
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
@@ -461,7 +479,7 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
 fn database_credits_balance(root: &std::path::Path, database_id: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT balance_credits FROM database_credit_accounts WHERE database_id = ?1",
+        "SELECT balance_credit_units FROM database_credit_accounts WHERE database_id = ?1",
         params![database_id],
         |row| row.get(0),
     )
@@ -504,22 +522,27 @@ fn credit_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    amount_credits: u64,
+    amount_credit_units: u64,
     block_index: u64,
     now: i64,
 ) -> u64 {
     let operation_id = service
-        .begin_database_credit_purchase(database_id, caller, amount_credits, now)
+        .begin_database_credit_purchase(database_id, caller, amount_credit_units, now)
         .expect("database credit purchase should begin");
     service
-        .mark_database_credit_purchase_completed(operation_id, database_id, caller, amount_credits)
+        .mark_database_credit_purchase_completed(
+            operation_id,
+            database_id,
+            caller,
+            amount_credit_units,
+        )
         .expect("database credit purchase should be marked completed");
     service
         .credit_database_purchase(
             operation_id,
             database_id,
             caller,
-            amount_credits,
+            amount_credit_units,
             block_index,
             now,
         )
@@ -1801,8 +1824,8 @@ fn credits_config_version_changes_only_for_effective_rate_updates() {
     service
         .update_credits_config(
             CreditsConfigUpdate {
-                credits_per_kinic: 1_000,
-                min_update_credits: 1,
+                credit_units_per_kinic: 1_000_000,
+                min_update_credit_units: 1,
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
@@ -1812,8 +1835,8 @@ fn credits_config_version_changes_only_for_effective_rate_updates() {
     service
         .update_credits_config(
             CreditsConfigUpdate {
-                credits_per_kinic: 2_000,
-                min_update_credits: 1,
+                credit_units_per_kinic: 2_000_000,
+                min_update_credit_units: 1,
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
@@ -1832,9 +1855,9 @@ fn credit_purchase_preview_returns_fixed_payment_inputs() {
         .preview_database_credit_purchase("alpha", 500)
         .expect("preview should succeed");
 
-    assert_eq!(preview.payment_amount_e8s, 50_000_000);
+    assert_eq!(preview.payment_amount_e8s, 50_000);
     assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
-    assert_eq!(preview.credits_per_kinic, 1_000);
+    assert_eq!(preview.credit_units_per_kinic, 1_000_000);
     assert_eq!(preview.config_version, 1);
 }
 
@@ -1850,7 +1873,7 @@ fn credit_purchase_begin_rejects_stale_expected_values_before_pending_create() {
             DatabaseCreditPurchaseWithLedgerDetails {
                 database_id: "alpha",
                 caller: "payer",
-                credits: 500,
+                credit_units: 500,
                 expected_payment_amount_e8s: 50_000_001,
                 expected_config_version: 1,
                 ledger: CreditsPendingLedgerDetailsInput {
@@ -1873,7 +1896,7 @@ fn credit_purchase_begin_rejects_stale_expected_values_before_pending_create() {
             DatabaseCreditPurchaseWithLedgerDetails {
                 database_id: "alpha",
                 caller: "payer",
-                credits: 500,
+                credit_units: 500,
                 expected_payment_amount_e8s: 50_000_000,
                 expected_config_version: 2,
                 ledger: CreditsPendingLedgerDetailsInput {
@@ -2199,8 +2222,8 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
         .expect("cancel entries should load")
         .entries;
     assert_eq!(cancel_entries[1].caller, "owner");
-    assert_eq!(cancel_entries[1].payment_amount_e8s, Some(70_000_000));
-    assert_eq!(cancel_entries[1].balance_after_credits, 0);
+    assert_eq!(cancel_entries[1].payment_amount_e8s, Some(70_000));
+    assert_eq!(cancel_entries[1].balance_after_credit_units, 0);
     assert_eq!(cancel_entries[1].ledger_block_index, None);
 }
 
@@ -2252,12 +2275,12 @@ fn zero_cycle_charge_skips_credit_ledger() {
     );
 
     service
-        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000_000, 4)
+        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000, 4)
         .expect("charged update should record credit ledger");
 
     assert_eq!(database_credits_balance(&root, "alpha"), 499);
     service
-        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000_001, 5)
+        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_001, 5)
         .expect("rounded-up update should record credit ledger");
 
     assert_eq!(database_credits_balance(&root, "alpha"), 497);
@@ -2267,9 +2290,9 @@ fn zero_cycle_charge_skips_credit_ledger() {
         .entries;
     assert_eq!(entries.len(), 3);
     assert_eq!(entries[1].kind, "charge");
-    assert_eq!(entries[1].amount_credits, -1);
+    assert_eq!(entries[1].amount_credit_units, -1);
     assert_eq!(entries[2].kind, "charge");
-    assert_eq!(entries[2].amount_credits, -2);
+    assert_eq!(entries[2].amount_credit_units, -2);
 }
 
 #[test]

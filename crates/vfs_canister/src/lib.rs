@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use std::fs::create_dir_all;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
+#[cfg(target_arch = "wasm32")]
+use std::time::Duration;
 
 #[cfg(any(target_arch = "wasm32", test))]
 use candid::utils::decode_args;
@@ -15,6 +17,8 @@ use candid::{CandidType, Decode, Deserialize, Nat, Principal, export_service};
 #[cfg(not(test))]
 use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
+#[cfg(target_arch = "wasm32")]
+use ic_cdk_timers::set_timer_interval;
 use ic_http_certification::{
     CERTIFICATE_EXPRESSION_HEADER_NAME, DefaultCelBuilder, DefaultResponseCertification,
     HttpCertification, HttpCertificationPath, HttpCertificationTree, HttpCertificationTreeEntry,
@@ -26,6 +30,8 @@ use ic_sqlite_vfs::{Db, DbHandle};
 use ic_stable_structures::DefaultMemoryImpl;
 #[cfg(target_arch = "wasm32")]
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+#[cfg(target_arch = "wasm32")]
+use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
     CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
     RequiredRole, VfsService,
@@ -278,6 +284,7 @@ enum TransferFromError {
 fn init_hook(config: CreditsConfig) {
     initialize_or_trap(Some(config));
     certify_http_responses();
+    schedule_storage_billing_timer();
 }
 
 #[post_upgrade]
@@ -285,6 +292,7 @@ fn post_upgrade_hook() {
     let config = post_upgrade_credits_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
     initialize_upgrade_or_trap(config);
     certify_http_responses();
+    schedule_storage_billing_timer();
 }
 
 #[query]
@@ -440,9 +448,9 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 #[query]
 fn preview_database_credit_purchase(
     database_id: String,
-    credits: u64,
+    credit_units: u64,
 ) -> Result<DatabaseCreditPurchasePreview, String> {
-    with_service(|service| service.preview_database_credit_purchase(&database_id, credits))
+    with_service(|service| service.preview_database_credit_purchase(&database_id, credit_units))
 }
 
 #[query]
@@ -469,7 +477,7 @@ fn icrc21_canister_call_consent_message(
         }
     };
     let preview = match with_service(|service| {
-        service.preview_database_credit_purchase(&purchase.database_id, purchase.credits)
+        service.preview_database_credit_purchase(&purchase.database_id, purchase.credit_units)
     }) {
         Ok(preview) => preview,
         Err(error) => return icrc21_unsupported(error),
@@ -490,7 +498,7 @@ fn icrc21_canister_call_consent_message(
         consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
             "# Purchase Kinic database credits\n\nDatabase: `{database_id}`\n\nCredits: `{credits}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
             database_id = purchase.database_id,
-            credits = purchase.credits,
+            credits = format_credit_units(purchase.credit_units),
             payment = format_e8s(preview.payment_amount_e8s),
             fee = format_e8s(preview.ledger_fee_e8s),
             spender = canister_principal().to_text()
@@ -509,7 +517,7 @@ async fn purchase_database_credits(
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let preview = with_service(|service| {
-        service.preview_database_credit_purchase(&request.database_id, request.credits)
+        service.preview_database_credit_purchase(&request.database_id, request.credit_units)
     })?;
     validate_credit_purchase_expectations(&request, &preview)?;
     let ledger_fee_e8s = preview.ledger_fee_e8s;
@@ -521,7 +529,7 @@ async fn purchase_database_credits(
             DatabaseCreditPurchaseWithLedgerDetails {
                 database_id: &request.database_id,
                 caller: &caller,
-                credits: request.credits,
+                credit_units: request.credit_units,
                 expected_payment_amount_e8s: request.expected_payment_amount_e8s,
                 expected_config_version: request.expected_config_version,
                 ledger: CreditsPendingLedgerDetailsInput {
@@ -562,7 +570,7 @@ async fn purchase_database_credits(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credits,
+                    request.credit_units,
                 )
             })
             .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
@@ -584,7 +592,7 @@ async fn purchase_database_credits(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credits,
+                    request.credit_units,
                     block_index,
                     now,
                 )
@@ -592,7 +600,7 @@ async fn purchase_database_credits(
             .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
             Ok(CreditsPurchaseResult {
                 block_index,
-                balance_credits: balance,
+                balance_credit_units: balance,
             })
         }
         LedgerTransferFromOutcome::LedgerErr(error) => {
@@ -601,7 +609,7 @@ async fn purchase_database_credits(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credits,
+                    request.credit_units,
                 )
             });
             Err(error)
@@ -612,7 +620,7 @@ async fn purchase_database_credits(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credits,
+                    request.credit_units,
                     now,
                 )
             }) {
@@ -675,6 +683,14 @@ fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResu
 }
 
 #[update]
+fn settle_database_storage_charges() -> Result<(), String> {
+    require_controller_caller()?;
+    with_service(|service| {
+        service.settle_database_storage_charges(&canister_principal().to_text(), now_millis())
+    })
+}
+
+#[update]
 async fn repair_database_credit_purchase_complete(
     database_id: String,
     operation_id: u64,
@@ -704,7 +720,7 @@ async fn repair_database_credit_purchase_complete(
     .map_err(|error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error))?;
     Ok(CreditsPurchaseResult {
         block_index: ledger_block_index,
-        balance_credits: balance,
+        balance_credit_units: balance,
     })
 }
 
@@ -1137,6 +1153,21 @@ fn initialize_upgrade_or_trap(config: Option<CreditsConfig>) {
     initialize_service_for_upgrade(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
+fn schedule_storage_billing_timer() {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
+        set_timer_interval(Duration::from_millis(interval_ms), || async {
+            if let Err(error) = with_service(|service| {
+                service
+                    .settle_database_storage_charges(&canister_principal().to_text(), now_millis())
+            }) {
+                ic_cdk::println!("storage billing settle failed: {error}");
+            }
+        });
+    }
+}
+
 fn initialize_service_with_config(config: Option<CreditsConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
@@ -1351,6 +1382,19 @@ fn format_e8s(amount_e8s: u64) -> String {
         return whole.to_string();
     }
     let mut fraction = format!("{fractional:08}");
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("{whole}.{fraction}")
+}
+
+fn format_credit_units(units: u64) -> String {
+    let whole = units / 1000;
+    let fractional = units % 1000;
+    if fractional == 0 {
+        return whole.to_string();
+    }
+    let mut fraction = format!("{fractional:03}");
     while fraction.ends_with('0') {
         fraction.pop();
     }

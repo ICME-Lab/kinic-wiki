@@ -16,11 +16,12 @@ export function parseCreditsTarget(input: URLSearchParams): CreditsTarget | stri
 
 export function parseCreditsAmountInput(value: string): bigint | string {
   const trimmed = value.trim();
-  if (!/^[0-9]+$/.test(trimmed)) return "credits must be a positive integer";
-  const credits = BigInt(trimmed);
-  if (credits <= 0n) return "credits must be positive";
-  if (credits > MAX_U64) return "credits must be <= u64::MAX";
-  return credits;
+  const match = /^([0-9]+)(?:\.([0-9]{1,3}))?$/.exec(trimmed);
+  if (!match) return "credits must be a positive number with up to 3 decimals";
+  const creditUnits = BigInt(match[1]) * 1000n + BigInt((match[2] ?? "").padEnd(3, "0") || "0");
+  if (creditUnits <= 0n) return "credits must be positive";
+  if (creditUnits > MAX_U64) return "credit units must be <= u64::MAX";
+  return creditUnits;
 }
 
 export function purchaseQueryString(input: CreditsTarget): string {

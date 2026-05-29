@@ -161,6 +161,7 @@ const methodOrder = [
   "rename_database",
   "search_node_paths",
   "search_nodes",
+  "settle_database_storage_charges",
   "source_evidence",
   "purchase_database_credits",
   "write_node",

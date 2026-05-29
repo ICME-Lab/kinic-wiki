@@ -18,7 +18,7 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      credits_balance: "opt nat64",
+      credit_units_balance: "opt nat64",
       credits_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64"
     }
@@ -28,8 +28,8 @@ const expectedTypes = {
     fields: {
       kinic_ledger_canister_id: "text",
       sns_governance_id: "text",
-      credits_per_kinic: "nat64",
-      min_update_credits: "nat64"
+      credit_units_per_kinic: "nat64",
+      min_update_credit_units: "nat64"
     }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },

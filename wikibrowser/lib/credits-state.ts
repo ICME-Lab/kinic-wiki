@@ -105,6 +105,9 @@ function parseOptionalCredits(value: string | null | undefined): bigint {
   return BigInt(value);
 }
 
-function formatCredits(value: bigint): string {
-  return `${value.toString()} credits`;
+export function formatCredits(value: bigint): string {
+  const whole = value / 1000n;
+  const fraction = value % 1000n;
+  if (fraction === 0n) return `${whole.toString()} credits`;
+  return `${whole.toString()}.${fraction.toString().padStart(3, "0").replace(/0+$/, "")} credits`;
 }

@@ -38,8 +38,8 @@ use super::{
     read_node, read_node_context, rename_database, repair_database_credit_purchase_cancel,
     repair_database_credit_purchase_complete, revoke_database_access, search_node_paths,
     search_nodes, set_ledger_transaction_for_test, set_next_ledger_transfer_from_outcome_for_test,
-    set_test_caller_principal_for_test, source_evidence, status, transfer_from_error_outcome,
-    write_database_restore_chunk, write_node, write_nodes,
+    set_test_caller_principal_for_test, settle_database_storage_charges, source_evidence, status,
+    transfer_from_error_outcome, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -116,12 +116,12 @@ fn block_on_ready<T>(future: impl Future<Output = T>) -> T {
     }
 }
 
-fn credit_purchase_request(database_id: &str, credits: u64) -> DatabaseCreditPurchaseRequest {
-    let preview = preview_database_credit_purchase(database_id.to_string(), credits)
+fn credit_purchase_request(database_id: &str, credit_units: u64) -> DatabaseCreditPurchaseRequest {
+    let preview = preview_database_credit_purchase(database_id.to_string(), credit_units)
         .expect("credit purchase preview should load");
     DatabaseCreditPurchaseRequest {
         database_id: database_id.to_string(),
-        credits,
+        credit_units,
         expected_payment_amount_e8s: preview.payment_amount_e8s,
         expected_config_version: preview.config_version,
     }
@@ -199,8 +199,8 @@ fn explicit_credits_config() -> CreditsConfig {
     CreditsConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
-        credits_per_kinic: 1_000,
-        min_update_credits: 1,
+        credit_units_per_kinic: 1_000,
+        min_update_credit_units: 1,
     }
 }
 
@@ -225,7 +225,7 @@ fn controller_can_query_index_sql_json() {
     set_test_caller_principal_for_test(Principal::management_canister());
 
     let result = query_index_sql_json(
-        "SELECT json_object('credit_purchase_credits', COALESCE(SUM(amount_credits), 0)) FROM database_credit_ledger WHERE kind = 'credit_purchase' LIMIT 1".to_string(),
+        "SELECT json_object('credit_purchase_credits', COALESCE(SUM(amount_credit_units), 0)) FROM database_credit_ledger WHERE kind = 'credit_purchase' LIMIT 1".to_string(),
         10,
     )
     .expect("controller should query index SQL");
@@ -252,6 +252,18 @@ fn index_sql_json_rejects_non_controller_callers() {
 }
 
 #[test]
+fn settle_database_storage_charges_rejects_non_controller_callers() {
+    install_test_service();
+    let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
+        .expect("valid non-controller principal");
+    set_test_caller_principal_for_test(non_controller);
+
+    let error = settle_database_storage_charges().expect_err("non-controller should reject");
+
+    assert!(error.contains("caller is not a canister controller"));
+}
+
+#[test]
 fn index_sql_json_rejects_anonymous_callers() {
     install_test_service();
     set_test_caller_principal_for_test(Principal::anonymous());
@@ -268,7 +280,7 @@ fn index_sql_json_rejects_mutating_and_multi_statement_sql() {
     set_test_caller_principal_for_test(Principal::management_canister());
 
     for sql in [
-        "UPDATE database_credit_accounts SET balance_credits = 0",
+        "UPDATE database_credit_accounts SET balance_credit_units = 0",
         "DELETE FROM database_credit_ledger",
         "INSERT INTO database_credit_ledger (database_id) VALUES ('x')",
         "CREATE TABLE x (id INTEGER)",
@@ -296,7 +308,7 @@ fn index_sql_json_requires_text_json_first_column() {
     assert!(error.contains("one non-null TEXT JSON column"));
 }
 
-fn fund_database(database_id: &str, amount_credits: u64, ledger_block_index: u64) {
+fn fund_database(database_id: &str, amount_credit_units: u64, ledger_block_index: u64) {
     let principal = Principal::management_canister().to_text();
     SERVICE.with(|slot| {
         let service = slot.borrow();
@@ -305,7 +317,7 @@ fn fund_database(database_id: &str, amount_credits: u64, ledger_block_index: u64
             .begin_database_credit_purchase(
                 database_id,
                 &principal,
-                amount_credits,
+                amount_credit_units,
                 1_700_000_000_000,
             )
             .expect("database credit purchase should begin");
@@ -314,7 +326,7 @@ fn fund_database(database_id: &str, amount_credits: u64, ledger_block_index: u64
                 operation_id,
                 database_id,
                 &principal,
-                amount_credits,
+                amount_credit_units,
             )
             .expect("database credit purchase should be marked completed");
         if service
@@ -331,7 +343,7 @@ fn fund_database(database_id: &str, amount_credits: u64, ledger_block_index: u64
                 operation_id,
                 database_id,
                 &principal,
-                amount_credits,
+                amount_credit_units,
                 ledger_block_index,
                 1_700_000_000_000,
             )
@@ -424,7 +436,7 @@ fn purchase_database_credits_credits_completed_transfer_from() {
     .expect("completed transfer-from should credit database");
 
     assert_eq!(result.block_index, 42);
-    assert_eq!(result.balance_credits, 500);
+    assert_eq!(result.balance_credit_units, 500);
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -448,13 +460,13 @@ fn preview_database_credit_purchase_rejects_invalid_target_before_approve() {
 
     let preview = preview_database_credit_purchase(database.database_id.clone(), 500)
         .expect("preview should accept");
-    assert_eq!(preview.payment_amount_e8s, 50_000_000);
+    assert_eq!(preview.payment_amount_e8s, 50_000);
     assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
-    assert_eq!(preview.credits_per_kinic, 1_000);
+    assert_eq!(preview.credit_units_per_kinic, 1_000_000);
     assert_eq!(preview.config_version, 1);
     let zero = preview_database_credit_purchase(database.database_id.clone(), 0)
         .expect_err("zero amount should reject");
-    assert!(zero.contains("credit purchase credits must be positive"));
+    assert!(zero.contains("credit purchase credit units must be positive"));
     let overflow = preview_database_credit_purchase(database.database_id.clone(), i64::MAX as u64)
         .expect_err("payment amount overflow should reject before approve");
     assert!(overflow.contains("credit purchase payment amount overflow"));
@@ -477,8 +489,8 @@ fn purchase_database_credits_rejects_balance_overflow_before_ledger_call() {
             .expect("service should be installed")
             .update_credits_config(
                 CreditsConfigUpdate {
-                    credits_per_kinic: 100_000_000,
-                    min_update_credits: 1,
+                    credit_units_per_kinic: 100_000_000,
+                    min_update_credit_units: 1,
                 },
                 &test_governance_principal().to_text(),
             )
@@ -490,7 +502,7 @@ fn purchase_database_credits_rejects_balance_overflow_before_ledger_call() {
 
     let error = block_on_ready(purchase_database_credits(DatabaseCreditPurchaseRequest {
         database_id: database.database_id,
-        credits: 1,
+        credit_units: 1,
         expected_payment_amount_e8s: 1,
         expected_config_version: 1,
     }))
@@ -515,8 +527,8 @@ fn purchase_database_credits_rejects_stale_preview_before_ledger_call() {
             .expect("service should be installed")
             .update_credits_config(
                 CreditsConfigUpdate {
-                    credits_per_kinic: 2_000,
-                    min_update_credits: 1,
+                    credit_units_per_kinic: 2_000,
+                    min_update_credit_units: 1,
                 },
                 &test_governance_principal().to_text(),
             )
@@ -586,8 +598,8 @@ fn purchase_database_credits_records_ambiguous_transfer_from() {
         .entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
-    assert_eq!(entries[0].amount_credits, 500);
-    assert_eq!(entries[0].balance_after_credits, 0);
+    assert_eq!(entries[0].amount_credit_units, 500);
+    assert_eq!(entries[0].balance_after_credit_units, 0);
     assert_eq!(entries[0].ledger_block_index, None);
     assert_eq!(
         database_status_and_mount(&database.database_id),
@@ -641,7 +653,7 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
     ))
     .expect("verified complete should retry mount and credit");
 
-    assert_eq!(result.balance_credits, 500);
+    assert_eq!(result.balance_credit_units, 500);
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -695,7 +707,7 @@ fn repair_complete_succeeds_after_activation_started_and_credit_apply_failed() {
     ))
     .expect("repair complete should finish activation and credit");
 
-    assert_eq!(result.balance_credits, 600);
+    assert_eq!(result.balance_credit_units, 600);
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -795,7 +807,7 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
         ))
         .expect("authenticated caller should complete verified credit purchase");
         assert_eq!(result.block_index, 77);
-        assert_eq!(result.balance_credits, 500);
+        assert_eq!(result.balance_credit_units, 500);
         assert_eq!(
             database_status_and_mount(&database_id).0,
             DatabaseStatus::Active
@@ -959,7 +971,7 @@ fn purchase_database_credits_allows_non_owner_payer() {
     .expect("non-owner payer should fund DB");
 
     assert_eq!(result.block_index, 43);
-    assert_eq!(result.balance_credits, 700);
+    assert_eq!(result.balance_credit_units, 700);
     assert_eq!(
         last_ledger_from_for_test().expect("ledger from should be recorded"),
         IcrcAccount {
@@ -992,8 +1004,8 @@ fn icrc21_purchase_database_credits_returns_consent_message() {
         }
     };
     assert!(message.contains(&database.database_id));
-    assert!(message.contains("Credits: `500`"));
-    assert!(message.contains("Payment: `0.5` KINIC"));
+    assert!(message.contains("Credits: `0.5`"));
+    assert!(message.contains("Payment: `0.0005` KINIC"));
     assert!(message.contains("Ledger transfer fee in allowance: `0.0001` KINIC"));
     assert!(message.contains("Spender canister:"));
 }
@@ -1075,7 +1087,7 @@ fn purchase_database_credits_rejects_unknown_and_deleted_database() {
 
     let missing = block_on_ready(purchase_database_credits(DatabaseCreditPurchaseRequest {
         database_id: "missing".to_string(),
-        credits: 500,
+        credit_units: 500,
         expected_payment_amount_e8s: 50_000_000,
         expected_config_version: 1,
     }))
@@ -1092,7 +1104,7 @@ fn purchase_database_credits_rejects_unknown_and_deleted_database() {
 
     let deleted = block_on_ready(purchase_database_credits(DatabaseCreditPurchaseRequest {
         database_id: database.database_id,
-        credits: 500,
+        credit_units: 500,
         expected_payment_amount_e8s: 50_000_000,
         expected_config_version: 1,
     }))
@@ -1209,8 +1221,8 @@ fn install_low_balance_default_service() {
     service
         .update_credits_config(
             CreditsConfigUpdate {
-                credits_per_kinic: 1_000,
-                min_update_credits: 2_000_000,
+                credit_units_per_kinic: 1_000,
+                min_update_credit_units: 2_000_000,
             },
             &test_governance_principal().to_text(),
         )

@@ -350,8 +350,8 @@ test("listWritableDatabases returns active writable database summaries", async (
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
             sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            credits_per_kinic: 1n,
-            min_update_credits: 10_000n
+            credit_units_per_kinic: 1n,
+            min_update_credit_units: 10_000n
           }
         };
       }
@@ -404,7 +404,7 @@ function writeCreditsActorMethods({ databaseId = "team-db", balanceCredits = 20_
             role: { Writer: null },
             status: { Active: null },
             logical_size_bytes: 0n,
-            credits_balance: [balanceCredits],
+            credit_units_balance: [balanceCredits],
             credits_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
             archived_at_ms: []
           }
@@ -416,8 +416,8 @@ function writeCreditsActorMethods({ databaseId = "team-db", balanceCredits = 20_
         Ok: {
           kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
           sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
-          credits_per_kinic: 1n,
-          min_update_credits: 10_000n
+          credit_units_per_kinic: 1n,
+          min_update_credit_units: 10_000n
         }
       };
     }
@@ -431,7 +431,7 @@ function rawDatabase(databaseId, name, role, status) {
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    credits_balance: [20_000n],
+    credit_units_balance: [20_000n],
     credits_suspended_at_ms: [],
     archived_at_ms: []
   };

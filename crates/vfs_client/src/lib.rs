@@ -12,15 +12,17 @@ use ic_agent::{
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseMember, DatabaseRestoreChunkRequest,
-    DatabaseRole, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
+    CreditsConfig, CreditsPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
+    DatabaseCreditEntryPage, DatabaseCreditPendingOperationPage, DatabaseCreditPurchasePreview,
+    DatabaseCreditPurchaseRequest, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
+    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryManifest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest,
+    SearchNodeHit,
     SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
     WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
@@ -43,6 +45,72 @@ pub trait VfsApi: Sync {
     }
     async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
         Err(anyhow!("rename_database is not implemented by this client"))
+    }
+    async fn purchase_database_credits(
+        &self,
+        _request: DatabaseCreditPurchaseRequest,
+    ) -> Result<CreditsPurchaseResult> {
+        Err(anyhow!(
+            "purchase_database_credits is not implemented by this client"
+        ))
+    }
+    async fn preview_database_credit_purchase(
+        &self,
+        _database_id: &str,
+        _amount_credit_units: u64,
+    ) -> Result<DatabaseCreditPurchasePreview> {
+        Err(anyhow!(
+            "preview_database_credit_purchase is not implemented by this client"
+        ))
+    }
+    async fn check_database_write_credits(&self, _database_id: &str) -> Result<()> {
+        Err(anyhow!(
+            "check_database_write_credits is not implemented by this client"
+        ))
+    }
+    async fn list_database_credit_entries(
+        &self,
+        _database_id: &str,
+        _cursor: Option<u64>,
+        _limit: u32,
+    ) -> Result<DatabaseCreditEntryPage> {
+        Err(anyhow!(
+            "list_database_credit_entries is not implemented by this client"
+        ))
+    }
+    async fn list_database_credit_pending_operations(
+        &self,
+        _database_id: &str,
+        _cursor: Option<u64>,
+        _limit: u32,
+    ) -> Result<DatabaseCreditPendingOperationPage> {
+        Err(anyhow!(
+            "list_database_credit_pending_operations is not implemented by this client"
+        ))
+    }
+    async fn repair_database_credit_purchase_complete(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+        _ledger_block_index: u64,
+    ) -> Result<CreditsPurchaseResult> {
+        Err(anyhow!(
+            "repair_database_credit_purchase_complete is not implemented by this client"
+        ))
+    }
+    async fn repair_database_credit_purchase_cancel(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+    ) -> Result<()> {
+        Err(anyhow!(
+            "repair_database_credit_purchase_cancel is not implemented by this client"
+        ))
+    }
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        Err(anyhow!(
+            "get_credits_config is not implemented by this client"
+        ))
     }
     async fn grant_database_access(
         &self,
@@ -402,6 +470,108 @@ impl VfsApi for CanisterVfsClient {
                 },
             )
             .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn purchase_database_credits(
+        &self,
+        request: DatabaseCreditPurchaseRequest,
+    ) -> Result<CreditsPurchaseResult> {
+        let result: Result<CreditsPurchaseResult, String> =
+            self.update("purchase_database_credits", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn preview_database_credit_purchase(
+        &self,
+        database_id: &str,
+        amount_credit_units: u64,
+    ) -> Result<DatabaseCreditPurchasePreview> {
+        let result: Result<DatabaseCreditPurchasePreview, String> = self
+            .query2(
+                "preview_database_credit_purchase",
+                &database_id.to_string(),
+                &amount_credit_units,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn check_database_write_credits(&self, database_id: &str) -> Result<()> {
+        let result: Result<(), String> = self
+            .query("check_database_write_credits", &database_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_database_credit_entries(
+        &self,
+        database_id: &str,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<DatabaseCreditEntryPage> {
+        let result: Result<DatabaseCreditEntryPage, String> = self
+            .query3(
+                "list_database_credit_entries",
+                &database_id.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_database_credit_pending_operations(
+        &self,
+        database_id: &str,
+        cursor: Option<u64>,
+        limit: u32,
+    ) -> Result<DatabaseCreditPendingOperationPage> {
+        let result: Result<DatabaseCreditPendingOperationPage, String> = self
+            .query3(
+                "list_database_credit_pending_operations",
+                &database_id.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_credit_purchase_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        ledger_block_index: u64,
+    ) -> Result<CreditsPurchaseResult> {
+        let result: Result<CreditsPurchaseResult, String> = self
+            .update3(
+                "repair_database_credit_purchase_complete",
+                &database_id.to_string(),
+                &operation_id,
+                &ledger_block_index,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_credit_purchase_cancel(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<()> {
+        let result: Result<(), String> = self
+            .update2(
+                "repair_database_credit_purchase_cancel",
+                &database_id.to_string(),
+                &operation_id,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        let result: Result<CreditsConfig, String> = self.query("get_credits_config", &()).await?;
         result.map_err(|error| anyhow!(error))
     }
 

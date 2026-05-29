@@ -44,9 +44,9 @@ Only `active` DBs are available to normal VFS APIs.
 
 ## Size Tracking
 
-`logical_size_bytes` tracks the SQLite file size for a database.
+`logical_size_bytes` is the billable SQLite bytes for an active database.
 
-It is updated after VFS mutations and restore finalization. It is useful for visibility and planning, but it is not a stable-memory credits or shrink metric.
+It is updated after VFS mutations, restore finalization, and storage billing settle. SQLite free pages are included. Index DB bytes, canister heap, and shared management state are excluded.
 
 Deleting or archiving a DB releases the active mount. It does not imply that canister stable memory shrinks or that the stable-memory mount ID is reused.
 
@@ -60,7 +60,7 @@ DB creation uses `create_database(display_name)`. It creates a generated `databa
 
 External ledger calls are limited to DB credit purchase:
 
-- `preview_database_credit_purchase(database_id, credits)` returns `payment_amount_e8s`, `ledger_fee_e8s`, `credits_per_kinic`, and `config_version`.
+- `preview_database_credit_purchase(database_id, credit_units)` returns `payment_amount_e8s`, `ledger_fee_e8s`, `credit_units_per_kinic`, and `config_version`.
 - `purchase_database_credits(DatabaseCreditPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance. The request must include the previewed `expected_payment_amount_e8s` and `expected_config_version`; mismatch rejects before pending operation creation and before ledger transfer. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
 
 Any authenticated caller can credit purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_credit_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer credits history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
@@ -68,16 +68,25 @@ Any authenticated caller can credit purchase an existing DB that still has an ow
 Successful DB update calls are charged after execution. The charge is:
 
 ```text
-ceil(cycles_delta / 1_000_000_000)
+ceil(cycles_delta / 1_000_000)
 ```
 
-The default purchase rate is `1 KINIC = 1000 credits`, controlled by `credits_per_kinic`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credits` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+Credits are stored as integer credit units. `1 credit_unit = 0.001 credit = 1_000_000 cycles`; UI and CLI output divide units by `1000`. The default purchase rate is `1 KINIC = 1_000_000 credit_units`, controlled by `credit_units_per_kinic`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credit_units` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+
+Storage billing settles every 24h from a canister timer, with controller-only `settle_database_storage_charges()` as recovery path. Only active DBs are charged. The 13-node subnet rate is fixed at `127_000 cycles / GiB / sec`:
+
+```text
+storage_cycles = logical_size_bytes * elapsed_seconds * 127_000 / 2^30
+charge_units = ceil(storage_cycles / 1_000_000)
+```
+
+Storage charges write `kind = "storage_charge"` ledger entries for actually collected credit units. Cycles below 1 credit_unit and insufficient-balance unpaid cycles are not carried forward; each DB settle rounds up by less than one credit_unit. Insufficient balance consumes the remaining balance and suspends the DB.
 
 `database_credit_ledger` is the credits source of truth. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
 
 Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credits_per_kinic` or `min_update_credits` actually changes.
+`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credit_units_per_kinic` or `min_update_credit_units` actually changes.
 
 `scripts/local/deploy_wiki.sh` carries local development init args. If `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local credit purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
 

@@ -12,7 +12,7 @@ type WalletProvider = "oisy" | "plug";
 type CreditsPurchaseRequest = {
   canisterId: string;
   databaseId: string;
-  credits: bigint;
+  creditUnits: bigint;
 };
 
 type CreditsPurchaseResult = {
@@ -64,7 +64,7 @@ type PlugWallet = {
 };
 
 type PlugVfsActor = {
-  purchase_database_credits: (request: DatabaseCreditPurchaseRequest) => Promise<{ Ok: { block_index: bigint; balance_credits: bigint } } | { Err: string }>;
+  purchase_database_credits: (request: DatabaseCreditPurchaseRequest) => Promise<{ Ok: { block_index: bigint; balance_credit_units: bigint } } | { Err: string }>;
 };
 
 type LedgerActor = {
@@ -193,11 +193,11 @@ export async function purchaseCreditsWithOisy(request: CreditsPurchaseRequest, c
     provider: "oisy",
     approveBlockIndex: approveBlockIndex.toString(),
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    creditedCredits: request.credits.toString(),
+    creditedCredits: formatCreditUnits(request.creditUnits),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     purchaseBlockIndex: purchase.blockIndex,
-    balanceCredits: purchase.balanceCredits
+    balanceCredits: purchase.balanceCredits ? formatCreditUnits(BigInt(purchase.balanceCredits)) : null
   };
 }
 
@@ -234,11 +234,11 @@ export async function purchaseCreditsWithPlug(request: CreditsPurchaseRequest, c
     provider: "plug",
     approveBlockIndex: approve.Ok.toString(),
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    creditedCredits: request.credits.toString(),
+    creditedCredits: formatCreditUnits(request.creditUnits),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     purchaseBlockIndex: purchase.block_index.toString(),
-    balanceCredits: purchase.balance_credits.toString()
+    balanceCredits: formatCreditUnits(purchase.balance_credit_units)
   };
 }
 
@@ -268,7 +268,7 @@ function rawApproveArgs(canisterId: string, allowanceE8s: bigint, expectedAllowa
 async function prepareCreditPurchase(request: CreditsPurchaseRequest, payer: string): Promise<PreparedCreditPurchase> {
   assertConfiguredCreditsCanister(request.canisterId);
   const config = await getCreditsConfig(request.canisterId);
-  const preview = await previewDatabaseCreditPurchase(request.canisterId, request.databaseId, request.credits);
+  const preview = await previewDatabaseCreditPurchase(request.canisterId, request.databaseId, request.creditUnits);
   const transferFeeE8s = BigInt(preview.ledgerFeeE8s);
   const paymentAmountE8s = BigInt(preview.paymentAmountE8s);
   const approvedAllowanceE8s = allowanceForCreditPurchase(paymentAmountE8s, transferFeeE8s);
@@ -278,7 +278,7 @@ async function prepareCreditPurchase(request: CreditsPurchaseRequest, payer: str
     kinicLedgerCanisterId: config.kinicLedgerCanisterId,
     purchaseRequest: {
       database_id: request.databaseId,
-      credits: request.credits,
+      credit_units: request.creditUnits,
       expected_payment_amount_e8s: paymentAmountE8s,
       expected_config_version: BigInt(preview.configVersion)
     },
@@ -362,7 +362,7 @@ function errorMessage(cause: unknown): string {
 function encodeCreditPurchaseArgs(request: DatabaseCreditPurchaseRequest): string {
   const PurchaseRequest = IDL.Record({
     database_id: IDL.Text,
-    credits: IDL.Nat64,
+    credit_units: IDL.Nat64,
     expected_payment_amount_e8s: IDL.Nat64,
     expected_config_version: IDL.Nat64
   });
@@ -414,7 +414,7 @@ function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; balanceC
   const ok = Reflect.get(decoded, "Ok");
   if (!isObject(ok)) throw new Error("wallet response result mismatch");
   const blockIndex = Reflect.get(ok, "block_index");
-  const balanceCredits = Reflect.get(ok, "balance_credits");
+  const balanceCredits = Reflect.get(ok, "balance_credit_units");
   if (typeof blockIndex !== "bigint" || typeof balanceCredits !== "bigint") {
     throw new Error("wallet response result mismatch");
   }
@@ -426,9 +426,16 @@ function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; balanceC
 
 function purchaseResultType() {
   return IDL.Variant({
-    Ok: IDL.Record({ block_index: IDL.Nat64, balance_credits: IDL.Nat64 }),
+    Ok: IDL.Record({ block_index: IDL.Nat64, balance_credit_units: IDL.Nat64 }),
     Err: IDL.Text
   });
+}
+
+function formatCreditUnits(units: bigint): string {
+  const whole = units / 1000n;
+  const fraction = units % 1000n;
+  if (fraction === 0n) return whole.toString();
+  return `${whole.toString()}.${fraction.toString().padStart(3, "0").replace(/0+$/, "")}`;
 }
 
 function bytesFromUnknown(value: unknown, label: string): Uint8Array {
