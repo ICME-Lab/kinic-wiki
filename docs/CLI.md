@@ -43,7 +43,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.
 
 `--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.
 
-List, search, recent, and graph commands default to the VFS root `/`.
+List, search, glob, and graph commands default to the VFS root `/`.
 Pass `--prefix /Wiki` or `--path /Wiki` when the human-facing wiki tree is the intended scope.
 
 Without `--canister-id`, the CLI reads configuration from:
@@ -78,16 +78,30 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --da
 Create a database before reading or writing:
 
 ```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> credits config
+# Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI credit purchase. The allowance must cover the DB credit amount plus ledger transfer fee.
 DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-credits "$DB_ID" 500000
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database credits "$DB_ID" 500000
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database credits-history "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database credits-pending "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success.
-`database list` prints databases attached to the caller principal.
+`credits config` prints the KINIC ledger canister, SNS governance principal, `credits_per_kinic`, `min_update_credits`, and fixed ledger transfer fee `10_000 e8s`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`.
+`database create <database-name>` creates a generated pending database ID with zero DB credits balance and prints it on success. It does not allocate a DB mount until the first successful credit purchase.
+`database purchase-credits <database-id> <credits>` previews the purchase, then pulls the previewed KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds credits to the DB credits balance. Any authenticated payer can purchase credits for an existing DB. The allowance must include the previewed ledger transfer fee.
+`database credits <database-id> <credits>` opens `https://wiki.kinic.xyz/credits?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, previews the DB credit purchase before approve, approves `preview.payment_amount_e8s + preview.ledger_fee_e8s` with a 30 minute expiry, and passes the previewed expected amount/config version to purchase. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
+`database credits-history <database-id> [--json]` lists DB credits ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and SNS governance see full details.
+`database credits-pending <database-id> [--json]` lists pending credit operations. DB owner and SNS governance can read it.
+`database repair-credit-purchase-complete <database-id> <operation-id> <ledger-block-index>` resolves a pending credit purchase after the canister verifies the ledger block against the pending operation. Any authenticated caller may run it.
+`database repair-credit-purchase-cancel <database-id> <operation-id>` is accepted only from the configured SNS governance principal. Use cancel only when governance has verified that the original ledger transfer did not execute.
+`database list` prints databases attached to the caller principal, including DB credit balance and suspension time.
+Successful DB updates consume DB credits balance. Browser write surfaces disable writes when the DB is suspended, below `min_update_credits`, or credits config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB credits balance changes.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 
@@ -142,7 +156,7 @@ Writes, database grants, archive operations, private Skill Registry writes, and 
 ## Archive and Restore
 
 Archive exports one database as SQLite snapshot bytes and then finalizes the database into `archived` status.
-Restore imports that snapshot into an `archived` or `deleted` database and returns it to `hot`.
+Restore imports that snapshot into an `archived` database and returns it to `active`.
 The canister verifies the SHA-256 digest during both flows.
 
 ```bash
@@ -167,7 +181,7 @@ Manual cancel is available when a database is left in `archiving`:
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database archive-cancel <database-id>
 ```
 
-If restore fails after it begins, the CLI attempts to cancel the restore automatically so the database returns to its previous `archived` or `deleted` state. Manual cancel is available for an interrupted restore:
+If restore fails after it begins, the CLI attempts to cancel the restore automatically so the database returns to its previous `archived` state. Manual cancel is available for an interrupted restore:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database restore-cancel <database-id>
@@ -223,7 +237,6 @@ Common read and write commands:
 - `delete-tree --path /Wiki/obsolete-scope --json`
 - `move-node --from-path /Wiki/a.md --to-path /Wiki/b.md`
 - `glob-nodes "**/*.md" --path /Wiki --json`
-- `recent-nodes 20 --path /Wiki --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
 Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.
