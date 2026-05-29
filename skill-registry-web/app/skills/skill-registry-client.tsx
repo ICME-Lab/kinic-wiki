@@ -170,9 +170,9 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const selectedSkill = useMemo(() => skills.find((skill) => skill.manifest.id === selectedSkillId) ?? skills[0] ?? null, [selectedSkillId, skills]);
   const pendingJobs = jobs.filter((job) => job.status === "queued" || job.status === "running").length;
   const conflictJobs = jobs.filter((job) => job.status === "conflict").length;
-  const identity = authClient?.getIdentity();
+  const packageIdentity = authClient?.getIdentity();
   const writable = databaseRole === "writer" || databaseRole === "owner";
-  const packageManager = usePackageManager({ canisterId, databaseId, identity, writable, refresh: loadCatalog, errorMessage });
+  const packageManager = usePackageManager({ canisterId, databaseId, identity: packageIdentity, writable, refresh: loadCatalog, errorMessage });
   function actionFor(skill: CatalogSkill): ActionDraft {
     return actions[skill.manifest.id] ?? DEFAULT_ACTION;
   }
@@ -182,16 +182,17 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   }
 
   async function runSkillAction(skill: CatalogSkill, operation: (identity: Identity, draft: ActionDraft) => Promise<void>, clearRun = false) {
-    if (!identity) {
+    const activeIdentity = authClient?.getIdentity();
+    if (!activeIdentity) {
       patchAction(skill, { error: "Login is required." });
       return;
     }
     const draft = actionFor(skill);
     patchAction(skill, { busy: true, error: null });
     try {
-      await operation(identity, draft);
+      await operation(activeIdentity, draft);
       patchAction(skill, clearRun ? { busy: false, runTask: "", runNotes: "", message: "Operation completed." } : { busy: false, message: "Operation completed." });
-      await loadCatalog(identity);
+      await loadCatalog(activeIdentity);
     } catch (cause) {
       patchAction(skill, { busy: false, error: errorMessage(cause) });
     }

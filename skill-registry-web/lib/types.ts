@@ -90,7 +90,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "hot" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived";
 
 export type DatabaseSummary = {
   databaseId: string;
@@ -99,7 +99,6 @@ export type DatabaseSummary = {
   status: DatabaseStatus;
   logicalSizeBytes: string;
   archivedAtMs: string | null;
-  deletedAtMs: string | null;
 };
 
 export type DatabaseMember = {
