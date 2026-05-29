@@ -30,7 +30,7 @@ export default {
         return jsonResponse({ error: errorMessage(error) }, status);
       }
       await env.WIKI_GENERATION_QUEUE.send({ kind: "url_ingest", ...input });
-      return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath }, 202);
+      return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath, sessionNonce: input.sessionNonce }, 202);
     }
     if (request.method !== "POST" || url.pathname !== "/run") {
       return jsonResponse({ error: "not found" }, 404);
