@@ -30,10 +30,11 @@ Open settings from the extension details page `Extension options`.
 
 ```bash
 npm run store-assets:generate
+npm run release:listing-check
 npm run release:package
 ```
 
-The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies required store image files and dimensions.
+The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies package inputs. `release:listing-check` also verifies required store image files and dimensions.
 Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude export, active-tab URL ingest, Internet Identity auth, and selected database storage behavior.
 
 ## Flow
@@ -50,7 +51,7 @@ Clicking the extension toolbar icon queues the active `http` / `https` tab URL a
 
 Required settings:
 
-- `Database`: loaded from writable hot databases for the logged-in Internet Identity principal. If none exists, create one explicitly from settings.
+- `Database`: loaded from writable active databases for the logged-in Internet Identity principal. If none exists, create one explicitly from settings.
 
 The active-tab flow writes `/Sources/ingest-requests/<request-id>.md` as a VFS `file`, then asks WikiBrowser to trigger the generator Worker with its server-side token.
 
@@ -66,7 +67,7 @@ The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edite
 
 - Canister ID is fixed to `xis3j-paaaa-aaaai-axumq-cai`.
 - IC host is fixed to `https://icp0.io`.
-- Database ID is selected and saved automatically from writable hot databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
+- Database ID is selected and saved automatically from writable active databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
 - Mainnet hosts require explicit confirmation before export.
 - ChatGPT/Claude raw-source export and URL ingest writes use the logged-in Internet Identity principal and require writer access for that principal.

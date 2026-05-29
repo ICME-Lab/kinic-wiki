@@ -132,29 +132,57 @@ test("create database name validation trims and rejects empty names", () => {
   assert.throws(() => validateCreateDatabaseName("  "), /Database name is required/);
 });
 
-test("database dropdown options include only hot owner and writer databases", () => {
+test("database dropdown options include only active owner and writer databases", () => {
   const databases = normalizeWritableDatabases([
-    rawDatabase("owner-db", "Owner", "Hot"),
-    rawDatabase("writer-db", "Writer", "Hot"),
-    rawDatabase("reader-db", "Reader", "Hot"),
-    rawDatabase("archived-db", "Owner", "Archived")
-  ]);
+    rawDatabase("owner-db", "Owner", "Active", 20_000n),
+    rawDatabase("legacy-owner-db", "Owner", "Hot", 20_000n),
+    rawDatabase("writer-db", "Writer", "Active", 20_000n),
+    rawDatabase("reader-db", "Reader", "Active", 20_000n),
+    rawDatabase("archived-db", "Owner", "Archived", 20_000n)
+  ], { minUpdateCredits: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.name, database.role, database.status]),
+    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCreditsAvailable]),
     [
-      ["owner-db", "owner-db name", "Owner", "Hot"],
-      ["writer-db", "writer-db name", "Writer", "Hot"]
+      ["owner-db", "owner-db name", "Owner", "Active", true],
+      ["legacy-owner-db", "legacy-owner-db name", "Owner", "Active", true],
+      ["writer-db", "writer-db name", "Writer", "Active", true]
     ]
   );
 });
 
+test("database dropdown keeps credits-disabled writer databases with reasons", () => {
+  const databases = normalizeWritableDatabases([
+    rawDatabase("active-db", "Owner", "Active", 20_000n),
+    rawDatabase("low-db", "Writer", "Active", 9_999n),
+    rawDatabase("suspended-db", "Writer", "Active", 20_000n, 1n)
+  ], { minUpdateCredits: "10000" });
+  assert.deepEqual(
+    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
+    [
+      ["active-db", true, null],
+      ["low-db", false, "Database credits balance is below the minimum update balance."],
+      ["suspended-db", false, "Database credits are suspended."]
+    ]
+  );
+});
+
+test("database dropdown disables writer databases when credits config is unavailable", () => {
+  const databases = normalizeWritableDatabases([
+    rawDatabase("owner-db", "Owner", "Active", 20_000n)
+  ]);
+  assert.deepEqual(
+    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
+    [["owner-db", false, "Credits config unavailable."]]
+  );
+});
+
 test("database dropdown labels prefer names and disambiguate duplicates", () => {
-  assert.equal(databaseOptionLabel(rawDatabase("team-db-1", "Writer", "Hot", "Team Wiki")), "Team Wiki (Writer)");
+  assert.equal(databaseOptionLabel(rawDatabase("team-db-1", "Writer", "Active", "Team Wiki")), "Team Wiki (Writer)");
   assert.equal(
-    databaseOptionLabel(rawDatabase("team-db-2-long-id", "Owner", "Hot", "Team Wiki"), 2),
+    databaseOptionLabel(rawDatabase("team-db-2-long-id", "Owner", "Active", "Team Wiki"), 2),
     "Team Wiki (Owner, team-db-2-...)"
   );
-  assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Hot", "")), "legacy-db (Writer, legacy-db)");
+  assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
 });
 
 test("preferred created database is kept when database list query is stale", () => {
@@ -163,11 +191,11 @@ test("preferred created database is kept when database list query is stale", () 
       databaseId: "db_created",
       name: "Created Wiki",
       role: "Owner",
-      status: "Hot",
+      status: "Active",
       logicalSizeBytes: "0"
     }
   ]);
-  const databases = normalizeWritableDatabases([rawDatabase("db_created", "Owner", "Hot", "Created Wiki")]);
+  const databases = normalizeWritableDatabases([rawDatabase("db_created", "Owner", "Active", "Created Wiki")]);
   assert.equal(mergePreferredDatabase(databases, { databaseId: "db_created", name: "Created Wiki" }), databases);
 });
 
@@ -222,14 +250,17 @@ test("settings docs describe automatic database save", () => {
   assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
-function rawDatabase(databaseId, role, status, name = `${databaseId} name`) {
+function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, creditsSuspendedAtMs = null) {
+  const name = typeof nameOrBalance === "string" ? nameOrBalance : `${databaseId} name`;
+  const creditsBalance = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
   return {
     database_id: databaseId,
     name,
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    archived_at_ms: [],
-    deleted_at_ms: []
+    credits_balance: [creditsBalance],
+    credits_suspended_at_ms: creditsSuspendedAtMs === null ? [] : [creditsSuspendedAtMs],
+    archived_at_ms: []
   };
 }

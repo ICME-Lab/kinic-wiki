@@ -24,7 +24,7 @@ export function mergePreferredDatabase(databases, preferredDatabase) {
       databaseId: preferredDatabaseId,
       name: String(preferredDatabase.name || preferredDatabaseId),
       role: "Owner",
-      status: "Hot",
+      status: "Active",
       logicalSizeBytes: "0"
     }
   ];
