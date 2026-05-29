@@ -9,14 +9,18 @@ import type { BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 
 export function DatabaseDangerZone(props: {
+  creditsBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
   databaseName: string;
+  pendingOperationCount: number;
   onDelete: () => Promise<string | null>;
 }) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const hasPendingOperations = props.pendingOperationCount > 0;
+  const deleteDisabled = props.busy || hasPendingOperations;
   function openDeleteDialog() {
     setDeleteError(null);
     setDeleteDialogOpen(true);
@@ -41,9 +45,10 @@ export function DatabaseDangerZone(props: {
           <p className="mt-2 break-all font-mono text-xs text-red-900">
             {props.databaseName} / {props.databaseId}
           </p>
+          <DeleteCreditsNotice pendingOperationCount={props.pendingOperationCount} />
         </div>
         <div>
-          <ActionButton disabled={props.busy} onClick={openDeleteDialog} variant="danger">
+          <ActionButton disabled={deleteDisabled} onClick={openDeleteDialog} variant="danger">
             Delete database
           </ActionButton>
         </div>
@@ -106,4 +111,15 @@ function ConfirmDeleteDatabaseDialog(props: {
       </div>
     </div>
   );
+}
+
+function DeleteCreditsNotice({ pendingOperationCount }: { pendingOperationCount: number }) {
+  if (pendingOperationCount > 0) {
+    return (
+      <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-900">
+        Resolve pending credit operations before deleting. Pending operations: {pendingOperationCount}
+      </p>
+    );
+  }
+  return <p className="mt-3 text-sm leading-6 text-red-900">Remaining credits will be discarded.</p>;
 }

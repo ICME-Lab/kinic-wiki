@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
+import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -13,10 +14,14 @@ const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
+const browserExpectedTypes = {
+  ...expectedTypes,
+  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
+};
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
-  compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], shape);
+  compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], browserExpectedTypes[name] ?? shape);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {
@@ -28,6 +33,15 @@ for (const name of Object.keys(idlMethods)) {
   if (!(name in expectedMethods)) {
     failures.push(`unexpected wikibrowser IDL method: ${name}`);
   }
+}
+
+try {
+  const generated = generateVfsIdlFromDid(did);
+  if (idl !== generated) {
+    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node scripts/generate-vfs-idl.mjs");
+  }
+} catch (error) {
+  failures.push(error instanceof Error ? error.message : String(error));
 }
 
 if (failures.length > 0) {
@@ -59,7 +73,7 @@ function parseDidFields(body) {
 }
 
 function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\(\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
     const line = raw.trim();
@@ -118,10 +132,10 @@ function parseIdlFields(body) {
 function parseIdlMethods(source) {
   const service = source.match(/return\s+idl\.Service\(\{([^]*?)\n\s*\}\);/m)?.[1] ?? "";
   const methods = {};
-  for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*(\w+)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
+  for (const match of service.matchAll(/^\s*(\w+):\s*idl\.Func\(\[\s*([^\]]*)\s*\],\s*\[\s*([^\]]+?)\s*\],\s*\[\s*(?:"(\w+)")?\s*\]\)/gm)) {
     methods[match[1]] = {
       input: splitIdlInputs(match[2]),
-      output: match[3],
+      output: normalizeIdlShape(match[3]),
       mode: match[4] ?? "update"
     };
   }
@@ -150,19 +164,23 @@ function findStatementEnd(source, start) {
 }
 
 function normalizeIdlShape(value) {
-  return value
+  const normalized = value
     .trim()
     .replace(/^idl\./, "")
     .replace(/^Text$/, "text")
+    .replace(/^Int16$/, "int16")
     .replace(/^Int64$/, "int64")
     .replace(/^Nat64$/, "nat64")
     .replace(/^Nat32$/, "nat32")
+    .replace(/^Nat8$/, "nat8")
     .replace(/^Nat$/, "nat")
     .replace(/^Float32$/, "float32")
     .replace(/^Bool$/, "bool")
+    .replace(/^Principal$/, "principal")
     .replace(/^Null$/, "null")
     .replace(/^Opt\((.+)\)$/, (_, inner) => `opt ${normalizeIdlShape(inner)}`)
     .replace(/^Vec\((.+)\)$/, (_, inner) => `vec ${normalizeIdlShape(inner)}`);
+  return normalizeBlobAlias(normalized);
 }
 
 function splitIdlInputs(value) {
@@ -178,28 +196,40 @@ function splitShapes(value) {
 }
 
 function normalizeShape(value) {
-  return value.trim().replace(/\s+/g, " ");
+  return normalizeBlobAlias(value.trim().replace(/\s+/g, " "));
+}
+
+function normalizeBlobAlias(value) {
+  if (value === "vec nat8") return "blob";
+  if (value === "opt vec nat8") return "opt blob";
+  return value;
 }
 
 function normalizeResultAlias(value) {
   const normalized = normalizeShape(value).replace(/,$/, "").trim();
   if (normalized === "Result_10") return "ResultLinks";
-  if (normalized === "Result_11") return "ResultChildren";
+  if (normalized === "Result_11") return "ResultLinks";
+  if (normalized === "Result_12") return "ResultChildren";
+  if (normalized === "Result_13") return "ResultCreditsEntries";
+  if (normalized === "Result_14") return "ResultCreditsPending";
+  if (normalized === "Result_15") return "ResultMembers";
+  if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_5") return "ResultDeleteNode";
-  if (normalized === "Result_12") return "ResultMembers";
-  if (normalized === "Result_13") return "ResultDatabases";
-  if (normalized === "Result_15") return "ResultMkdirNode";
-  if (normalized === "Result_16") return "ResultMoveNode";
-  if (normalized === "Result_17") return "ResultQueryContext";
-  if (normalized === "Result_19") return "ResultNode";
-  if (normalized === "Result_20") return "ResultNodeContext";
-  if (normalized === "Result_21") return "ResultRecent";
-  if (normalized === "Result_22") return "ResultSearch";
-  if (normalized === "Result_23") return "ResultSourceEvidence";
-  if (normalized === "Result_25") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_19") return "ResultMoveNode";
+  if (normalized === "Result_20") return "ResultCreditsPurchasePreview";
+  if (normalized === "Result_21") return "ResultCreditsPurchase";
+  if (normalized === "Result_22") return "ResultQueryContext";
+  if (normalized === "Result_25") return "ResultNode";
+  if (normalized === "Result_26") return "ResultNodeContext";
+  if (normalized === "Result_27") return "ResultRecent";
+  if (normalized === "Result_28") return "ResultSearch";
+  if (normalized === "Result_29") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
+  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

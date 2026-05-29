@@ -9,7 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", fields: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -18,8 +18,18 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      credits_balance: "opt nat64",
+      credits_suspended_at_ms: "opt int64",
+      archived_at_ms: "opt int64"
+    }
+  },
+  CreditsConfig: {
+    kind: "record",
+    fields: {
+      kinic_ledger_canister_id: "text",
+      sns_governance_id: "text",
+      credits_per_kinic: "nat64",
+      min_update_credits: "nat64"
     }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
@@ -61,14 +71,20 @@ const expectedTypes = {
   },
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
-  OpsAnswerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
+  UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
+  NodeMutationAck: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
   RecentNodeHit: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
   WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
+const actorExpectedTypes = {
+  ...expectedTypes,
+  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
+};
 
 const expectedMethods = {
-  authorize_url_ingest_trigger_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
+  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
+  get_credits_config: { input: [], output: "ResultCreditsConfig", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
@@ -84,7 +100,7 @@ const actorMethods = parseActorMethods(actor);
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   assert.deepEqual(canonicalTypeShape(didTypes[name]), shape, `vfs.did type drift: ${name}`);
-  assert.deepEqual(actorTypes[name], shape, `extension IDL type drift: ${name}`);
+  assert.deepEqual(actorTypes[name], actorExpectedTypes[name], `extension IDL type drift: ${name}`);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {
@@ -115,10 +131,10 @@ function parseDidFields(body) {
 }
 
 function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\(\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.trim();
+    const line = raw.trim().replace(/\s+/g, " ");
     if (!line) continue;
     const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
     if (!match || !(match[1] in expectedMethods)) continue;
@@ -133,7 +149,7 @@ function parseDidMethods(source) {
 
 function parseActorTypes(source) {
   const result = {};
-  for (const [name, shape] of Object.entries(expectedTypes)) {
+  for (const [name, shape] of Object.entries(actorExpectedTypes)) {
     const initializer = source.match(new RegExp(`const\\s+${name}\\s*=\\s*idl\\.(Record|Variant)\\(\\{([^]*?)\\}\\);`, "m"));
     assert.ok(initializer, `extension IDL type missing: ${name}`);
     const kind = initializer[1] === "Record" ? "record" : "variant";
@@ -177,11 +193,12 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
+  if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result_4") return "ResultCreateDatabase";
-  if (normalized === "Result_13") return "ResultDatabases";
-  if (normalized === "Result_15") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultNode";
-  if (normalized === "Result_25") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_16") return "ResultDatabases";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_25") return "ResultNode";
+  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -213,6 +230,7 @@ function splitActorInputs(value) {
 function actorResultName(okShape) {
   const normalized = normalizeActorShape(okShape);
   if (normalized === "null") return "ResultUnit";
+  if (normalized === "CreditsConfig") return "ResultCreditsConfig";
   if (normalized === "CreateDatabaseResult") return "ResultCreateDatabase";
   if (normalized === "Vec(DatabaseSummary)") return "ResultDatabases";
   if (normalized === "MkdirNodeResult") return "ResultMkdirNode";

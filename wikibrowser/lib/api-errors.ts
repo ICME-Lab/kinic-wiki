@@ -1,6 +1,7 @@
 export type ApiErrorCode =
   | "canister_not_found"
   | "ic_host_unreachable"
+  | "wiki_api_version_mismatch"
   | "wiki_api_missing"
   | "invalid_canister_id"
   | "wiki_request_failed";
@@ -40,10 +41,17 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
       code: "ic_host_unreachable"
     };
   }
+  if (/CandidDecodeError|Cannot find field hash|subtype|type mismatch|variant, expected fields/i.test(raw)) {
+    return {
+      error: "Wiki VFS API response unavailable.",
+      hint: "The canister response could not be decoded by the browser.",
+      code: "wiki_api_version_mismatch"
+    };
+  }
   if (/method .*not found|no (query|update) method|does not expose|Cannot find field|subtype|type mismatch|Candid|IDL/i.test(raw)) {
     return {
       error: "This canister does not expose the Wiki VFS API",
-      hint: "Use a Kinic Wiki canister with read_node_context, list_children, graph_neighborhood, search, and recent_nodes methods.",
+      hint: "Use a Kinic Wiki canister with read_node_context, list_children, graph_neighborhood, and search methods.",
       code: "wiki_api_missing"
     };
   }

@@ -113,6 +113,7 @@ export function DocumentPane({
   writeIdentity,
   currentDatabaseRole,
   databaseRoleError,
+  databaseCreditsError,
   onNodeSaved,
   onFolderIndexSaved,
   onEditStateChange,
@@ -131,6 +132,7 @@ export function DocumentPane({
   writeIdentity?: Identity | null;
   currentDatabaseRole?: DatabaseRole | null;
   databaseRoleError?: string | null;
+  databaseCreditsError?: string | null;
   onNodeSaved?: () => Promise<WikiNode>;
   onFolderIndexSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
@@ -158,6 +160,7 @@ export function DocumentPane({
           writeIdentity={writeIdentity ?? null}
           currentDatabaseRole={currentDatabaseRole ?? null}
           databaseRoleError={databaseRoleError ?? null}
+          databaseCreditsError={databaseCreditsError ?? null}
           onFolderIndexSaved={onFolderIndexSaved}
           onEditStateChange={onEditStateChange}
         />
@@ -178,6 +181,7 @@ export function DocumentPane({
           writeIdentity={writeIdentity ?? null}
           currentDatabaseRole={currentDatabaseRole ?? null}
           databaseRoleError={databaseRoleError ?? null}
+          databaseCreditsError={databaseCreditsError ?? null}
           onNodeSaved={onNodeSaved}
           onEditStateChange={onEditStateChange}
           tab={tab}
@@ -281,6 +285,7 @@ function NodeDocument({
   writeIdentity,
   currentDatabaseRole,
   databaseRoleError,
+  databaseCreditsError,
   onNodeSaved,
   onEditStateChange
 }: {
@@ -295,6 +300,7 @@ function NodeDocument({
   writeIdentity: Identity | null;
   currentDatabaseRole: DatabaseRole | null;
   databaseRoleError: string | null;
+  databaseCreditsError: string | null;
   onNodeSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
@@ -315,6 +321,7 @@ function NodeDocument({
         writeIdentity={writeIdentity}
         currentDatabaseRole={currentDatabaseRole}
         databaseRoleError={databaseRoleError}
+        databaseCreditsError={databaseCreditsError}
         onNodeSaved={onNodeSaved}
         onEditStateChange={onEditStateChange}
       />
@@ -348,6 +355,7 @@ function EditDocument({
   writeIdentity,
   currentDatabaseRole,
   databaseRoleError,
+  databaseCreditsError,
   onNodeSaved,
   onEditStateChange
 }: {
@@ -363,6 +371,7 @@ function EditDocument({
   writeIdentity: Identity | null;
   currentDatabaseRole: DatabaseRole | null;
   databaseRoleError: string | null;
+  databaseCreditsError: string | null;
   onNodeSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
@@ -409,6 +418,9 @@ function EditDocument({
   }
   if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") {
     return <EditorUnavailable title="Writer or owner access required" message="This principal can read the database but cannot save Markdown changes." />;
+  }
+  if (databaseCreditsError) {
+    return <EditorUnavailable title="Database credits required" message={databaseCreditsError} />;
   }
   if (!onNodeSaved) {
     return <EditorUnavailable title="Save unavailable" message="The browser cannot refresh this node after saving." />;
@@ -560,6 +572,7 @@ function FolderDocument({
   writeIdentity,
   currentDatabaseRole,
   databaseRoleError,
+  databaseCreditsError,
   onFolderIndexSaved,
   onEditStateChange
 }: {
@@ -576,6 +589,7 @@ function FolderDocument({
   writeIdentity: Identity | null;
   currentDatabaseRole: DatabaseRole | null;
   databaseRoleError: string | null;
+  databaseCreditsError: string | null;
   onFolderIndexSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
@@ -600,6 +614,7 @@ function FolderDocument({
         writeIdentity={writeIdentity}
         currentDatabaseRole={currentDatabaseRole}
         databaseRoleError={databaseRoleError}
+        databaseCreditsError={databaseCreditsError}
         onNodeSaved={onFolderIndexSaved}
         onEditStateChange={onEditStateChange}
       />
