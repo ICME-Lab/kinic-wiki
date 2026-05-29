@@ -14,8 +14,9 @@ use vfs_types::{
 };
 
 use crate::{
-    SERVICE, append_node, caller_text, export_snapshot, fetch_updates, initialize_service,
-    move_node, now_millis, read_node, search_nodes, with_service, write_node,
+    SERVICE, append_node, caller_text, export_snapshot, fetch_updates,
+    initialize_service_with_config, move_node, now_millis, read_node, search_nodes, with_service,
+    write_node,
 };
 
 const BENCH_DATABASE_ID: &str = "canbench";
@@ -46,7 +47,7 @@ struct SnapshotMetrics {
 fn ensure_bench_service() {
     let initialized = SERVICE.with(|slot| slot.borrow().is_some());
     if !initialized {
-        initialize_service().expect("bench service should initialize");
+        initialize_service_with_config(None).expect("bench service should initialize");
     }
     with_service(|service| {
         let exists = service
