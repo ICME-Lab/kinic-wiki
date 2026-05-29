@@ -56,6 +56,12 @@ fn install_test_service() {
     service
         .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+            )?;
             service.credit_database_purchase(
                 operation_id,
                 "default",
@@ -303,6 +309,14 @@ fn fund_database(database_id: &str, amount_credits: u64, ledger_block_index: u64
                 1_700_000_000_000,
             )
             .expect("database credit purchase should begin");
+        service
+            .mark_database_credit_purchase_completed(
+                operation_id,
+                database_id,
+                &principal,
+                amount_credits,
+            )
+            .expect("database credit purchase should be marked completed");
         if service
             .activate_pending_database_for_credit_purchase(database_id, 1_700_000_000_000)
             .expect("pending database activation should prepare")
@@ -666,6 +680,12 @@ fn repair_complete_succeeds_after_activation_started_and_credit_apply_failed() {
             .entries
             .is_empty()
     );
+    let cancel_error = repair_database_credit_purchase_cancel(
+        database.database_id.clone(),
+        pending[0].operation_id,
+    )
+    .expect_err("completed payment should not be cancellable");
+    assert!(cancel_error.contains("credit purchase operation is completed"));
 
     set_ledger_transaction_for_test(44, pending_credit_purchase_transaction(&pending[0]));
     let result = block_on_ready(repair_database_credit_purchase_complete(
@@ -680,6 +700,56 @@ fn repair_complete_succeeds_after_activation_started_and_credit_apply_failed() {
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
     );
+}
+
+#[test]
+fn repair_cancel_rejects_in_flight_credit_purchase() {
+    install_empty_test_service();
+    let _owner = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "In flight cancel".to_string(),
+    })
+    .expect("database should create");
+    let caller = Principal::management_canister().to_text();
+    let operation_id = SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .begin_database_credit_purchase(&database.database_id, &caller, 500, 1_700_000_000_000)
+            .expect("credit purchase should begin")
+    });
+
+    let error = repair_database_credit_purchase_cancel(database.database_id, operation_id)
+        .expect_err("in-flight purchase cancel should reject");
+
+    assert!(error.contains("credit purchase operation is in_flight"));
+}
+
+#[test]
+fn repair_complete_rejects_in_flight_credit_purchase() {
+    install_empty_test_service();
+    let _owner = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "In flight complete".to_string(),
+    })
+    .expect("database should create");
+    let caller = Principal::management_canister().to_text();
+    let operation_id = SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .begin_database_credit_purchase(&database.database_id, &caller, 500, 1_700_000_000_000)
+            .expect("credit purchase should begin")
+    });
+
+    let error = block_on_ready(repair_database_credit_purchase_complete(
+        database.database_id,
+        operation_id,
+        42,
+    ))
+    .expect_err("in-flight purchase complete should reject");
+
+    assert!(error.contains("credit purchase operation is in_flight"));
 }
 
 #[test]
@@ -1066,6 +1136,12 @@ fn install_suspended_default_service() {
     service
         .begin_database_credit_purchase("default", "2vxsx-fae", 1, 1_700_000_000_001)
         .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1,
+            )?;
             service.credit_database_purchase(
                 operation_id,
                 "default",
@@ -1105,6 +1181,12 @@ fn install_low_balance_default_service() {
     service
         .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+            )?;
             service.credit_database_purchase(
                 operation_id,
                 "default",
@@ -1432,6 +1514,12 @@ fn write_nodes_rejects_reader_role() {
     service
         .begin_database_credit_purchase("public", "owner", 1_000_000, 2)
         .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "public",
+                "owner",
+                1_000_000,
+            )?;
             service.credit_database_purchase(operation_id, "public", "owner", 1_000_000, 1, 2)
         })
         .expect("database should have write credits available");
@@ -2463,6 +2551,12 @@ fn cancel_database_archive_entrypoint_rejects_non_owner() {
     service
         .begin_database_credit_purchase("default", "owner", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "owner",
+                1_000_000,
+            )?;
             service.credit_database_purchase(
                 operation_id,
                 "default",

@@ -38,6 +38,7 @@ CREATE TABLE database_credit_pending_operations (
   to_subaccount BLOB,
   ledger_fee_e8s INTEGER,
   ledger_created_at_time_ns INTEGER,
+  operation_status TEXT NOT NULL,
   created_at_ms INTEGER NOT NULL,
   FOREIGN KEY (database_id) REFERENCES databases(database_id)
 );

@@ -28,6 +28,12 @@ fn install_test_service() {
     service
         .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+            )?;
             service.credit_database_purchase(
                 operation_id,
                 "default",

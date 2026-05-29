@@ -512,6 +512,9 @@ fn credit_database(
         .begin_database_credit_purchase(database_id, caller, amount_credits, now)
         .expect("database credit purchase should begin");
     service
+        .mark_database_credit_purchase_completed(operation_id, database_id, caller, amount_credits)
+        .expect("database credit purchase should be marked completed");
+    service
         .credit_database_purchase(
             operation_id,
             database_id,
@@ -1570,6 +1573,14 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
     service
         .run_pending_database_migrations(&pending.database_id)
         .expect("pending migrations should run");
+    service
+        .mark_database_credit_purchase_completed(
+            operation_id,
+            &pending.database_id,
+            "payer",
+            1_000_000,
+        )
+        .expect("credit purchase should be marked completed");
     let balance = service
         .credit_database_purchase(
             operation_id,
@@ -1615,6 +1626,53 @@ fn pending_database_credit_purchase_cancel_does_not_allocate_mount_slot() {
         .create_database("active", "owner", 5)
         .expect("active database should use first mount");
     assert_eq!(active.mount_id, 11);
+}
+
+#[test]
+fn direct_credit_purchase_cancel_rejects_non_in_flight_operations() {
+    let (service, root) = service_with_root();
+    for database_id in ["completed-cancel", "ambiguous-cancel"] {
+        service
+            .create_database(database_id, "owner", 1)
+            .expect("database should create");
+    }
+
+    let completed = service
+        .begin_database_credit_purchase("completed-cancel", "payer", 500, 2)
+        .expect("completed operation should begin");
+    service
+        .mark_database_credit_purchase_completed(completed, "completed-cancel", "payer", 500)
+        .expect("completed operation should be marked completed");
+    let completed_error = service
+        .cancel_database_credit_purchase(completed, "completed-cancel", "payer", 500)
+        .expect_err("completed operation should not be directly cancellable");
+    assert!(completed_error.contains("credit purchase operation is completed"));
+    assert_eq!(
+        database_pending_operation_count(&root, "completed-cancel"),
+        1
+    );
+
+    let ambiguous = service
+        .begin_database_credit_purchase("ambiguous-cancel", "payer", 700, 3)
+        .expect("ambiguous operation should begin");
+    service
+        .mark_database_credit_purchase_ambiguous(ambiguous, "ambiguous-cancel", "payer", 700, 4)
+        .expect("ambiguous operation should be marked ambiguous");
+    let ambiguous_error = service
+        .cancel_database_credit_purchase(ambiguous, "ambiguous-cancel", "payer", 700)
+        .expect_err("ambiguous operation should not be directly cancellable");
+    assert!(ambiguous_error.contains("credit purchase operation is ambiguous"));
+    assert_eq!(
+        database_pending_operation_count(&root, "ambiguous-cancel"),
+        1
+    );
+    service
+        .repair_database_credit_purchase_cancel("ambiguous-cancel", ambiguous, "payer", 5)
+        .expect("ambiguous operation should remain repair cancellable");
+    assert_eq!(
+        database_pending_operation_count(&root, "ambiguous-cancel"),
+        0
+    );
 }
 
 #[test]
@@ -1849,6 +1907,9 @@ fn database_credit_purchase_settlement_survives_owner_role_change() {
     service
         .revoke_database_access("alpha", "replacement", "owner")
         .expect("replacement should revoke original owner");
+    service
+        .mark_database_credit_purchase_completed(operation_id, "alpha", "owner", 500)
+        .expect("credit purchase should be marked completed");
 
     let balance = service
         .credit_database_purchase(operation_id, "alpha", "owner", 500, 7, 3)
@@ -1888,6 +1949,9 @@ fn pending_database_credit_purchase_blocks_delete_until_resolved() {
         assert_eq!(database_pending_operation_count(&root, database_id), 1);
     }
 
+    service
+        .mark_database_credit_purchase_completed(complete, "complete", "owner", 500)
+        .expect("credit purchase should be marked completed");
     service
         .credit_database_purchase(complete, "complete", "owner", 500, 10, 4)
         .expect("credit purchase should complete");

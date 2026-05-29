@@ -95,6 +95,7 @@ fn credit_database(
     now: i64,
 ) -> Result<u64, String> {
     let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
+    service.mark_database_credit_purchase_completed(operation_id, database_id, caller, credits)?;
     service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
 }
 

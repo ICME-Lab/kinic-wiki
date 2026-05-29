@@ -556,6 +556,15 @@ async fn purchase_database_credits(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
+            with_service(|service| {
+                service.mark_database_credit_purchase_completed(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    request.credits,
+                )
+            })
+            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
             activate_pending_database_after_credit_purchase_ledger_success(
                 &request.database_id,
                 now,
@@ -597,7 +606,7 @@ async fn purchase_database_credits(
             Err(error)
         }
         LedgerTransferFromOutcome::Ambiguous(error) => {
-            let _ = with_service(|service| {
+            match with_service(|service| {
                 service.mark_database_credit_purchase_ambiguous(
                     operation_id,
                     &request.database_id,
@@ -605,10 +614,14 @@ async fn purchase_database_credits(
                     request.credits,
                     now,
                 )
-            });
-            Err(format!(
-                "credit purchase pending operation {operation_id}; manual repair required: {error}"
-            ))
+            }) {
+                Ok(_) => Err(format!(
+                    "credit purchase pending operation {operation_id}; manual repair required: {error}"
+                )),
+                Err(mark_error) => Err(format!(
+                    "credit purchase pending operation {operation_id}; ledger result ambiguous; mark ambiguous failed: {mark_error}; original ledger error: {error}"
+                )),
+            }
         }
     }
 }

@@ -63,6 +63,8 @@ const INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT: &str =
     "database_index:019_fixed_cycles_per_credit";
 const INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION: &str =
     "database_index:020_credits_config_version";
+const INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS: &str =
+    "database_index:021_credit_pending_operation_status";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -89,6 +91,9 @@ const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
 pub const DEFAULT_LLM_WRITER_PRINCIPAL: &str =
     "ckurn-x74ln-nemlm-42vfv-gej7r-4cc3e-v22e5-otcod-jndlh-pbst4-3qe";
 const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
+const CREDIT_OPERATION_STATUS_IN_FLIGHT: &str = "in_flight";
+const CREDIT_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
+const CREDIT_OPERATION_STATUS_COMPLETED: &str = "completed";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseMeta {
@@ -680,6 +685,7 @@ impl VfsService {
                         ledger_fee_e8s: ledger_fee,
                         ledger_created_at_time_ns: ledger_created_at_time,
                     },
+                    operation_status: CREDIT_OPERATION_STATUS_IN_FLIGHT,
                     now: request.now,
                 },
             )
@@ -706,6 +712,11 @@ impl VfsService {
                     caller,
                     credits,
                 },
+            )?;
+            require_pending_operation_status(
+                &operation,
+                &[CREDIT_OPERATION_STATUS_COMPLETED],
+                "apply completed credit purchase",
             )?;
             load_database_status(tx, database_id)?;
             complete_pending_database_activation(tx, database_id, now)?;
@@ -753,6 +764,11 @@ impl VfsService {
                     credits,
                 },
             )?;
+            require_pending_operation_status(
+                &operation,
+                &[CREDIT_OPERATION_STATUS_IN_FLIGHT],
+                "mark credit purchase ambiguous",
+            )?;
             load_database_status(tx, database_id)?;
             let balance = database_balance_for_update(tx, database_id)?;
             insert_database_ledger(
@@ -771,7 +787,44 @@ impl VfsService {
                     now,
                 },
             )?;
+            update_pending_credits_operation_status(
+                tx,
+                operation_id,
+                CREDIT_OPERATION_STATUS_AMBIGUOUS,
+            )?;
             Ok(balance as u64)
+        })
+    }
+
+    pub fn mark_database_credit_purchase_completed(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        credits: u64,
+    ) -> Result<(), String> {
+        let credits = credits_to_i64(credits)?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_credits_operation(
+                tx,
+                PendingCreditsOperationMatch {
+                    operation_id,
+                    database_id,
+                    kind: "credit_purchase",
+                    caller,
+                    credits,
+                },
+            )?;
+            require_pending_operation_status(
+                &operation,
+                &[CREDIT_OPERATION_STATUS_IN_FLIGHT],
+                "mark credit purchase completed",
+            )?;
+            update_pending_credits_operation_status(
+                tx,
+                operation_id,
+                CREDIT_OPERATION_STATUS_COMPLETED,
+            )
         })
     }
 
@@ -784,7 +837,7 @@ impl VfsService {
     ) -> Result<(), String> {
         let credits = credits_to_i64(credits)?;
         self.write_index(|tx| {
-            require_pending_credits_operation(
+            let operation = load_required_pending_credits_operation(
                 tx,
                 PendingCreditsOperationMatch {
                     operation_id,
@@ -793,6 +846,11 @@ impl VfsService {
                     caller,
                     credits,
                 },
+            )?;
+            require_pending_operation_status(
+                &operation,
+                &[CREDIT_OPERATION_STATUS_IN_FLIGHT],
+                "cancel credit purchase",
             )?;
             delete_pending_credits_operation(tx, operation_id)
         })
@@ -882,7 +940,7 @@ impl VfsService {
                 .prepare(
                     "SELECT operation_id, database_id, kind, caller, credits, payment_amount_e8s,
                             from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
-                            ledger_created_at_time_ns, created_at_ms
+                            ledger_created_at_time_ns, operation_status, created_at_ms
                      FROM database_credit_pending_operations
                      WHERE database_id = ?1 AND operation_id > ?2
                      ORDER BY operation_id ASC
@@ -918,6 +976,14 @@ impl VfsService {
             if operation.database_id != database_id {
                 return Err("pending credit operation mismatch".to_string());
             }
+            require_pending_operation_status(
+                &operation,
+                &[
+                    CREDIT_OPERATION_STATUS_AMBIGUOUS,
+                    CREDIT_OPERATION_STATUS_COMPLETED,
+                ],
+                "complete credit purchase repair",
+            )?;
             Ok(pending_credits_operation_to_public(operation))
         })
     }
@@ -933,6 +999,14 @@ impl VfsService {
         self.write_index(|tx| {
             let operation = load_pending_credits_operation(tx, operation_id)?;
             require_pending_database_kind(&operation, database_id, "credit_purchase")?;
+            require_pending_operation_status(
+                &operation,
+                &[
+                    CREDIT_OPERATION_STATUS_AMBIGUOUS,
+                    CREDIT_OPERATION_STATUS_COMPLETED,
+                ],
+                "complete credit purchase repair",
+            )?;
             load_database_status(tx, database_id)?;
             complete_pending_database_activation(tx, database_id, now)?;
             let balance = database_balance_for_update(tx, database_id)?;
@@ -969,6 +1043,11 @@ impl VfsService {
         self.write_index(|tx| {
             let operation = load_pending_credits_operation(tx, operation_id)?;
             require_pending_database_kind(&operation, database_id, "credit_purchase")?;
+            require_pending_operation_status(
+                &operation,
+                &[CREDIT_OPERATION_STATUS_AMBIGUOUS],
+                "cancel credit purchase repair",
+            )?;
             let status = load_database_status(tx, database_id)?;
             let is_payer = operation.caller == caller;
             let is_owner = load_member_role(tx, database_id, caller)?
@@ -2599,6 +2678,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    NeedsPendingOperationStatus,
     Mainnet011,
 }
 
@@ -2608,6 +2688,10 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
+        IndexSchemaState::NeedsPendingOperationStatus => {
+            apply_pending_operation_status_index_migration(conn)?;
+            validate_index_schema(conn)
+        }
         IndexSchemaState::Mainnet011 => {
             let config = config
                 .ok_or_else(|| "credits config required for first credits upgrade".to_string())?;
@@ -2623,7 +2707,12 @@ fn classify_existing_index_schema_state(
     conn: &Transaction<'_>,
 ) -> Result<IndexSchemaState, String> {
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION)? {
-        return Ok(IndexSchemaState::Latest);
+        return if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS)?
+        {
+            Ok(IndexSchemaState::Latest)
+        } else {
+            Ok(IndexSchemaState::NeedsPendingOperationStatus)
+        };
     }
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         return Err(format!(
@@ -2672,6 +2761,22 @@ fn apply_mainnet_011_to_latest_index_migration(
         insert_schema_migration_now(conn, version)?;
     }
     Ok(())
+}
+
+fn apply_pending_operation_status_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    if !index_column_exists(
+        conn,
+        "database_credit_pending_operations",
+        "operation_status",
+    )? {
+        conn.execute(
+            "ALTER TABLE database_credit_pending_operations
+             ADD COLUMN operation_status TEXT NOT NULL DEFAULT 'ambiguous'",
+            params![],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS)
 }
 
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
@@ -2799,6 +2904,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY,
     INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT,
     INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION,
+    INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -2826,6 +2932,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY,
     INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT,
     INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION,
+    INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -3031,6 +3138,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "to_subaccount",
                 "ledger_fee_e8s",
                 "ledger_created_at_time_ns",
+                "operation_status",
                 "created_at_ms",
             ][..],
         ),
@@ -3400,6 +3508,7 @@ struct PendingCreditsOperation {
     to_subaccount: Option<Vec<u8>>,
     ledger_fee_e8s: Option<i64>,
     ledger_created_at_time_ns: Option<i64>,
+    operation_status: String,
     created_at_ms: i64,
 }
 
@@ -3419,6 +3528,7 @@ struct PendingCreditsOperationInsert<'a> {
     credits: i64,
     payment_amount_e8s: i64,
     ledger: PendingCreditsLedgerDetails<'a>,
+    operation_status: &'a str,
     now: i64,
 }
 
@@ -3446,14 +3556,16 @@ fn insert_pending_credits_operation(
         crate::sqlite::nullable_blob_value(operation.ledger.to_subaccount.map(Vec::from)),
         crate::sqlite::integer_value(operation.ledger.ledger_fee_e8s),
         crate::sqlite::integer_value(operation.ledger.ledger_created_at_time_ns),
+        crate::sqlite::text_value(operation.operation_status),
         crate::sqlite::integer_value(operation.now),
     ];
     crate::sqlite::execute_values(
         conn,
         "INSERT INTO database_credit_pending_operations
          (database_id, kind, caller, credits, payment_amount_e8s, from_owner, from_subaccount,
-          to_owner, to_subaccount, ledger_fee_e8s, ledger_created_at_time_ns, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          to_owner, to_subaccount, ledger_fee_e8s, ledger_created_at_time_ns, operation_status,
+          created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -3469,7 +3581,7 @@ fn load_pending_credits_operation(
     conn.query_row(
         "SELECT operation_id, database_id, kind, caller, credits, payment_amount_e8s,
                 from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
-                ledger_created_at_time_ns, created_at_ms
+                ledger_created_at_time_ns, operation_status, created_at_ms
          FROM database_credit_pending_operations
          WHERE operation_id = ?1",
         params![operation_id],
@@ -3480,6 +3592,23 @@ fn load_pending_credits_operation(
     .ok_or_else(|| "pending credit operation not found".to_string())
 }
 
+fn require_pending_operation_status(
+    operation: &PendingCreditsOperation,
+    allowed: &[&str],
+    action: &str,
+) -> Result<(), String> {
+    if allowed
+        .iter()
+        .any(|status| operation.operation_status == *status)
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "cannot {action}; credit purchase operation is {}",
+        operation.operation_status
+    ))
+}
+
 fn require_pending_database_kind(
     operation: &PendingCreditsOperation,
     database_id: &str,
@@ -3488,14 +3617,6 @@ fn require_pending_database_kind(
     if operation.database_id != database_id || operation.kind != kind {
         return Err("pending credit operation mismatch".to_string());
     }
-    Ok(())
-}
-
-fn require_pending_credits_operation(
-    conn: &Transaction<'_>,
-    expected: PendingCreditsOperationMatch<'_>,
-) -> Result<(), String> {
-    let _operation = load_required_pending_credits_operation(conn, expected)?;
     Ok(())
 }
 
@@ -3527,6 +3648,22 @@ fn delete_pending_credits_operation(
     Ok(())
 }
 
+fn update_pending_credits_operation_status(
+    conn: &Transaction<'_>,
+    operation_id: u64,
+    status: &str,
+) -> Result<(), String> {
+    let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+    conn.execute(
+        "UPDATE database_credit_pending_operations
+         SET operation_status = ?2
+         WHERE operation_id = ?1",
+        params![operation_id, status],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn map_pending_credits_operation(
     row: &crate::sqlite::Row<'_>,
 ) -> crate::sqlite::Result<PendingCreditsOperation> {
@@ -3544,7 +3681,8 @@ fn map_pending_credits_operation(
         to_subaccount: crate::sqlite::row_get(row, 9)?,
         ledger_fee_e8s: crate::sqlite::row_get(row, 10)?,
         ledger_created_at_time_ns: crate::sqlite::row_get(row, 11)?,
-        created_at_ms: crate::sqlite::row_get(row, 12)?,
+        operation_status: crate::sqlite::row_get(row, 12)?,
+        created_at_ms: crate::sqlite::row_get(row, 13)?,
     })
 }
 
@@ -4670,6 +4808,125 @@ mod tests {
     }
 
     #[test]
+    fn upgrade_migration_marks_existing_pending_credit_operations_ambiguous() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let conn = Connection::open(&index_path).expect("index DB should open");
+        conn.execute(
+            "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
+            params![],
+        )
+        .expect("schema_migrations should create");
+        conn.execute_batch(
+            &FRESH_INDEX_SCHEMA_SQL.replace("  operation_status TEXT NOT NULL,\n", ""),
+        )
+        .expect("pre-status schema should create");
+        for version in INDEX_SCHEMA_VERSIONS
+            .iter()
+            .copied()
+            .filter(|version| *version != INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS)
+        {
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+                params![version],
+            )
+            .expect("migration marker should insert");
+        }
+        let config = test_credits_config();
+        conn.execute(
+            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
+            params![
+                "kinic_ledger_canister_id",
+                config.kinic_ledger_canister_id.as_str()
+            ],
+        )
+        .expect("ledger config should insert");
+        conn.execute(
+            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
+            params!["sns_governance_id", config.sns_governance_id.as_str()],
+        )
+        .expect("governance config should insert");
+        conn.execute(
+            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
+            params!["credits_per_kinic", config.credits_per_kinic.to_string()],
+        )
+        .expect("rate config should insert");
+        conn.execute(
+            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
+            params!["min_update_credits", config.min_update_credits.to_string()],
+        )
+        .expect("minimum config should insert");
+        conn.execute(
+            "INSERT INTO credits_config (key, value) VALUES ('config_version', '1')",
+            params![],
+        )
+        .expect("version config should insert");
+        conn.execute(
+            "INSERT INTO databases
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
+              logical_size_bytes, created_at_ms, updated_at_ms)
+             VALUES ('db_old', 'Old', '', 0, NULL, 'pending', ?1, 0, 1, 1)",
+            params![DATABASE_SCHEMA_VERSION],
+        )
+        .expect("database should insert");
+        conn.execute(
+            "INSERT INTO database_credit_accounts
+             (database_id, balance_credits, suspended_at_ms, created_at_ms, updated_at_ms)
+             VALUES ('db_old', 0, 1, 1, 1)",
+            params![],
+        )
+        .expect("account should insert");
+        conn.execute(
+            "INSERT INTO database_credit_pending_operations
+             (database_id, kind, caller, credits, payment_amount_e8s, from_owner, from_subaccount,
+              to_owner, to_subaccount, ledger_fee_e8s, ledger_created_at_time_ns, created_at_ms)
+             VALUES ('db_old', 'credit_purchase', '2vxsx-fae', 10, 1000, '2vxsx-fae', NULL,
+                     'aaaaa-aa', NULL, 10000, 1700000000000000000, 1)",
+            params![],
+        )
+        .expect("legacy pending operation should insert");
+        drop(conn);
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("status migration should apply");
+
+        let conn = Connection::open(&index_path).expect("index DB should reopen");
+        let status: String = conn
+            .query_row(
+                "SELECT operation_status FROM database_credit_pending_operations WHERE database_id = 'db_old'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("operation status should load");
+        let marker: String = conn
+            .query_row(
+                "SELECT version FROM schema_migrations WHERE version = ?1",
+                params![INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS],
+                |row| row.get(0),
+            )
+            .expect("status migration marker should exist");
+        assert_eq!(status, CREDIT_OPERATION_STATUS_AMBIGUOUS);
+        assert_eq!(marker, INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS);
+        drop(conn);
+
+        service
+            .repair_database_credit_purchase_cancel("db_old", 1, "2vxsx-fae", 2)
+            .expect("migrated ambiguous operation should remain cancellable");
+
+        let conn = Connection::open(&index_path).expect("index DB should reopen after cancel");
+        let pending_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM database_credit_pending_operations WHERE database_id = 'db_old'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("pending count should load");
+        assert_eq!(pending_count, 0);
+    }
+
+    #[test]
     fn index_sql_json_returns_credits_json_rows() {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
@@ -4685,6 +4942,14 @@ mod tests {
         let operation_id = service
             .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
             .expect("credit purchase should begin");
+        service
+            .mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+            )
+            .expect("credit purchase should be marked completed");
         service
             .credit_database_purchase(
                 operation_id,
