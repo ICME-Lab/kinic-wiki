@@ -3,7 +3,12 @@
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
 import { buildUrlIngestRequest } from "./url-ingest-request.js";
-import { createVfsActor as defaultCreateVfsActor, normalizeWritableDatabases } from "./vfs-actor.js";
+import {
+  createVfsActor as defaultCreateVfsActor,
+  getCreditsConfigOrNull,
+  normalizeWritableDatabases,
+  requireDatabaseWriteCreditsAvailable
+} from "./vfs-actor.js";
 
 const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
 const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
@@ -45,6 +50,7 @@ export async function queueUrlIngest(tab, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  await requireDatabaseWriteCreditsAvailable(actor, config.databaseId);
   const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
   const request = buildUrlIngestRequest({
     url: tab.url,
@@ -80,6 +86,7 @@ export async function saveRawSource(rawSource, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  await requireDatabaseWriteCreditsAvailable(actor, config.databaseId);
   const existing = await actor.read_node(config.databaseId, rawSource.path);
   if ("Err" in existing) throw new Error(existing.Err);
   const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];
@@ -141,9 +148,12 @@ export async function listWritableDatabases(config) {
   if (!config?.canisterId) throw new Error("canister id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  const result = await actor.list_databases();
+  const [result, creditsConfig] = await Promise.all([
+    actor.list_databases(),
+    getCreditsConfigOrNull(actor)
+  ]);
   if ("Err" in result) throw new Error(result.Err);
-  return normalizeWritableDatabases(result.Ok);
+  return normalizeWritableDatabases(result.Ok, creditsConfig);
 }
 
 export function setOffscreenDepsForTest(deps = {}) {

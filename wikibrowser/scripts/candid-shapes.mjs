@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -10,13 +10,96 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
-      archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      credits_balance: "opt nat64",
+      credits_suspended_at_ms: "opt int64",
+      archived_at_ms: "opt int64"
     }
+  },
+  CreditsConfig: {
+    kind: "record",
+    fields: {
+      credits_per_kinic: "nat64",
+      min_update_credits: "nat64",
+      kinic_ledger_canister_id: "text",
+      sns_governance_id: "text"
+    }
+  },
+  CreditsPurchaseResult: {
+    kind: "record",
+    fields: { block_index: "nat64", balance_credits: "nat64" }
+  },
+  DatabaseCreditPurchasePreview: {
+    kind: "record",
+    fields: {
+      payment_amount_e8s: "nat64",
+      ledger_fee_e8s: "nat64",
+      credits_per_kinic: "nat64",
+      config_version: "nat64"
+    }
+  },
+  DatabaseCreditPurchaseRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      credits: "nat64",
+      expected_payment_amount_e8s: "nat64",
+      expected_config_version: "nat64"
+    }
+  },
+  Icrc21ConsentMessageMetadata: {
+    kind: "record",
+    fields: { utc_offset_minutes: "opt int16", language: "text" }
+  },
+  Icrc21DeviceSpec: { kind: "variant", cases: { GenericDisplay: "null", FieldsDisplay: "null" } },
+  Icrc21ConsentMessageSpec: {
+    kind: "record",
+    fields: {
+      metadata: "Icrc21ConsentMessageMetadata",
+      device_spec: "opt Icrc21DeviceSpec"
+    }
+  },
+  Icrc21ConsentMessageRequest: {
+    kind: "record",
+    fields: {
+      arg: "blob",
+      method: "text",
+      user_preferences: "Icrc21ConsentMessageSpec"
+    }
+  },
+  Icrc21ConsentMessage: { kind: "variant", cases: { GenericDisplayMessage: "text" } },
+  Icrc21ConsentInfo: {
+    kind: "record",
+    fields: {
+      metadata: "Icrc21ConsentMessageMetadata",
+      consent_message: "Icrc21ConsentMessage"
+    }
+  },
+  Icrc21ErrorInfo: { kind: "record", fields: { description: "text" } },
+  Icrc21GenericError: {
+    kind: "record",
+    fields: { description: "text", error_code: "nat" }
+  },
+  Icrc21Error: {
+    kind: "variant",
+    cases: {
+      GenericError: "Icrc21GenericError",
+      InsufficientPayment: "Icrc21ErrorInfo",
+      UnsupportedCanisterCall: "Icrc21ErrorInfo",
+      ConsentMessageUnavailable: "Icrc21ErrorInfo"
+    }
+  },
+  Icrc21ConsentMessageResponse: {
+    kind: "variant",
+    cases: { Ok: "Icrc21ConsentInfo", Err: "Icrc21Error" }
+  },
+  Icrc10SupportedStandard: {
+    kind: "record",
+    fields: { url: "text", name: "text" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
+  DeleteDatabaseRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -24,6 +107,52 @@ export const expectedTypes = {
       role: "DatabaseRole",
       created_at_ms: "int64",
       database_id: "text"
+    }
+  },
+  DatabaseCreditEntry: {
+    kind: "record",
+    fields: {
+      method: "opt text",
+      credits_per_kinic: "opt nat64",
+      payment_amount_e8s: "opt nat64",
+      kind: "text",
+      created_at_ms: "int64",
+      amount_credits: "int64",
+      ledger_block_index: "opt nat64",
+      database_id: "text",
+      balance_after_credits: "nat64",
+      caller: "text",
+      cycles_delta: "opt nat64",
+      entry_id: "nat64"
+    }
+  },
+  DatabaseCreditEntryPage: {
+    kind: "record",
+    fields: { entries: "vec DatabaseCreditEntry", next_cursor: "opt nat64" }
+  },
+  DatabaseCreditPendingOperation: {
+    kind: "record",
+    fields: {
+      credits: "int64",
+      payment_amount_e8s: "int64",
+      to_owner: "opt text",
+      to_subaccount: "opt blob",
+      from_owner: "opt text",
+      kind: "text",
+      operation_id: "nat64",
+      from_subaccount: "opt blob",
+      created_at_ms: "int64",
+      ledger_fee_e8s: "opt int64",
+      ledger_created_at_time_ns: "opt int64",
+      database_id: "text",
+      caller: "text"
+    }
+  },
+  DatabaseCreditPendingOperationPage: {
+    kind: "record",
+    fields: {
+      entries: "vec DatabaseCreditPendingOperation",
+      next_cursor: "opt nat64"
     }
   },
   CanonicalRole: {
@@ -71,7 +200,7 @@ export const expectedTypes = {
   },
   WriteNodeResult: {
     kind: "record",
-    fields: { created: "bool", node: "RecentNodeHit" }
+    fields: { created: "bool", node: "NodeMutationAck" }
   },
   WriteSourceForGenerationRequest: {
     kind: "record",
@@ -191,11 +320,6 @@ export const expectedTypes = {
       namespace: "opt text"
     }
   },
-  RecentNodeHit: {
-    kind: "record",
-    fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
-  },
-  RecentNodesRequest: { kind: "record", fields: { path: "opt text", limit: "nat32", database_id: "text" } },
   GraphLinksRequest: { kind: "record", fields: { limit: "nat32", database_id: "text", prefix: "text" } },
   GraphNeighborhoodRequest: { kind: "record", fields: { center_path: "text", limit: "nat32", database_id: "text", depth: "nat32" } },
   IncomingLinksRequest: { kind: "record", fields: { path: "text", limit: "nat32", database_id: "text" } },
@@ -217,7 +341,12 @@ export const expectedTypes = {
     fields: { incoming_links: "vec LinkEdge", node: "Node", outgoing_links: "vec LinkEdge" }
   },
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
-  ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
+  ResultCreditsConfig: { kind: "variant", cases: { Ok: "CreditsConfig", Err: "text" } },
+  ResultCreditsPurchase: { kind: "variant", cases: { Ok: "CreditsPurchaseResult", Err: "text" } },
+  ResultCreditsPurchasePreview: { kind: "variant", cases: { Ok: "DatabaseCreditPurchasePreview", Err: "text" } },
+  ResultCreditsEntries: { kind: "variant", cases: { Ok: "DatabaseCreditEntryPage", Err: "text" } },
+  ResultCreditsPending: { kind: "variant", cases: { Ok: "DatabaseCreditPendingOperationPage", Err: "text" } },
+    ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
@@ -229,9 +358,12 @@ export const expectedTypes = {
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
-  ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
+  ResultOpsAnswerSessionCheck: {
+    kind: "variant",
+    cases: { Ok: "OpsAnswerSessionCheckResult", Err: "text" }
+  },
   ResultWriteSourceForGeneration: {
     kind: "variant",
     cases: { Ok: "WriteSourceForGenerationResult", Err: "text" }
@@ -298,56 +430,69 @@ export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
   RenameDatabaseRequest: "CreateDatabaseResult",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
-  ResultChildren: "Result_11",
+  ResultChildren: "Result_12",
+  ResultCreditsConfig: "Result_9",
+  ResultCreditsPurchasePreview: "Result_20",
+  ResultCreditsPurchase: "Result_21",
+  ResultCreditsEntries: "Result_13",
+  ResultCreditsPending: "Result_14",
   ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_13",
+  ResultDatabases: "Result_16",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_15",
-  ResultMoveNode: "Result_16",
-  ResultMembers: "Result_12",
+  ResultMkdirNode: "Result_18",
+  ResultMoveNode: "Result_19",
+  ResultMembers: "Result_15",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultLinks: "Result_10",
-  ResultNode: "Result_19",
-  ResultNodeContext: "Result_20",
-  ResultQueryContext: "Result_17",
-  ResultRecent: "Result_21",
-  ResultSearch: "Result_22",
-  ResultSourceEvidence: "Result_23",
+  ResultLinks: "Result_11",
+  ResultNode: "Result_25",
+  ResultNodeContext: "Result_26",
+  ResultQueryContext: "Result_22",
+  ResultSearch: "Result_27",
+  ResultSourceEvidence: "Result_28",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_25"
+  ResultWriteSourceForGeneration: "Result_30"
 };
 
 export const expectedMethods = {
   authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
+  check_database_write_credits: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
-  delete_database: { input: ["text"], output: "ResultUnit", mode: "update" },
+  delete_database: { input: ["DeleteDatabaseRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
+  get_credits_config: { input: [], output: "ResultCreditsConfig", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
   rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
   graph_links: { input: ["GraphLinksRequest"], output: "ResultLinks", mode: "query" },
   graph_neighborhood: { input: ["GraphNeighborhoodRequest"], output: "ResultLinks", mode: "query" },
+  icrc10_supported_standards: { input: [], output: "vec Icrc10SupportedStandard", mode: "query" },
+  icrc21_canister_call_consent_message: { input: ["Icrc21ConsentMessageRequest"], output: "Icrc21ConsentMessageResponse", mode: "update" },
   incoming_links: { input: ["IncomingLinksRequest"], output: "ResultLinks", mode: "query" },
   list_children: { input: ["ListChildrenRequest"], output: "ResultChildren", mode: "query" },
+  list_database_credit_entries: { input: ["text", "opt nat64", "nat32"], output: "ResultCreditsEntries", mode: "query" },
+  list_database_credit_pending_operations: { input: ["text", "opt nat64", "nat32"], output: "ResultCreditsPending", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
   memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
+  preview_database_credit_purchase: { input: ["text", "nat64"], output: "ResultCreditsPurchasePreview", mode: "query" },
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
-  recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
+  repair_database_credit_purchase_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
+  repair_database_credit_purchase_complete: { input: ["text", "nat64", "nat64"], output: "ResultCreditsPurchase", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
+  purchase_database_credits: { input: ["DatabaseCreditPurchaseRequest"], output: "ResultCreditsPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };

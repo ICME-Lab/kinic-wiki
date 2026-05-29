@@ -165,13 +165,13 @@ test("list-writable-databases delegates to offscreen with fixed runtime config",
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    return { ok: true, result: [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Hot" }] };
+    return { ok: true, result: [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Active" }] };
   });
   try {
     const response = await handleMessage({ type: "list-writable-databases" }, null);
 
     assert.equal(response.ok, true);
-    assert.deepEqual(response.result, [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Hot" }]);
+    assert.deepEqual(response.result, [{ databaseId: "team-db", name: "Team Wiki", role: "Writer", status: "Active" }]);
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].type, "list-writable-databases");
     assert.equal(calls[0].config.databaseId, "team-db");
@@ -222,6 +222,29 @@ test("unauthenticated save-source opens settings once", async () => {
   }
 });
 
+test("credits-disabled save-source opens settings once", async () => {
+  const syncStorage = memoryStorage();
+  const settingsTabs = [];
+  resetSettingsOpenThrottleForTest();
+  const restore = installChromeForSettings(syncStorage, settingsTabs);
+  setOffscreenBridgeForTest(async () => ({ ok: false, error: "Database credits balance is below the minimum update balance." }));
+  try {
+    const message = {
+      type: "save-source",
+      capture: capture(),
+      config: { canisterId: "aaaaa-aa", databaseId: "team-db", host: "http://127.0.0.1:8001" }
+    };
+    await assert.rejects(() => handleMessage(message, sender()), /minimum update balance/);
+    await assert.rejects(() => handleMessage(message, sender()), /minimum update balance/);
+
+    assert.deepEqual(settingsTabs, ["options"]);
+  } finally {
+    setOffscreenBridgeForTest(null);
+    resetSettingsOpenThrottleForTest();
+    restore();
+  }
+});
+
 test("action click rejects non-http pages", async () => {
   const calls = [];
   const response = await handleActionClick(
@@ -258,6 +281,26 @@ test("action click opens settings when database config is incomplete", async () 
     ["badge", "..."],
     ["status", "setup_required", "Login and select a writable database."],
     ["badge", "SET"],
+    ["settings"]
+  ]);
+});
+
+test("action click opens settings and stores status when credits is disabled", async () => {
+  const calls = [];
+  const response = await handleActionClick(
+    { url: "https://example.com/", title: "Example" },
+    actionDeps({
+      sendOffscreen: async () => ({ ok: false, error: "Database credits are suspended." }),
+      openSettings: async () => calls.push(["settings"]),
+      writeStatus: async (status) => calls.push(["status", status.status, status.message]),
+      setBadge: async (text) => calls.push(["badge", text])
+    })
+  );
+  assert.equal(response.ok, false);
+  assert.deepEqual(calls, [
+    ["badge", "..."],
+    ["status", "error", "Database credits are suspended."],
+    ["badge", "ERR"],
     ["settings"]
   ]);
 });

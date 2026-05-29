@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { Share2 } from "lucide-react";
-import type { FormEvent } from "react";
+import { BookOpen, Share2, Wallet } from "lucide-react";
+import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRoleFromValue, isBusyGrant, isBusyRevoke, principalDisplayName, type BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 import { DatabaseDangerZone } from "./database-danger-zone";
 import { MemberTable } from "./member-table";
-import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { databaseCreditsView, databaseCreditsHref } from "@/lib/credits-state";
+import type { CreditsConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -36,11 +37,13 @@ export function AuthControls(props: { authReady: boolean; loading: boolean; prin
 }
 
 export function SummaryPanel({
+  creditsConfig,
   database,
   databaseId,
   principal,
   publicReadable
 }: {
+  creditsConfig: CreditsConfig | null;
   database: DatabaseSummary | null;
   databaseId: string;
   principal: string;
@@ -48,41 +51,42 @@ export function SummaryPanel({
 }) {
   const routable = isRoutableDatabaseId(databaseId);
   const openHref = routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
+  const credits = databaseCreditsView(database, creditsConfig);
+  const purchaseHref = database ? databaseCreditsHref(database) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
       <Field label="Database" value={database?.name ?? databaseId} />
       <Field label="Database ID" value={databaseId} />
-      <Field label="Role" value={database?.role ?? "-"} />
-      <Field label="Status" value={database?.status ?? "-"} />
+      <Field label="Your Role" value={database?.role ?? "-"} />
+      <Field label="Status" value={databaseStatusLabel(database?.status)} />
       <Field label="Logical size" value={database ? formatBytes(database.logicalSizeBytes) : "-"} />
-      {openHref ? (
-        <Link className="text-accent no-underline hover:underline" href={openHref}>
-          Open
-        </Link>
-      ) : <span className="text-muted">Reserved route</span>}
-      {publicReadable && routable ? (
-        <a
-          aria-label={`Share ${database?.name ?? databaseId} on X`}
-          className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"
-          href={xShareDatabaseHref({ databaseId, databaseName: database?.name ?? databaseId })}
-          rel="noreferrer"
-          target="_blank"
-        >
-          <Share2 aria-hidden size={14} />
-          <span>Share</span>
-        </a>
-      ) : null}
+      <Field label="Credits" value={credits.summary} />
+      <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-3">
+        {purchaseHref ? <SummaryActionLink href={purchaseHref} icon={<Wallet aria-hidden size={14} />} label="Credits" /> : null}
+        {openHref ? <SummaryActionLink href={openHref} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : null}
+        {publicReadable && routable ? (
+          <SummaryActionLink
+            external
+            ariaLabel={`Share ${database?.name ?? databaseId} on X`}
+            href={xShareDatabaseHref({ databaseId, databaseName: database?.name ?? databaseId })}
+            icon={<Share2 aria-hidden size={14} />}
+            label="Share"
+          />
+        ) : null}
+      </div>
     </section>
   );
 }
 
 export function OwnerPanel(props: {
+  creditsBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
   databaseName: string;
   members: DatabaseMember[];
+  pendingOperationCount: number;
   principal: string;
   onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
@@ -113,7 +117,7 @@ export function OwnerPanel(props: {
     if (principalText === LLM_WRITER_PRINCIPAL) {
       setPendingAction({
         title: llmWriterButtonLabel,
-        message: `Grant writer access to ${LLM_WRITER_LABEL}. Worker writes can create and update wiki drafts.`,
+        message: `Grant writer access to ${LLM_WRITER_LABEL}. Worker writes can create and update wiki drafts, and stop when role or credits state changes.`,
         confirmLabel: llmWriterButtonLabel,
         principalText,
         role: "writer",
@@ -237,7 +241,15 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
-      <DatabaseDangerZone busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
+      <DatabaseDangerZone
+        creditsBalance={props.creditsBalance}
+        busy={props.busy}
+        busyAction={props.busyAction}
+        databaseId={props.databaseId}
+        databaseName={props.databaseName}
+        pendingOperationCount={props.pendingOperationCount}
+        onDelete={props.onDelete}
+      />
     </section>
   );
 }
@@ -344,6 +356,37 @@ function Field({ label, value }: { label: string; value: string }) {
       </div>
     </div>
   );
+}
+
+function SummaryActionLink({ ariaLabel, external = false, href, icon, label }: { ariaLabel?: string; external?: boolean; href: string; icon: ReactNode; label: string }) {
+  const className =
+    "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
+  if (external) {
+    return (
+      <a aria-label={ariaLabel} className={className} href={href} rel="noreferrer" target="_blank">
+        {icon}
+        <span>{label}</span>
+      </a>
+    );
+  }
+  return (
+    <Link aria-label={ariaLabel} className={className} href={href}>
+      {icon}
+      <span>{label}</span>
+    </Link>
+  );
+}
+
+function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): string {
+  if (!status) return "-";
+  const labels: Record<DatabaseSummary["status"], string> = {
+    pending: "Pending",
+    archived: "Archived",
+    archiving: "Archiving",
+    active: "Active",
+    restoring: "Restoring"
+  };
+  return labels[status];
 }
 
 function formatBytes(value: string): string {
