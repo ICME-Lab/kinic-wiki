@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+candid = "0.10.26"
 sha2 = "0.10.9"
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
 vfs-store = { path = "../vfs_store" }
@@ -16,4 +17,5 @@ rusqlite = { version = "0.37.0", features = ["bundled"] }
 ic-sqlite-vfs = { version = "0.2.1", default-features = false, features = ["sqlite-precompiled"] }
 
 [dev-dependencies]
+proptest = "1.11.0"
 tempfile = "3.23.0"

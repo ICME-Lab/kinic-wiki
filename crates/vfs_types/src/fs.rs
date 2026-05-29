@@ -26,14 +26,14 @@ pub struct DatabaseMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseStatus {
-    #[serde(alias = "Hot")]
-    Hot,
+    #[serde(alias = "Pending")]
+    Pending,
+    #[serde(alias = "Active")]
+    Active,
     #[serde(alias = "Archiving")]
     Archiving,
     #[serde(alias = "Archived")]
     Archived,
-    #[serde(alias = "Deleted")]
-    Deleted,
     #[serde(alias = "Restoring")]
     Restoring,
 }
@@ -48,7 +48,6 @@ pub struct DatabaseInfo {
     pub logical_size_bytes: u64,
     pub snapshot_hash: Option<Vec<u8>>,
     pub archived_at_ms: Option<i64>,
-    pub deleted_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -58,8 +57,97 @@ pub struct DatabaseSummary {
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
+    pub credits_balance: Option<u64>,
+    pub credits_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
-    pub deleted_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct CreditsConfig {
+    pub kinic_ledger_canister_id: String,
+    pub sns_governance_id: String,
+    pub credits_per_kinic: u64,
+    pub min_update_credits: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct CreditsConfigUpdate {
+    pub credits_per_kinic: u64,
+    pub min_update_credits: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditPurchasePreview {
+    pub payment_amount_e8s: u64,
+    pub ledger_fee_e8s: u64,
+    pub credits_per_kinic: u64,
+    pub config_version: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditPurchaseRequest {
+    pub database_id: String,
+    pub credits: u64,
+    pub expected_payment_amount_e8s: u64,
+    pub expected_config_version: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct CreditsPurchaseResult {
+    pub block_index: u64,
+    pub balance_credits: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditEntry {
+    pub entry_id: u64,
+    pub database_id: String,
+    pub kind: String,
+    pub amount_credits: i64,
+    pub balance_after_credits: u64,
+    pub payment_amount_e8s: Option<u64>,
+    pub caller: String,
+    pub method: Option<String>,
+    pub cycles_delta: Option<u64>,
+    pub credits_per_kinic: Option<u64>,
+    pub ledger_block_index: Option<u64>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditEntryPage {
+    pub entries: Vec<DatabaseCreditEntry>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditPendingOperation {
+    pub operation_id: u64,
+    pub database_id: String,
+    pub kind: String,
+    pub caller: String,
+    pub credits: i64,
+    pub payment_amount_e8s: i64,
+    pub from_owner: Option<String>,
+    pub from_subaccount: Option<Vec<u8>>,
+    pub to_owner: Option<String>,
+    pub to_subaccount: Option<Vec<u8>>,
+    pub ledger_fee_e8s: Option<i64>,
+    pub ledger_created_at_time_ns: Option<i64>,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditPendingOperationPage {
+    pub entries: Vec<DatabaseCreditPendingOperation>,
+    pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct IndexSqlJsonQueryResult {
+    pub rows: Vec<String>,
+    pub row_count: u32,
+    pub limit: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -77,6 +165,11 @@ pub struct CreateDatabaseResult {
 pub struct RenameDatabaseRequest {
     pub database_id: String,
     pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DeleteDatabaseRequest {
+    pub database_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
