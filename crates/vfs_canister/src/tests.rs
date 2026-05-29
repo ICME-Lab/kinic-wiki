@@ -10,14 +10,14 @@ use tempfile::tempdir;
 use vfs_runtime::VfsService;
 use vfs_types::{
     AppendNodeRequest, CreateDatabaseRequest, CreditsConfig, CreditsConfigUpdate,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
-    DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    KINIC_LEDGER_FEE_E8S, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest,
-    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    DatabaseCreditPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus,
+    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
+    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
+    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
@@ -27,15 +27,15 @@ use super::{
     begin_database_archive, begin_database_restore, cancel_database_archive,
     check_database_write_credits, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
-    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
-    finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
-    icrc21_canister_call_consent_message, incoming_links, last_ledger_from_for_test,
-    last_ledger_memo_for_test, list_children, list_database_credit_entries,
-    list_database_credit_pending_operations, list_database_members, list_databases, list_nodes,
-    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_credits_config_arg, preview_database_credit_purchase, purchase_database_credits,
-    query_context, query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, repair_database_credit_purchase_cancel,
+    fail_next_credit_database_purchase_apply_for_test, fail_next_mount_database_file_for_test,
+    fetch_updates, finalize_database_archive, finalize_database_restore, glob_nodes,
+    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
+    incoming_links, last_ledger_from_for_test, last_ledger_memo_for_test, list_children,
+    list_database_credit_entries, list_database_credit_pending_operations, list_database_members,
+    list_databases, list_nodes, memory_manifest, mkdir_node, move_node, multi_edit_node,
+    outgoing_links, parse_upgrade_credits_config_arg, preview_database_credit_purchase,
+    purchase_database_credits, query_context, query_index_sql_json, read_database_archive_chunk,
+    read_node, read_node_context, rename_database, repair_database_credit_purchase_cancel,
     repair_database_credit_purchase_complete, revoke_database_access, search_node_paths,
     search_nodes, set_ledger_transaction_for_test, set_next_ledger_transfer_from_outcome_for_test,
     set_test_caller_principal_for_test, source_evidence, status, transfer_from_error_outcome,
@@ -107,6 +107,17 @@ fn block_on_ready<T>(future: impl Future<Output = T>) -> T {
     match future.as_mut().poll(&mut context) {
         Poll::Ready(value) => value,
         Poll::Pending => panic!("test future unexpectedly pending"),
+    }
+}
+
+fn credit_purchase_request(database_id: &str, credits: u64) -> DatabaseCreditPurchaseRequest {
+    let preview = preview_database_credit_purchase(database_id.to_string(), credits)
+        .expect("credit purchase preview should load");
+    DatabaseCreditPurchaseRequest {
+        database_id: database_id.to_string(),
+        credits,
+        expected_payment_amount_e8s: preview.payment_amount_e8s,
+        expected_config_version: preview.config_version,
     }
 }
 
@@ -392,8 +403,11 @@ fn purchase_database_credits_credits_completed_transfer_from() {
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
 
-    let result = block_on_ready(purchase_database_credits(database.database_id.clone(), 500))
-        .expect("completed transfer-from should credit database");
+    let result = block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect("completed transfer-from should credit database");
 
     assert_eq!(result.block_index, 42);
     assert_eq!(result.balance_credits, 500);
@@ -418,8 +432,12 @@ fn preview_database_credit_purchase_rejects_invalid_target_before_approve() {
     })
     .expect("database should create");
 
-    preview_database_credit_purchase(database.database_id.clone(), 500)
+    let preview = preview_database_credit_purchase(database.database_id.clone(), 500)
         .expect("preview should accept");
+    assert_eq!(preview.payment_amount_e8s, 50_000_000);
+    assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
+    assert_eq!(preview.credits_per_kinic, 1_000);
+    assert_eq!(preview.config_version, 1);
     let zero = preview_database_credit_purchase(database.database_id.clone(), 0)
         .expect_err("zero amount should reject");
     assert!(zero.contains("credit purchase credits must be positive"));
@@ -456,10 +474,47 @@ fn purchase_database_credits_rejects_balance_overflow_before_ledger_call() {
     clear_last_ledger_memo_for_test();
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
 
-    let error = block_on_ready(purchase_database_credits(database.database_id, 1))
-        .expect_err("overflow should reject before ledger");
+    let error = block_on_ready(purchase_database_credits(DatabaseCreditPurchaseRequest {
+        database_id: database.database_id,
+        credits: 1,
+        expected_payment_amount_e8s: 1,
+        expected_config_version: 1,
+    }))
+    .expect_err("overflow should reject before ledger");
 
     assert!(error.contains("balance overflow"));
+    assert_eq!(last_ledger_memo_for_test(), None);
+}
+
+#[test]
+fn purchase_database_credits_rejects_stale_preview_before_ledger_call() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Stale preview".to_string(),
+    })
+    .expect("database should create");
+    let request = credit_purchase_request(&database.database_id, 500);
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .update_credits_config(
+                CreditsConfigUpdate {
+                    credits_per_kinic: 2_000,
+                    min_update_credits: 1,
+                },
+                &test_governance_principal().to_text(),
+            )
+            .expect("credits config should update");
+    });
+    clear_last_ledger_memo_for_test();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+
+    let error = block_on_ready(purchase_database_credits(request))
+        .expect_err("stale preview should reject before ledger");
+
+    assert!(error.contains("credits config changed"));
     assert_eq!(last_ledger_memo_for_test(), None);
 }
 
@@ -475,8 +530,11 @@ fn purchase_database_credits_leaves_balance_on_ledger_reject() {
         "icrc2_transfer_from failed: InsufficientAllowance".to_string(),
     ));
 
-    let error = block_on_ready(purchase_database_credits(database.database_id.clone(), 500))
-        .expect_err("ledger reject should not credit database");
+    let error = block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ledger reject should not credit database");
 
     assert!(error.contains("InsufficientAllowance"));
     assert_eq!(
@@ -501,10 +559,14 @@ fn purchase_database_credits_records_ambiguous_transfer_from() {
         "icrc2_transfer_from decode failed".to_string(),
     ));
 
-    let error = block_on_ready(purchase_database_credits(database.database_id.clone(), 500))
-        .expect_err("ambiguous transfer-from should return pending error");
+    let error = block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ambiguous transfer-from should return pending error");
 
-    assert!(error.contains("credit purchase pending; manual repair required"));
+    assert!(error.contains("credit purchase pending operation"));
+    assert!(error.contains("manual repair required"));
     let entries = list_database_credit_entries(database.database_id.clone(), None, 10)
         .expect("database ledger should load")
         .entries;
@@ -530,8 +592,11 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
     fail_next_mount_database_file_for_test();
 
-    let error = block_on_ready(purchase_database_credits(database.database_id.clone(), 500))
-        .expect_err("mount failure after ledger success should keep repair path");
+    let error = block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("mount failure after ledger success should keep repair path");
 
     assert!(error.contains("test mount failure"));
     assert!(error.contains("credit purchase payment completed"));
@@ -570,6 +635,54 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
 }
 
 #[test]
+fn repair_complete_succeeds_after_activation_started_and_credit_apply_failed() {
+    install_empty_test_service();
+    let _owner = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Apply retry".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(44));
+    fail_next_credit_database_purchase_apply_for_test();
+
+    let error = block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database.database_id,
+        600,
+    )))
+    .expect_err("credit apply failure after activation should keep repair path");
+
+    assert!(error.contains("test credit purchase apply failure"));
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, Some(11))
+    );
+    let pending = list_database_credit_pending_operations(database.database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+    assert!(
+        list_database_credit_entries(database.database_id.clone(), None, 10)
+            .expect("ledger should load")
+            .entries
+            .is_empty()
+    );
+
+    set_ledger_transaction_for_test(44, pending_credit_purchase_transaction(&pending[0]));
+    let result = block_on_ready(repair_database_credit_purchase_complete(
+        database.database_id.clone(),
+        pending[0].operation_id,
+        44,
+    ))
+    .expect("repair complete should finish activation and credit");
+
+    assert_eq!(result.balance_credits, 600);
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+}
+
+#[test]
 fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
     install_empty_test_service();
     let database_id;
@@ -586,8 +699,11 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
             "icrc2_transfer_from decode failed".to_string(),
         ));
-        let error = block_on_ready(purchase_database_credits(database_id.clone(), 500))
-            .expect_err("ambiguous transfer-from should return pending error");
+        let error = block_on_ready(purchase_database_credits(credit_purchase_request(
+            &database_id,
+            500,
+        )))
+        .expect_err("ambiguous transfer-from should return pending error");
         assert!(error.contains("credit purchase pending"));
 
         let pending = list_database_credit_pending_operations(database_id.clone(), None, 10)
@@ -658,8 +774,11 @@ fn repair_credit_purchase_complete_rejects_mismatched_ledger_block() {
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
             "icrc2_transfer_from decode failed".to_string(),
         ));
-        let _ = block_on_ready(purchase_database_credits(database_id.clone(), 500))
-            .expect_err("ambiguous credit purchase should stay pending");
+        let _ = block_on_ready(purchase_database_credits(credit_purchase_request(
+            &database_id,
+            500,
+        )))
+        .expect_err("ambiguous credit purchase should stay pending");
         operation_id = list_database_credit_pending_operations(database_id.clone(), None, 10)
             .expect("pending should load")
             .entries[0]
@@ -702,21 +821,27 @@ fn repair_credit_purchase_cancel_removes_ambiguous_operation() {
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
             "icrc2_transfer_from call failed".to_string(),
         ));
-        let _ = block_on_ready(purchase_database_credits(database_id.clone(), 500))
-            .expect_err("ambiguous credit purchase should stay pending");
+        let _ = block_on_ready(purchase_database_credits(credit_purchase_request(
+            &database_id,
+            500,
+        )))
+        .expect_err("ambiguous credit purchase should stay pending");
         operation_id = list_database_credit_pending_operations(database_id.clone(), None, 10)
             .expect("pending should load")
             .entries[0]
             .operation_id;
 
+        let third_party = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
+            .expect("third party principal should parse");
+        let _third_party = AuthenticatedCallerGuard::install_principal(third_party);
         let error = repair_database_credit_purchase_cancel(database_id.clone(), operation_id)
-            .expect_err("owner cancel should reject");
-        assert!(error.contains("caller is not SNS governance"));
+            .expect_err("third party cancel should reject");
+        assert!(error.contains("not credit purchase payer or database owner"));
     }
 
-    let _governance = AuthenticatedCallerGuard::install_principal(test_governance_principal());
+    let _owner = AuthenticatedCallerGuard::install();
     repair_database_credit_purchase_cancel(database_id.clone(), operation_id)
-        .expect("governance should cancel ambiguous credit purchase after verification");
+        .expect("owner should cancel ambiguous credit purchase after verification");
     assert_eq!(
         database_status_and_mount(&database_id),
         (DatabaseStatus::Pending, None)
@@ -733,7 +858,10 @@ fn repair_credit_purchase_cancel_removes_ambiguous_operation() {
             .iter()
             .map(|entry| entry.kind.as_str())
             .collect::<Vec<_>>(),
-        vec!["credit_purchase_ambiguous"]
+        vec![
+            "credit_purchase_ambiguous",
+            "credit_purchase_repair_cancelled"
+        ]
     );
 }
 
@@ -754,8 +882,11 @@ fn purchase_database_credits_allows_non_owner_payer() {
     clear_last_ledger_memo_for_test();
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(43));
 
-    let result = block_on_ready(purchase_database_credits(database_id, 700))
-        .expect("non-owner payer should fund DB");
+    let result = block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database_id,
+        700,
+    )))
+    .expect("non-owner payer should fund DB");
 
     assert_eq!(result.block_index, 43);
     assert_eq!(result.balance_credits, 700);
@@ -776,7 +907,8 @@ fn icrc21_purchase_database_credits_returns_consent_message() {
         name: "Consent".to_string(),
     })
     .expect("database should create");
-    let arg = Encode!(&database.database_id, &500_u64).expect("arg should encode");
+    let request = credit_purchase_request(&database.database_id, 500);
+    let arg = Encode!(&request).expect("arg should encode");
 
     let response =
         icrc21_canister_call_consent_message(consent_request("purchase_database_credits", arg));
@@ -794,6 +926,29 @@ fn icrc21_purchase_database_credits_returns_consent_message() {
     assert!(message.contains("Payment: `0.5` KINIC"));
     assert!(message.contains("Ledger transfer fee in allowance: `0.0001` KINIC"));
     assert!(message.contains("Spender canister:"));
+}
+
+#[test]
+fn icrc21_purchase_database_credits_rejects_stale_expected_amount() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Consent mismatch".to_string(),
+    })
+    .expect("database should create");
+    let mut request = credit_purchase_request(&database.database_id, 500);
+    request.expected_payment_amount_e8s += 1;
+    let arg = Encode!(&request).expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("purchase_database_credits", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("payment amount changed"));
+        }
+        other => panic!("stale consent should reject: {other:?}"),
+    }
 }
 
 #[test]
@@ -832,8 +987,11 @@ fn purchase_database_credits_sends_operation_memo_to_ledger() {
     clear_last_ledger_memo_for_test();
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(43));
 
-    block_on_ready(purchase_database_credits(database.database_id, 700))
-        .expect("credit purchase should succeed");
+    block_on_ready(purchase_database_credits(credit_purchase_request(
+        &database.database_id,
+        700,
+    )))
+    .expect("credit purchase should succeed");
 
     let memo = String::from_utf8(last_ledger_memo_for_test().expect("memo should be recorded"))
         .expect("memo should be utf8");
@@ -845,8 +1003,13 @@ fn purchase_database_credits_rejects_unknown_and_deleted_database() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
 
-    let missing = block_on_ready(purchase_database_credits("missing".to_string(), 500))
-        .expect_err("unknown database should reject");
+    let missing = block_on_ready(purchase_database_credits(DatabaseCreditPurchaseRequest {
+        database_id: "missing".to_string(),
+        credits: 500,
+        expected_payment_amount_e8s: 50_000_000,
+        expected_config_version: 1,
+    }))
+    .expect_err("unknown database should reject");
     assert!(missing.contains("database not found"));
 
     let database = create_database(CreateDatabaseRequest {
@@ -857,8 +1020,13 @@ fn purchase_database_credits_rejects_unknown_and_deleted_database() {
     super::delete_database(delete_database_request(&database.database_id))
         .expect("owner should delete");
 
-    let deleted = block_on_ready(purchase_database_credits(database.database_id, 500))
-        .expect_err("deleted database should reject");
+    let deleted = block_on_ready(purchase_database_credits(DatabaseCreditPurchaseRequest {
+        database_id: database.database_id,
+        credits: 500,
+        expected_payment_amount_e8s: 50_000_000,
+        expected_config_version: 1,
+    }))
+    .expect_err("deleted database should reject");
     assert!(deleted.contains("database not found"));
 }
 
@@ -1333,10 +1501,10 @@ fn create_database_returns_result() {
     assert!(pending_read.contains("database is pending"));
 
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
-    block_on_ready(purchase_database_credits(
-        result.database_id.clone(),
+    block_on_ready(purchase_database_credits(credit_purchase_request(
+        &result.database_id,
         1_000_000,
-    ))
+    )))
     .expect("credit purchase should activate database");
     let status = status(result.database_id.clone());
     assert_eq!(status.file_count, 0);

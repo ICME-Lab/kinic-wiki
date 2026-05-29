@@ -140,6 +140,13 @@ export type CreditsPurchaseResult = {
   balanceCredits: string;
 };
 
+export type DatabaseCreditPurchasePreview = {
+  paymentAmountE8s: string;
+  ledgerFeeE8s: string;
+  creditsPerKinic: string;
+  configVersion: string;
+};
+
 export type DatabaseMember = {
   databaseId: string;
   principal: string;

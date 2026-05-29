@@ -28,6 +28,24 @@ export const expectedTypes = {
     kind: "record",
     fields: { block_index: "nat64", balance_credits: "nat64" }
   },
+  DatabaseCreditPurchasePreview: {
+    kind: "record",
+    fields: {
+      payment_amount_e8s: "nat64",
+      ledger_fee_e8s: "nat64",
+      credits_per_kinic: "nat64",
+      config_version: "nat64"
+    }
+  },
+  DatabaseCreditPurchaseRequest: {
+    kind: "record",
+    fields: {
+      database_id: "text",
+      credits: "nat64",
+      expected_payment_amount_e8s: "nat64",
+      expected_config_version: "nat64"
+    }
+  },
   Icrc21ConsentMessageMetadata: {
     kind: "record",
     fields: { utc_offset_minutes: "opt int16", language: "text" }
@@ -325,6 +343,7 @@ export const expectedTypes = {
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
   ResultCreditsConfig: { kind: "variant", cases: { Ok: "CreditsConfig", Err: "text" } },
   ResultCreditsPurchase: { kind: "variant", cases: { Ok: "CreditsPurchaseResult", Err: "text" } },
+  ResultCreditsPurchasePreview: { kind: "variant", cases: { Ok: "DatabaseCreditPurchasePreview", Err: "text" } },
   ResultCreditsEntries: { kind: "variant", cases: { Ok: "DatabaseCreditEntryPage", Err: "text" } },
   ResultCreditsPending: { kind: "variant", cases: { Ok: "DatabaseCreditPendingOperationPage", Err: "text" } },
     ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
@@ -413,7 +432,8 @@ export const didTypeAliases = {
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultChildren: "Result_12",
   ResultCreditsConfig: "Result_9",
-  ResultCreditsPurchase: "Result_20",
+  ResultCreditsPurchasePreview: "Result_20",
+  ResultCreditsPurchase: "Result_21",
   ResultCreditsEntries: "Result_13",
   ResultCreditsPending: "Result_14",
   ResultCreateDatabase: "Result_4",
@@ -425,13 +445,13 @@ export const didTypeAliases = {
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_24",
-  ResultNodeContext: "Result_25",
-  ResultQueryContext: "Result_21",
-  ResultSearch: "Result_26",
-  ResultSourceEvidence: "Result_27",
+  ResultNode: "Result_25",
+  ResultNodeContext: "Result_26",
+  ResultQueryContext: "Result_22",
+  ResultSearch: "Result_27",
+  ResultSourceEvidence: "Result_28",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_29"
+  ResultWriteSourceForGeneration: "Result_30"
 };
 
 export const expectedMethods = {
@@ -462,7 +482,7 @@ export const expectedMethods = {
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
-  preview_database_credit_purchase: { input: ["text", "nat64"], output: "ResultUnit", mode: "query" },
+  preview_database_credit_purchase: { input: ["text", "nat64"], output: "ResultCreditsPurchasePreview", mode: "query" },
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
@@ -472,7 +492,7 @@ export const expectedMethods = {
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
-  purchase_database_credits: { input: ["text", "nat64"], output: "ResultCreditsPurchase", mode: "update" },
+  purchase_database_credits: { input: ["DatabaseCreditPurchaseRequest"], output: "ResultCreditsPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };

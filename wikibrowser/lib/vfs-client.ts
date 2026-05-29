@@ -8,6 +8,7 @@ import type {
   CanisterHealth,
   CreditsConfig,
   ChildNode,
+  DatabaseCreditPurchasePreview,
   DatabaseCreditPendingOperation,
   DeleteDatabaseRequest,
   DeleteNodeRequest,
@@ -62,6 +63,20 @@ type RawCreditsConfig = {
   sns_governance_id: string;
   credits_per_kinic: bigint;
   min_update_credits: bigint;
+};
+
+type RawDatabaseCreditPurchasePreview = {
+  payment_amount_e8s: bigint;
+  ledger_fee_e8s: bigint;
+  credits_per_kinic: bigint;
+  config_version: bigint;
+};
+
+export type DatabaseCreditPurchaseRequest = {
+  database_id: string;
+  credits: bigint;
+  expected_payment_amount_e8s: bigint;
+  expected_config_version: bigint;
 };
 
 type RawDatabaseSummary = {
@@ -262,7 +277,7 @@ type VfsActor = {
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
-  preview_database_credit_purchase: (databaseId: string, credits: bigint) => Promise<{ Ok: null } | { Err: string }>;
+  preview_database_credit_purchase: (databaseId: string, credits: bigint) => Promise<{ Ok: RawDatabaseCreditPurchasePreview } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
@@ -410,13 +425,14 @@ export async function getCreditsConfig(canisterId: string): Promise<CreditsConfi
   });
 }
 
-export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, credits: bigint): Promise<void> {
+export async function previewDatabaseCreditPurchase(canisterId: string, databaseId: string, credits: bigint): Promise<DatabaseCreditPurchasePreview> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
     const result = await actor.preview_database_credit_purchase(databaseId, credits);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
+    return normalizeDatabaseCreditPurchasePreview(result.Ok);
   });
 }
 
@@ -877,6 +893,15 @@ function normalizeCreditsConfig(raw: RawCreditsConfig): CreditsConfig {
     snsGovernanceId: raw.sns_governance_id,
     creditsPerKinic: raw.credits_per_kinic.toString(),
     minUpdateCredits: raw.min_update_credits.toString()
+  };
+}
+
+function normalizeDatabaseCreditPurchasePreview(raw: RawDatabaseCreditPurchasePreview): DatabaseCreditPurchasePreview {
+  return {
+    paymentAmountE8s: raw.payment_amount_e8s.toString(),
+    ledgerFeeE8s: raw.ledger_fee_e8s.toString(),
+    creditsPerKinic: raw.credits_per_kinic.toString(),
+    configVersion: raw.config_version.toString()
   };
 }
 

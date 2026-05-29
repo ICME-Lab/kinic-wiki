@@ -13,13 +13,14 @@ use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CreditsConfig, CreditsPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseCreditEntryPage, DatabaseCreditPendingOperationPage, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    DatabaseCreditEntryPage, DatabaseCreditPendingOperationPage, DatabaseCreditPurchasePreview,
+    DatabaseCreditPurchaseRequest, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
@@ -47,8 +48,7 @@ pub trait VfsApi: Sync {
     }
     async fn purchase_database_credits(
         &self,
-        _database_id: &str,
-        _amount_credits: u64,
+        _request: DatabaseCreditPurchaseRequest,
     ) -> Result<CreditsPurchaseResult> {
         Err(anyhow!(
             "purchase_database_credits is not implemented by this client"
@@ -58,7 +58,7 @@ pub trait VfsApi: Sync {
         &self,
         _database_id: &str,
         _amount_credits: u64,
-    ) -> Result<()> {
+    ) -> Result<DatabaseCreditPurchasePreview> {
         Err(anyhow!(
             "preview_database_credit_purchase is not implemented by this client"
         ))
@@ -474,16 +474,10 @@ impl VfsApi for CanisterVfsClient {
 
     async fn purchase_database_credits(
         &self,
-        database_id: &str,
-        amount_credits: u64,
+        request: DatabaseCreditPurchaseRequest,
     ) -> Result<CreditsPurchaseResult> {
-        let result: Result<CreditsPurchaseResult, String> = self
-            .update2(
-                "purchase_database_credits",
-                &database_id.to_string(),
-                &amount_credits,
-            )
-            .await?;
+        let result: Result<CreditsPurchaseResult, String> =
+            self.update("purchase_database_credits", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -491,8 +485,8 @@ impl VfsApi for CanisterVfsClient {
         &self,
         database_id: &str,
         amount_credits: u64,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
+    ) -> Result<DatabaseCreditPurchasePreview> {
+        let result: Result<DatabaseCreditPurchasePreview, String> = self
             .query2(
                 "preview_database_credit_purchase",
                 &database_id.to_string(),

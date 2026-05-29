@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest, NodeKind, OutgoingLinksRequest,
-    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    DatabaseCreditPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
+    NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
 };
 
 const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
@@ -284,8 +284,17 @@ async fn activate_smoke_database(
     database_id: &str,
     amount_credits: u64,
 ) -> Result<()> {
+    let preview = client
+        .preview_database_credit_purchase(database_id, amount_credits)
+        .await
+        .with_context(|| format!("failed to preview credits for smoke database {database_id}"))?;
     client
-        .purchase_database_credits(database_id, amount_credits)
+        .purchase_database_credits(DatabaseCreditPurchaseRequest {
+            database_id: database_id.to_string(),
+            credits: amount_credits,
+            expected_payment_amount_e8s: preview.payment_amount_e8s,
+            expected_config_version: preview.config_version,
+        })
         .await
         .with_context(|| format!("failed to purchase credits for smoke database {database_id}"))?;
     Ok(())

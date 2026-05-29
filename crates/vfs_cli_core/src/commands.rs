@@ -12,10 +12,10 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, CreditsConfig, DatabaseRestoreChunkRequest, DatabaseSummary,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    AppendNodeRequest, CreditsConfig, DatabaseCreditPurchaseRequest, DatabaseRestoreChunkRequest,
+    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, GlobNodesRequest,
+    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S,
+    LinkEdge, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
     MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
     SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
@@ -675,8 +675,16 @@ async fn run_database_command(
             database_id,
             credits,
         } => {
+            let preview = client
+                .preview_database_credit_purchase(&database_id, credits)
+                .await?;
             let result = client
-                .purchase_database_credits(&database_id, credits)
+                .purchase_database_credits(DatabaseCreditPurchaseRequest {
+                    database_id: database_id.clone(),
+                    credits,
+                    expected_payment_amount_e8s: preview.payment_amount_e8s,
+                    expected_config_version: preview.config_version,
+                })
                 .await?;
             println!(
                 "{database_id}\t{}\t{}",
@@ -1377,7 +1385,8 @@ mod tests {
         entries: Vec<NodeEntry>,
         created: Mutex<u32>,
         database_lists: Mutex<u32>,
-        database_credit_purchases: Mutex<Vec<(String, u64)>>,
+        database_credit_purchases: Mutex<Vec<DatabaseCreditPurchaseRequest>>,
+        database_credit_purchase_previews: Mutex<Vec<(String, u64)>>,
         database_credits_history: Mutex<Vec<String>>,
         database_credits_pending: Mutex<Vec<String>>,
         database_credit_purchase_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
@@ -1482,16 +1491,29 @@ mod tests {
         }
         async fn purchase_database_credits(
             &self,
-            database_id: &str,
-            credits: u64,
+            request: DatabaseCreditPurchaseRequest,
         ) -> Result<CreditsPurchaseResult> {
-            self.database_credit_purchases
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), credits));
+            let credits = request.credits;
+            self.database_credit_purchases.lock().unwrap().push(request);
             Ok(CreditsPurchaseResult {
                 block_index: 7,
                 balance_credits: credits,
+            })
+        }
+        async fn preview_database_credit_purchase(
+            &self,
+            database_id: &str,
+            amount_credits: u64,
+        ) -> Result<DatabaseCreditPurchasePreview> {
+            self.database_credit_purchase_previews
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), amount_credits));
+            Ok(DatabaseCreditPurchasePreview {
+                payment_amount_e8s: amount_credits * 100_000,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                credits_per_kinic: 1_000,
+                config_version: 3,
             })
         }
         async fn list_database_credit_entries(
@@ -2318,6 +2340,15 @@ mod tests {
         .expect("database credit purchase should succeed");
         assert_eq!(
             *client.database_credit_purchases.lock().unwrap(),
+            vec![DatabaseCreditPurchaseRequest {
+                database_id: "db_alpha".to_string(),
+                credits: 500_000,
+                expected_payment_amount_e8s: 50_000_000_000,
+                expected_config_version: 3,
+            }]
+        );
+        assert_eq!(
+            *client.database_credit_purchase_previews.lock().unwrap(),
             vec![("db_alpha".to_string(), 500_000)]
         );
     }
@@ -2342,7 +2373,12 @@ mod tests {
         .expect("database credit purchase should not need credits precheck");
         assert_eq!(
             *client.database_credit_purchases.lock().unwrap(),
-            vec![("db_alpha".to_string(), 500_000)]
+            vec![DatabaseCreditPurchaseRequest {
+                database_id: "db_alpha".to_string(),
+                credits: 500_000,
+                expected_payment_amount_e8s: 50_000_000_000,
+                expected_config_version: 3,
+            }]
         );
     }
 

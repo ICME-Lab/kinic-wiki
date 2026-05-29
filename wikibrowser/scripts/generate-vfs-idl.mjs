@@ -30,6 +30,8 @@ const typeOrder = [
   "DatabaseSummary",
   "CreditsConfig",
   "CreditsPurchaseResult",
+  "DatabaseCreditPurchasePreview",
+  "DatabaseCreditPurchaseRequest",
   "Icrc21ConsentMessageMetadata",
   "Icrc21DeviceSpec",
   "Icrc21ConsentMessageSpec",
@@ -99,6 +101,7 @@ const typeOrder = [
   "ResultCreateDatabase",
   "ResultCreditsConfig",
   "ResultCreditsPurchase",
+  "ResultCreditsPurchasePreview",
   "ResultCreditsEntries",
   "ResultCreditsPending",
   "ResultDatabases",
@@ -367,14 +370,15 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCreditsPurchase";
-  if (normalized === "Result_21") return "ResultQueryContext";
-  if (normalized === "Result_24") return "ResultNode";
-  if (normalized === "Result_25") return "ResultNodeContext";
-  if (normalized === "Result_26") return "ResultSearch";
-  if (normalized === "Result_27") return "ResultSourceEvidence";
+  if (normalized === "Result_20") return "ResultCreditsPurchasePreview";
+  if (normalized === "Result_21") return "ResultCreditsPurchase";
+  if (normalized === "Result_22") return "ResultQueryContext";
+  if (normalized === "Result_25") return "ResultNode";
+  if (normalized === "Result_26") return "ResultNodeContext";
+  if (normalized === "Result_27") return "ResultSearch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCreditsConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

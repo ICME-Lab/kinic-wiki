@@ -77,6 +77,22 @@ pub struct CreditsConfigUpdate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditPurchasePreview {
+    pub payment_amount_e8s: u64,
+    pub ledger_fee_e8s: u64,
+    pub credits_per_kinic: u64,
+    pub config_version: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCreditPurchaseRequest {
+    pub database_id: String,
+    pub credits: u64,
+    pub expected_payment_amount_e8s: u64,
+    pub expected_config_version: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreditsPurchaseResult {
     pub block_index: u64,
     pub balance_credits: u64,

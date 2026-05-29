@@ -7,15 +7,16 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
-    DEFAULT_LLM_WRITER_PRINCIPAL, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
+    CreditsPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
+    DatabaseCreditPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
     MAX_RESTORE_CHUNK_BYTES, VfsService,
 };
 use vfs_types::{
-    AppendNodeRequest, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest,
-    MkdirNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteSourceForGenerationRequest,
+    AppendNodeRequest, CreditsConfigUpdate, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
+    DeleteNodeRequest, KINIC_LEDGER_FEE_E8S, MkdirNodeRequest, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -39,11 +40,80 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
 }
 
 #[test]
-fn old_index_with_schema_migrations_upgrades_to_credit_ledger_only() {
+fn mainnet_011_index_upgrades_to_latest() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let index_path = root.join("index.sqlite3");
+    write_mainnet_011_index_schema(&index_path, "hot");
+
+    let service = VfsService::new(index_path.clone(), root.join("databases"));
+    service
+        .run_index_migrations()
+        .expect("only supported index migration should upgrade mainnet 011");
+
     let conn = Connection::open(&index_path).expect("index should open");
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM databases WHERE database_id = 'db_existing'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("database status should load");
+    let balance: i64 = conn
+        .query_row(
+            "SELECT balance_credits FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("database credits account should exist");
+    let suspended_at_ms: Option<i64> = conn
+        .query_row(
+            "SELECT suspended_at_ms FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("database credits suspension should exist");
+    let pending_details_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_pending_operations')
+             WHERE name IN ('from_owner', 'from_subaccount', 'to_owner', 'to_subaccount',
+                            'ledger_fee_e8s', 'ledger_created_at_time_ns')",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("pending details columns should load");
+    let ledger_cycles_column_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
+             WHERE name = 'cycles_per_credit'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("ledger cycles column count should load");
+    let usage_table_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'usage_events'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("usage table count should load");
+
+    assert_eq!(status, "active");
+    assert_eq!(balance, 0);
+    assert_eq!(suspended_at_ms, Some(0));
+    assert_eq!(pending_details_columns, 6);
+    assert_eq!(ledger_cycles_column_count, 0);
+    assert_eq!(usage_table_count, 0);
+    assert_eq!(
+        schema_migration_count(&root, "database_index:020_credits_config_version"),
+        1
+    );
+    assert_eq!(credits_config_version(&root), 1);
+}
+
+fn write_mainnet_011_index_schema(index_path: &std::path::Path, status: &str) {
+    let conn = Connection::open(index_path).expect("index should open");
     conn.execute_batch(
         "CREATE TABLE schema_migrations (
            version TEXT PRIMARY KEY,
@@ -65,14 +135,85 @@ fn old_index_with_schema_migrations_upgrades_to_credit_ledger_only() {
            created_at_ms INTEGER NOT NULL,
            updated_at_ms INTEGER NOT NULL
          );
-         INSERT INTO databases
-           (database_id, name, db_file_name, mount_id, active_mount_id, status,
-            schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-         VALUES
-           ('db_existing', 'Existing', 'db_existing.sqlite3', 11, 11, 'active',
-            'vfs_store:current', 0, 1, 1);",
+         CREATE UNIQUE INDEX databases_active_mount_id_idx
+           ON databases(active_mount_id)
+           WHERE active_mount_id IS NOT NULL;
+         CREATE TABLE database_members (
+           database_id TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           role TEXT NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, principal),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE TABLE database_restore_chunks (
+           database_id TEXT NOT NULL,
+           offset_bytes INTEGER NOT NULL,
+           end_bytes INTEGER NOT NULL,
+           bytes BLOB,
+           PRIMARY KEY (database_id, offset_bytes, end_bytes),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX database_restore_chunks_database_id_idx
+           ON database_restore_chunks(database_id, offset_bytes);
+         CREATE TABLE database_mount_history (
+           database_id TEXT NOT NULL,
+           mount_id INTEGER NOT NULL,
+           reason TEXT NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (mount_id)
+         );
+         CREATE TABLE url_ingest_trigger_sessions (
+           database_id TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX url_ingest_trigger_sessions_expiry_idx
+           ON url_ingest_trigger_sessions(expires_at_ms);
+         CREATE TABLE ops_answer_sessions (
+           database_id TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX ops_answer_sessions_expiry_idx
+           ON ops_answer_sessions(expires_at_ms);
+         CREATE TABLE source_run_sessions (
+           database_id TEXT NOT NULL,
+           source_path TEXT NOT NULL,
+           source_etag TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );
+         CREATE INDEX source_run_sessions_expiry_idx
+           ON source_run_sessions(expires_at_ms);
+         CREATE TABLE database_restore_sessions (
+           database_id TEXT PRIMARY KEY,
+           status TEXT NOT NULL,
+           active_mount_id INTEGER,
+           snapshot_hash BLOB,
+           archived_at_ms INTEGER,
+           deleted_at_ms INTEGER,
+           restore_size_bytes INTEGER,
+           created_at_ms INTEGER NOT NULL,
+           FOREIGN KEY (database_id) REFERENCES databases(database_id)
+         );",
     )
-    .expect("existing index schema should create");
+    .expect("mainnet 011 schema should create");
     for version in [
         "database_index:000_initial",
         "database_index:001_lifecycle",
@@ -92,81 +233,76 @@ fn old_index_with_schema_migrations_upgrades_to_credit_ledger_only() {
         )
         .expect("migration marker should insert");
     }
-    drop(conn);
-
-    let service = VfsService::new(index_path.clone(), root.join("databases"));
-    service
-        .run_index_migrations()
-        .expect("old index should upgrade");
-
-    let conn = Connection::open(index_path).expect("index should reopen");
-    let balance: i64 = conn
-        .query_row(
-            "SELECT balance_credits FROM database_credit_accounts WHERE database_id = 'db_existing'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("database credits account should exist");
-    let pending_details_columns: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_pending_operations')
-             WHERE name IN ('from_owner', 'from_subaccount', 'to_owner', 'to_subaccount',
-                            'ledger_fee_e8s', 'ledger_created_at_time_ns')",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("pending details columns should load");
-    let ledger_usage_column_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
-             WHERE name = 'usage_event_id'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("ledger usage column count should load");
-    let ledger_cycles_column_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
-             WHERE name = 'cycles_per_credit'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("ledger cycles column count should load");
-    let config_cycles_row_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM credits_config WHERE key = 'cycles_per_credit'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("config cycles row count should load");
-    let usage_table_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'table' AND name = 'usage_events'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("usage table count should load");
-    let marker: String = conn
-        .query_row(
-            "SELECT version FROM schema_migrations
-             WHERE version = 'database_index:019_fixed_cycles_per_credit'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("fixed cycles marker should exist");
-
-    assert_eq!(balance, 0);
-    assert_eq!(pending_details_columns, 6);
-    assert_eq!(ledger_usage_column_count, 0);
-    assert_eq!(ledger_cycles_column_count, 0);
-    assert_eq!(config_cycles_row_count, 0);
-    assert_eq!(usage_table_count, 0);
-    assert_eq!(marker, "database_index:019_fixed_cycles_per_credit");
+    conn.execute(
+        "INSERT INTO databases
+           (database_id, name, db_file_name, mount_id, active_mount_id, status,
+            schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
+         VALUES
+           ('db_existing', 'Existing', 'db_existing.sqlite3', 11, 11, ?1,
+            'vfs_store:current', 0, 1, 1)",
+        params![status],
+    )
+    .expect("existing database row should insert");
 }
 
 #[test]
-fn fixed_cycles_per_credit_migration_preserves_credit_ledger_rows() {
+fn partial_billing_index_schema_is_rejected() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let index_path = root.join("index.sqlite3");
+    write_mainnet_011_index_schema(&index_path, "hot");
+    let conn = Connection::open(&index_path).expect("index should reopen");
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+        params!["database_index:012_credits_initial"],
+    )
+    .expect("partial billing marker should insert");
+    drop(conn);
+
+    let service = VfsService::new(index_path, root.join("databases"));
+    let error = service
+        .run_index_migrations()
+        .expect_err("partial billing schema should reject");
+
+    assert!(error.contains("unsupported partial billing index schema"));
+}
+
+#[test]
+fn pre_011_index_schema_is_rejected() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let index_path = root.join("index.sqlite3");
+    let conn = Connection::open(&index_path).expect("index should open");
+    conn.execute_batch(
+        "CREATE TABLE schema_migrations (
+           version TEXT PRIMARY KEY,
+           applied_at INTEGER NOT NULL
+         );
+         INSERT INTO schema_migrations (version, applied_at) VALUES
+           ('database_index:000_initial', 0),
+           ('database_index:001_lifecycle', 0),
+           ('database_index:002_restore_size', 0),
+           ('database_index:003_restore_chunks', 0),
+           ('database_index:005_mount_history', 0),
+           ('database_index:006_url_ingest_trigger_sessions', 0),
+           ('database_index:007_ops_answer_sessions', 0),
+           ('database_index:008_restore_sessions', 0),
+           ('database_index:009_restore_chunk_bytes', 0),
+           ('database_index:010_database_name_breaking', 0);",
+    )
+    .expect("pre-011 marker schema should create");
+    drop(conn);
+
+    let service = VfsService::new(index_path, root.join("databases"));
+    let error = service
+        .run_index_migrations()
+        .expect_err("pre-011 schema should reject");
+
+    assert!(error.contains("database_index:011_source_run_sessions"));
+}
+
+#[test]
+fn cycles_per_credit_ledger_schema_is_rejected() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let index_path = root.join("index.sqlite3");
@@ -191,25 +327,10 @@ fn fixed_cycles_per_credit_migration_preserves_credit_ledger_rows() {
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
          );
-         CREATE INDEX database_credit_ledger_database_idx
-           ON database_credit_ledger(database_id, entry_id);
          CREATE TABLE credits_config (
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL
-         );
-         INSERT INTO database_credit_ledger
-           (database_id, kind, amount_credits, balance_after_credits, payment_amount_e8s,
-            caller, method, cycles_delta, credits_per_kinic, cycles_per_credit,
-            ledger_block_index, created_at_ms)
-         VALUES
-           ('alpha', 'charge', -2, 8, null, 'owner', 'write_node',
-            1000000001, 1000, 1000000000, null, 7);
-         INSERT INTO credits_config (key, value) VALUES
-           ('kinic_ledger_canister_id', 'aaaaa-aa'),
-           ('sns_governance_id', 'rrkah-fqaaa-aaaaa-aaaaq-cai'),
-           ('credits_per_kinic', '1000'),
-           ('cycles_per_credit', '1000000000'),
-           ('min_update_credits', '1');",
+         );",
     )
     .expect("legacy credits schema should create");
     for version in [
@@ -225,12 +346,6 @@ fn fixed_cycles_per_credit_migration_preserves_credit_ledger_rows() {
         "database_index:010_database_name_breaking",
         "database_index:011_source_run_sessions",
         "database_index:012_credits_initial",
-        "database_index:013_credits_pending",
-        "database_index:014_credits_ledger_block_index",
-        "database_index:015_credits_pending_ledger_details",
-        "database_index:016_active_status",
-        "database_index:017_hard_delete_databases",
-        "database_index:018_credit_ledger_only",
     ] {
         conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
@@ -241,28 +356,11 @@ fn fixed_cycles_per_credit_migration_preserves_credit_ledger_rows() {
     drop(conn);
 
     let service = VfsService::new(index_path.clone(), root.join("databases"));
-    service
+    let error = service
         .run_index_migrations()
-        .expect("fixed cycles migration should run");
+        .expect_err("cycles_per_credit schema should reject");
 
     let conn = Connection::open(index_path).expect("index should reopen");
-    let preserved: (String, i64, i64, Option<i64>, i64) = conn
-        .query_row(
-            "SELECT kind, amount_credits, balance_after_credits, ledger_block_index, created_at_ms
-             FROM database_credit_ledger
-             WHERE database_id = 'alpha'",
-            params![],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
-        )
-        .expect("ledger row should survive migration");
     let ledger_cycles_column_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
@@ -271,19 +369,9 @@ fn fixed_cycles_per_credit_migration_preserves_credit_ledger_rows() {
             |row| row.get(0),
         )
         .expect("ledger cycles column count should load");
-    let config_cycles_row_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM credits_config WHERE key = 'cycles_per_credit'",
-            params![],
-            |row| row.get(0),
-        )
-        .expect("config cycles row count should load");
-    let marker = schema_migration_count(&root, "database_index:019_fixed_cycles_per_credit");
 
-    assert_eq!(preserved, ("charge".to_string(), -2, 8, None, 7));
-    assert_eq!(ledger_cycles_column_count, 0);
-    assert_eq!(config_cycles_row_count, 0);
-    assert_eq!(marker, 1);
+    assert!(error.contains("unsupported partial billing index schema"));
+    assert_eq!(ledger_cycles_column_count, 1);
 }
 
 fn assert_restore_size(root: &std::path::Path, database_id: &str, expected: Option<u64>) {
@@ -388,6 +476,18 @@ fn database_credits_suspended_at(root: &std::path::Path, database_id: &str) -> O
         |row| row.get(0),
     )
     .expect("database credits suspension should load")
+}
+
+fn credits_config_version(root: &std::path::Path) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT value FROM credits_config WHERE key = 'config_version'",
+        params![],
+        |row| row.get::<_, String>(0),
+    )
+    .expect("credits config version should load")
+    .parse()
+    .expect("credits config version should be numeric")
 }
 
 fn database_pending_operation_count(root: &std::path::Path, database_id: &str) -> i64 {
@@ -1542,12 +1642,7 @@ fn pending_database_credit_purchase_cancel_rejects_after_activation_started() {
     assert_eq!(meta.mount_id, 11);
 
     let error = service
-        .repair_database_credit_purchase_cancel(
-            &pending.database_id,
-            operation_id,
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            5,
-        )
+        .repair_database_credit_purchase_cancel(&pending.database_id, operation_id, "payer", 5)
         .expect_err("started activation should require complete repair");
 
     assert!(error.contains("complete credit purchase repair"));
@@ -1638,6 +1733,105 @@ fn database_credits_purchase_allows_authenticated_non_owner() {
     service
         .begin_database_credit_purchase("alpha", "stranger", 100, 4)
         .expect("authenticated non-owner should be allowed to purchase credits");
+}
+
+#[test]
+fn credits_config_version_changes_only_for_effective_rate_updates() {
+    let (service, root) = service_with_root();
+    assert_eq!(credits_config_version(&root), 1);
+
+    service
+        .update_credits_config(
+            CreditsConfigUpdate {
+                credits_per_kinic: 1_000,
+                min_update_credits: 1,
+            },
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        )
+        .expect("same config should update without version bump");
+    assert_eq!(credits_config_version(&root), 1);
+
+    service
+        .update_credits_config(
+            CreditsConfigUpdate {
+                credits_per_kinic: 2_000,
+                min_update_credits: 1,
+            },
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+        )
+        .expect("changed config should update");
+    assert_eq!(credits_config_version(&root), 2);
+}
+
+#[test]
+fn credit_purchase_preview_returns_fixed_payment_inputs() {
+    let (service, _root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    let preview = service
+        .preview_database_credit_purchase("alpha", 500)
+        .expect("preview should succeed");
+
+    assert_eq!(preview.payment_amount_e8s, 50_000_000);
+    assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
+    assert_eq!(preview.credits_per_kinic, 1_000);
+    assert_eq!(preview.config_version, 1);
+}
+
+#[test]
+fn credit_purchase_begin_rejects_stale_expected_values_before_pending_create() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    let stale_amount = service
+        .begin_database_credit_purchase_with_ledger_details(
+            DatabaseCreditPurchaseWithLedgerDetails {
+                database_id: "alpha",
+                caller: "payer",
+                credits: 500,
+                expected_payment_amount_e8s: 50_000_001,
+                expected_config_version: 1,
+                ledger: CreditsPendingLedgerDetailsInput {
+                    from_owner: "payer",
+                    from_subaccount: None,
+                    to_owner: "canister",
+                    to_subaccount: None,
+                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                    ledger_created_at_time_ns: 2_000_000,
+                },
+                now: 2,
+            },
+        )
+        .expect_err("stale amount should reject");
+    assert!(stale_amount.contains("payment amount changed"));
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
+
+    let stale_version = service
+        .begin_database_credit_purchase_with_ledger_details(
+            DatabaseCreditPurchaseWithLedgerDetails {
+                database_id: "alpha",
+                caller: "payer",
+                credits: 500,
+                expected_payment_amount_e8s: 50_000_000,
+                expected_config_version: 2,
+                ledger: CreditsPendingLedgerDetailsInput {
+                    from_owner: "payer",
+                    from_subaccount: None,
+                    to_owner: "canister",
+                    to_subaccount: None,
+                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                    ledger_created_at_time_ns: 3_000_000,
+                },
+                now: 3,
+            },
+        )
+        .expect_err("stale version should reject");
+    assert!(stale_version.contains("credits config changed"));
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
 }
 
 #[test]
@@ -1774,6 +1968,64 @@ fn pending_credits_operations_are_visible_to_owner_and_governance_only() {
 }
 
 #[test]
+fn repair_credit_purchase_cancel_allows_payer_or_owner_only() {
+    let (service, root) = service_with_root();
+    for database_id in ["payer-cancel", "owner-cancel", "reject-cancel"] {
+        service
+            .create_database(database_id, "owner", 1)
+            .expect("database should create");
+        service
+            .grant_database_access(database_id, "owner", "writer", DatabaseRole::Writer, 2)
+            .expect("writer should be granted");
+        service
+            .grant_database_access(database_id, "owner", "reader", DatabaseRole::Reader, 3)
+            .expect("reader should be granted");
+    }
+
+    let payer_cancel = service
+        .begin_database_credit_purchase("payer-cancel", "payer", 500, 4)
+        .expect("payer cancel operation should begin");
+    service
+        .mark_database_credit_purchase_ambiguous(payer_cancel, "payer-cancel", "payer", 500, 5)
+        .expect("payer cancel should mark ambiguous");
+    service
+        .repair_database_credit_purchase_cancel("payer-cancel", payer_cancel, "payer", 6)
+        .expect("payer should cancel own pending purchase");
+    assert_eq!(database_pending_operation_count(&root, "payer-cancel"), 0);
+
+    let owner_cancel = service
+        .begin_database_credit_purchase("owner-cancel", "payer", 700, 7)
+        .expect("owner cancel operation should begin");
+    service
+        .mark_database_credit_purchase_ambiguous(owner_cancel, "owner-cancel", "payer", 700, 8)
+        .expect("owner cancel should mark ambiguous");
+    service
+        .repair_database_credit_purchase_cancel("owner-cancel", owner_cancel, "owner", 9)
+        .expect("owner should cancel pending purchase");
+    assert_eq!(
+        database_ledger_kinds(&root, "owner-cancel"),
+        vec![
+            "credit_purchase_ambiguous",
+            "credit_purchase_repair_cancelled"
+        ]
+    );
+
+    let reject_cancel = service
+        .begin_database_credit_purchase("reject-cancel", "payer", 900, 10)
+        .expect("reject cancel operation should begin");
+    service
+        .mark_database_credit_purchase_ambiguous(reject_cancel, "reject-cancel", "payer", 900, 11)
+        .expect("reject cancel should mark ambiguous");
+    for caller in ["writer", "reader", "outsider"] {
+        let error = service
+            .repair_database_credit_purchase_cancel("reject-cancel", reject_cancel, caller, 12)
+            .expect_err("non-payer non-owner should reject");
+        assert!(error.contains("not credit purchase payer or database owner"));
+        assert_eq!(database_pending_operation_count(&root, "reject-cancel"), 1);
+    }
+}
+
+#[test]
 fn credits_history_redacts_principals_for_non_owner_readers() {
     let (service, _root) = service_with_root();
     service
@@ -1823,7 +2075,7 @@ fn credits_history_redacts_principals_for_non_owner_readers() {
 }
 
 #[test]
-fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
+fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
     let (service, root) = service_with_root();
     service
         .create_database("complete", "owner", 1)
@@ -1849,8 +2101,8 @@ fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
         .expect("authenticated caller should complete verified credit purchase");
     assert_eq!(balance, 500);
     service
-        .repair_database_credit_purchase_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
-        .expect("governance should cancel ambiguous credit purchase after verification");
+        .repair_database_credit_purchase_cancel("cancel", cancel, "owner", 4)
+        .expect("owner should cancel ambiguous credit purchase after verification");
 
     assert_eq!(database_credits_balance(&root, "complete"), 500);
     assert_eq!(database_credits_balance(&root, "cancel"), 0);
@@ -1865,7 +2117,10 @@ fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
     );
     assert_eq!(
         database_ledger_kinds(&root, "cancel"),
-        vec!["credit_purchase_ambiguous"]
+        vec![
+            "credit_purchase_ambiguous",
+            "credit_purchase_repair_cancelled"
+        ]
     );
     let entries = service
         .list_database_credit_entries("complete", "owner", None, 10)
@@ -1874,6 +2129,15 @@ fn verified_complete_allows_authenticated_caller_and_governance_cancel() {
     assert_eq!(entries[0].caller, "payer");
     assert_eq!(entries[1].caller, "payer");
     assert_eq!(entries[1].ledger_block_index, Some(77));
+
+    let cancel_entries = service
+        .list_database_credit_entries("cancel", "owner", None, 10)
+        .expect("cancel entries should load")
+        .entries;
+    assert_eq!(cancel_entries[1].caller, "owner");
+    assert_eq!(cancel_entries[1].payment_amount_e8s, Some(70_000_000));
+    assert_eq!(cancel_entries[1].balance_after_credits, 0);
+    assert_eq!(cancel_entries[1].ledger_block_index, None);
 }
 
 #[test]

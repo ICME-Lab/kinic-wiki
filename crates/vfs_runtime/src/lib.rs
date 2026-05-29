@@ -20,18 +20,18 @@ use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, ChildNode, CreditsConfig, CreditsConfigUpdate, DatabaseArchiveInfo,
     DatabaseCreditEntry, DatabaseCreditEntryPage, DatabaseCreditPendingOperation,
-    DatabaseCreditPendingOperationPage, DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus,
-    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    DatabaseCreditPendingOperationPage, DatabaseCreditPurchasePreview, DatabaseInfo,
+    DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult,
 };
@@ -61,6 +61,8 @@ const INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES: &str = "database_index:017_har
 const INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY: &str = "database_index:018_credit_ledger_only";
 const INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT: &str =
     "database_index:019_fixed_cycles_per_credit";
+const INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION: &str =
+    "database_index:020_credits_config_version";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -74,10 +76,13 @@ const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
 const SHA256_DIGEST_BYTES: usize = 32;
 const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
+const FRESH_INDEX_SCHEMA_SQL: &str = include_str!("../migrations/index_db/fresh_index_schema.sql");
+const INDEX_011_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/011_to_latest.sql");
 pub const KINIC_E8S_PER_TOKEN: u64 = 100_000_000;
 pub const DEFAULT_CREDITS_PER_KINIC: u64 = 1_000;
 pub const CYCLES_PER_CREDIT: u128 = 1_000_000_000;
 pub const DEFAULT_MIN_UPDATE_CREDITS: u64 = 1;
+const DEFAULT_CREDITS_CONFIG_VERSION: u64 = 1;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV1A64_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -131,6 +136,8 @@ pub struct DatabaseCreditPurchaseWithLedgerDetails<'a> {
     pub database_id: &'a str,
     pub caller: &'a str,
     pub credits: u64,
+    pub expected_payment_amount_e8s: u64,
+    pub expected_config_version: u64,
     pub ledger: CreditsPendingLedgerDetailsInput<'a>,
     pub now: i64,
 }
@@ -241,15 +248,39 @@ impl VfsService {
         self.read_index(load_credits_config)
     }
 
+    pub fn preview_database_credit_purchase(
+        &self,
+        database_id: &str,
+        credits: u64,
+    ) -> Result<DatabaseCreditPurchasePreview, String> {
+        let credits = credits_to_i64(credits)?;
+        self.read_index(|conn| {
+            let config = load_credits_config(conn)?;
+            let config_version = load_credits_config_version(conn)?;
+            let payment_amount_e8s = payment_amount_e8s_for_credits(credits as u64, &config)?;
+            amount_to_i64(payment_amount_e8s)?;
+            validate_database_credit_purchase_for_conn(conn, database_id, credits)?;
+            Ok(DatabaseCreditPurchasePreview {
+                payment_amount_e8s,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                credits_per_kinic: config.credits_per_kinic,
+                config_version,
+            })
+        })
+    }
+
     pub fn update_credits_config(
         &self,
         update: CreditsConfigUpdate,
         caller: &str,
     ) -> Result<CreditsConfig, String> {
         let current = self.credits_config()?;
+        let current_version = self.read_index(load_credits_config_version)?;
         if caller != current.sns_governance_id {
             return Err("caller is not SNS governance".to_string());
         }
+        let config_changed = current.credits_per_kinic != update.credits_per_kinic
+            || current.min_update_credits != update.min_update_credits;
         let next = CreditsConfig {
             kinic_ledger_canister_id: current.kinic_ledger_canister_id,
             sns_governance_id: current.sns_governance_id,
@@ -257,9 +288,20 @@ impl VfsService {
             min_update_credits: update.min_update_credits,
         };
         validate_credits_config(&next)?;
+        let next_version = if config_changed {
+            current_version
+                .checked_add(1)
+                .ok_or_else(|| "credits config version overflow".to_string())?
+        } else {
+            current_version
+        };
         self.write_index(|tx| {
             set_credits_config_value(tx, "credits_per_kinic", next.credits_per_kinic)?;
-            set_credits_config_value(tx, "min_update_credits", next.min_update_credits)
+            set_credits_config_value(tx, "min_update_credits", next.min_update_credits)?;
+            if config_changed {
+                set_credits_config_value(tx, "config_version", next_version)?;
+            }
+            Ok(())
         })?;
         Ok(next)
     }
@@ -564,13 +606,8 @@ impl VfsService {
         database_id: &str,
         credits: u64,
     ) -> Result<(), String> {
-        let credits = credits_to_i64(credits)?;
-        let config = self.credits_config()?;
-        payment_amount_e8s_for_credits(credits as u64, &config).and_then(amount_to_i64)?;
-        self.read_index(|conn| {
-            validate_database_credit_purchase_for_conn(conn, database_id, credits)?;
-            Ok(())
-        })
+        self.preview_database_credit_purchase(database_id, credits)
+            .map(|_| ())
     }
 
     pub fn begin_database_credit_purchase(
@@ -580,11 +617,14 @@ impl VfsService {
         credits: u64,
         now: i64,
     ) -> Result<u64, String> {
+        let preview = self.preview_database_credit_purchase(database_id, credits)?;
         self.begin_database_credit_purchase_with_ledger_details(
             DatabaseCreditPurchaseWithLedgerDetails {
                 database_id,
                 caller,
                 credits,
+                expected_payment_amount_e8s: preview.payment_amount_e8s,
+                expected_config_version: preview.config_version,
                 ledger: CreditsPendingLedgerDetailsInput {
                     from_owner: caller,
                     from_subaccount: None,
@@ -603,13 +643,26 @@ impl VfsService {
         request: DatabaseCreditPurchaseWithLedgerDetails<'_>,
     ) -> Result<u64, String> {
         let credits = credits_to_i64(request.credits)?;
-        let config = self.credits_config()?;
-        let payment_amount_e8s =
-            payment_amount_e8s_for_credits(request.credits, &config).and_then(amount_to_i64)?;
         let ledger_fee = amount_to_i64(request.ledger.ledger_fee_e8s)?;
         let ledger_created_at_time = i64::try_from(request.ledger.ledger_created_at_time_ns)
             .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
         self.write_index(|tx| {
+            let config = load_credits_config(tx)?;
+            let config_version = load_credits_config_version(tx)?;
+            let payment_amount_e8s_u64 = payment_amount_e8s_for_credits(request.credits, &config)?;
+            if request.expected_config_version != config_version {
+                return Err(format!(
+                    "credits config changed: expected version {}, current version {}",
+                    request.expected_config_version, config_version
+                ));
+            }
+            if request.expected_payment_amount_e8s != payment_amount_e8s_u64 {
+                return Err(format!(
+                    "credit purchase payment amount changed: expected {}, current {}",
+                    request.expected_payment_amount_e8s, payment_amount_e8s_u64
+                ));
+            }
+            let payment_amount_e8s = amount_to_i64(payment_amount_e8s_u64)?;
             validate_database_credit_purchase_for_conn(tx, request.database_id, credits)?;
             insert_pending_credits_operation(
                 tx,
@@ -913,11 +966,19 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<(), String> {
-        self.require_sns_governance(caller)?;
         self.write_index(|tx| {
             let operation = load_pending_credits_operation(tx, operation_id)?;
             require_pending_database_kind(&operation, database_id, "credit_purchase")?;
             let status = load_database_status(tx, database_id)?;
+            let is_payer = operation.caller == caller;
+            let is_owner = load_member_role(tx, database_id, caller)?
+                .map(|role| role == DatabaseRole::Owner)
+                .unwrap_or(false);
+            if !is_payer && !is_owner {
+                return Err(format!(
+                    "caller is not credit purchase payer or database owner: {database_id}"
+                ));
+            }
             let active_mount_id: Option<i64> = tx
                 .query_row(
                     "SELECT active_mount_id FROM databases WHERE database_id = ?1",
@@ -931,8 +992,24 @@ impl VfsService {
                         .to_string(),
                 );
             }
+            let balance = database_balance_for_update(tx, database_id)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id,
+                    kind: "credit_purchase_repair_cancelled",
+                    amount_credits: operation.credits,
+                    balance_after_credits: balance,
+                    payment_amount_e8s: Some(operation.payment_amount_e8s),
+                    caller,
+                    method: Some("repair_database_credit_purchase_cancel"),
+                    cycles_delta: None,
+                    config: None,
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
             delete_pending_credits_operation(tx, operation_id)?;
-            let _ = now;
             Ok(())
         })
     }
@@ -2108,18 +2185,6 @@ impl VfsService {
         }
     }
 
-    fn require_sns_governance(&self, caller: &str) -> Result<(), String> {
-        if caller == ANONYMOUS_PRINCIPAL {
-            return Err("anonymous caller not allowed".to_string());
-        }
-        let config = self.credits_config()?;
-        if caller == config.sns_governance_id {
-            Ok(())
-        } else {
-            Err("caller is not SNS governance".to_string())
-        }
-    }
-
     fn database_meta(&self, database_id: &str) -> Result<DatabaseMeta, String> {
         self.read_index(|conn| {
             load_database(conn, database_id)?.ok_or_else(|| database_meta_error(conn, database_id))
@@ -2450,34 +2515,27 @@ impl VfsService {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_index_migrations(conn: &mut Connection, config: &CreditsConfig) -> Result<(), String> {
-    if !sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
-        conn.execute_batch("CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL);")
-            .map_err(|error| error.to_string())?;
+    if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
+        let tx = conn.transaction().map_err(|error| error.to_string())?;
+        ensure_existing_index_schema_is_latest(&tx, Some(config))?;
+        tx.commit().map_err(|error| error.to_string())?;
+        return Ok(());
     }
-    let migration_count = schema_migration_count(conn)?;
     for table in INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS {
-        if migration_count == 0 && sqlite_master_entry_exists(conn, "table", table)? {
+        if sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!(
                 "unsupported index schema: {table} exists without supported schema_migrations; recreate the index database"
             ));
         }
     }
-    if migration_count != 0 {
-        let tx = conn.transaction().map_err(|error| error.to_string())?;
-        apply_existing_index_migrations(&tx, Some(config))?;
-        tx.commit().map_err(|error| error.to_string())?;
-        return Ok(());
-    }
     validate_credits_config(config)?;
     let tx = conn.transaction().map_err(|error| error.to_string())?;
+    create_schema_migrations(&tx)?;
     create_fresh_index_schema(&tx)?;
     insert_credits_config(&tx, config)?;
+    insert_credits_config_version(&tx)?;
     for &version in INDEX_SCHEMA_VERSIONS {
-        tx.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-            params![version],
-        )
-        .map_err(|error| error.to_string())?;
+        insert_schema_migration_now(&tx, version)?;
     }
     tx.commit().map_err(|error| error.to_string())
 }
@@ -2488,11 +2546,8 @@ fn run_index_migrations_for_upgrade(
     config: Option<&CreditsConfig>,
 ) -> Result<(), String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
-        if migration_applied(conn, INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT)? {
-            return Ok(());
-        }
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        apply_existing_index_migrations(&tx, config)?;
+        ensure_existing_index_schema_is_latest(&tx, config)?;
         tx.commit().map_err(|error| error.to_string())?;
         return Ok(());
     }
@@ -2507,15 +2562,7 @@ fn run_index_migrations_in_tx(
     config: &CreditsConfig,
 ) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        apply_existing_index_migrations(conn, Some(config))?;
-        validate_wasm_index_schema(conn)?;
-        for &version in INDEX_SCHEMA_VERSIONS {
-            if !wasm_index_migration_exists(conn, version)? {
-                return Err(format!(
-                    "unsupported index schema: missing migration {version}"
-                ));
-            }
-        }
+        ensure_existing_index_schema_is_latest(conn, Some(config))?;
         return Ok(());
     }
     for table in INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS {
@@ -2526,21 +2573,14 @@ fn run_index_migrations_in_tx(
         }
     }
     validate_credits_config(config)?;
-    conn.execute(
-        "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
+    create_schema_migrations(conn)?;
     create_fresh_index_schema(conn)?;
     insert_credits_config(conn, config)?;
+    insert_credits_config_version(conn)?;
     for &version in INDEX_SCHEMA_VERSIONS {
-        conn.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-            params![version],
-        )
-        .map_err(|error| error.to_string())?;
+        insert_schema_migration_zero(conn, version)?;
     }
-    validate_wasm_index_schema(conn)
+    validate_index_schema(conn)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -2549,19 +2589,7 @@ fn run_index_migrations_in_tx_for_upgrade(
     config: Option<&CreditsConfig>,
 ) -> Result<(), String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        if wasm_index_migration_exists(conn, INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT)? {
-            validate_wasm_index_schema(conn)?;
-            for &version in INDEX_SCHEMA_VERSIONS {
-                if !wasm_index_migration_exists(conn, version)? {
-                    return Err(format!(
-                        "unsupported index schema: missing migration {version}"
-                    ));
-                }
-            }
-            return Ok(());
-        }
-        apply_existing_index_migrations(conn, config)?;
-        validate_wasm_index_schema(conn)?;
+        ensure_existing_index_schema_is_latest(conn, config)?;
         return Ok(());
     }
     let config =
@@ -2569,106 +2597,62 @@ fn run_index_migrations_in_tx_for_upgrade(
     run_index_migrations_in_tx(conn, config)
 }
 
-fn apply_existing_index_migrations(
+enum IndexSchemaState {
+    Latest,
+    Mainnet011,
+}
+
+fn ensure_existing_index_schema_is_latest(
     conn: &Transaction<'_>,
     config: Option<&CreditsConfig>,
 ) -> Result<(), String> {
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING)? {
-        if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_RESTORE_CHUNK_BYTES)? {
-            return Err(format!(
-                "unsupported index schema: missing migration {INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING}"
-            ));
+    match classify_existing_index_schema_state(conn)? {
+        IndexSchemaState::Latest => validate_index_schema(conn),
+        IndexSchemaState::Mainnet011 => {
+            let config = config
+                .ok_or_else(|| "credits config required for first credits upgrade".to_string())?;
+            validate_credits_config(config)?;
+            validate_pre_billing_index_schema(conn)?;
+            apply_mainnet_011_to_latest_index_migration(conn, config)?;
+            validate_index_schema(conn)
         }
-        apply_database_name_index_migration(conn)?;
+    }
+}
+
+fn classify_existing_index_schema_state(
+    conn: &Transaction<'_>,
+) -> Result<IndexSchemaState, String> {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION)? {
+        return Ok(IndexSchemaState::Latest);
     }
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
-        apply_source_run_sessions_index_migration(conn)?;
+        return Err(format!(
+            "unsupported index schema: missing migration {INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS}"
+        ));
     }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_BILLING_INITIAL)? {
-        let config = config
-            .ok_or_else(|| "credits config required for first credits upgrade".to_string())?;
-        validate_credits_config(config)?;
-        apply_credits_index_migration(conn, config)?;
+    for &version in POST_011_INDEX_SCHEMA_VERSIONS {
+        if migration_applied_tx(conn, version)? {
+            return Err(format!(
+                "unsupported partial billing index schema: migration {version} is already applied"
+            ));
+        }
     }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING)? {
-        apply_credits_pending_index_migration(conn)?;
+    for table in POST_011_INDEX_SCHEMA_TABLES {
+        if tx_sqlite_master_entry_exists(conn, "table", table)? {
+            return Err(format!(
+                "unsupported partial billing index schema: table {table} already exists"
+            ));
+        }
     }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX)? {
-        apply_credit_ledger_block_index_migration(conn)?;
-    }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS)? {
-        apply_credit_pending_ledger_details_index_migration(conn)?;
-    }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_ACTIVE_STATUS)? {
-        apply_active_status_index_migration(conn)?;
-    }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES)? {
-        apply_hard_delete_database_index_migration(conn)?;
-    }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY)? {
-        apply_credit_ledger_only_index_migration(conn)?;
-    }
-    if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT)? {
-        apply_fixed_cycles_per_credit_index_migration(conn)?;
-    }
-    Ok(())
+    Ok(IndexSchemaState::Mainnet011)
 }
 
-fn apply_database_name_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    if !index_column_exists(conn, "databases", "name")? {
-        conn.execute("ALTER TABLE databases ADD COLUMN name TEXT", params![])
-            .map_err(|error| error.to_string())?;
-        conn.execute(
-            "UPDATE databases
-             SET name = database_id
-             WHERE name IS NULL OR name = ''",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-        params![INDEX_SCHEMA_VERSION_DATABASE_NAME_BREAKING],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_credits_index_migration(
+fn apply_mainnet_011_to_latest_index_migration(
     conn: &Transaction<'_>,
     config: &CreditsConfig,
 ) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE database_credit_accounts (
-           database_id TEXT PRIMARY KEY,
-           balance_credits INTEGER NOT NULL,
-           suspended_at_ms INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL,
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE TABLE database_credit_ledger (
-           entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           database_id TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           amount_credits INTEGER NOT NULL,
-           balance_after_credits INTEGER NOT NULL,
-           payment_amount_e8s INTEGER,
-           caller TEXT NOT NULL,
-           method TEXT,
-           cycles_delta INTEGER,
-           credits_per_kinic INTEGER,
-           ledger_block_index INTEGER,
-           created_at_ms INTEGER NOT NULL
-         );
-         CREATE INDEX database_credit_ledger_database_idx
-           ON database_credit_ledger(database_id, entry_id);
-         CREATE TABLE credits_config (
-           key TEXT PRIMARY KEY,
-           value TEXT NOT NULL
-         );",
-    )
-    .map_err(|error| error.to_string())?;
+    conn.execute_batch(INDEX_011_TO_LATEST_SQL)
+        .map_err(|error| error.to_string())?;
     conn.execute(
         "INSERT INTO database_credit_accounts
          (database_id, balance_credits, suspended_at_ms, created_at_ms, updated_at_ms)
@@ -2677,330 +2661,50 @@ fn apply_credits_index_migration(
     )
     .map_err(|error| error.to_string())?;
     insert_credits_config(conn, config)?;
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_BILLING_INITIAL],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_credits_pending_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE database_credit_pending_operations (
-           operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           database_id TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           caller TEXT NOT NULL,
-           credits INTEGER NOT NULL,
-           payment_amount_e8s INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX database_credit_pending_operations_database_idx
-           ON database_credit_pending_operations(database_id);",
-    )
-    .map_err(|error| error.to_string())?;
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_BILLING_PENDING],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_credit_ledger_block_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    if !index_column_exists(conn, "database_credit_ledger", "ledger_block_index")? {
-        conn.execute(
-            "ALTER TABLE database_credit_ledger ADD COLUMN ledger_block_index INTEGER",
-            params![],
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_credit_pending_ledger_details_index_migration(
-    conn: &Transaction<'_>,
-) -> Result<(), String> {
-    for (column, definition) in [
-        ("from_owner", "TEXT"),
-        ("from_subaccount", "BLOB"),
-        ("to_owner", "TEXT"),
-        ("to_subaccount", "BLOB"),
-        ("ledger_fee_e8s", "INTEGER"),
-        ("ledger_created_at_time_ns", "INTEGER"),
-    ] {
-        if !index_column_exists(conn, "database_credit_pending_operations", column)? {
-            conn.execute(
-                &format!(
-                    "ALTER TABLE database_credit_pending_operations ADD COLUMN {column} {definition}"
-                ),
-                params![],
-            )
-            .map_err(|error| error.to_string())?;
-        }
-    }
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_active_status_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    insert_credits_config_version(conn)?;
     conn.execute(
         "UPDATE databases SET status = 'active' WHERE status = 'hot'",
         params![],
     )
     .map_err(|error| error.to_string())?;
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_ACTIVE_STATUS],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_hard_delete_database_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
     purge_hard_deleted_database_rows(conn)?;
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_credit_ledger_only_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn apply_fixed_cycles_per_credit_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    if index_column_exists(conn, "database_credit_ledger", "cycles_per_credit")? {
-        conn.execute_batch(
-            "ALTER TABLE database_credit_ledger RENAME TO database_credit_ledger_old;
-             CREATE TABLE database_credit_ledger (
-               entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-               database_id TEXT NOT NULL,
-               kind TEXT NOT NULL,
-               amount_credits INTEGER NOT NULL,
-               balance_after_credits INTEGER NOT NULL,
-               payment_amount_e8s INTEGER,
-               caller TEXT NOT NULL,
-               method TEXT,
-               cycles_delta INTEGER,
-               credits_per_kinic INTEGER,
-               ledger_block_index INTEGER,
-               created_at_ms INTEGER NOT NULL
-             );
-             INSERT INTO database_credit_ledger
-               (entry_id, database_id, kind, amount_credits, balance_after_credits,
-                payment_amount_e8s, caller, method, cycles_delta, credits_per_kinic,
-                ledger_block_index, created_at_ms)
-             SELECT entry_id, database_id, kind, amount_credits, balance_after_credits,
-                    payment_amount_e8s, caller, method, cycles_delta, credits_per_kinic,
-                    ledger_block_index, created_at_ms
-             FROM database_credit_ledger_old;
-             DROP TABLE database_credit_ledger_old;
-             CREATE INDEX database_credit_ledger_database_idx
-               ON database_credit_ledger(database_id, entry_id);",
-        )
-        .map_err(|error| error.to_string())?;
+    for &version in POST_011_INDEX_SCHEMA_VERSIONS {
+        insert_schema_migration_now(conn, version)?;
     }
+    Ok(())
+}
+
+fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM credits_config WHERE key = 'cycles_per_credit'",
+        "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
         params![],
     )
     .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn insert_schema_migration_now(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT],
+        params![version],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
 }
 
-fn apply_source_run_sessions_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE source_run_sessions (
-           database_id TEXT NOT NULL,
-           source_path TEXT NOT NULL,
-           source_etag TEXT NOT NULL,
-           session_nonce TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           expires_at_ms INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           refreshed_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, session_nonce),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX source_run_sessions_expiry_idx
-           ON source_run_sessions(expires_at_ms);",
-    )
-    .map_err(|error| error.to_string())?;
+#[cfg(target_arch = "wasm32")]
+fn insert_schema_migration_zero(conn: &Transaction<'_>, version: &str) -> Result<(), String> {
     conn.execute(
-        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-        params![INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS],
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+        params![version],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
 }
 
 fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE databases (
-           database_id TEXT PRIMARY KEY,
-           name TEXT NOT NULL,
-           db_file_name TEXT NOT NULL,
-           mount_id INTEGER NOT NULL,
-           active_mount_id INTEGER,
-           status TEXT NOT NULL DEFAULT 'active',
-           schema_version TEXT NOT NULL,
-           logical_size_bytes INTEGER NOT NULL DEFAULT 0,
-           snapshot_hash BLOB,
-           archived_at_ms INTEGER,
-           deleted_at_ms INTEGER,
-           restore_size_bytes INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL
-         );
-         CREATE UNIQUE INDEX databases_active_mount_id_idx
-           ON databases(active_mount_id)
-           WHERE active_mount_id IS NOT NULL;
-         CREATE TABLE database_members (
-           database_id TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           role TEXT NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, principal),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE TABLE database_restore_chunks (
-           database_id TEXT NOT NULL,
-           offset_bytes INTEGER NOT NULL,
-           end_bytes INTEGER NOT NULL,
-           bytes BLOB,
-           PRIMARY KEY (database_id, offset_bytes, end_bytes),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX database_restore_chunks_database_id_idx
-           ON database_restore_chunks(database_id, offset_bytes);
-         CREATE TABLE database_mount_history (
-           database_id TEXT NOT NULL,
-           mount_id INTEGER NOT NULL,
-           reason TEXT NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (mount_id)
-         );
-         CREATE TABLE url_ingest_trigger_sessions (
-           database_id TEXT NOT NULL,
-           session_nonce TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           expires_at_ms INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           refreshed_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, session_nonce),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX url_ingest_trigger_sessions_expiry_idx
-           ON url_ingest_trigger_sessions(expires_at_ms);
-         CREATE TABLE ops_answer_sessions (
-           database_id TEXT NOT NULL,
-           session_nonce TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           expires_at_ms INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           refreshed_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, session_nonce),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX ops_answer_sessions_expiry_idx
-           ON ops_answer_sessions(expires_at_ms);
-         CREATE TABLE source_run_sessions (
-           database_id TEXT NOT NULL,
-           source_path TEXT NOT NULL,
-           source_etag TEXT NOT NULL,
-           session_nonce TEXT NOT NULL,
-           principal TEXT NOT NULL,
-           expires_at_ms INTEGER NOT NULL,
-           created_at_ms INTEGER NOT NULL,
-           refreshed_at_ms INTEGER NOT NULL,
-           PRIMARY KEY (database_id, session_nonce),
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX source_run_sessions_expiry_idx
-           ON source_run_sessions(expires_at_ms);
-         CREATE TABLE database_restore_sessions (
-           database_id TEXT PRIMARY KEY,
-           status TEXT NOT NULL,
-           active_mount_id INTEGER,
-           snapshot_hash BLOB,
-           archived_at_ms INTEGER,
-           deleted_at_ms INTEGER,
-           restore_size_bytes INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE TABLE database_credit_accounts (
-           database_id TEXT PRIMARY KEY,
-           balance_credits INTEGER NOT NULL,
-           suspended_at_ms INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL,
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE TABLE database_credit_ledger (
-           entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           database_id TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           amount_credits INTEGER NOT NULL,
-           balance_after_credits INTEGER NOT NULL,
-           payment_amount_e8s INTEGER,
-           caller TEXT NOT NULL,
-           method TEXT,
-           cycles_delta INTEGER,
-           credits_per_kinic INTEGER,
-           ledger_block_index INTEGER,
-           created_at_ms INTEGER NOT NULL
-         );
-         CREATE INDEX database_credit_ledger_database_idx
-           ON database_credit_ledger(database_id, entry_id);
-         CREATE TABLE database_credit_pending_operations (
-           operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-           database_id TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           caller TEXT NOT NULL,
-           credits INTEGER NOT NULL,
-           payment_amount_e8s INTEGER NOT NULL,
-           from_owner TEXT,
-           from_subaccount BLOB,
-           to_owner TEXT,
-           to_subaccount BLOB,
-           ledger_fee_e8s INTEGER,
-           ledger_created_at_time_ns INTEGER,
-           created_at_ms INTEGER NOT NULL,
-           FOREIGN KEY (database_id) REFERENCES databases(database_id)
-         );
-         CREATE INDEX database_credit_pending_operations_database_idx
-           ON database_credit_pending_operations(database_id);
-         CREATE TABLE credits_config (
-           key TEXT PRIMARY KEY,
-           value TEXT NOT NULL
-         );",
-    )
-    .map_err(|error| error.to_string())
+    conn.execute_batch(FRESH_INDEX_SCHEMA_SQL)
+        .map_err(|error| error.to_string())
 }
 
 fn default_credits_config() -> CreditsConfig {
@@ -3054,6 +2758,15 @@ fn insert_credits_config(conn: &Transaction<'_>, config: &CreditsConfig) -> Resu
     Ok(())
 }
 
+fn insert_credits_config_version(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
+        params!["config_version", DEFAULT_CREDITS_CONFIG_VERSION.to_string()],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn set_credits_config_value(conn: &Transaction<'_>, key: &str, value: u64) -> Result<(), String> {
     conn.execute(
         "INSERT INTO credits_config (key, value)
@@ -3085,6 +2798,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
     INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY,
     INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT,
+    INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3102,18 +2816,157 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "credits_config",
 ];
 
-#[cfg(target_arch = "wasm32")]
-fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
+const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
+    INDEX_SCHEMA_VERSION_BILLING_INITIAL,
+    INDEX_SCHEMA_VERSION_BILLING_PENDING,
+    INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
+    INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
+    INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
+    INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
+    INDEX_SCHEMA_VERSION_CREDIT_LEDGER_ONLY,
+    INDEX_SCHEMA_VERSION_FIXED_CYCLES_PER_CREDIT,
+    INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION,
+];
+
+const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
+    "database_credit_accounts",
+    "database_credit_ledger",
+    "database_credit_pending_operations",
+    "credits_config",
+];
+
+fn validate_pre_billing_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
+    for table in [
+        "schema_migrations",
+        "databases",
+        "database_members",
+        "database_restore_chunks",
+        "database_mount_history",
+        "url_ingest_trigger_sessions",
+        "ops_answer_sessions",
+        "source_run_sessions",
+        "database_restore_sessions",
+    ] {
+        if !tx_sqlite_master_entry_exists(conn, "table", table)? {
+            return Err(format!("unsupported index schema: missing table {table}"));
+        }
+    }
+    for (table, columns) in [
+        ("schema_migrations", &["version", "applied_at"][..]),
+        (
+            "databases",
+            &[
+                "database_id",
+                "name",
+                "db_file_name",
+                "mount_id",
+                "active_mount_id",
+                "status",
+                "schema_version",
+                "logical_size_bytes",
+                "snapshot_hash",
+                "archived_at_ms",
+                "deleted_at_ms",
+                "restore_size_bytes",
+                "created_at_ms",
+                "updated_at_ms",
+            ][..],
+        ),
+        (
+            "database_members",
+            &["database_id", "principal", "role", "created_at_ms"][..],
+        ),
+        (
+            "database_restore_chunks",
+            &["database_id", "offset_bytes", "end_bytes", "bytes"][..],
+        ),
+        (
+            "database_mount_history",
+            &["database_id", "mount_id", "reason", "created_at_ms"][..],
+        ),
+        (
+            "url_ingest_trigger_sessions",
+            &[
+                "database_id",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
+        ),
+        (
+            "ops_answer_sessions",
+            &[
+                "database_id",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
+        ),
+        (
+            "source_run_sessions",
+            &[
+                "database_id",
+                "source_path",
+                "source_etag",
+                "session_nonce",
+                "principal",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
+        ),
+        (
+            "database_restore_sessions",
+            &[
+                "database_id",
+                "status",
+                "active_mount_id",
+                "snapshot_hash",
+                "archived_at_ms",
+                "deleted_at_ms",
+                "restore_size_bytes",
+                "created_at_ms",
+            ][..],
+        ),
+    ] {
+        for column in columns {
+            if !index_column_exists(conn, table, column)? {
+                return Err(format!(
+                    "unsupported index schema: missing column {table}.{column}"
+                ));
+            }
+        }
+    }
+    for index in [
+        "databases_active_mount_id_idx",
+        "database_restore_chunks_database_id_idx",
+        "url_ingest_trigger_sessions_expiry_idx",
+        "ops_answer_sessions_expiry_idx",
+        "source_run_sessions_expiry_idx",
+    ] {
+        if !tx_sqlite_master_entry_exists(conn, "index", index)? {
+            return Err(format!("unsupported index schema: missing index {index}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
     for table in [
         "schema_migrations",
         "databases",
         "database_restore_chunks",
         "database_restore_sessions",
         "database_credit_accounts",
+        "database_credit_ledger",
         "database_credit_pending_operations",
         "credits_config",
     ] {
-        if !wasm_index_table_exists(conn, table)? {
+        if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
         }
     }
@@ -3196,7 +3049,7 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_credit_ledger_database_idx",
         "database_credit_pending_operations_database_idx",
     ] {
-        if !wasm_index_index_exists(conn, index)? {
+        if !tx_sqlite_master_entry_exists(conn, "index", index)? {
             return Err(format!("unsupported index schema: missing index {index}"));
         }
     }
@@ -3205,28 +3058,10 @@ fn validate_wasm_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
 
 #[cfg(target_arch = "wasm32")]
 fn wasm_index_table_exists(conn: &Transaction<'_>, table: &str) -> Result<bool, String> {
-    sqlite_master_entry_exists(conn, "table", table)
+    tx_sqlite_master_entry_exists(conn, "table", table)
 }
 
-#[cfg(target_arch = "wasm32")]
-fn wasm_index_index_exists(conn: &Transaction<'_>, index: &str) -> Result<bool, String> {
-    sqlite_master_entry_exists(conn, "index", index)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn wasm_index_migration_exists(conn: &Transaction<'_>, version: &str) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM schema_migrations WHERE version = ?1",
-        params![version],
-        |row| crate::sqlite::row_get::<i64>(row, 0),
-    )
-    .optional()
-    .map(|row| row.is_some())
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(target_arch = "wasm32")]
-fn sqlite_master_entry_exists(
+fn tx_sqlite_master_entry_exists(
     conn: &Transaction<'_>,
     entry_type: &str,
     name: &str,
@@ -3263,26 +3098,6 @@ fn migration_applied_tx(conn: &Transaction<'_>, version: &str) -> Result<bool, S
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn migration_applied(conn: &Connection, version: &str) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM schema_migrations WHERE version = ?1",
-        params![version],
-        |row| crate::sqlite::row_get::<i64>(row, 0),
-    )
-    .optional()
-    .map(|row| row.is_some())
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn schema_migration_count(conn: &Connection) -> Result<i64, String> {
-    conn.query_row("SELECT COUNT(*) FROM schema_migrations", params![], |row| {
-        crate::sqlite::row_get(row, 0)
-    })
-    .map_err(|error| error.to_string())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn sqlite_master_entry_exists(
     conn: &Connection,
     entry_type: &str,
@@ -3305,6 +3120,10 @@ fn load_credits_config(conn: &Connection) -> Result<CreditsConfig, String> {
         credits_per_kinic: load_credits_config_u64(conn, "credits_per_kinic")?,
         min_update_credits: load_credits_config_u64(conn, "min_update_credits")?,
     })
+}
+
+fn load_credits_config_version(conn: &Connection) -> Result<u64, String> {
+    load_credits_config_u64(conn, "config_version")
 }
 
 fn load_credits_config_text(conn: &Connection, key: &str) -> Result<String, String> {

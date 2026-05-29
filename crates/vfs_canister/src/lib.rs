@@ -28,27 +28,27 @@ use ic_stable_structures::DefaultMemoryImpl;
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::{
     CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
-    RequiredRole, VfsService, payment_amount_e8s_for_credits,
+    RequiredRole, VfsService,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CreditsConfig, CreditsConfigUpdate, CreditsPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCreditEntryPage,
-    DatabaseCreditPendingOperation, DatabaseCreditPendingOperationPage, DatabaseMember,
+    DatabaseCreditPendingOperation, DatabaseCreditPendingOperationPage,
+    DatabaseCreditPurchasePreview, DatabaseCreditPurchaseRequest, DatabaseMember,
     DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
-    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult,
+    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
+    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -437,8 +437,11 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[query]
-fn preview_database_credit_purchase(database_id: String, credits: u64) -> Result<(), String> {
-    with_service(|service| service.validate_database_credit_purchase(&database_id, credits))
+fn preview_database_credit_purchase(
+    database_id: String,
+    credits: u64,
+) -> Result<DatabaseCreditPurchasePreview, String> {
+    with_service(|service| service.preview_database_credit_purchase(&database_id, credits))
 }
 
 #[query]
@@ -456,7 +459,7 @@ fn icrc21_canister_call_consent_message(
     if request.method != "purchase_database_credits" {
         return icrc21_unsupported(format!("unsupported canister call: {}", request.method));
     }
-    let (database_id, credits) = match Decode!(&request.arg, String, u64) {
+    let purchase = match Decode!(&request.arg, DatabaseCreditPurchaseRequest) {
         Ok(decoded) => decoded,
         Err(error) => {
             return icrc21_unavailable(format!(
@@ -464,19 +467,15 @@ fn icrc21_canister_call_consent_message(
             ));
         }
     };
-    if let Err(error) =
-        with_service(|service| service.validate_database_credit_purchase(&database_id, credits))
-    {
-        return icrc21_unsupported(error);
-    }
-    let config = match with_service(|service| service.credits_config()) {
-        Ok(config) => config,
-        Err(error) => return icrc21_unavailable(error),
-    };
-    let payment_amount_e8s = match payment_amount_e8s_for_credits(credits, &config) {
-        Ok(amount) => amount,
+    let preview = match with_service(|service| {
+        service.preview_database_credit_purchase(&purchase.database_id, purchase.credits)
+    }) {
+        Ok(preview) => preview,
         Err(error) => return icrc21_unsupported(error),
     };
+    if let Err(error) = validate_credit_purchase_expectations(&purchase, &preview) {
+        return icrc21_unsupported(error);
+    }
     let language = if request.user_preferences.metadata.language.trim().is_empty() {
         "en".to_string()
     } else {
@@ -488,18 +487,19 @@ fn icrc21_canister_call_consent_message(
             utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
         },
         consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-            "# Purchase Kinic database credits\n\nDatabase: `{database_id}`\n\nCredits: `{credits}`\n\nPayment: `{}` KINIC\n\nLedger transfer fee in allowance: `{}` KINIC\n\nSpender canister: `{}`",
-            format_e8s(payment_amount_e8s),
-            format_e8s(KINIC_LEDGER_FEE_E8S),
-            canister_principal().to_text()
+            "# Purchase Kinic database credits\n\nDatabase: `{database_id}`\n\nCredits: `{credits}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
+            database_id = purchase.database_id,
+            credits = purchase.credits,
+            payment = format_e8s(preview.payment_amount_e8s),
+            fee = format_e8s(preview.ledger_fee_e8s),
+            spender = canister_principal().to_text()
         )),
     })
 }
 
 #[update]
 async fn purchase_database_credits(
-    database_id: String,
-    credits: u64,
+    request: DatabaseCreditPurchaseRequest,
 ) -> Result<CreditsPurchaseResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
@@ -507,17 +507,22 @@ async fn purchase_database_credits(
     let config = with_service(|service| service.credits_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    with_service(|service| service.validate_database_credit_purchase(&database_id, credits))?;
-    let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
-    let payment_amount_e8s = payment_amount_e8s_for_credits(credits, &config)?;
+    let preview = with_service(|service| {
+        service.preview_database_credit_purchase(&request.database_id, request.credits)
+    })?;
+    validate_credit_purchase_expectations(&request, &preview)?;
+    let ledger_fee_e8s = preview.ledger_fee_e8s;
+    let payment_amount_e8s = preview.payment_amount_e8s;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
     let operation_id = match with_service(|service| {
         service.begin_database_credit_purchase_with_ledger_details(
             DatabaseCreditPurchaseWithLedgerDetails {
-                database_id: &database_id,
+                database_id: &request.database_id,
                 caller: &caller,
-                credits,
+                credits: request.credits,
+                expected_payment_amount_e8s: request.expected_payment_amount_e8s,
+                expected_config_version: request.expected_config_version,
                 ledger: CreditsPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
@@ -551,16 +556,25 @@ async fn purchase_database_credits(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
-            activate_pending_database_after_credit_purchase_ledger_success(&database_id, now)
-                .map_err(|error| {
-                    credit_purchase_local_apply_error(operation_id, block_index, error)
-                })?;
+            activate_pending_database_after_credit_purchase_ledger_success(
+                &request.database_id,
+                now,
+            )
+            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
+            #[cfg(test)]
+            if TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
+                return Err(credit_purchase_local_apply_error(
+                    operation_id,
+                    block_index,
+                    "test credit purchase apply failure".to_string(),
+                ));
+            }
             let balance = with_service(|service| {
                 service.credit_database_purchase(
                     operation_id,
-                    &database_id,
+                    &request.database_id,
                     &caller,
-                    credits,
+                    request.credits,
                     block_index,
                     now,
                 )
@@ -575,9 +589,9 @@ async fn purchase_database_credits(
             let _ = with_service(|service| {
                 service.cancel_database_credit_purchase(
                     operation_id,
-                    &database_id,
+                    &request.database_id,
                     &caller,
-                    credits,
+                    request.credits,
                 )
             });
             Err(error)
@@ -586,17 +600,36 @@ async fn purchase_database_credits(
             let _ = with_service(|service| {
                 service.mark_database_credit_purchase_ambiguous(
                     operation_id,
-                    &database_id,
+                    &request.database_id,
                     &caller,
-                    credits,
+                    request.credits,
                     now,
                 )
             });
             Err(format!(
-                "credit purchase pending; manual repair required: {error}"
+                "credit purchase pending operation {operation_id}; manual repair required: {error}"
             ))
         }
     }
+}
+
+fn validate_credit_purchase_expectations(
+    request: &DatabaseCreditPurchaseRequest,
+    preview: &DatabaseCreditPurchasePreview,
+) -> Result<(), String> {
+    if request.expected_config_version != preview.config_version {
+        return Err(format!(
+            "credits config changed: expected version {}, current version {}",
+            request.expected_config_version, preview.config_version
+        ));
+    }
+    if request.expected_payment_amount_e8s != preview.payment_amount_e8s {
+        return Err(format!(
+            "credit purchase payment amount changed: expected {}, current {}",
+            request.expected_payment_amount_e8s, preview.payment_amount_e8s
+        ));
+    }
+    Ok(())
 }
 
 #[query]
@@ -1198,11 +1231,17 @@ thread_local! {
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
+    static TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
 }
 
 #[cfg(test)]
 fn fail_next_mount_database_file_for_test() {
     TEST_MOUNT_DATABASE_FILE_FAIL_ONCE.with(|flag| flag.replace(true));
+}
+
+#[cfg(test)]
+fn fail_next_credit_database_purchase_apply_for_test() {
+    TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
 }
 
 #[cfg(test)]

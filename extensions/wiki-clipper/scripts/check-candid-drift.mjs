@@ -196,8 +196,8 @@ function normalizeDidResult(value) {
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_24") return "ResultNode";
-  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_25") return "ResultNode";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

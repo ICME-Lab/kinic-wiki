@@ -26,7 +26,7 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and credits history. User DBs hold VFS node data, search data, and link data.
 
-The credits index schema is a breaking initial schema. Existing index DBs with an older `schema_migrations` value are rejected with `fresh index required`; operators must install against a fresh index instead of relying on automatic migration.
+The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
 
 Pending DBs have index metadata and credit accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful credit purchase activates it.
 
@@ -60,7 +60,8 @@ DB creation uses `create_database(display_name)`. It creates a generated `databa
 
 External ledger calls are limited to DB credit purchase:
 
-- `purchase_database_credits(database_id, credits)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance; the approved allowance must cover `credits * (100_000_000 / credits_per_kinic) + 10_000 e8s`
+- `preview_database_credit_purchase(database_id, credits)` returns `payment_amount_e8s`, `ledger_fee_e8s`, `credits_per_kinic`, and `config_version`.
+- `purchase_database_credits(DatabaseCreditPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance. The request must include the previewed `expected_payment_amount_e8s` and `expected_config_version`; mismatch rejects before pending operation creation and before ledger transfer. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
 
 Any authenticated caller can credit purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_credit_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer credits history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
 
@@ -76,9 +77,9 @@ The default purchase rate is `1 KINIC = 1000 credits`, controlled by `credits_pe
 
 Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob.
+`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credits_per_kinic` or `min_update_credits` actually changes.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. By default it injects fixed local ledger canister ID `73mez-iiaaa-aaaaq-aaasq-cai`; if `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The script does not create the ledger canister. Local credit purchase tests that hit the external ledger require an ICRC ledger already installed at that ID and enough local KINIC balance on the current identity.
+`scripts/local/deploy_wiki.sh` carries local development init args. If `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local credit purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
 
 Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
 
@@ -86,7 +87,7 @@ Normal operator flow:
 
 1. Owner creates a pending DB with `create_database(display_name)`.
 2. Payer previews the DB credit purchase, then approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
-3. Payer calls `purchase_database_credits(database_id, credits)`. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance credit both complete.
+3. Payer calls `purchase_database_credits` with the previewed expected amount and config version. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance credit both complete.
 4. Successful DB updates consume DB credits balance.
 5. DB delete discards any remaining credits.
 
@@ -101,7 +102,7 @@ Pending operations block DB delete until they are resolved:
 - `repair_database_credit_purchase_complete(database_id, operation_id, ledger_block_index)`
 - `repair_database_credit_purchase_cancel(database_id, operation_id)`
 
-Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is a governance-only escape hatch for cases where governance has verified that the original ledger transfer did not execute. DB owner and SNS governance can inspect pending operations.
+Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is allowed only for the original payer or DB owner, and is rejected once pending DB activation has started. Cancel writes `credit_purchase_repair_cancelled` with the cancel caller, pending payment amount, current balance, and no ledger block index. DB owner and SNS governance can inspect pending operations.
 
 ## Delete
 
