@@ -3503,9 +3503,11 @@ dependencies = [
 name = "vfs-runtime"
 version = "0.1.0"
 dependencies = [
+ "candid",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
  "kinic-wiki-domain",
+ "proptest",
  "rusqlite",
  "sha2 0.10.9",
  "tempfile",

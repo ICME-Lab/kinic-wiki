@@ -25,9 +25,68 @@ type ChildNode = record {
 };
 type CreateDatabaseRequest = record { name : text };
 type CreateDatabaseResult = record { name : text; database_id : text };
+type CreditsConfig = record {
+  credits_per_kinic : nat64;
+  min_update_credits : nat64;
+  kinic_ledger_canister_id : text;
+  sns_governance_id : text;
+};
+type CreditsPurchaseResult = record {
+  block_index : nat64;
+  balance_credits : nat64;
+};
 type RenameDatabaseRequest = record { name : text; database_id : text };
 type DatabaseArchiveChunk = record { bytes : blob };
 type DatabaseArchiveInfo = record { size_bytes : nat64; database_id : text };
+type DatabaseCreditEntry = record {
+  method : opt text;
+  credits_per_kinic : opt nat64;
+  payment_amount_e8s : opt nat64;
+  kind : text;
+  balance_after_credits : nat64;
+  amount_credits : int64;
+  created_at_ms : int64;
+  ledger_block_index : opt nat64;
+  database_id : text;
+  caller : text;
+  cycles_delta : opt nat64;
+  entry_id : nat64;
+};
+type DatabaseCreditEntryPage = record {
+  entries : vec DatabaseCreditEntry;
+  next_cursor : opt nat64;
+};
+type DatabaseCreditPendingOperation = record {
+  credits : int64;
+  payment_amount_e8s : int64;
+  to_owner : opt text;
+  to_subaccount : opt blob;
+  from_owner : opt text;
+  kind : text;
+  operation_id : nat64;
+  from_subaccount : opt blob;
+  created_at_ms : int64;
+  ledger_fee_e8s : opt int64;
+  ledger_created_at_time_ns : opt int64;
+  database_id : text;
+  caller : text;
+};
+type DatabaseCreditPendingOperationPage = record {
+  entries : vec DatabaseCreditPendingOperation;
+  next_cursor : opt nat64;
+};
+type DatabaseCreditPurchasePreview = record {
+  credits_per_kinic : nat64;
+  payment_amount_e8s : nat64;
+  ledger_fee_e8s : nat64;
+  config_version : nat64;
+};
+type DatabaseCreditPurchaseRequest = record {
+  credits : nat64;
+  expected_config_version : nat64;
+  database_id : text;
+  expected_payment_amount_e8s : nat64;
+};
 type DatabaseMember = record {
   "principal" : text;
   role : DatabaseRole;
@@ -40,16 +99,24 @@ type DatabaseRestoreChunkRequest = record {
   bytes : blob;
 };
 type DatabaseRole = variant { Reader; Writer; Owner };
-type DatabaseStatus = variant { Hot; Restoring; Archiving; Archived; Deleted };
+type DatabaseStatus = variant {
+  Active;
+  Restoring;
+  Archiving;
+  Archived;
+  Pending;
+};
 type DatabaseSummary = record {
   status : DatabaseStatus;
   name : text;
   role : DatabaseRole;
   logical_size_bytes : nat64;
+  credits_suspended_at_ms : opt int64;
+  credits_balance : opt nat64;
   database_id : text;
   archived_at_ms : opt int64;
-  deleted_at_ms : opt int64;
 };
+type DeleteDatabaseRequest = record { database_id : text };
 type DeleteNodeRequest = record {
   path : text;
   expected_etag : opt text;
@@ -133,10 +200,47 @@ type HttpResponse = record {
   upgrade : opt bool;
   status_code : nat16;
 };
+type Icrc10SupportedStandard = record { url : text; name : text };
+type Icrc21ConsentInfo = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  consent_message : Icrc21ConsentMessage;
+};
+type Icrc21ConsentMessage = variant { GenericDisplayMessage : text };
+type Icrc21ConsentMessageMetadata = record {
+  utc_offset_minutes : opt int16;
+  language : text;
+};
+type Icrc21ConsentMessageRequest = record {
+  arg : blob;
+  method : text;
+  user_preferences : Icrc21ConsentMessageSpec;
+};
+type Icrc21ConsentMessageResponse = variant {
+  Ok : Icrc21ConsentInfo;
+  Err : Icrc21Error;
+};
+type Icrc21ConsentMessageSpec = record {
+  metadata : Icrc21ConsentMessageMetadata;
+  device_spec : opt Icrc21DeviceSpec;
+};
+type Icrc21DeviceSpec = variant { GenericDisplay; FieldsDisplay };
+type Icrc21Error = variant {
+  GenericError : Icrc21GenericError;
+  InsufficientPayment : Icrc21ErrorInfo;
+  UnsupportedCanisterCall : Icrc21ErrorInfo;
+  ConsentMessageUnavailable : Icrc21ErrorInfo;
+};
+type Icrc21ErrorInfo = record { description : text };
+type Icrc21GenericError = record { description : text; error_code : nat };
 type IncomingLinksRequest = record {
   path : text;
   limit : nat32;
   database_id : text;
+};
+type IndexSqlJsonQueryResult = record {
+  rows : vec text;
+  row_count : nat32;
+  limit : nat32;
 };
 type OutgoingLinksRequest = record { path : text; limit : nat32; database_id : text };
 type LinkEdge = record {
@@ -245,43 +349,40 @@ type QueryContextRequest = record {
   depth : nat32;
   namespace : opt text;
 };
-type RecentNodeHit = record {
-  updated_at : int64;
-  etag : text;
-  kind : NodeKind;
-  path : text;
-};
-type RecentNodesRequest = record {
-  path : opt text;
-  limit : nat32;
-  database_id : text;
-};
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok; Err : text };
-type Result_10 = variant { Ok : vec LinkEdge; Err : text };
-type Result_11 = variant { Ok : vec ChildNode; Err : text };
-type Result_12 = variant { Ok : vec DatabaseMember; Err : text };
-type Result_13 = variant { Ok : vec DatabaseSummary; Err : text };
-type Result_14 = variant { Ok : vec NodeEntry; Err : text };
-type Result_15 = variant { Ok : MkdirNodeResult; Err : text };
-type Result_16 = variant { Ok : MoveNodeResult; Err : text };
-type Result_17 = variant { Ok : QueryContext; Err : text };
-type Result_18 = variant { Ok : DatabaseArchiveChunk; Err : text };
-type Result_19 = variant { Ok : opt Node; Err : text };
+type Result_10 = variant { Ok : vec GlobNodeHit; Err : text };
+type Result_11 = variant { Ok : vec LinkEdge; Err : text };
+type Result_12 = variant { Ok : vec ChildNode; Err : text };
+type Result_13 = variant { Ok : DatabaseCreditEntryPage; Err : text };
+type Result_14 = variant {
+  Ok : DatabaseCreditPendingOperationPage;
+  Err : text;
+};
+type Result_15 = variant { Ok : vec DatabaseMember; Err : text };
+type Result_16 = variant { Ok : vec DatabaseSummary; Err : text };
+type Result_17 = variant { Ok : vec NodeEntry; Err : text };
+type Result_18 = variant { Ok : MkdirNodeResult; Err : text };
+type Result_19 = variant { Ok : MoveNodeResult; Err : text };
 type Result_2 = variant { Ok : DatabaseArchiveInfo; Err : text };
-type Result_20 = variant { Ok : opt NodeContext; Err : text };
-type Result_21 = variant { Ok : vec RecentNodeHit; Err : text };
-type Result_22 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_23 = variant { Ok : SourceEvidence; Err : text };
-type Result_24 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_25 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_20 = variant { Ok : DatabaseCreditPurchasePreview; Err : text };
+type Result_21 = variant { Ok : CreditsPurchaseResult; Err : text };
+type Result_22 = variant { Ok : QueryContext; Err : text };
+type Result_23 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
+type Result_24 = variant { Ok : DatabaseArchiveChunk; Err : text };
+type Result_25 = variant { Ok : opt Node; Err : text };
+type Result_26 = variant { Ok : opt NodeContext; Err : text };
+type Result_27 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_28 = variant { Ok : SourceEvidence; Err : text };
+type Result_29 = variant { Ok : vec WriteNodeResult; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
+type Result_30 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_6 = variant { Ok : EditNodeResult; Err : text };
 type Result_7 = variant { Ok : ExportSnapshotResponse; Err : text };
 type Result_8 = variant { Ok : FetchUpdatesResponse; Err : text };
-type Result_9 = variant { Ok : vec GlobNodeHit; Err : text };
+type Result_9 = variant { Ok : CreditsConfig; Err : text };
 type SearchNodeHit = record {
   preview : opt SearchPreview;
   kind : NodeKind;
@@ -332,6 +433,10 @@ type UrlIngestTriggerSessionCheckRequest = record {
   session_nonce : text;
   database_id : text;
 };
+type UrlIngestTriggerSessionRequest = record {
+  session_nonce : text;
+  database_id : text;
+};
 type WriteNodeItem = record {
   content : text;
   kind : NodeKind;
@@ -347,7 +452,7 @@ type WriteNodeRequest = record {
   metadata_json : text;
   database_id : text;
 };
-type WriteNodeResult = record { created : bool; node : RecentNodeHit };
+type WriteNodeResult = record { created : bool; node : NodeMutationAck };
 type WriteNodesRequest = record {
   nodes : vec WriteNodeItem;
   database_id : text;
@@ -364,10 +469,10 @@ type WriteSourceForGenerationResult = record {
   session_nonce : text;
   write : WriteNodeResult;
 };
-service : () -> {
+service : (CreditsConfig) -> {
   append_node : (AppendNodeRequest) -> (Result);
   authorize_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_1);
-  authorize_url_ingest_trigger_session : (OpsAnswerSessionRequest) -> (
+  authorize_url_ingest_trigger_session : (UrlIngestTriggerSessionRequest) -> (
       Result_1,
     );
   begin_database_archive : (text) -> (Result_2);
@@ -375,49 +480,66 @@ service : () -> {
   cancel_database_archive : (text) -> (Result_1);
   cancel_database_restore : (text) -> (Result_1);
   canister_health : () -> (CanisterHealth) query;
+  check_database_write_credits : (text) -> (Result_1) query;
   check_ops_answer_session : (OpsAnswerSessionRequest) -> (Result_3) query;
   check_source_run_session : (SourceRunSessionCheckRequest) -> (Result_1) query;
   check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
       Result_1,
     ) query;
   create_database : (CreateDatabaseRequest) -> (Result_4);
-  delete_database : (text) -> (Result_1);
+  delete_database : (DeleteDatabaseRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_5);
   edit_node : (EditNodeRequest) -> (Result_6);
   export_snapshot : (ExportSnapshotRequest) -> (Result_7) query;
   fetch_updates : (FetchUpdatesRequest) -> (Result_8) query;
   finalize_database_archive : (text, blob) -> (Result_1);
   finalize_database_restore : (text) -> (Result_1);
-  glob_nodes : (GlobNodesRequest) -> (Result_9) query;
+  get_credits_config : () -> (Result_9) query;
+  glob_nodes : (GlobNodesRequest) -> (Result_10) query;
   grant_database_access : (text, text, DatabaseRole) -> (Result_1);
-  graph_links : (GraphLinksRequest) -> (Result_10) query;
-  graph_neighborhood : (GraphNeighborhoodRequest) -> (Result_10) query;
+  graph_links : (GraphLinksRequest) -> (Result_11) query;
+  graph_neighborhood : (GraphNeighborhoodRequest) -> (Result_11) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
-  incoming_links : (IncomingLinksRequest) -> (Result_10) query;
-  list_children : (ListChildrenRequest) -> (Result_11) query;
-  list_database_members : (text) -> (Result_12) query;
-  list_databases : () -> (Result_13) query;
-  list_nodes : (ListNodesRequest) -> (Result_14) query;
+  icrc10_supported_standards : () -> (vec Icrc10SupportedStandard) query;
+  icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
+      Icrc21ConsentMessageResponse,
+    );
+  incoming_links : (IncomingLinksRequest) -> (Result_11) query;
+  list_children : (ListChildrenRequest) -> (Result_12) query;
+  list_database_credit_entries : (text, opt nat64, nat32) -> (Result_13) query;
+  list_database_credit_pending_operations : (text, opt nat64, nat32) -> (
+      Result_14,
+    ) query;
+  list_database_members : (text) -> (Result_15) query;
+  list_databases : () -> (Result_16) query;
+  list_nodes : (ListNodesRequest) -> (Result_17) query;
   memory_manifest : () -> (MemoryManifest) query;
-  mkdir_node : (MkdirNodeRequest) -> (Result_15);
-  move_node : (MoveNodeRequest) -> (Result_16);
+  mkdir_node : (MkdirNodeRequest) -> (Result_18);
+  move_node : (MoveNodeRequest) -> (Result_19);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_6);
-  outgoing_links : (OutgoingLinksRequest) -> (Result_10) query;
-  query_context : (QueryContextRequest) -> (Result_17) query;
-  read_database_archive_chunk : (text, nat64, nat32) -> (Result_18) query;
-  read_node : (text, text) -> (Result_19) query;
-  read_node_context : (NodeContextRequest) -> (Result_20) query;
-  recent_nodes : (RecentNodesRequest) -> (Result_21) query;
+  outgoing_links : (OutgoingLinksRequest) -> (Result_11) query;
+  preview_database_credit_purchase : (text, nat64) -> (Result_20) query;
+  purchase_database_credits : (DatabaseCreditPurchaseRequest) -> (Result_21);
+  query_context : (QueryContextRequest) -> (Result_22) query;
+  query_index_sql_json : (text, nat32) -> (Result_23) query;
+  read_database_archive_chunk : (text, nat64, nat32) -> (Result_24) query;
+  read_node : (text, text) -> (Result_25) query;
+  read_node_context : (NodeContextRequest) -> (Result_26) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
+  repair_database_credit_purchase_cancel : (text, nat64) -> (Result_1);
+  repair_database_credit_purchase_complete : (text, nat64, nat64) -> (
+      Result_21,
+    );
   revoke_database_access : (text, text) -> (Result_1);
-  search_node_paths : (SearchNodePathsRequest) -> (Result_22) query;
-  search_nodes : (SearchNodesRequest) -> (Result_22) query;
-  source_evidence : (SourceEvidenceRequest) -> (Result_23) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_27) query;
+  search_nodes : (SearchNodesRequest) -> (Result_27) query;
+  source_evidence : (SourceEvidenceRequest) -> (Result_28) query;
   status : (text) -> (Status) query;
+  update_credits_config : (blob) -> (Result_1);
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_24);
+  write_nodes : (WriteNodesRequest) -> (Result_29);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_25,
+      Result_30,
     );
 }
