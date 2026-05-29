@@ -16,7 +16,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     created_at: idl.Int64,
     metadata_json: idl.Text
   });
-  const RecentNodeHit = idl.Record({
+  const NodeMutationAck = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
     kind: NodeKind,
@@ -82,7 +82,18 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     changed_nodes: idl.Vec(Node),
     next_cursor: idl.Opt(idl.Text)
   });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const UrlIngestTriggerSessionCheckRequest = idl.Record({
+    database_id: idl.Text,
+    request_path: idl.Text,
+    session_nonce: idl.Text
+  });
+  const SourceRunSessionCheckRequest = idl.Record({
+    source_path: idl.Text,
+    source_etag: idl.Text,
+    session_nonce: idl.Text,
+    database_id: idl.Text
+  });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const MkdirNodeResult = idl.Record({ created: idl.Bool, path: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
@@ -90,8 +101,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultMkdirNode = idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text });
   const ResultExportSnapshot = idl.Variant({ Ok: ExportSnapshotResponse, Err: idl.Text });
   const ResultFetchUpdates = idl.Variant({ Ok: FetchUpdatesResponse, Err: idl.Text });
+  const ResultUnit = idl.Variant({ Ok: idl.Null, Err: idl.Text });
 
   return idl.Service({
+    check_database_write_credits: idl.Func([idl.Text], [ResultUnit], ["query"]),
+    check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
+    check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),

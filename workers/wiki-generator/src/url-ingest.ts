@@ -28,15 +28,18 @@ export class UrlIngestTriggerError extends Error {
 }
 
 export function parseUrlIngestTriggerInput(value: unknown): UrlIngestTriggerInput | string {
-  if (!isObject(value)) return "body must include canisterId, databaseId, and requestPath";
+  if (!isObject(value)) return "body must include canisterId, databaseId, requestPath, and sessionNonce";
   const canisterId = value.canisterId;
   const databaseId = value.databaseId;
   const requestPath = value.requestPath;
+  const sessionNonce = value.sessionNonce;
   if (typeof canisterId !== "string" || canisterId.length === 0) return "canisterId is required";
   if (typeof databaseId !== "string" || databaseId.length === 0) return "databaseId is required";
   if (typeof requestPath !== "string" || requestPath.length === 0) return "requestPath is required";
+  if (typeof sessionNonce !== "string" || sessionNonce.length === 0) return "sessionNonce is required";
+  if (sessionNonce.length > 128) return "sessionNonce is too long";
   if (!isIngestRequestPath(requestPath)) return `non-canonical ingest request path: ${requestPath}`;
-  return { canisterId, databaseId, requestPath };
+  return { canisterId, databaseId, requestPath, sessionNonce };
 }
 
 export function validateUrlIngestTriggerInput(env: RuntimeEnv, input: UrlIngestTriggerInput): WorkerConfig {
@@ -62,7 +65,7 @@ export async function triggerUrlIngestRequest(env: RuntimeEnv, input: UrlIngestT
   const request = parseUrlIngestRequest(node);
   if (!request) throw new Error(`invalid ingest request: ${input.requestPath}`);
   if (!shouldProcessIngestRequest(request)) return;
-  await processUrlIngestRequest(env, vfs, config, input.databaseId, request);
+  await processUrlIngestRequest(env, vfs, config, input.databaseId, request, input.sessionNonce);
 }
 
 export function parseUrlIngestRequest(node: WikiNode): UrlIngestRequest | null {
@@ -94,13 +97,28 @@ export function shouldProcessIngestRequest(request: UrlIngestRequest): boolean {
   return request.status === "queued" || request.status === "source_written" || (request.status === "fetching" && isStaleFetching(request, new Date()));
 }
 
-export async function processUrlIngestRequest(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, request: UrlIngestRequest): Promise<void> {
+export async function processUrlIngestRequest(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  config: WorkerConfig,
+  databaseId: string,
+  request: UrlIngestRequest,
+  sessionNonce?: string
+): Promise<void> {
   let current: UrlIngestRequest | null = request;
   try {
     current = await claimIngestRequest(vfs, databaseId, request);
     if (!current) return;
     let sourceAck: WriteNodeAck | null = null;
     if (current.status === "fetching") {
+      if (sessionNonce) {
+        try {
+          await vfs.checkUrlIngestTriggerSession(databaseId, current.path, sessionNonce);
+        } catch (error) {
+          await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", error: errorMessage(error) });
+          return;
+        }
+      }
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
       const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl);
       sourceAck = await writeFetchedSource(vfs, databaseId, sourcePath, current.path, fetched, config.maxSourceChars);
@@ -114,7 +132,8 @@ export async function processUrlIngestRequest(env: RuntimeEnv, vfs: VfsClient, c
       databaseId,
       sourcePath: sourceAck.path,
       sourceEtag: sourceAck.etag,
-      requestPath: current.path
+      requestPath: current.path,
+      sessionNonce
     });
     if (!queued) {
       const job = await loadJob(env.DB, databaseId, sourceAck.path);
@@ -126,7 +145,7 @@ export async function processUrlIngestRequest(env: RuntimeEnv, vfs: VfsClient, c
     await writeRequestState(vfs, databaseId, current, { status: "generating", error: null });
   } catch (error) {
     if (isEtagMismatch(error)) {
-      await reprocessLatestIfRecoverable(env, vfs, config, databaseId, request.path);
+      await reprocessLatestIfRecoverable(env, vfs, config, databaseId, request.path, sessionNonce);
       return;
     }
     await writeLatestRequestState(vfs, databaseId, (current ?? request).path, { status: "failed", error: errorMessage(error) });
@@ -284,11 +303,12 @@ async function reprocessLatestIfRecoverable(
   vfs: VfsClient,
   config: WorkerConfig,
   databaseId: string,
-  requestPath: string
+  requestPath: string,
+  sessionNonce?: string
 ): Promise<void> {
   const latest = await readUrlIngestRequest(vfs, databaseId, requestPath);
   if (!latest || latest.status !== "source_written") return;
-  await processUrlIngestRequest(env, vfs, config, databaseId, latest);
+  await processUrlIngestRequest(env, vfs, config, databaseId, latest, sessionNonce);
 }
 
 async function writeLatestRequestState(
@@ -304,6 +324,19 @@ async function writeLatestRequestState(
   } catch (error) {
     if (isEtagMismatch(error)) return null;
     throw error;
+  }
+}
+
+async function bestEffortWriteLatestRequestState(
+  vfs: VfsClient,
+  databaseId: string,
+  requestPath: string,
+  updates: { status: UrlIngestRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+): Promise<void> {
+  try {
+    await writeLatestRequestState(vfs, databaseId, requestPath, updates);
+  } catch (error) {
+    console.warn("failed to record URL ingest non-retry failure", errorMessage(error));
   }
 }
 

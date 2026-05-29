@@ -9,6 +9,16 @@ import type { WorkerConfig } from "../src/types.js";
 const draftJson = JSON.stringify({
   title: "Project Notes",
   slug: "project-notes",
+  labels: {
+    summary: "Summary",
+    key_facts: "Key Facts",
+    decisions: "Decisions",
+    open_questions: "Open Questions",
+    follow_ups: "Follow-ups",
+    related_context: "Related Context",
+    provenance: "Provenance",
+    none: "none"
+  },
   summary: "Short summary",
   key_facts: [{ text: "Fact", source_path: "/Sources/raw/a/a.md" }],
   decisions: [],
@@ -26,6 +36,19 @@ test("invalid draft schema is rejected", () => {
   assert.throws(() => parseDraftText('{"title":"Bad"}'), /schema/);
   const draft = parseDraftResponse({ choices: [{ message: { content: draftJson } }] });
   assert.throws(() => validateDraftSources(draft, "/Sources/raw/b/b.md"), /unsupported source/);
+});
+
+test("draft labels must be non-empty single-line strings", () => {
+  assert.throws(
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "" } })),
+    /schema/
+  );
+  assert.throws(
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "Summary\nInjected" } })),
+    /schema/
+  );
+  const multilingual = parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, summary: "概要" } }));
+  assert.equal(multilingual.labels.summary, "概要");
 });
 
 test("DeepSeek error body exposes API message", () => {
@@ -60,6 +83,8 @@ test("generateDraft calls DeepSeek chat completions", async () => {
     assert.ok(isRecord(requestBody));
     assert.equal(requestBody.model, "deepseek-v4-flash");
     assert.deepEqual(requestBody.response_format, { type: "json_object" });
+    assert.match(JSON.stringify(requestBody.messages), /pattern/);
+    assert.match(JSON.stringify(requestBody.messages), /non-empty single-line strings/);
     assert.equal(draft.slug, "project-notes");
   } finally {
     globalThis.fetch = originalFetch;
