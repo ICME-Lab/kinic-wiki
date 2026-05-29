@@ -3519,6 +3519,7 @@ dependencies = [
  "hex",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
+ "proptest",
  "pulldown-cmark",
  "rusqlite",
  "sha2 0.10.9",

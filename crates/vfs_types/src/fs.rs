@@ -341,21 +341,6 @@ pub struct GlobNodeHit {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct RecentNodesRequest {
-    pub database_id: String,
-    pub limit: u32,
-    pub path: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct RecentNodeHit {
-    pub path: String,
-    pub kind: NodeKind,
-    pub updated_at: i64,
-    pub etag: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct IncomingLinksRequest {
     pub database_id: String,
     pub path: String,
