@@ -25,25 +25,28 @@ fn install_test_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
+    let preview = service
+        .preview_database_cycles_purchase("default", 1_000_000)
+        .expect("default database cycle purchase preview should load");
     service
-        .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
-            service.mark_database_credit_purchase_completed(
+            service.mark_database_cycles_purchase_completed(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                1_000_000,
+                preview.cycles,
             )?;
-            service.credit_database_purchase(
+            service.apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                1_000_000,
+                preview.cycles,
                 1,
                 1_700_000_000_001,
             )
         })
-        .expect("default database should have write credits available");
+        .expect("default database should have write cycles available");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 

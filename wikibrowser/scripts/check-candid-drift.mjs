@@ -210,8 +210,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_10") return "ResultLinks";
   if (normalized === "Result_11") return "ResultLinks";
   if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultCreditsEntries";
-  if (normalized === "Result_14") return "ResultCreditsPending";
+  if (normalized === "Result_13") return "ResultCyclesEntries";
+  if (normalized === "Result_14") return "ResultCyclesPending";
   if (normalized === "Result_15") return "ResultMembers";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
@@ -219,8 +219,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCreditsPurchasePreview";
-  if (normalized === "Result_21") return "ResultCreditsPurchase";
+  if (normalized === "Result_20") return "ResultCyclesPurchasePreview";
+  if (normalized === "Result_21") return "ResultCyclesPurchase";
   if (normalized === "Result_22") return "ResultQueryContext";
   if (normalized === "Result_25") return "ResultNode";
   if (normalized === "Result_26") return "ResultNodeContext";
@@ -229,7 +229,7 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_29") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
   if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultCreditsConfig";
+  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

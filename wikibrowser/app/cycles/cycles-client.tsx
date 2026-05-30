@@ -1,38 +1,38 @@
-// Where: /credits client UI.
-// What: collects a KINIC amount locally, then submits wallet approval and credits purchase.
-// Why: CLI/query can seed credits, and the final purchase amount remains user-editable.
+// Where: /cycles client UI.
+// What: collects a KINIC amount locally, then submits wallet approval and cycles purchase.
+// Why: CLI/query can seed KINIC, and the final purchase amount remains user-editable.
 "use client";
 
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { parseCreditsAmountInput, parseCreditsTarget } from "@/lib/credits-url";
-import { connectOisyWallet, connectPlugWallet, purchaseCreditsWithOisy, purchaseCreditsWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/credits-wallet";
-import { formatTokenAmountFromE8s } from "@/lib/credit-amount";
+import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
+import { connectOisyWallet, connectPlugWallet, purchaseCyclesWithOisy, purchaseCyclesWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/cycles-wallet";
+import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 
-type CreditsStatus = "idle" | "connecting" | "running" | "success" | "error";
-type CreditsProvider = "oisy" | "plug";
+type CyclesStatus = "idle" | "connecting" | "running" | "success" | "error";
+type CyclesProvider = "oisy" | "plug";
 
-type CreditsClientProps = {
+type CyclesClientProps = {
   canisterId: string;
   databaseId: string;
-  initialCredits?: string;
+  initialKinic?: string;
 };
 
-export function CreditsClient({ canisterId, databaseId, initialCredits }: CreditsClientProps) {
-  const [status, setStatus] = useState<CreditsStatus>("idle");
+export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesClientProps) {
+  const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
-  const [provider, setProvider] = useState<CreditsProvider | null>(null);
-  const [amount, setAmount] = useState(() => (initialCredits?.trim() ? initialCredits : "1"));
+  const [provider, setProvider] = useState<CyclesProvider | null>(null);
+  const [amount, setAmount] = useState(() => (initialKinic?.trim() ? initialKinic : "1"));
   const [oisyWallet, setOisyWallet] = useState<ConnectedOisyWallet | null>(null);
   const [plugWallet, setPlugWallet] = useState<ConnectedPlugWallet | null>(null);
   const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const parsedTarget = useMemo(() => {
     const params = new URLSearchParams();
     params.set("database_id", databaseId);
-    return parseCreditsTarget(params);
+    return parseCyclesTarget(params);
   }, [databaseId]);
-  const parsedAmount = useMemo(() => parseCreditsAmountInput(amount), [amount]);
+  const parsedAmount = useMemo(() => parseKinicAmountE8sInput(amount), [amount]);
   const error =
     typeof parsedTarget === "string"
       ? parsedTarget
@@ -59,7 +59,7 @@ export function CreditsClient({ canisterId, databaseId, initialCredits }: Credit
     };
   }, [oisyWallet]);
 
-  async function connect(nextProvider: CreditsProvider) {
+  async function connect(nextProvider: CyclesProvider) {
     setStatus("connecting");
     setProvider(nextProvider);
     setMessage(null);
@@ -91,17 +91,17 @@ export function CreditsClient({ canisterId, databaseId, initialCredits }: Credit
     setProvider(selectedProvider);
     setMessage(null);
     try {
-      const request = { canisterId, databaseId: parsedTarget.databaseId, creditUnits: parsedAmount };
+      const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
       const result =
         selectedProvider === "oisy" && activeOisyWallet
-          ? await purchaseCreditsWithOisy(request, activeOisyWallet)
+          ? await purchaseCyclesWithOisy(request, activeOisyWallet)
           : activePlugWallet
-            ? await purchaseCreditsWithPlug(request, activePlugWallet)
+            ? await purchaseCyclesWithPlug(request, activePlugWallet)
             : null;
       if (!result) return;
-      const balance = result.balanceCredits ? `credits balance ${result.balanceCredits}` : "credits purchase accepted";
+      const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
       setMessage(
-        `${result.provider} approve block ${result.approveBlockIndex}; purchased credits ${result.creditedCredits}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} KINIC; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
+        `${result.provider} approve block ${result.approveBlockIndex}; purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} KINIC; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
       );
       if (selectedProvider === "oisy") setOisyWallet(null);
       setStatus("success");
@@ -118,14 +118,14 @@ export function CreditsClient({ canisterId, databaseId, initialCredits }: Credit
           <Link className="text-sm font-medium text-accent no-underline hover:underline" href="/">
             Database dashboard
           </Link>
-          <h1 className="mt-5 text-3xl font-semibold">Database purchase</h1>
+          <h1 className="mt-5 text-3xl font-semibold">Database cycles purchase</h1>
         </header>
 
         <section className="grid gap-3 rounded-lg border border-line bg-white p-4 shadow-[0_8px_28px_#14142b0d]">
           <Field label="Database" value={databaseId || "-"} />
           <Field label="Canister" value={canisterId || "-"} />
           <label className="grid gap-2">
-            <span className="text-xs font-semibold uppercase text-muted">Amount</span>
+            <span className="text-xs font-semibold uppercase text-muted">KINIC amount</span>
             <input
               className="min-h-12 rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
               inputMode="decimal"
@@ -137,7 +137,7 @@ export function CreditsClient({ canisterId, databaseId, initialCredits }: Credit
           </label>
         </section>
 
-        <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable credits for this database." />
+        <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable cycles for this database." />
 
         <div className="grid gap-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -225,14 +225,14 @@ function WalletConnect({
   );
 }
 
-function purchaseButtonLabel(selectedProvider: CreditsProvider | null, status: CreditsStatus, activeProvider: CreditsProvider | null): string {
+function purchaseButtonLabel(selectedProvider: CyclesProvider | null, status: CyclesStatus, activeProvider: CyclesProvider | null): string {
   if (status === "running" && activeProvider === selectedProvider) {
     if (selectedProvider === "oisy") return "Processing OISY";
     if (selectedProvider === "plug") return "Processing Plug";
   }
-  if (selectedProvider === "oisy") return "Purchase credits with OISY";
-  if (selectedProvider === "plug") return "Purchase credits with Plug";
-  return "Purchase credits";
+  if (selectedProvider === "oisy") return "Purchase cycles with OISY";
+  if (selectedProvider === "plug") return "Purchase cycles with Plug";
+  return "Purchase cycles";
 }
 
 function Field({ label, value }: { label: string; value: string }) {

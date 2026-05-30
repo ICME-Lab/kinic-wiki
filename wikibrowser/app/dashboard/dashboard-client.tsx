@@ -8,12 +8,12 @@ import type { BusyAction } from "./access-control";
 import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
 import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { CreditsConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
-  getCreditsConfig,
+  getCyclesBillingConfig,
   grantDatabaseAccessAuthenticated,
-  listDatabaseCreditPendingOperationsAuthenticated,
+  listDatabaseCyclePendingOperationsAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
@@ -32,7 +32,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
-  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
+  const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
   const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -59,7 +59,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       if (!nextDatabaseId) {
         setPrincipal(client?.getIdentity().getPrincipal().toText() ?? null);
         setDatabases([]);
-        setCreditsConfig(null);
+        setCyclesBillingConfig(null);
         setMembers([]);
         setPendingOperationCount(0);
         setError(null);
@@ -74,8 +74,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setMemberError(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [creditsResult, publicResult, memberResult] = await Promise.allSettled([
-          getCreditsConfig(canisterId),
+        const [cyclesResult, publicResult, memberResult] = await Promise.allSettled([
+          getCyclesBillingConfig(canisterId),
           listDatabasesPublic(canisterId),
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
@@ -92,7 +92,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         const nextDatabase = nextDatabases.find((item) => item.databaseId === nextDatabaseId) ?? null;
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
-        setCreditsConfig(creditsResult.status === "fulfilled" ? creditsResult.value : null);
+        setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
         setMembers([]);
         setPendingOperationCount(0);
         if (publicResult.status === "rejected") {
@@ -111,7 +111,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             setMemberError(errorMessage(cause));
           }
           try {
-            const pendingOperations = await listDatabaseCreditPendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
+            const pendingOperations = await listDatabaseCyclePendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
             if (!isCurrentRefresh()) return;
             setPendingOperationCount(pendingOperations.length);
           } catch {
@@ -182,7 +182,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     await authClient.logout();
     setPrincipal(null);
     setDatabases([]);
-    setCreditsConfig(null);
+    setCyclesBillingConfig(null);
     setMembers([]);
     setPendingOperationCount(0);
     setError(null);
@@ -294,12 +294,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
 
-        {database ? <SummaryPanel creditsConfig={creditsConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
+        {database ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
           canManage ? (
             <OwnerPanel
-              creditsBalance={database.creditsBalance}
+              cyclesBalance={database.cyclesBalance}
               busy={busy}
               busyAction={busyAction}
               databaseId={databaseId}

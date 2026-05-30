@@ -33,15 +33,15 @@ use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 #[cfg(target_arch = "wasm32")]
 use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
-    CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
+    CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseWithLedgerDetails, DatabaseMeta,
     RequiredRole, VfsService,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
-    CreateDatabaseResult, CreditsConfig, CreditsConfigUpdate, CreditsPurchaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCreditEntryPage,
-    DatabaseCreditPendingOperation, DatabaseCreditPendingOperationPage,
-    DatabaseCreditPurchasePreview, DatabaseCreditPurchaseRequest, DatabaseMember,
+    CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
+    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
+    DatabaseCyclePendingOperation, DatabaseCyclePendingOperationPage,
+    DatabaseCyclesPurchasePreview, DatabaseCyclesPurchaseRequest, DatabaseMember,
     DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
@@ -281,7 +281,7 @@ enum TransferFromError {
 }
 
 #[init]
-fn init_hook(config: CreditsConfig) {
+fn init_hook(config: CyclesBillingConfig) {
     initialize_or_trap(Some(config));
     certify_http_responses();
     schedule_storage_billing_timer();
@@ -289,7 +289,8 @@ fn init_hook(config: CreditsConfig) {
 
 #[post_upgrade]
 fn post_upgrade_hook() {
-    let config = post_upgrade_credits_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
+    let config =
+        post_upgrade_cycles_billing_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
     initialize_upgrade_or_trap(config);
     certify_http_responses();
     schedule_storage_billing_timer();
@@ -446,11 +447,13 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[query]
-fn preview_database_credit_purchase(
+fn preview_database_cycles_purchase(
     database_id: String,
-    credit_units: u64,
-) -> Result<DatabaseCreditPurchasePreview, String> {
-    with_service(|service| service.preview_database_credit_purchase(&database_id, credit_units))
+    payment_amount_e8s: u64,
+) -> Result<DatabaseCyclesPurchasePreview, String> {
+    with_service(|service| {
+        service.preview_database_cycles_purchase(&database_id, payment_amount_e8s)
+    })
 }
 
 #[query]
@@ -465,24 +468,24 @@ fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
 fn icrc21_canister_call_consent_message(
     request: Icrc21ConsentMessageRequest,
 ) -> Icrc21ConsentMessageResponse {
-    if request.method != "purchase_database_credits" {
+    if request.method != "purchase_database_cycles" {
         return icrc21_unsupported(format!("unsupported canister call: {}", request.method));
     }
-    let purchase = match Decode!(&request.arg, DatabaseCreditPurchaseRequest) {
+    let purchase = match Decode!(&request.arg, DatabaseCyclesPurchaseRequest) {
         Ok(decoded) => decoded,
         Err(error) => {
             return icrc21_unavailable(format!(
-                "purchase_database_credits argument decode failed: {error}"
+                "purchase_database_cycles argument decode failed: {error}"
             ));
         }
     };
     let preview = match with_service(|service| {
-        service.preview_database_credit_purchase(&purchase.database_id, purchase.credit_units)
+        service.preview_database_cycles_purchase(&purchase.database_id, purchase.payment_amount_e8s)
     }) {
         Ok(preview) => preview,
         Err(error) => return icrc21_unsupported(error),
     };
-    if let Err(error) = validate_credit_purchase_expectations(&purchase, &preview) {
+    if let Err(error) = validate_cycles_purchase_expectations(&purchase, &preview) {
         return icrc21_unsupported(error);
     }
     let language = if request.user_preferences.metadata.language.trim().is_empty() {
@@ -496,9 +499,9 @@ fn icrc21_canister_call_consent_message(
             utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
         },
         consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-            "# Purchase Kinic database credits\n\nDatabase: `{database_id}`\n\nCredits: `{credits}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
+            "# Purchase Kinic database cycles\n\nDatabase: `{database_id}`\n\nCycles: `{cycles}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
             database_id = purchase.database_id,
-            credits = format_credit_units(purchase.credit_units),
+            cycles = format_cycles(preview.cycles),
             payment = format_e8s(preview.payment_amount_e8s),
             fee = format_e8s(preview.ledger_fee_e8s),
             spender = canister_principal().to_text()
@@ -507,32 +510,32 @@ fn icrc21_canister_call_consent_message(
 }
 
 #[update]
-async fn purchase_database_credits(
-    request: DatabaseCreditPurchaseRequest,
-) -> Result<CreditsPurchaseResult, String> {
+async fn purchase_database_cycles(
+    request: DatabaseCyclesPurchaseRequest,
+) -> Result<CyclesPurchaseResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
     let now = now_millis();
-    let config = with_service(|service| service.credits_config())?;
+    let config = with_service(|service| service.cycles_billing_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let preview = with_service(|service| {
-        service.preview_database_credit_purchase(&request.database_id, request.credit_units)
+        service.preview_database_cycles_purchase(&request.database_id, request.payment_amount_e8s)
     })?;
-    validate_credit_purchase_expectations(&request, &preview)?;
+    validate_cycles_purchase_expectations(&request, &preview)?;
     let ledger_fee_e8s = preview.ledger_fee_e8s;
     let payment_amount_e8s = preview.payment_amount_e8s;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
     let operation_id = match with_service(|service| {
-        service.begin_database_credit_purchase_with_ledger_details(
-            DatabaseCreditPurchaseWithLedgerDetails {
+        service.begin_database_cycles_purchase_with_ledger_details(
+            DatabaseCyclesPurchaseWithLedgerDetails {
                 database_id: &request.database_id,
                 caller: &caller,
-                credit_units: request.credit_units,
-                expected_payment_amount_e8s: request.expected_payment_amount_e8s,
+                payment_amount_e8s: request.payment_amount_e8s,
+                expected_cycles: request.expected_cycles,
                 expected_config_version: request.expected_config_version,
-                ledger: CreditsPendingLedgerDetailsInput {
+                ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
                     to_owner: &canister_owner,
@@ -566,113 +569,113 @@ async fn purchase_database_credits(
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
             with_service(|service| {
-                service.mark_database_credit_purchase_completed(
+                service.mark_database_cycles_purchase_completed(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credit_units,
+                    request.expected_cycles,
                 )
             })
-            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
-            activate_pending_database_after_credit_purchase_ledger_success(
+            .map_err(|error| cycles_purchase_local_apply_error(operation_id, block_index, error))?;
+            activate_pending_database_after_cycles_purchase_ledger_success(
                 &request.database_id,
                 now,
             )
-            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
+            .map_err(|error| cycles_purchase_local_apply_error(operation_id, block_index, error))?;
             #[cfg(test)]
-            if TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
-                return Err(credit_purchase_local_apply_error(
+            if TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
+                return Err(cycles_purchase_local_apply_error(
                     operation_id,
                     block_index,
-                    "test credit purchase apply failure".to_string(),
+                    "test cycle purchase apply failure".to_string(),
                 ));
             }
             let balance = with_service(|service| {
-                service.credit_database_purchase(
+                service.apply_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credit_units,
+                    request.expected_cycles,
                     block_index,
                     now,
                 )
             })
-            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
-            Ok(CreditsPurchaseResult {
+            .map_err(|error| cycles_purchase_local_apply_error(operation_id, block_index, error))?;
+            Ok(CyclesPurchaseResult {
                 block_index,
-                balance_credit_units: balance,
+                balance_cycles: balance,
             })
         }
         LedgerTransferFromOutcome::LedgerErr(error) => {
             let _ = with_service(|service| {
-                service.cancel_database_credit_purchase(
+                service.cancel_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credit_units,
+                    request.expected_cycles,
                 )
             });
             Err(error)
         }
         LedgerTransferFromOutcome::Ambiguous(error) => {
             match with_service(|service| {
-                service.mark_database_credit_purchase_ambiguous(
+                service.mark_database_cycles_purchase_ambiguous(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.credit_units,
+                    request.expected_cycles,
                     now,
                 )
             }) {
                 Ok(_) => Err(format!(
-                    "credit purchase pending operation {operation_id}; manual repair required: {error}"
+                    "cycles purchase pending operation {operation_id}; manual repair required: {error}"
                 )),
                 Err(mark_error) => Err(format!(
-                    "credit purchase pending operation {operation_id}; ledger result ambiguous; mark ambiguous failed: {mark_error}; original ledger error: {error}"
+                    "cycles purchase pending operation {operation_id}; ledger result ambiguous; mark ambiguous failed: {mark_error}; original ledger error: {error}"
                 )),
             }
         }
     }
 }
 
-fn validate_credit_purchase_expectations(
-    request: &DatabaseCreditPurchaseRequest,
-    preview: &DatabaseCreditPurchasePreview,
+fn validate_cycles_purchase_expectations(
+    request: &DatabaseCyclesPurchaseRequest,
+    preview: &DatabaseCyclesPurchasePreview,
 ) -> Result<(), String> {
     if request.expected_config_version != preview.config_version {
         return Err(format!(
-            "credits config changed: expected version {}, current version {}",
+            "cycles billing config changed: expected version {}, current version {}",
             request.expected_config_version, preview.config_version
         ));
     }
-    if request.expected_payment_amount_e8s != preview.payment_amount_e8s {
+    if request.expected_cycles != preview.cycles {
         return Err(format!(
-            "credit purchase payment amount changed: expected {}, current {}",
-            request.expected_payment_amount_e8s, preview.payment_amount_e8s
+            "cycles purchase amount changed: expected {}, current {}",
+            request.expected_cycles, preview.cycles
         ));
     }
     Ok(())
 }
 
 #[query]
-fn list_database_credit_entries(
+fn list_database_cycle_entries(
     database_id: String,
     cursor: Option<u64>,
     limit: u32,
-) -> Result<DatabaseCreditEntryPage, String> {
+) -> Result<DatabaseCycleEntryPage, String> {
     with_service(|service| {
-        service.list_database_credit_entries(&database_id, &caller_text(), cursor, limit)
+        service.list_database_cycle_entries(&database_id, &caller_text(), cursor, limit)
     })
 }
 
 #[query]
-fn list_database_credit_pending_operations(
+fn list_database_cycle_pending_operations(
     database_id: String,
     cursor: Option<u64>,
     limit: u32,
-) -> Result<DatabaseCreditPendingOperationPage, String> {
+) -> Result<DatabaseCyclePendingOperationPage, String> {
     with_service(|service| {
-        service.list_database_credit_pending_operations(&database_id, &caller_text(), cursor, limit)
+        service.list_database_cycle_pending_operations(&database_id, &caller_text(), cursor, limit)
     })
 }
 
@@ -691,45 +694,45 @@ fn settle_database_storage_charges() -> Result<(), String> {
 }
 
 #[update]
-async fn repair_database_credit_purchase_complete(
+async fn repair_database_cycles_purchase_complete(
     database_id: String,
     operation_id: u64,
     ledger_block_index: u64,
-) -> Result<CreditsPurchaseResult, String> {
+) -> Result<CyclesPurchaseResult, String> {
     require_authenticated_caller()?;
-    let config = with_service(|service| service.credits_config())?;
+    let config = with_service(|service| service.cycles_billing_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
     let operation = with_service(|service| {
-        service.get_database_credit_pending_operation_for_complete(&database_id, operation_id)
+        service.get_database_cycle_pending_operation_for_complete(&database_id, operation_id)
     })?;
-    let expected = expected_credit_purchase_transfer(&operation)?;
+    let expected = expected_cycles_purchase_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
     let now = now_millis();
-    activate_pending_database_after_credit_purchase_ledger_success(&database_id, now).map_err(
-        |error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error),
+    activate_pending_database_after_cycles_purchase_ledger_success(&database_id, now).map_err(
+        |error| cycles_purchase_local_apply_error(operation_id, ledger_block_index, error),
     )?;
     let balance = with_service(|service| {
-        service.repair_database_credit_purchase_complete(
+        service.repair_database_cycles_purchase_complete(
             &database_id,
             operation_id,
             ledger_block_index,
             now,
         )
     })
-    .map_err(|error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error))?;
-    Ok(CreditsPurchaseResult {
+    .map_err(|error| cycles_purchase_local_apply_error(operation_id, ledger_block_index, error))?;
+    Ok(CyclesPurchaseResult {
         block_index: ledger_block_index,
-        balance_credit_units: balance,
+        balance_cycles: balance,
     })
 }
 
-fn activate_pending_database_after_credit_purchase_ledger_success(
+fn activate_pending_database_after_cycles_purchase_ledger_success(
     database_id: &str,
     now: i64,
 ) -> Result<(), String> {
     let activation = with_service(|service| {
-        service.activate_pending_database_for_credit_purchase(database_id, now)
+        service.activate_pending_database_for_cycles_purchase(database_id, now)
     })?;
     if let Some(meta) = &activation {
         if let Err(error) = mount_database_file(meta) {
@@ -745,21 +748,21 @@ fn activate_pending_database_after_credit_purchase_ledger_success(
     Ok(())
 }
 
-fn credit_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
     format!(
-        "credit purchase payment completed but local credit application failed; pending operation {operation_id} can be completed with verified ledger block {block_index}: {cause}"
+        "cycles purchase payment completed but local cycles application failed; pending operation {operation_id} can be completed with verified ledger block {block_index}: {cause}"
     )
 }
 
 #[update]
-fn repair_database_credit_purchase_cancel(
+fn repair_database_cycles_purchase_cancel(
     database_id: String,
     operation_id: u64,
 ) -> Result<(), String> {
     require_authenticated_caller()?;
     let caller = caller_text();
     with_service(|service| {
-        service.repair_database_credit_purchase_cancel(
+        service.repair_database_cycles_purchase_cancel(
             &database_id,
             operation_id,
             &caller,
@@ -769,18 +772,24 @@ fn repair_database_credit_purchase_cancel(
 }
 
 #[query]
-fn get_credits_config() -> Result<CreditsConfig, String> {
-    with_service(|service| service.credits_config())
+fn get_cycles_billing_config() -> Result<CyclesBillingConfig, String> {
+    with_service(|service| service.cycles_billing_config())
 }
 
 #[update]
-fn update_credits_config(payload: Vec<u8>) -> Result<(), String> {
+fn update_cycles_billing_config(payload: Vec<u8>) -> Result<(), String> {
     require_authenticated_caller()?;
-    let update = Decode!(&payload, CreditsConfigUpdate)
-        .map_err(|error| format!("invalid credits config payload: {error}"))?;
-    with_unmetered_update("update_credits_config", None, |service, caller, _now| {
-        service.update_credits_config(update, caller).map(|_| ())
-    })
+    let update = Decode!(&payload, CyclesBillingConfigUpdate)
+        .map_err(|error| format!("invalid cycles config payload: {error}"))?;
+    with_unmetered_update(
+        "update_cycles_billing_config",
+        None,
+        |service, caller, _now| {
+            service
+                .update_cycles_billing_config(update, caller)
+                .map(|_| ())
+        },
+    )
 }
 
 #[update]
@@ -987,8 +996,8 @@ fn check_url_ingest_trigger_session(
 }
 
 #[query]
-fn check_database_write_credits(database_id: String) -> Result<(), String> {
-    with_service(|service| service.check_database_write_credits(&database_id, &caller_text()))
+fn check_database_write_cycles(database_id: String) -> Result<(), String> {
+    with_service(|service| service.check_database_write_cycles(&database_id, &caller_text()))
 }
 
 #[update]
@@ -1145,11 +1154,11 @@ fn fetch_updates(request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse, S
     with_service(|service| service.fetch_fs_updates(&caller_text(), request))
 }
 
-fn initialize_or_trap(config: Option<CreditsConfig>) {
+fn initialize_or_trap(config: Option<CyclesBillingConfig>) {
     initialize_service_with_config(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
-fn initialize_upgrade_or_trap(config: Option<CreditsConfig>) {
+fn initialize_upgrade_or_trap(config: Option<CyclesBillingConfig>) {
     initialize_service_for_upgrade(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
@@ -1168,7 +1177,7 @@ fn schedule_storage_billing_timer() {
     }
 }
 
-fn initialize_service_with_config(config: Option<CreditsConfig>) -> Result<(), String> {
+fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
@@ -1186,7 +1195,7 @@ fn initialize_service_with_config(config: Option<CreditsConfig>) -> Result<(), S
     Ok(())
 }
 
-fn initialize_service_for_upgrade(config: Option<CreditsConfig>) -> Result<(), String> {
+fn initialize_service_for_upgrade(config: Option<CyclesBillingConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
@@ -1201,26 +1210,28 @@ fn initialize_service_for_upgrade(config: Option<CreditsConfig>) -> Result<(), S
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn parse_upgrade_credits_config_arg(bytes: &[u8]) -> Result<Option<CreditsConfig>, String> {
+fn parse_upgrade_cycles_billing_config_arg(
+    bytes: &[u8],
+) -> Result<Option<CyclesBillingConfig>, String> {
     if bytes.is_empty() || bytes == b"DIDL\0\0" {
         return Ok(None);
     }
-    if let Ok((config,)) = decode_args::<(CreditsConfig,)>(bytes) {
+    if let Ok((config,)) = decode_args::<(CyclesBillingConfig,)>(bytes) {
         return Ok(Some(config));
     }
-    if let Ok((config,)) = decode_args::<(Option<CreditsConfig>,)>(bytes) {
+    if let Ok((config,)) = decode_args::<(Option<CyclesBillingConfig>,)>(bytes) {
         return Ok(config);
     }
     Err(
-        "post_upgrade credits config arg must be empty, CreditsConfig, or opt CreditsConfig"
+        "post_upgrade cycles config arg must be empty, CyclesBillingConfig, or opt CyclesBillingConfig"
             .to_string(),
     )
 }
 
-fn post_upgrade_credits_config_arg() -> Result<Option<CreditsConfig>, String> {
+fn post_upgrade_cycles_billing_config_arg() -> Result<Option<CyclesBillingConfig>, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        parse_upgrade_credits_config_arg(&ic_cdk::api::msg_arg_data())
+        parse_upgrade_cycles_billing_config_arg(&ic_cdk::api::msg_arg_data())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -1281,7 +1292,7 @@ thread_local! {
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
-    static TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
 }
 
 #[cfg(test)]
@@ -1290,8 +1301,8 @@ fn fail_next_mount_database_file_for_test() {
 }
 
 #[cfg(test)]
-fn fail_next_credit_database_purchase_apply_for_test() {
-    TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
+fn fail_next_apply_database_cycles_purchase_apply_for_test() {
+    TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
 }
 
 #[cfg(test)]
@@ -1388,17 +1399,8 @@ fn format_e8s(amount_e8s: u64) -> String {
     format!("{whole}.{fraction}")
 }
 
-fn format_credit_units(units: u64) -> String {
-    let whole = units / 1000;
-    let fractional = units % 1000;
-    if fractional == 0 {
-        return whole.to_string();
-    }
-    let mut fraction = format!("{fractional:03}");
-    while fraction.ends_with('0') {
-        fraction.pop();
-    }
-    format!("{whole}.{fraction}")
+fn format_cycles(cycles: u64) -> String {
+    cycles.to_string()
 }
 
 fn caller_text() -> String {
@@ -1502,17 +1504,17 @@ fn now_nanos() -> u64 {
     }
 }
 
-fn expected_credit_purchase_transfer(
-    operation: &DatabaseCreditPendingOperation,
+fn expected_cycles_purchase_transfer(
+    operation: &DatabaseCyclePendingOperation,
 ) -> Result<ExpectedLedgerTransfer, String> {
-    if operation.kind != "credit_purchase" {
-        return Err("pending credit operation kind mismatch".to_string());
+    if operation.kind != "cycles_purchase" {
+        return Err("pending cycle operation kind mismatch".to_string());
     }
-    expected_ledger_transfer(operation, "credit_purchase")
+    expected_ledger_transfer(operation, "cycles_purchase")
 }
 
 fn expected_ledger_transfer(
-    operation: &DatabaseCreditPendingOperation,
+    operation: &DatabaseCyclePendingOperation,
     memo_kind: &str,
 ) -> Result<ExpectedLedgerTransfer, String> {
     let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
@@ -1541,7 +1543,7 @@ fn expected_ledger_transfer(
         },
         amount_e8s,
         ledger_fee_e8s,
-        memo: credit_operation_memo(memo_kind, operation.operation_id),
+        memo: cycle_operation_memo(memo_kind, operation.operation_id),
         created_at_time_ns,
     })
 }
@@ -1639,7 +1641,7 @@ async fn ledger_transfer_from(
     operation_id: u64,
     created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
-    let memo = credit_operation_memo("credit_purchase", operation_id);
+    let memo = cycle_operation_memo("cycles_purchase", operation_id);
     #[cfg(test)]
     {
         record_test_ledger_from(&from);
@@ -1713,7 +1715,7 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
         .map_err(|_| "nat exceeds u64".to_string())
 }
 
-fn credit_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
+fn cycle_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
     format!("kinic:vfs:{kind}:{operation_id}").into_bytes()
 }
 
@@ -1782,7 +1784,7 @@ fn with_authorized_metered_update<T, A, F>(
     f: F,
 ) -> Result<T, String>
 where
-    A: FnOnce(&VfsService, &str) -> Result<CreditsConfig, String>,
+    A: FnOnce(&VfsService, &str) -> Result<CyclesBillingConfig, String>,
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
     let caller = caller_text();
@@ -1793,14 +1795,14 @@ where
         let service = borrowed
             .as_ref()
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
-        let credits_config = authorize(service, &caller)?;
+        let cycles_billing_config = authorize(service, &caller)?;
         let result = f(service, &caller, now);
         let after_cycles = cycle_balance();
         let cycles_delta = before_cycles.saturating_sub(after_cycles);
         if result.is_ok()
             && let Some(database_id) = database_id.as_deref()
             && let Err(error) = service.charge_database_update(
-                &credits_config,
+                &cycles_billing_config,
                 database_id,
                 &caller,
                 method,
@@ -1808,7 +1810,7 @@ where
                 now,
             )
         {
-            ic_cdk::trap(format!("credits charge failed after update: {error}"));
+            ic_cdk::trap(format!("cycles charge failed after update: {error}"));
         }
         result
     })

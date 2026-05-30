@@ -28,10 +28,10 @@ const typeOrder = [
   "DatabaseRole",
   "DatabaseStatus",
   "DatabaseSummary",
-  "CreditsConfig",
-  "CreditsPurchaseResult",
-  "DatabaseCreditPurchasePreview",
-  "DatabaseCreditPurchaseRequest",
+  "CyclesBillingConfig",
+  "CyclesPurchaseResult",
+  "DatabaseCyclesPurchasePreview",
+  "DatabaseCyclesPurchaseRequest",
   "Icrc21ConsentMessageMetadata",
   "Icrc21DeviceSpec",
   "Icrc21ConsentMessageSpec",
@@ -48,10 +48,10 @@ const typeOrder = [
   "RenameDatabaseRequest",
   "DeleteDatabaseRequest",
   "DatabaseMember",
-  "DatabaseCreditEntry",
-  "DatabaseCreditEntryPage",
-  "DatabaseCreditPendingOperation",
-  "DatabaseCreditPendingOperationPage",
+  "DatabaseCycleEntry",
+  "DatabaseCycleEntryPage",
+  "DatabaseCyclePendingOperation",
+  "DatabaseCyclePendingOperationPage",
   "NodeKind",
   "NodeEntryKind",
   "Node",
@@ -102,11 +102,11 @@ const typeOrder = [
   "ResultQueryContext",
   "ResultSourceEvidence",
   "ResultCreateDatabase",
-  "ResultCreditsConfig",
-  "ResultCreditsPurchase",
-  "ResultCreditsPurchasePreview",
-  "ResultCreditsEntries",
-  "ResultCreditsPending",
+  "ResultCyclesBillingConfig",
+  "ResultCyclesPurchase",
+  "ResultCyclesPurchasePreview",
+  "ResultCyclesEntries",
+  "ResultCyclesPending",
   "ResultDatabases",
   "ResultMembers",
   "WriteNodeResult",
@@ -127,22 +127,22 @@ const methodOrder = [
   "authorize_ops_answer_session",
   "authorize_url_ingest_trigger_session",
   "canister_health",
-  "check_database_write_credits",
+  "check_database_write_cycles",
   "check_ops_answer_session",
   "check_source_run_session",
   "check_url_ingest_trigger_session",
   "create_database",
   "delete_database",
   "delete_node",
-  "get_credits_config",
+  "get_cycles_billing_config",
   "grant_database_access",
   "graph_links",
   "graph_neighborhood",
   "icrc10_supported_standards",
   "icrc21_canister_call_consent_message",
   "incoming_links",
-  "list_database_credit_entries",
-  "list_database_credit_pending_operations",
+  "list_database_cycle_entries",
+  "list_database_cycle_pending_operations",
   "list_databases",
   "list_database_members",
   "memory_manifest",
@@ -154,16 +154,16 @@ const methodOrder = [
   "recent_nodes",
   "list_children",
   "outgoing_links",
-  "preview_database_credit_purchase",
-  "repair_database_credit_purchase_cancel",
-  "repair_database_credit_purchase_complete",
+  "preview_database_cycles_purchase",
+  "repair_database_cycles_purchase_cancel",
+  "repair_database_cycles_purchase_complete",
   "revoke_database_access",
   "rename_database",
   "search_node_paths",
   "search_nodes",
   "settle_database_storage_charges",
   "source_evidence",
-  "purchase_database_credits",
+  "purchase_database_cycles",
   "write_node",
   "write_source_for_generation"
 ];
@@ -366,8 +366,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_10") return "ResultLinks";
   if (normalized === "Result_11") return "ResultLinks";
   if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultCreditsEntries";
-  if (normalized === "Result_14") return "ResultCreditsPending";
+  if (normalized === "Result_13") return "ResultCyclesEntries";
+  if (normalized === "Result_14") return "ResultCyclesPending";
   if (normalized === "Result_15") return "ResultMembers";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
@@ -375,8 +375,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCreditsPurchasePreview";
-  if (normalized === "Result_21") return "ResultCreditsPurchase";
+  if (normalized === "Result_20") return "ResultCyclesPurchasePreview";
+  if (normalized === "Result_21") return "ResultCyclesPurchase";
   if (normalized === "Result_22") return "ResultQueryContext";
   if (normalized === "Result_25") return "ResultNode";
   if (normalized === "Result_26") return "ResultNodeContext";
@@ -385,7 +385,7 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_29") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
   if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultCreditsConfig";
+  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

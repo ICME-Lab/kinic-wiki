@@ -4,31 +4,32 @@ import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
 import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
-import { getCreditsConfig, previewDatabaseCreditPurchase, type DatabaseCreditPurchaseRequest } from "@/lib/vfs-client";
+import { getCyclesBillingConfig, previewDatabaseCyclesPurchase, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
+import { formatRawCycles } from "@/lib/cycles";
 
 type WalletProvider = "oisy" | "plug";
 
-type CreditsPurchaseRequest = {
+type CyclesPurchaseRequest = {
   canisterId: string;
   databaseId: string;
-  creditUnits: bigint;
+  paymentAmountE8s: bigint;
 };
 
-type CreditsPurchaseResult = {
+type CyclesPurchaseResult = {
   provider: WalletProvider;
   approveBlockIndex: string;
   approvedAllowanceE8s: string;
-  creditedCredits: string;
+  purchasedCycles: string;
   paymentAmountE8s: string;
   transferFeeE8s: string;
   purchaseBlockIndex: string | null;
-  balanceCredits: string | null;
+  balanceCycles: string | null;
 };
 
-type PreparedCreditPurchase = {
+type PreparedCyclesPurchase = {
   kinicLedgerCanisterId: string;
-  purchaseRequest: DatabaseCreditPurchaseRequest;
+  purchaseRequest: DatabaseCyclesPurchaseRequest;
   transferFeeE8s: bigint;
   paymentAmountE8s: bigint;
   approvedAllowanceE8s: bigint;
@@ -49,7 +50,7 @@ type IcrcCallCanisterResult = {
   certificate: string;
 };
 
-type CreditPurchaseWalletConnectOptions = {
+type CyclesPurchaseWalletConnectOptions = {
   url: string;
   windowOptions?: { position: "center" | "top-right"; width: number; height: number; features?: string } | string;
   connectionOptions?: { pollingIntervalInMilliseconds?: number; timeoutInMilliseconds?: number };
@@ -64,7 +65,7 @@ type PlugWallet = {
 };
 
 type PlugVfsActor = {
-  purchase_database_credits: (request: DatabaseCreditPurchaseRequest) => Promise<{ Ok: { block_index: bigint; balance_credit_units: bigint } } | { Err: string }>;
+  purchase_database_cycles: (request: DatabaseCyclesPurchaseRequest) => Promise<{ Ok: { block_index: bigint; balance_cycles: bigint } } | { Err: string }>;
 };
 
 type LedgerActor = {
@@ -101,7 +102,7 @@ type LedgerAccount = {
 };
 
 export type ConnectedOisyWallet = {
-  wallet: CreditPurchaseIcrcWallet;
+  wallet: CyclesPurchaseIcrcWallet;
   owner: string;
 };
 
@@ -122,26 +123,26 @@ const CALL_TIMEOUT_MS = 120_000;
 const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
-type CreditPurchaseIcrcWalletOptions = {
+type CyclesPurchaseIcrcWalletOptions = {
   origin: string;
   popup: Window;
   onDisconnect?: () => void;
   host?: string;
 };
 
-class CreditPurchaseIcrcWallet extends IcrcWallet {
-  constructor(options: CreditPurchaseIcrcWalletOptions) {
+class CyclesPurchaseIcrcWallet extends IcrcWallet {
+  constructor(options: CyclesPurchaseIcrcWalletOptions) {
     super(options);
   }
 
-  static override async connect({ onDisconnect, host, ...rest }: CreditPurchaseWalletConnectOptions): Promise<CreditPurchaseIcrcWallet> {
-    return CreditPurchaseIcrcWallet.connectSigner({
+  static override async connect({ onDisconnect, host, ...rest }: CyclesPurchaseWalletConnectOptions): Promise<CyclesPurchaseIcrcWallet> {
+    return CyclesPurchaseIcrcWallet.connectSigner({
       options: rest,
-      init: (params) => new CreditPurchaseIcrcWallet({ ...params, onDisconnect, host })
+      init: (params) => new CyclesPurchaseIcrcWallet({ ...params, onDisconnect, host })
     });
   }
 
-  async callCreditPurchase(params: IcrcCallCanisterRequestParams): Promise<IcrcCallCanisterResult> {
+  async callCyclesPurchase(params: IcrcCallCanisterRequestParams): Promise<IcrcCallCanisterResult> {
     return this.call({
       params,
       options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
@@ -150,7 +151,7 @@ class CreditPurchaseIcrcWallet extends IcrcWallet {
 }
 
 export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
-  const wallet = await CreditPurchaseIcrcWallet.connect({
+  const wallet = await CyclesPurchaseIcrcWallet.connect({
     url: process.env.NEXT_PUBLIC_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
     host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
   });
@@ -177,8 +178,8 @@ export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
   return { principal: principal.toText() };
 }
 
-export async function purchaseCreditsWithOisy(request: CreditsPurchaseRequest, connection: ConnectedOisyWallet): Promise<CreditsPurchaseResult> {
-  const prepared = await prepareCreditPurchase(request, connection.owner);
+export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
+  const prepared = await prepareCyclesPurchase(request, connection.owner);
   const approveBlockIndex = await connection.wallet.approve({
     owner: connection.owner,
     ledgerCanisterId: prepared.kinicLedgerCanisterId,
@@ -186,23 +187,23 @@ export async function purchaseCreditsWithOisy(request: CreditsPurchaseRequest, c
     options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
   });
   const purchase = await purchaseAfterApprove(
-    () => oisyCallCreditPurchase(connection.wallet, connection.owner, request.canisterId, prepared.purchaseRequest),
+    () => oisyCallCyclesPurchase(connection.wallet, connection.owner, request.canisterId, prepared.purchaseRequest),
     prepared.expiresAt
   );
   return {
     provider: "oisy",
     approveBlockIndex: approveBlockIndex.toString(),
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    creditedCredits: formatCreditUnits(request.creditUnits),
+    purchasedCycles: formatRawCycles(BigInt(prepared.purchaseRequest.expected_cycles)),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     purchaseBlockIndex: purchase.blockIndex,
-    balanceCredits: purchase.balanceCredits ? formatCreditUnits(BigInt(purchase.balanceCredits)) : null
+    balanceCycles: purchase.balanceCycles ? formatRawCycles(BigInt(purchase.balanceCycles)) : null
   };
 }
 
-export async function purchaseCreditsWithPlug(request: CreditsPurchaseRequest, connection: ConnectedPlugWallet): Promise<CreditsPurchaseResult> {
-  const prepared = await prepareCreditPurchase(request, connection.principal);
+export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, connection: ConnectedPlugWallet): Promise<CyclesPurchaseResult> {
+  const prepared = await prepareCyclesPurchase(request, connection.principal);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
   const connected = await plug.requestConnect({
@@ -226,7 +227,7 @@ export async function purchaseCreditsWithPlug(request: CreditsPurchaseRequest, c
     interfaceFactory: idlFactory
   });
   const purchase = await purchaseAfterApprove(async () => {
-    const result = await vfsActor.purchase_database_credits(prepared.purchaseRequest);
+    const result = await vfsActor.purchase_database_cycles(prepared.purchaseRequest);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
   }, prepared.expiresAt);
@@ -234,11 +235,11 @@ export async function purchaseCreditsWithPlug(request: CreditsPurchaseRequest, c
     provider: "plug",
     approveBlockIndex: approve.Ok.toString(),
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    creditedCredits: formatCreditUnits(request.creditUnits),
+    purchasedCycles: formatRawCycles(BigInt(prepared.purchaseRequest.expected_cycles)),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     purchaseBlockIndex: purchase.block_index.toString(),
-    balanceCredits: formatCreditUnits(purchase.balance_credit_units)
+    balanceCycles: formatRawCycles(purchase.balance_cycles)
   };
 }
 
@@ -265,21 +266,21 @@ function rawApproveArgs(canisterId: string, allowanceE8s: bigint, expectedAllowa
   };
 }
 
-async function prepareCreditPurchase(request: CreditsPurchaseRequest, payer: string): Promise<PreparedCreditPurchase> {
-  assertConfiguredCreditsCanister(request.canisterId);
-  const config = await getCreditsConfig(request.canisterId);
-  const preview = await previewDatabaseCreditPurchase(request.canisterId, request.databaseId, request.creditUnits);
+async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: string): Promise<PreparedCyclesPurchase> {
+  assertConfiguredCyclesCanister(request.canisterId);
+  const config = await getCyclesBillingConfig(request.canisterId);
+  const preview = await previewDatabaseCyclesPurchase(request.canisterId, request.databaseId, request.paymentAmountE8s);
   const transferFeeE8s = BigInt(preview.ledgerFeeE8s);
   const paymentAmountE8s = BigInt(preview.paymentAmountE8s);
-  const approvedAllowanceE8s = allowanceForCreditPurchase(paymentAmountE8s, transferFeeE8s);
+  const approvedAllowanceE8s = allowanceForCyclesPurchase(paymentAmountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
   const currentAllowanceE8s = await getLedgerAllowance(config.kinicLedgerCanisterId, payer, request.canisterId);
   return {
     kinicLedgerCanisterId: config.kinicLedgerCanisterId,
     purchaseRequest: {
       database_id: request.databaseId,
-      credit_units: request.creditUnits,
-      expected_payment_amount_e8s: paymentAmountE8s,
+      payment_amount_e8s: paymentAmountE8s,
+      expected_cycles: BigInt(preview.cycles),
       expected_config_version: BigInt(preview.configVersion)
     },
     transferFeeE8s,
@@ -290,7 +291,7 @@ async function prepareCreditPurchase(request: CreditsPurchaseRequest, payer: str
   };
 }
 
-function allowanceForCreditPurchase(amountE8s: bigint, transferFeeE8s: bigint): bigint {
+function allowanceForCyclesPurchase(amountE8s: bigint, transferFeeE8s: bigint): bigint {
   return amountE8s + transferFeeE8s;
 }
 
@@ -298,7 +299,7 @@ function approveExpiresAt(): bigint {
   return BigInt(Date.now() + APPROVE_EXPIRES_IN_MS) * 1_000_000n;
 }
 
-function assertConfiguredCreditsCanister(canisterId: string): void {
+function assertConfiguredCyclesCanister(canisterId: string): void {
   const configured = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID;
   if (!configured) throw new Error("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
   if (Principal.fromText(canisterId).toText() !== Principal.fromText(configured).toText()) {
@@ -325,22 +326,22 @@ function allowanceArgs(owner: string, spender: string): LedgerAllowanceArgs {
   };
 }
 
-async function oisyCallCreditPurchase(
-  wallet: CreditPurchaseIcrcWallet,
+async function oisyCallCyclesPurchase(
+  wallet: CyclesPurchaseIcrcWallet,
   owner: string,
   canisterId: string,
-  request: DatabaseCreditPurchaseRequest
-): Promise<{ blockIndex: string; balanceCredits: string }> {
-  const arg = encodeCreditPurchaseArgs(request);
-  const result = await wallet.callCreditPurchase({
+  request: DatabaseCyclesPurchaseRequest
+): Promise<{ blockIndex: string; balanceCycles: string }> {
+  const arg = encodeCyclesPurchaseArgs(request);
+  const result = await wallet.callCyclesPurchase({
     canisterId,
     sender: owner,
-    method: "purchase_database_credits",
+    method: "purchase_database_cycles",
     arg
   });
-  return decodeOisyCreditPurchaseResult({
+  return decodeOisyCyclesPurchaseResult({
     canisterId,
-    method: "purchase_database_credits",
+    method: "purchase_database_cycles",
     arg,
     result
   });
@@ -351,7 +352,7 @@ async function purchaseAfterApprove<T>(run: () => Promise<T>, expiresAt: bigint)
     return await run();
   } catch (cause) {
     const expiry = new Date(Number(expiresAt / 1_000_000n)).toISOString();
-    throw new Error(`credits purchase failed after approve; approval remains until ${expiry}: ${errorMessage(cause)}`);
+    throw new Error(`cycles purchase failed after approve; approval remains until ${expiry}: ${errorMessage(cause)}`);
   }
 }
 
@@ -359,17 +360,17 @@ function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-function encodeCreditPurchaseArgs(request: DatabaseCreditPurchaseRequest): string {
+function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): string {
   const PurchaseRequest = IDL.Record({
     database_id: IDL.Text,
-    credit_units: IDL.Nat64,
-    expected_payment_amount_e8s: IDL.Nat64,
+    payment_amount_e8s: IDL.Nat64,
+    expected_cycles: IDL.Nat64,
     expected_config_version: IDL.Nat64
   });
   return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
 }
 
-async function decodeOisyCreditPurchaseResult({
+async function decodeOisyCyclesPurchaseResult({
   canisterId,
   method,
   arg,
@@ -379,7 +380,7 @@ async function decodeOisyCreditPurchaseResult({
   method: string;
   arg: string;
   result: IcrcCallCanisterResult;
-}): Promise<{ blockIndex: string; balanceCredits: string }> {
+}): Promise<{ blockIndex: string; balanceCycles: string }> {
   const contentMap = Cbor.decode<Record<string, unknown>>(base64ToUint8Array(result.contentMap));
   const responseMethod = contentMap.method_name;
   if (typeof responseMethod !== "string" || responseMethod !== method) throw new Error("wallet response method mismatch");
@@ -404,38 +405,31 @@ async function decodeOisyCreditPurchaseResult({
   return decodePurchaseResult(reply);
 }
 
-function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; balanceCredits: string } {
+function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; balanceCycles: string } {
   const [decoded] = IDL.decode([purchaseResultType()], reply);
   if (!isObject(decoded)) throw new Error("wallet response result mismatch");
   if (hasOwn(decoded, "Err")) {
     const error = Reflect.get(decoded, "Err");
-    throw new Error(typeof error === "string" ? error : "credits purchase failed");
+    throw new Error(typeof error === "string" ? error : "cycles purchase failed");
   }
   const ok = Reflect.get(decoded, "Ok");
   if (!isObject(ok)) throw new Error("wallet response result mismatch");
   const blockIndex = Reflect.get(ok, "block_index");
-  const balanceCredits = Reflect.get(ok, "balance_credit_units");
-  if (typeof blockIndex !== "bigint" || typeof balanceCredits !== "bigint") {
+  const balanceCycles = Reflect.get(ok, "balance_cycles");
+  if (typeof blockIndex !== "bigint" || typeof balanceCycles !== "bigint") {
     throw new Error("wallet response result mismatch");
   }
   return {
     blockIndex: blockIndex.toString(),
-    balanceCredits: balanceCredits.toString()
+    balanceCycles: balanceCycles.toString()
   };
 }
 
 function purchaseResultType() {
   return IDL.Variant({
-    Ok: IDL.Record({ block_index: IDL.Nat64, balance_credit_units: IDL.Nat64 }),
+    Ok: IDL.Record({ block_index: IDL.Nat64, balance_cycles: IDL.Nat64 }),
     Err: IDL.Text
   });
-}
-
-function formatCreditUnits(units: bigint): string {
-  const whole = units / 1000n;
-  const fraction = units % 1000n;
-  if (fraction === 0n) return whole.toString();
-  return `${whole.toString()}.${fraction.toString().padStart(3, "0").replace(/0+$/, "")}`;
 }
 
 function bytesFromUnknown(value: unknown, label: string): Uint8Array {

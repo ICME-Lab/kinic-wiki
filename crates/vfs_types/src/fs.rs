@@ -57,76 +57,77 @@ pub struct DatabaseSummary {
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
-    pub credit_units_balance: Option<u64>,
-    pub credits_suspended_at_ms: Option<i64>,
+    pub cycles_balance: Option<u64>,
+    pub cycles_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct CreditsConfig {
+pub struct CyclesBillingConfig {
     pub kinic_ledger_canister_id: String,
     pub sns_governance_id: String,
-    pub credit_units_per_kinic: u64,
-    pub min_update_credit_units: u64,
+    pub cycles_per_kinic: u64,
+    pub min_update_cycles: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct CreditsConfigUpdate {
-    pub credit_units_per_kinic: u64,
-    pub min_update_credit_units: u64,
+pub struct CyclesBillingConfigUpdate {
+    pub cycles_per_kinic: u64,
+    pub min_update_cycles: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCreditPurchasePreview {
+pub struct DatabaseCyclesPurchasePreview {
     pub payment_amount_e8s: u64,
+    pub cycles: u64,
     pub ledger_fee_e8s: u64,
-    pub credit_units_per_kinic: u64,
+    pub cycles_per_kinic: u64,
     pub config_version: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCreditPurchaseRequest {
+pub struct DatabaseCyclesPurchaseRequest {
     pub database_id: String,
-    pub credit_units: u64,
-    pub expected_payment_amount_e8s: u64,
+    pub payment_amount_e8s: u64,
+    pub expected_cycles: u64,
     pub expected_config_version: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct CreditsPurchaseResult {
+pub struct CyclesPurchaseResult {
     pub block_index: u64,
-    pub balance_credit_units: u64,
+    pub balance_cycles: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCreditEntry {
+pub struct DatabaseCycleEntry {
     pub entry_id: u64,
     pub database_id: String,
     pub kind: String,
-    pub amount_credit_units: i64,
-    pub balance_after_credit_units: u64,
+    pub amount_cycles: i64,
+    pub balance_after_cycles: u64,
     pub payment_amount_e8s: Option<u64>,
     pub caller: String,
     pub method: Option<String>,
     pub cycles_delta: Option<u64>,
-    pub credit_units_per_kinic: Option<u64>,
+    pub cycles_per_kinic: Option<u64>,
     pub ledger_block_index: Option<u64>,
     pub created_at_ms: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCreditEntryPage {
-    pub entries: Vec<DatabaseCreditEntry>,
+pub struct DatabaseCycleEntryPage {
+    pub entries: Vec<DatabaseCycleEntry>,
     pub next_cursor: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCreditPendingOperation {
+pub struct DatabaseCyclePendingOperation {
     pub operation_id: u64,
     pub database_id: String,
     pub kind: String,
     pub caller: String,
-    pub credit_units: i64,
+    pub cycles: i64,
     pub payment_amount_e8s: i64,
     pub from_owner: Option<String>,
     pub from_subaccount: Option<Vec<u8>>,
@@ -138,8 +139,8 @@ pub struct DatabaseCreditPendingOperation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCreditPendingOperationPage {
-    pub entries: Vec<DatabaseCreditPendingOperation>,
+pub struct DatabaseCyclePendingOperationPage {
+    pub entries: Vec<DatabaseCyclePendingOperation>,
     pub next_cursor: Option<u64>,
 }
 

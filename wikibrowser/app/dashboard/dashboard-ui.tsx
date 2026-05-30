@@ -8,8 +8,8 @@ import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRo
 import { ActionButton } from "./action-button";
 import { DatabaseDangerZone } from "./database-danger-zone";
 import { MemberTable } from "./member-table";
-import { databaseCreditsView, databaseCreditsHref } from "@/lib/credits-state";
-import type { CreditsConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
+import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -37,13 +37,13 @@ export function AuthControls(props: { authReady: boolean; loading: boolean; prin
 }
 
 export function SummaryPanel({
-  creditsConfig,
+  cyclesConfig,
   database,
   databaseId,
   principal,
   publicReadable
 }: {
-  creditsConfig: CreditsConfig | null;
+  cyclesConfig: CyclesBillingConfig | null;
   database: DatabaseSummary | null;
   databaseId: string;
   principal: string;
@@ -51,8 +51,8 @@ export function SummaryPanel({
 }) {
   const routable = isRoutableDatabaseId(databaseId);
   const openHref = routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
-  const credits = databaseCreditsView(database, creditsConfig);
-  const purchaseHref = database ? databaseCreditsHref(database) : null;
+  const cycles = databaseCyclesView(database, cyclesConfig);
+  const purchaseHref = database ? databaseCyclesHref(database) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
@@ -61,9 +61,9 @@ export function SummaryPanel({
       <Field label="Your Role" value={database?.role ?? "-"} />
       <Field label="Status" value={databaseStatusLabel(database?.status)} />
       <Field label="Logical size" value={database ? formatBytes(database.logicalSizeBytes) : "-"} />
-      <Field label="Credits" value={credits.summary} />
+      <Field label="Cycles" value={cycles.summary} />
       <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-3">
-        {purchaseHref ? <SummaryActionLink href={purchaseHref} icon={<Wallet aria-hidden size={14} />} label="Credits" /> : null}
+        {purchaseHref ? <SummaryActionLink href={purchaseHref} icon={<Wallet aria-hidden size={14} />} label="Cycles" /> : null}
         {openHref ? <SummaryActionLink href={openHref} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : null}
         {publicReadable && routable ? (
           <SummaryActionLink
@@ -80,7 +80,7 @@ export function SummaryPanel({
 }
 
 export function OwnerPanel(props: {
-  creditsBalance: string;
+  cyclesBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
@@ -117,7 +117,7 @@ export function OwnerPanel(props: {
     if (principalText === LLM_WRITER_PRINCIPAL) {
       setPendingAction({
         title: llmWriterButtonLabel,
-        message: `Grant writer access to ${LLM_WRITER_LABEL}. Worker writes can create and update wiki drafts, and stop when role or credits state changes.`,
+        message: `Grant writer access to ${LLM_WRITER_LABEL}. Worker writes can create and update wiki drafts, and stop when role or cycles state changes.`,
         confirmLabel: llmWriterButtonLabel,
         principalText,
         role: "writer",
@@ -242,7 +242,7 @@ export function OwnerPanel(props: {
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
       <DatabaseDangerZone
-        creditsBalance={props.creditsBalance}
+        cyclesBalance={props.cyclesBalance}
         busy={props.busy}
         busyAction={props.busyAction}
         databaseId={props.databaseId}

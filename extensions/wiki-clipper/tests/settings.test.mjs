@@ -139,9 +139,9 @@ test("database dropdown options include only active owner and writer databases",
     rawDatabase("writer-db", "Writer", "Active", 20_000n),
     rawDatabase("reader-db", "Reader", "Active", 20_000n),
     rawDatabase("archived-db", "Owner", "Archived", 20_000n)
-  ], { minUpdateCredits: "10000" });
+  ], { minUpdateCycles: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCreditsAvailable]),
+    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCyclesAvailable]),
     [
       ["owner-db", "owner-db name", "Owner", "Active", true],
       ["legacy-owner-db", "legacy-owner-db name", "Owner", "Active", true],
@@ -150,29 +150,29 @@ test("database dropdown options include only active owner and writer databases",
   );
 });
 
-test("database dropdown keeps credits-disabled writer databases with reasons", () => {
+test("database dropdown keeps cycles-disabled writer databases with reasons", () => {
   const databases = normalizeWritableDatabases([
     rawDatabase("active-db", "Owner", "Active", 20_000n),
     rawDatabase("low-db", "Writer", "Active", 9_999n),
     rawDatabase("suspended-db", "Writer", "Active", 20_000n, 1n)
-  ], { minUpdateCredits: "10000" });
+  ], { minUpdateCycles: "10000" });
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
+    databases.map((database) => [database.databaseId, database.writeCyclesAvailable, database.cyclesReason]),
     [
       ["active-db", true, null],
-      ["low-db", false, "Database credits balance is below the minimum update balance."],
-      ["suspended-db", false, "Database credits are suspended."]
+      ["low-db", false, "Database cycles balance is below the minimum update balance."],
+      ["suspended-db", false, "Database cycles are suspended."]
     ]
   );
 });
 
-test("database dropdown disables writer databases when credits config is unavailable", () => {
+test("database dropdown disables writer databases when cycles config is unavailable", () => {
   const databases = normalizeWritableDatabases([
     rawDatabase("owner-db", "Owner", "Active", 20_000n)
   ]);
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
-    [["owner-db", false, "Credits config unavailable."]]
+    databases.map((database) => [database.databaseId, database.writeCyclesAvailable, database.cyclesReason]),
+    [["owner-db", false, "Cycles config unavailable."]]
   );
 });
 
@@ -250,17 +250,17 @@ test("settings docs describe automatic database save", () => {
   assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
-function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, creditsSuspendedAtMs = null) {
+function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSuspendedAtMs = null) {
   const name = typeof nameOrBalance === "string" ? nameOrBalance : `${databaseId} name`;
-  const creditsBalance = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
+  const cyclesBalance = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
   return {
     database_id: databaseId,
     name,
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    credit_units_balance: [creditsBalance],
-    credits_suspended_at_ms: creditsSuspendedAtMs === null ? [] : [creditsSuspendedAtMs],
+    cycles_balance: [cyclesBalance],
+    cycles_suspended_at_ms: cyclesSuspendedAtMs === null ? [] : [cyclesSuspendedAtMs],
     archived_at_ms: []
   };
 }

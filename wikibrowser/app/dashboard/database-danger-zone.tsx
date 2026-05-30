@@ -9,7 +9,7 @@ import type { BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 
 export function DatabaseDangerZone(props: {
-  creditsBalance: string;
+  cyclesBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
   databaseId: string;
@@ -45,7 +45,7 @@ export function DatabaseDangerZone(props: {
           <p className="mt-2 break-all font-mono text-xs text-red-900">
             {props.databaseName} / {props.databaseId}
           </p>
-          <DeleteCreditsNotice pendingOperationCount={props.pendingOperationCount} />
+          <DeleteCyclesNotice pendingOperationCount={props.pendingOperationCount} />
         </div>
         <div>
           <ActionButton disabled={deleteDisabled} onClick={openDeleteDialog} variant="danger">
@@ -113,13 +113,13 @@ function ConfirmDeleteDatabaseDialog(props: {
   );
 }
 
-function DeleteCreditsNotice({ pendingOperationCount }: { pendingOperationCount: number }) {
+function DeleteCyclesNotice({ pendingOperationCount }: { pendingOperationCount: number }) {
   if (pendingOperationCount > 0) {
     return (
       <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-900">
-        Resolve pending credit operations before deleting. Pending operations: {pendingOperationCount}
+        Resolve pending cycle operations before deleting. Pending operations: {pendingOperationCount}
       </p>
     );
   }
-  return <p className="mt-3 text-sm leading-6 text-red-900">Remaining credits will be discarded.</p>;
+  return <p className="mt-3 text-sm leading-6 text-red-900">Remaining cycles will be discarded.</p>;
 }

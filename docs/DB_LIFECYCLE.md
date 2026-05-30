@@ -24,17 +24,17 @@ Stable-memory mount IDs are partitioned by purpose:
 - `11..=32767`: user DB slots
 - `32768..=65534`: reserved
 
-The index DB tracks database metadata, membership, and credits history. User DBs hold VFS node data, search data, and link data.
+The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
 The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
 
-Pending DBs have index metadata and credit accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful credit purchase activates it.
+Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 
 ## Status
 
 Databases move through five statuses:
 
-- `pending`: metadata reserved, no mounted SQLite DB yet, only credit purchase and owner management are available
+- `pending`: metadata reserved, no mounted SQLite DB yet, only cycle purchase and owner management are available
 - `active`: mounted and usable for VFS read/write/search/list
 - `archiving`: mounted for chunk export, VFS operations rejected until finalize succeeds
 - `archived`: not mounted, active mount released, snapshot metadata retained
@@ -50,68 +50,67 @@ It is updated after VFS mutations, restore finalization, and storage billing set
 
 Deleting or archiving a DB releases the active mount. It does not imply that canister stable memory shrinks or that the stable-memory mount ID is reused.
 
-## Credits
+## Cycles
 
-KINIC credits uses one internal DB-scoped balance:
+KINIC cycles uses one internal DB-scoped balance:
 
-- DB credits balance: KINIC pulled from the external ledger directly into a reserved DB
+- DB cycles balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB credits balance without allocating a stable-memory mount ID. The DB remains `pending` and credits-suspended until its first successful credit purchase activates the mounted SQLite DB.
+DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
 
-External ledger calls are limited to DB credit purchase:
+External ledger calls are limited to DB cycles purchase:
 
-- `preview_database_credit_purchase(database_id, credit_units)` returns `payment_amount_e8s`, `ledger_fee_e8s`, `credit_units_per_kinic`, and `config_version`.
-- `purchase_database_credits(DatabaseCreditPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance. The request must include the previewed `expected_payment_amount_e8s` and `expected_config_version`; mismatch rejects before pending operation creation and before ledger transfer. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
+- `preview_database_cycles_purchase(database_id, payment_amount_e8s)` returns `payment_amount_e8s`, `cycles`, `ledger_fee_e8s`, `cycles_per_kinic`, and `config_version`.
+- `purchase_database_cycles(DatabaseCyclesPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints cycles into that DB cycles balance. The request must include `payment_amount_e8s`, previewed `expected_cycles`, and `expected_config_version`; mismatch rejects before pending operation creation and before ledger transfer. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
 
-Any authenticated caller can credit purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_credit_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer credits history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
+Any authenticated caller can cycle purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_cycles_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer cycles history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
 
-Successful DB update calls are charged after execution. The charge is:
+Successful DB update calls are charged after execution. The charge is raw cycle usage:
 
 ```text
-ceil(cycles_delta / 1_000_000)
+cycles_delta
 ```
 
-Credits are stored as integer credit units. `1 credit_unit = 0.001 credit = 1_000_000 cycles`; UI and CLI output divide units by `1000`. The default purchase rate is `1 KINIC = 1_000_000 credit_units`, controlled by `credit_units_per_kinic`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credit_units` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+Cycles are stored as raw integer cycles. The default purchase rate is `1 KINIC = 1_000_000_000_000 cycles`, controlled by `cycles_per_kinic`. Before a metered update, the caller role is checked first, then the DB cycles balance must be at least `min_update_cycles` and the DB must not be suspended. Non-members receive access errors without learning cycles state. If the post-update charge exceeds the DB cycles balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
 
 Storage billing settles every 24h from a canister timer, with controller-only `settle_database_storage_charges()` as recovery path. Only active DBs are charged. The 13-node subnet rate is fixed at `127_000 cycles / GiB / sec`:
 
 ```text
 storage_cycles = logical_size_bytes * elapsed_seconds * 127_000 / 2^30
-charge_units = ceil(storage_cycles / 1_000_000)
 ```
 
-Storage charges write `kind = "storage_charge"` ledger entries for actually collected credit units. Cycles below 1 credit_unit and insufficient-balance unpaid cycles are not carried forward; each DB settle rounds up by less than one credit_unit. Insufficient balance consumes the remaining balance and suspends the DB.
+Storage charges write `kind = "storage_charge"` ledger entries for actually collected cycles. Insufficient-balance unpaid cycles are not carried forward. Insufficient balance consumes the remaining balance and suspends the DB.
 
-`database_credit_ledger` is the credits source of truth. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
+`database_cycle_ledger` is the cycles source of truth. Successful charged update calls are recorded there directly. Ledger-backed cycle purchase and repair entries store ledger block indexes in `ledger_block_index`.
 
-Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
+Cycles history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full cycles history. Pending cycle operations remain visible only to DB owner and SNS governance. New cycles history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credit_units_per_kinic` or `min_update_credit_units` actually changes.
+`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_cycles_billing_config` with a Candid-encoded `CyclesBillingConfigUpdate` blob. `config_version` starts at `1` and increments only when `cycles_per_kinic` or `min_update_cycles` actually changes.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. If `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local credit purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
+`scripts/local/deploy_wiki.sh` carries local development init args. If `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local cycle purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
 
 Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
 
 Normal operator flow:
 
 1. Owner creates a pending DB with `create_database(display_name)`.
-2. Payer previews the DB credit purchase, then approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
-3. Payer calls `purchase_database_credits` with the previewed expected amount and config version. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance credit both complete.
-4. Successful DB updates consume DB credits balance.
-5. DB delete discards any remaining credits.
+2. Payer previews the DB cycle purchase, then approves the VFS canister on the KINIC ICRC-2 ledger for the DB cycle amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
+3. Payer calls `purchase_database_cycles` with the previewed expected amount and config version. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
+4. Successful DB updates consume DB cycles balance.
+5. DB delete discards any remaining cycles.
 
-URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or credits-config-unavailable DBs as not writable. Browser and worker paths re-check credits before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
+URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 
 Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented.
 
-If DB credit purchase receives an explicit ledger error, the credit purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `credit_purchase_ambiguous`. If the ledger transfer succeeds but local DB activation or credit application fails, the operation remains pending and the error returns the pending `operation_id` and `ledger_block_index` for verified completion. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so completion can validate the exact transfer.
+If DB cycle purchase receives an explicit ledger error, the cycle purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `cycles_purchase_ambiguous`. If the ledger transfer succeeds but local DB activation or cycle application fails, the operation remains pending and the error returns the pending `operation_id` and `ledger_block_index` for verified completion. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so completion can validate the exact transfer.
 
 Pending operations block DB delete until they are resolved:
 
-- `repair_database_credit_purchase_complete(database_id, operation_id, ledger_block_index)`
-- `repair_database_credit_purchase_cancel(database_id, operation_id)`
+- `repair_database_cycles_purchase_complete(database_id, operation_id, ledger_block_index)`
+- `repair_database_cycles_purchase_cancel(database_id, operation_id)`
 
-Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is allowed only for the original payer or DB owner, and is rejected once pending DB activation has started. Cancel writes `credit_purchase_repair_cancelled` with the cancel caller, pending payment amount, current balance, and no ledger block index. DB owner and SNS governance can inspect pending operations.
+Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB cycles balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or cycle application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is allowed only for the original payer or DB owner, and is rejected once pending DB activation has started. Cancel writes `cycles_purchase_repair_cancelled` with the cancel caller, pending payment amount, current balance, and no ledger block index. DB owner and SNS governance can inspect pending operations.
 
 ## Delete
 
@@ -120,11 +119,11 @@ Complete checks the ledger transaction at `ledger_block_index` against the pendi
 Delete is a hard delete:
 
 - the SQLite DB file is removed where file deletion is available
-- DB membership, credits, pending operations, restore chunks, restore sessions, and transient sessions are removed from the index
+- DB membership, cycles, pending operations, restore chunks, restore sessions, and transient sessions are removed from the index
 - `database_mount_history` is retained so the stable-memory mount ID is not reused by another DB in v1
 - the stable-memory mount ID is not reused by another DB in v1
 
-Delete requires no pending credit purchase operations. The request carries only `database_id`. Remaining DB credits are discarded with the deleted index rows.
+Delete requires no pending cycle purchase operations. The request carries only `database_id`. Remaining DB cycles are discarded with the deleted index rows.
 
 Delete is treated as irreversible. If recovery is required, archive first and store the exported bytes outside the canister.
 Deleted DBs are absent from `list_databases` and subsequent DB operations return `database not found`.

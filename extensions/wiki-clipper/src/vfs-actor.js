@@ -30,15 +30,15 @@ function idlFactory({ IDL: idl }) {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
-    credit_units_balance: idl.Opt(idl.Nat64),
-    credits_suspended_at_ms: idl.Opt(idl.Int64),
+    cycles_balance: idl.Opt(idl.Nat64),
+    cycles_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64)
   });
-  const CreditsConfig = idl.Record({
+  const CyclesBillingConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
     sns_governance_id: idl.Text,
-    credit_units_per_kinic: idl.Nat64,
-    min_update_credit_units: idl.Nat64
+    cycles_per_kinic: idl.Nat64,
+    min_update_cycles: idl.Nat64
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
@@ -93,7 +93,7 @@ function idlFactory({ IDL: idl }) {
   });
   return idl.Service({
     authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
-    get_credits_config: idl.Func([], [idl.Variant({ Ok: CreditsConfig, Err: idl.Text })], ["query"]),
+    get_cycles_billing_config: idl.Func([], [idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
@@ -118,40 +118,40 @@ export async function createDatabaseWithActor(actor, name) {
 
 export async function listWritableDatabases(config) {
   const actor = await createVfsActor(config);
-  const [databaseResult, creditsConfig] = await Promise.all([
+  const [databaseResult, cyclesConfig] = await Promise.all([
     actor.list_databases(),
-    getCreditsConfigOrNull(actor)
+    getCyclesBillingConfigOrNull(actor)
   ]);
   if ("Err" in databaseResult) {
     throw new Error(databaseResult.Err);
   }
-  return normalizeWritableDatabases(databaseResult.Ok, creditsConfig);
+  return normalizeWritableDatabases(databaseResult.Ok, cyclesConfig);
 }
 
-export async function requireDatabaseWriteCreditsAvailable(actor, databaseId) {
-  const [databaseResult, creditsConfigResult] = await Promise.all([
+export async function requireDatabaseWriteCyclesAvailable(actor, databaseId) {
+  const [databaseResult, cyclesConfigResult] = await Promise.all([
     actor.list_databases(),
-    actor.get_credits_config()
+    actor.get_cycles_billing_config()
   ]);
   if ("Err" in databaseResult) throw new Error(databaseResult.Err);
-  if ("Err" in creditsConfigResult) throw new Error(`Credits config unavailable: ${creditsConfigResult.Err}`);
-  const config = normalizeCreditsConfig(creditsConfigResult.Ok);
+  if ("Err" in cyclesConfigResult) throw new Error(`Cycles config unavailable: ${cyclesConfigResult.Err}`);
+  const config = normalizeCyclesBillingConfig(cyclesConfigResult.Ok);
   const databases = databaseResult.Ok.map(normalizeDatabaseSummary);
   const database = databases.find((entry) => entry.databaseId === databaseId);
-  if (!database) throw new Error(`Database credits state unavailable: ${databaseId}`);
-  const reason = databaseCreditsDisabledReason(database, config);
+  if (!database) throw new Error(`Database cycles state unavailable: ${databaseId}`);
+  const reason = databaseCyclesDisabledReason(database, config);
   if (reason) throw new Error(reason);
 }
 
-export function normalizeWritableDatabases(rawDatabases, creditsConfig = null) {
+export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
   return rawDatabases.map(normalizeDatabaseSummary).filter((database) => {
     return database.status === "Active" && (database.role === "Owner" || database.role === "Writer");
   }).map((database) => {
-    const reason = databaseCreditsDisabledReason(database, creditsConfig);
+    const reason = databaseCyclesDisabledReason(database, cyclesConfig);
     return {
       ...database,
-      writeCreditsAvailable: !reason,
-      creditsReason: reason
+      writeCyclesAvailable: !reason,
+      cyclesReason: reason
     };
   });
 }
@@ -170,8 +170,8 @@ function normalizeDatabaseSummary(raw) {
     role: variantKey(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
-    creditsBalance: raw.credit_units_balance?.[0]?.toString?.() ?? "0",
-    creditsSuspendedAtMs: raw.credits_suspended_at_ms?.[0]?.toString?.() ?? null
+    cyclesBalance: raw.cycles_balance?.[0]?.toString?.() ?? "0",
+    cyclesSuspendedAtMs: raw.cycles_suspended_at_ms?.[0]?.toString?.() ?? null
   };
 }
 
@@ -180,29 +180,29 @@ function normalizeDatabaseStatus(status) {
   return key === "Hot" ? "Active" : key;
 }
 
-export async function getCreditsConfigOrNull(actor) {
-  const result = await actor.get_credits_config();
+export async function getCyclesBillingConfigOrNull(actor) {
+  const result = await actor.get_cycles_billing_config();
   if ("Err" in result) return null;
-  return normalizeCreditsConfig(result.Ok);
+  return normalizeCyclesBillingConfig(result.Ok);
 }
 
-function normalizeCreditsConfig(raw) {
+function normalizeCyclesBillingConfig(raw) {
   return {
-    minUpdateCredits: raw.min_update_credit_units?.toString?.() ?? String(raw.min_update_credit_units ?? "0")
+    minUpdateCycles: raw.min_update_cycles?.toString?.() ?? String(raw.min_update_cycles ?? "0")
   };
 }
 
-function databaseCreditsDisabledReason(database, config) {
-  const balance = parseCredits(database.creditsBalance);
-  const minimum = parseCredits(config?.minUpdateCredits);
-  if (!config) return "Credits config unavailable.";
-  if (database.status === "Pending") return "Database activation is pending until its first credit purchase completes.";
-  if (database.creditsSuspendedAtMs) return "Database credits are suspended.";
-  if (balance < minimum) return "Database credits balance is below the minimum update balance.";
+function databaseCyclesDisabledReason(database, config) {
+  const balance = parseCycles(database.cyclesBalance);
+  const minimum = parseCycles(config?.minUpdateCycles);
+  if (!config) return "Cycles config unavailable.";
+  if (database.status === "Pending") return "Database activation is pending until its first cycle purchase completes.";
+  if (database.cyclesSuspendedAtMs) return "Database cycles are suspended.";
+  if (balance < minimum) return "Database cycles balance is below the minimum update balance.";
   return null;
 }
 
-function parseCredits(value) {
+function parseCycles(value) {
   return typeof value === "string" && /^[0-9]+$/.test(value) ? BigInt(value) : 0n;
 }
 
