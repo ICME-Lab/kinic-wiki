@@ -29,6 +29,11 @@ pub enum Command {
         #[command(subcommand)]
         command: DatabaseCommand,
     },
+    #[command(about = "Read official docs sources as citation-ready LLM context")]
+    Docs {
+        #[command(subcommand)]
+        command: DocsCommand,
+    },
     #[command(about = "Show the current authenticated canister identity")]
     Identity {
         #[command(subcommand)]
@@ -332,6 +337,74 @@ pub enum Command {
     },
     #[command(about = "Show target canister and database access status")]
     Status {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DocsCommand {
+    #[command(about = "List and search docs sources under /Wiki/sources")]
+    Source {
+        #[command(subcommand)]
+        command: DocsSourceCommand,
+    },
+    #[command(about = "Build citation-ready docs context packs")]
+    Context {
+        #[command(subcommand)]
+        command: DocsContextCommand,
+    },
+    #[command(about = "Extract citation records from a docs evidence pack")]
+    Cite {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DocsSourceCommand {
+    #[command(about = "List registered docs sources")]
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Resolve a search query to likely docs sources")]
+    Resolve {
+        query: String,
+        #[arg(long, default_value_t = 10)]
+        top_k: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Search one docs source and return chunk evidence")]
+    Query {
+        query: String,
+        #[arg(long)]
+        source_id: String,
+        #[arg(long)]
+        version: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        top_k: u32,
+        #[arg(long, default_value_t = 4_000)]
+        max_tokens: u32,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum DocsContextCommand {
+    #[command(about = "Pack docs evidence across resolved sources within a token budget")]
+    Pack {
+        query: String,
+        #[arg(long, default_value_t = 3)]
+        top_sources: u32,
+        #[arg(long, default_value_t = 6)]
+        top_k_per_source: u32,
+        #[arg(long, default_value_t = 8_000)]
+        max_tokens: u32,
         #[arg(long)]
         json: bool,
     },
@@ -666,6 +739,7 @@ impl Command {
                 command,
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
+            Self::Docs { .. } => false,
             Self::Hermes { command } => matches!(
                 command,
                 HermesCommand::Setup { .. }
@@ -710,6 +784,7 @@ impl Command {
                 command,
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
+            Self::Docs { command } => !matches!(command, DocsCommand::Cite { .. }),
             Self::ReadNode { .. }
             | Self::ListNodes { .. }
             | Self::ListChildren { .. }
@@ -970,8 +1045,9 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand, IdentityModeArg,
-        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, DocsCommand,
+        DocsContextCommand, DocsSourceCommand, HermesCommand, IdentityModeArg, NodeKindArg,
+        SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
@@ -990,6 +1066,7 @@ mod tests {
         let help = command.render_long_help().to_string();
 
         assert!(help.contains("Manage database creation"));
+        assert!(help.contains("Read official docs sources"));
         assert!(help.contains("Manage Skill Registry packages"));
         assert!(help.contains("Read one node by path"));
         assert!(help.contains("Search node content"));
@@ -1209,6 +1286,152 @@ mod tests {
         let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
+
+        let docs = Cli::parse_from(["kinic-vfs-cli", "docs", "source", "list", "--json"]);
+        assert!(!docs.command.requires_identity());
+        assert!(docs.command.probes_anonymous_database_read());
+
+        let docs_cite = Cli::parse_from([
+            "kinic-vfs-cli",
+            "docs",
+            "cite",
+            "--input",
+            "pack.json",
+            "--json",
+        ]);
+        assert!(!docs_cite.command.requires_identity());
+        assert!(!docs_cite.command.probes_anonymous_database_read());
+    }
+
+    #[test]
+    fn main_cli_parses_docs_commands() {
+        let list = Cli::parse_from(["kinic-vfs-cli", "docs", "source", "list", "--json"]);
+        let Command::Docs {
+            command:
+                DocsCommand::Source {
+                    command: DocsSourceCommand::List { json },
+                },
+        } = list.command
+        else {
+            panic!("expected docs source list command");
+        };
+        assert!(json);
+
+        let resolve = Cli::parse_from([
+            "kinic-vfs-cli",
+            "docs",
+            "source",
+            "resolve",
+            "next middleware",
+            "--top-k",
+            "12",
+            "--json",
+        ]);
+        let Command::Docs {
+            command:
+                DocsCommand::Source {
+                    command: DocsSourceCommand::Resolve { query, top_k, json },
+                },
+        } = resolve.command
+        else {
+            panic!("expected docs source resolve command");
+        };
+        assert_eq!(query, "next middleware");
+        assert_eq!(top_k, 12);
+        assert!(json);
+
+        let query = Cli::parse_from([
+            "kinic-vfs-cli",
+            "docs",
+            "source",
+            "query",
+            "--source-id",
+            "/vercel/next.js",
+            "next middleware",
+            "--version",
+            "16",
+            "--top-k",
+            "8",
+            "--max-tokens",
+            "3000",
+            "--json",
+        ]);
+        let Command::Docs {
+            command:
+                DocsCommand::Source {
+                    command:
+                        DocsSourceCommand::Query {
+                            query,
+                            source_id,
+                            version,
+                            top_k,
+                            max_tokens,
+                            json,
+                        },
+                },
+        } = query.command
+        else {
+            panic!("expected docs source query command");
+        };
+        assert_eq!(query, "next middleware");
+        assert_eq!(source_id, "/vercel/next.js");
+        assert_eq!(version.as_deref(), Some("16"));
+        assert_eq!(top_k, 8);
+        assert_eq!(max_tokens, 3000);
+        assert!(json);
+
+        let pack = Cli::parse_from([
+            "kinic-vfs-cli",
+            "docs",
+            "context",
+            "pack",
+            "next middleware",
+            "--top-sources",
+            "2",
+            "--top-k-per-source",
+            "5",
+            "--max-tokens",
+            "6000",
+            "--json",
+        ]);
+        let Command::Docs {
+            command:
+                DocsCommand::Context {
+                    command:
+                        DocsContextCommand::Pack {
+                            query,
+                            top_sources,
+                            top_k_per_source,
+                            max_tokens,
+                            json,
+                        },
+                },
+        } = pack.command
+        else {
+            panic!("expected docs context pack command");
+        };
+        assert_eq!(query, "next middleware");
+        assert_eq!(top_sources, 2);
+        assert_eq!(top_k_per_source, 5);
+        assert_eq!(max_tokens, 6000);
+        assert!(json);
+
+        let cite = Cli::parse_from([
+            "kinic-vfs-cli",
+            "docs",
+            "cite",
+            "--input",
+            "pack.json",
+            "--json",
+        ]);
+        let Command::Docs {
+            command: DocsCommand::Cite { input, json },
+        } = cite.command
+        else {
+            panic!("expected docs cite command");
+        };
+        assert_eq!(input.to_string_lossy(), "pack.json");
+        assert!(json);
     }
 
     #[test]

@@ -13,6 +13,7 @@ mod commands_fs_tests;
 #[cfg(test)]
 mod commands_maintenance_tests;
 pub mod conversation_wiki;
+mod docs_context;
 mod facts_policy;
 pub mod github_ingest;
 pub mod github_source;
