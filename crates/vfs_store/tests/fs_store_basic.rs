@@ -4,8 +4,8 @@ use vfs_store::FsStore;
 use vfs_types::{
     DeleteNodeRequest, ExportSnapshotRequest, FetchUpdatesRequest, ListChildrenRequest,
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewField, SearchPreviewMode, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewField,
+    SearchPreviewMode, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -200,7 +200,7 @@ fn fs_migrations_create_tables() {
 }
 
 #[test]
-fn list_and_recent_queries_use_covering_indexes() {
+fn list_queries_use_covering_indexes() {
     let (_dir, store) = new_store();
     write_file(&store, "/Wiki/indexed.md", None, 10);
     let conn = Connection::open(store.database_path()).expect("db should open");
@@ -216,20 +216,6 @@ fn list_and_recent_queries_use_covering_indexes() {
     assert!(
         list_plan.contains("COVERING INDEX fs_nodes_path_covering_idx"),
         "list should avoid table lookups: {list_plan}"
-    );
-
-    let recent_plan = explain_query_plan(
-        &conn,
-        "SELECT path, kind, updated_at, etag
-         FROM fs_nodes
-         WHERE path = ?1 OR path LIKE ?2 ESCAPE '\\'
-         ORDER BY updated_at DESC, path ASC
-         LIMIT 10",
-        ["/Wiki", "/Wiki/%"],
-    );
-    assert!(
-        recent_plan.contains("COVERING INDEX fs_nodes_recent_covering_idx"),
-        "recent should avoid table lookups: {recent_plan}"
     );
 }
 
@@ -331,19 +317,6 @@ fn assert_prefix_scope_with_wildcards(
         .collect::<Vec<_>>();
     assert!(list_paths.contains(&expected_path.to_string()));
     assert!(!list_paths.contains(&lookalike_path.to_string()));
-
-    let recent_paths = store
-        .recent_nodes(RecentNodesRequest {
-            database_id: "default".to_string(),
-            path: Some(prefix.to_string()),
-            limit: 100,
-        })
-        .expect("recent should succeed")
-        .into_iter()
-        .map(|hit| hit.path)
-        .collect::<Vec<_>>();
-    assert!(recent_paths.contains(&expected_path.to_string()));
-    assert!(!recent_paths.contains(&lookalike_path.to_string()));
 
     let search_paths = store
         .search_nodes(SearchNodesRequest {
@@ -3140,15 +3113,6 @@ fn query_limits_are_capped_at_one_hundred() {
             )
             .expect("write should succeed");
     }
-
-    let recent = store
-        .recent_nodes(RecentNodesRequest {
-            database_id: "default".to_string(),
-            limit: 1_000,
-            path: Some("/Wiki/capped".to_string()),
-        })
-        .expect("recent should succeed");
-    assert_eq!(recent.len(), 100);
 
     let search = store
         .search_nodes(SearchNodesRequest {
