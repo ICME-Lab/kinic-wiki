@@ -44,12 +44,11 @@ use vfs_types::{
     MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1059,11 +1058,6 @@ fn glob_nodes(request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>, String> {
 }
 
 #[query]
-fn recent_nodes(request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>, String> {
-    with_service(|service| service.recent_nodes(&caller_text(), request))
-}
-
-#[query]
 fn incoming_links(request: IncomingLinksRequest) -> Result<Vec<LinkEdge>, String> {
     with_service(|service| service.incoming_links(&caller_text(), request))
 }
@@ -1803,7 +1797,6 @@ fn memory_capabilities() -> Vec<MemoryCapability> {
             "graph_neighborhood",
             "Auxiliary local link graph around one node",
         ),
-        ("recent_nodes", "Auxiliary recent live-node listing"),
     ]
     .into_iter()
     .map(|(name, description)| MemoryCapability {
