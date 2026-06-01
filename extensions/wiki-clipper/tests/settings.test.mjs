@@ -134,17 +134,43 @@ test("create database name validation trims and rejects empty names", () => {
 
 test("database dropdown options include only active owner and writer databases", () => {
   const databases = normalizeWritableDatabases([
-    rawDatabase("owner-db", "Owner", "Active"),
-    rawDatabase("writer-db", "Writer", "Active"),
-    rawDatabase("reader-db", "Reader", "Active"),
-    rawDatabase("archived-db", "Owner", "Archived")
+    rawDatabase("owner-db", "Owner", "Active", 20_000n),
+    rawDatabase("writer-db", "Writer", "Active", 20_000n),
+    rawDatabase("reader-db", "Reader", "Active", 20_000n),
+    rawDatabase("archived-db", "Owner", "Archived", 20_000n)
+  ], { minUpdateCredits: "10000" });
+  assert.deepEqual(
+    databases.map((database) => [database.databaseId, database.name, database.role, database.status, database.writeCreditsAvailable]),
+    [
+      ["owner-db", "owner-db name", "Owner", "Active", true],
+      ["writer-db", "writer-db name", "Writer", "Active", true]
+    ]
+  );
+});
+
+test("database dropdown keeps credits-disabled writer databases with reasons", () => {
+  const databases = normalizeWritableDatabases([
+    rawDatabase("active-db", "Owner", "Active", 20_000n),
+    rawDatabase("low-db", "Writer", "Active", 9_999n),
+    rawDatabase("suspended-db", "Writer", "Active", 20_000n, 1n)
+  ], { minUpdateCredits: "10000" });
+  assert.deepEqual(
+    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
+    [
+      ["active-db", true, null],
+      ["low-db", false, "Database credits balance is below the minimum update balance."],
+      ["suspended-db", false, "Database credits are suspended."]
+    ]
+  );
+});
+
+test("database dropdown disables writer databases when credits config is unavailable", () => {
+  const databases = normalizeWritableDatabases([
+    rawDatabase("owner-db", "Owner", "Active", 20_000n)
   ]);
   assert.deepEqual(
-    databases.map((database) => [database.databaseId, database.name, database.role, database.status]),
-    [
-      ["owner-db", "owner-db name", "Owner", "Active"],
-      ["writer-db", "writer-db name", "Writer", "Active"]
-    ]
+    databases.map((database) => [database.databaseId, database.writeCreditsAvailable, database.creditsReason]),
+    [["owner-db", false, "Credits config unavailable."]]
   );
 });
 
@@ -225,15 +251,17 @@ test("settings docs describe automatic database save", () => {
   assert.doesNotMatch(storeAssets, /Refresh/);
 });
 
-function rawDatabase(databaseId, role, status, name = `${databaseId} name`) {
+function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, creditsSuspendedAtMs = null) {
+  const name = typeof nameOrBalance === "string" ? nameOrBalance : `${databaseId} name`;
+  const creditsBalance = typeof nameOrBalance === "bigint" ? nameOrBalance : 20_000n;
   return {
     database_id: databaseId,
     name,
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    archived_at_ms: [],
-    credits_balance: [],
-    credits_suspended_at_ms: []
+    credits_balance: [creditsBalance],
+    credits_suspended_at_ms: creditsSuspendedAtMs === null ? [] : [creditsSuspendedAtMs],
+    archived_at_ms: []
   };
 }

@@ -126,15 +126,48 @@ export type DatabaseSummary = {
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
-  creditsBalance: string | null;
+  creditsBalance: string;
   creditsSuspendedAtMs: string | null;
   archivedAtMs: string | null;
+};
+
+export type DeleteDatabaseRequest = {
+  databaseId: string;
+};
+
+export type CreditsConfig = {
+  kinicLedgerCanisterId: string;
+  snsGovernanceId: string;
+  creditsPerKinic: string;
+  minUpdateCredits: string;
+};
+
+export type CreditsPurchaseResult = {
+  blockIndex: string;
+  balanceCredits: string;
+};
+
+export type DatabaseCreditPurchasePreview = {
+  paymentAmountE8s: string;
+  ledgerFeeE8s: string;
+  creditsPerKinic: string;
+  configVersion: string;
 };
 
 export type DatabaseMember = {
   databaseId: string;
   principal: string;
   role: DatabaseRole;
+  createdAtMs: string;
+};
+
+export type DatabaseCreditPendingOperation = {
+  operationId: string;
+  databaseId: string;
+  kind: string;
+  operationStatus: string;
+  credits: string;
+  paymentAmountE8s: string;
   createdAtMs: string;
 };
 

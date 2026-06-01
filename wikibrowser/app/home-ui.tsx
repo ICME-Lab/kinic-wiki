@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Settings, Share2 } from "lucide-react";
-import type { DatabaseSummary } from "@/lib/types";
+import { BookOpen, Settings, Share2, Wallet } from "lucide-react";
+import type { ReactNode } from "react";
+import { databaseCreditsView, databaseCreditsHref } from "@/lib/credits-state";
+import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 const OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv";
@@ -55,12 +57,14 @@ export function AuthControls({
 }
 
 export function DatabaseBody({
+  creditsConfig,
   loading,
   myDatabases,
   principal,
   publicError,
   publicDatabases
 }: {
+  creditsConfig: CreditsConfig | null;
   loading: boolean;
   myDatabases: DatabaseRow[];
   principal: string | null;
@@ -69,12 +73,12 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection creditsConfig={creditsConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection creditsConfig={creditsConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection creditsConfig={creditsConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -106,6 +110,7 @@ export function OfficialKinicWikiPanel() {
 }
 
 function DatabaseSection({
+  creditsConfig,
   description,
   emptyMessage,
   mode,
@@ -114,6 +119,7 @@ function DatabaseSection({
   showTitle = true,
   title
 }: {
+  creditsConfig: CreditsConfig | null;
   description: string;
   emptyMessage: string;
   mode: "member" | "public";
@@ -122,20 +128,12 @@ function DatabaseSection({
   showTitle?: boolean;
   title: string;
 }) {
-  if (publicError && mode === "public") {
-    return (
-      <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
-        {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
-        {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
-        <p className="mt-2 text-sm text-muted">{publicError}</p>
-      </section>
-    );
-  }
   if (rows.length === 0) {
     return (
       <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
         {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
+        {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
         <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
       </section>
     );
@@ -146,11 +144,13 @@ function DatabaseSection({
         <div className="border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
           <p className="mt-1 text-xs leading-5 text-muted">{description}</p>
+          {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
         </div>
       ) : null}
+      {!showTitle && publicError && mode === "public" ? <p className="px-4 pt-4 text-sm text-muted">{publicError}</p> : null}
       <div className="grid gap-3 p-3 sm:hidden">
         {rows.map((database) => (
-          <DatabaseMobileCard key={database.databaseId} database={database} mode={mode} />
+          <DatabaseMobileCard key={database.databaseId} creditsConfig={creditsConfig} database={database} mode={mode} />
         ))}
       </div>
       <div className="hidden overflow-x-auto sm:block">
@@ -161,7 +161,7 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Role</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Logical size</th>
-              <th className="px-4 py-3 font-medium">Archive</th>
+              <th className="px-4 py-3 font-medium">Credits</th>
               <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
               {mode === "member" ? <th className="px-4 py-3 font-medium">Skills</th> : null}
@@ -170,7 +170,7 @@ function DatabaseSection({
           </thead>
           <tbody>
             {rows.map((database) => (
-              <DatabaseTableRow key={database.databaseId} database={database} mode={mode} />
+              <DatabaseTableRow key={database.databaseId} creditsConfig={creditsConfig} database={database} mode={mode} />
             ))}
           </tbody>
         </table>
@@ -179,7 +179,7 @@ function DatabaseSection({
   );
 }
 
-function DatabaseTableRow({ database, mode }: { database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseTableRow({ creditsConfig, database, mode }: { creditsConfig: CreditsConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   return (
     <tr className="border-t border-line">
@@ -193,41 +193,38 @@ function DatabaseTableRow({ database, mode }: { database: DatabaseRow; mode: "me
       <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
       <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
       <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
-      <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
+      <td className="px-4 py-3 text-ink">{databaseCreditsView(database, creditsConfig).summary}</td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap gap-2">
           {active ? (
-            <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-              Open
-            </Link>
+            <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" />
           ) : <span className="text-muted">-</span>}
           {active && mode === "member" && database.publicReadable ? (
-            <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
-              Open public
-            </Link>
+            <DatabaseActionLink href={openPublicDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open public" />
           ) : null}
         </div>
       </td>
       <td className="px-4 py-3">{active && database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
       {mode === "member" ? (
         <td className="px-4 py-3">
-          {active ? (
-            <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
-              Registry
-            </Link>
-          ) : <span className="text-muted">-</span>}
+          <div className="flex flex-wrap gap-2">
+            {active ? (
+              <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
+                Registry
+              </Link>
+            ) : null}
+            <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
+          </div>
         </td>
       ) : null}
       <td className="px-4 py-3">
-        <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
-          Access
-        </Link>
+        <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Access" />
       </td>
     </tr>
   );
 }
 
-function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseMobileCard({ creditsConfig, database, mode }: { creditsConfig: CreditsConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
@@ -240,18 +237,14 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
         <DatabaseCardMeta label="Role" value={database.role} />
         <DatabaseCardMeta label="Status" value={database.status} />
         <DatabaseCardMeta label="Logical size" value={formatBytes(database.logicalSizeBytes)} />
-        <DatabaseCardMeta label="Archive" value={databaseMarker(database)} />
+        <DatabaseCardMeta label="Credits" value={databaseCreditsView(database, creditsConfig).summary} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
         {active ? (
-          <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-            Open
-          </Link>
+          <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" />
         ) : null}
         {active && mode === "member" && database.publicReadable ? (
-          <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
-            Open public
-          </Link>
+          <DatabaseActionLink href={openPublicDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open public" />
         ) : null}
         {mode === "member" ? (
           active ? (
@@ -260,10 +253,11 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
             </Link>
           ) : null
         ) : null}
+        {mode === "member" ? (
+          <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
+        ) : null}
         {active && database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
-        <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
-          Access
-        </Link>
+        <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Access" />
       </div>
     </article>
   );
@@ -271,16 +265,32 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
 
 function ShareDatabaseLink({ database }: { database: DatabaseRow }) {
   return (
-    <a
-      aria-label={`Share ${database.name} on X`}
-      className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"
+    <DatabaseActionLink
+      external
+      ariaLabel={`Share ${database.name} on X`}
       href={xShareDatabaseHref({ databaseId: database.databaseId, databaseName: database.name })}
-      rel="noreferrer"
-      target="_blank"
-    >
-      <Share2 aria-hidden size={14} />
-      <span>Share</span>
-    </a>
+      icon={<Share2 aria-hidden size={14} />}
+      label="Share"
+    />
+  );
+}
+
+function DatabaseActionLink({ ariaLabel, external = false, href, icon, label }: { ariaLabel?: string; external?: boolean; href: string; icon: ReactNode; label: string }) {
+  const className =
+    "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
+  if (external) {
+    return (
+      <a aria-label={ariaLabel} className={className} href={href} rel="noreferrer" target="_blank">
+        {icon}
+        <span>{label}</span>
+      </a>
+    );
+  }
+  return (
+    <Link aria-label={ariaLabel} className={className} href={href}>
+      {icon}
+      <span>{label}</span>
+    </Link>
   );
 }
 
@@ -323,13 +333,6 @@ function formatBytes(value: string): string {
   return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[unitIndex]}`;
 }
 
-function databaseMarker(database: DatabaseSummary): string {
-  if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
-  if (database.status === "pending") return "Pending";
-  if (database.creditsSuspendedAtMs) return `Suspended ${formatTimestamp(database.creditsSuspendedAtMs)}`;
-  return "-";
-}
-
 function isActiveRoutableDatabase(database: DatabaseRow): boolean {
   return database.status === "active" && isRoutableDatabaseId(database.databaseId);
 }
@@ -341,9 +344,4 @@ function openDatabaseHref(database: DatabaseRow): string {
 
 function openPublicDatabaseHref(database: DatabaseRow): string {
   return publicDatabasePath(database.databaseId);
-}
-
-function formatTimestamp(value: string): string {
-  const milliseconds = Number(value);
-  return Number.isFinite(milliseconds) ? new Date(milliseconds).toLocaleString() : value;
 }

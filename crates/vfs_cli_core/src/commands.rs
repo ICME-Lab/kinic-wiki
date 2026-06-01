@@ -1180,7 +1180,7 @@ mod tests {
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
-                credits_balance: Some(100),
+                credits_balance: Some(1_000_000),
                 credits_suspended_at_ms: None,
                 archived_at_ms: None,
             }])

@@ -352,7 +352,7 @@ async fn assert_primary_database_restored(
         .ok_or_else(|| anyhow!("smoke database info missing"))?;
     ensure(
         info.status == DatabaseStatus::Active,
-        "smoke database should be hot",
+        "smoke database should be active",
     )?;
     Ok(())
 }
@@ -440,7 +440,7 @@ async fn assert_isolation_database_still_hot(
         .ok_or_else(|| anyhow!("isolation database info missing"))?;
     ensure(
         info.status == DatabaseStatus::Active,
-        "isolation DB should remain hot while primary archived",
+        "isolation DB should remain active while primary archived",
     )?;
     Ok(())
 }

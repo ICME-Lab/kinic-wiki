@@ -33,6 +33,12 @@ function idlFactory({ IDL: idl }) {
     credits_balance: idl.Opt(idl.Nat64),
     credits_suspended_at_ms: idl.Opt(idl.Int64)
   });
+  const CreditsConfig = idl.Record({
+    kinic_ledger_canister_id: idl.Text,
+    sns_governance_id: idl.Text,
+    credits_per_kinic: idl.Nat64,
+    min_update_credits: idl.Nat64
+  });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
@@ -63,10 +69,6 @@ function idlFactory({ IDL: idl }) {
   });
   const MkdirNodeRequest = idl.Record({ database_id: idl.Text, path: idl.Text });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
-  const OpsAnswerSessionRequest = idl.Record({
-    database_id: idl.Text,
-    session_nonce: idl.Text
-  });
   const UrlIngestTriggerSessionRequest = idl.Record({
     database_id: idl.Text,
     session_nonce: idl.Text
@@ -84,6 +86,7 @@ function idlFactory({ IDL: idl }) {
   });
   return idl.Service({
     authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
+    get_credits_config: idl.Func([], [idl.Variant({ Ok: CreditsConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
@@ -108,16 +111,41 @@ export async function createDatabaseWithActor(actor, name) {
 
 export async function listWritableDatabases(config) {
   const actor = await createVfsActor(config);
-  const result = await actor.list_databases();
-  if ("Err" in result) {
-    throw new Error(result.Err);
+  const [databaseResult, creditsConfig] = await Promise.all([
+    actor.list_databases(),
+    getCreditsConfigOrNull(actor)
+  ]);
+  if ("Err" in databaseResult) {
+    throw new Error(databaseResult.Err);
   }
-  return normalizeWritableDatabases(result.Ok);
+  return normalizeWritableDatabases(databaseResult.Ok, creditsConfig);
 }
 
-export function normalizeWritableDatabases(rawDatabases) {
+export async function requireDatabaseWriteCreditsAvailable(actor, databaseId) {
+  const [databaseResult, creditsConfigResult] = await Promise.all([
+    actor.list_databases(),
+    actor.get_credits_config()
+  ]);
+  if ("Err" in databaseResult) throw new Error(databaseResult.Err);
+  if ("Err" in creditsConfigResult) throw new Error(`Credits config unavailable: ${creditsConfigResult.Err}`);
+  const config = normalizeCreditsConfig(creditsConfigResult.Ok);
+  const databases = databaseResult.Ok.map(normalizeDatabaseSummary);
+  const database = databases.find((entry) => entry.databaseId === databaseId);
+  if (!database) throw new Error(`Database credits state unavailable: ${databaseId}`);
+  const reason = databaseCreditsDisabledReason(database, config);
+  if (reason) throw new Error(reason);
+}
+
+export function normalizeWritableDatabases(rawDatabases, creditsConfig = null) {
   return rawDatabases.map(normalizeDatabaseSummary).filter((database) => {
     return database.status === "Active" && (database.role === "Owner" || database.role === "Writer");
+  }).map((database) => {
+    const reason = databaseCreditsDisabledReason(database, creditsConfig);
+    return {
+      ...database,
+      writeCreditsAvailable: !reason,
+      creditsReason: reason
+    };
   });
 }
 
@@ -133,9 +161,41 @@ function normalizeDatabaseSummary(raw) {
     databaseId: raw.database_id,
     name: String(raw.name || ""),
     role: variantKey(raw.role),
-    status: variantKey(raw.status),
-    logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0")
+    status: normalizeDatabaseStatus(raw.status),
+    logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
+    creditsBalance: raw.credits_balance?.[0]?.toString?.() ?? "0",
+    creditsSuspendedAtMs: raw.credits_suspended_at_ms?.[0]?.toString?.() ?? null
   };
+}
+
+function normalizeDatabaseStatus(status) {
+  return variantKey(status);
+}
+
+export async function getCreditsConfigOrNull(actor) {
+  const result = await actor.get_credits_config();
+  if ("Err" in result) return null;
+  return normalizeCreditsConfig(result.Ok);
+}
+
+function normalizeCreditsConfig(raw) {
+  return {
+    minUpdateCredits: raw.min_update_credits?.toString?.() ?? String(raw.min_update_credits ?? "0")
+  };
+}
+
+function databaseCreditsDisabledReason(database, config) {
+  const balance = parseCredits(database.creditsBalance);
+  const minimum = parseCredits(config?.minUpdateCredits);
+  if (!config) return "Credits config unavailable.";
+  if (database.status === "Pending") return "Database activation is pending until its first credit purchase completes.";
+  if (database.creditsSuspendedAtMs) return "Database credits are suspended.";
+  if (balance < minimum) return "Database credits balance is below the minimum update balance.";
+  return null;
+}
+
+function parseCredits(value) {
+  return typeof value === "string" && /^[0-9]+$/.test(value) ? BigInt(value) : 0n;
 }
 
 function variantKey(value) {

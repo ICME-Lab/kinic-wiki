@@ -8,8 +8,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, X } from "lucide-react";
-import { CycleBattery } from "@/components/cycle-battery";
+import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -18,12 +17,13 @@ import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import { databaseCreditsDisabledReason, databaseCreditsHref, databaseCreditsView } from "@/lib/credits-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
 import { xShareDatabaseHref } from "@/lib/share-links";
-import type { ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
-import { listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import type { CreditsConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
+import { getCreditsConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
 import {
   errorHint,
@@ -82,6 +82,7 @@ export function WikiBrowser() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
   const [memberDatabases, setMemberDatabases] = useState<DatabaseSummary[]>([]);
+  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
   const [publicDatabaseIds, setPublicDatabaseIds] = useState<Set<string>>(() => new Set());
   const [memberDatabasesLoaded, setMemberDatabasesLoaded] = useState(false);
   const [databaseListError, setDatabaseListError] = useState<string | null>(null);
@@ -143,15 +144,17 @@ export function WikiBrowser() {
         setDatabaseListError(null);
         return Promise.allSettled([
           listDatabasesPublic(canisterId),
-          readIdentity ? listDatabasesAuthenticated(canisterId, readIdentity) : Promise.resolve<DatabaseSummary[]>([])
+          readIdentity ? listDatabasesAuthenticated(canisterId, readIdentity) : Promise.resolve<DatabaseSummary[]>([]),
+          getCreditsConfig(canisterId)
         ]);
       })
       .then((results) => {
         if (cancelled || !results) return;
-        const [publicResult, memberResult] = results;
+        const [publicResult, memberResult, creditsConfigResult] = results;
         if (publicResult.status === "rejected" && memberResult.status === "rejected") {
           setDatabases([]);
           setMemberDatabases([]);
+          setCreditsConfig(null);
           setPublicDatabaseIds(new Set());
           setMemberDatabasesLoaded(false);
           setDatabaseListError(`${errorMessage(publicResult.reason)}; ${errorMessage(memberResult.reason)}`);
@@ -161,14 +164,16 @@ export function WikiBrowser() {
         const authenticatedDatabases = memberResult.status === "fulfilled" ? memberResult.value : [];
         setDatabases(mergeDatabaseSummaries(authenticatedDatabases, publicDatabases));
         setMemberDatabases(authenticatedDatabases);
+        setCreditsConfig(creditsConfigResult.status === "fulfilled" ? creditsConfigResult.value : null);
         setPublicDatabaseIds(new Set(publicDatabases.map((database) => database.databaseId)));
         setMemberDatabasesLoaded(memberResult.status === "fulfilled");
-        setDatabaseListError(databaseListWarning(publicResult, memberResult));
+        setDatabaseListError(databaseListWarning(publicResult, memberResult, creditsConfigResult));
       })
       .catch((cause) => {
         if (!cancelled) {
           setDatabases([]);
           setMemberDatabases([]);
+          setCreditsConfig(null);
           setPublicDatabaseIds(new Set());
           setMemberDatabasesLoaded(false);
           setDatabaseListError(errorMessage(cause));
@@ -355,6 +360,10 @@ export function WikiBrowser() {
   }, [canLeaveDirtyEdit, logout]);
   const databaseOptions = useMemo(() => withCurrentDatabase(databases, databaseId), [databaseId, databases]);
   const currentDatabase = useMemo(() => databaseOptions.find((database) => database.databaseId === databaseId) ?? null, [databaseId, databaseOptions]);
+  const currentDatabaseCreditReason = useMemo(
+    () => readIdentity && currentDatabaseRole ? databaseCreditsDisabledReason(currentDatabase, creditsConfig) : null,
+    [creditsConfig, currentDatabase, currentDatabaseRole, readIdentity]
+  );
   const explorerSelectionKey = nodeRequestKey(canisterId, databaseId, selectedPath, readPrincipal);
   const selectedExplorerNode = selectedExplorerState?.key === explorerSelectionKey
     ? selectedExplorerState.node
@@ -363,7 +372,8 @@ export function WikiBrowser() {
     readMode,
     readIdentity,
     currentDatabaseRole,
-    readIdentity && !currentDatabaseRole ? databaseListError : null
+    readIdentity && !currentDatabaseRole ? databaseListError : null,
+    currentDatabaseCreditReason
   );
   const explorerCreateDirectory = createDirectoryForExplorerNode(selectedExplorerNode);
   const explorerMutationTarget = selectedExplorerNode && isMutableWikiExplorerNode(selectedExplorerNode) ? selectedExplorerNode : null;
@@ -396,6 +406,7 @@ export function WikiBrowser() {
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to create Markdown files.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseCreditReason) throw new Error(currentDatabaseCreditReason);
     const nextPath = wikiMarkdownChildPath(directoryPath, fileName);
     const { writeNodeAuthenticated } = await import("@/lib/vfs-client");
     await writeNodeAuthenticated(canisterId, readIdentity, {
@@ -410,12 +421,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, "edit", tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCreditReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
   const createFolderNode = useCallback(async (directoryPath: string, folderName: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to create folders.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseCreditReason) throw new Error(currentDatabaseCreditReason);
     const nextPath = wikiChildPath(directoryPath, folderName, "folder");
     const { mkdirNodeAuthenticated } = await import("@/lib/vfs-client");
     await mkdirNodeAuthenticated(canisterId, readIdentity, {
@@ -426,12 +438,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, undefined, tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCreditReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab]);
   const renameExplorerNode = useCallback(async (target: ChildNode, nextName: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to rename nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseCreditReason) throw new Error(currentDatabaseCreditReason);
     if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Wiki Markdown files and folders can be renamed.");
     if (!target.etag) throw new Error("Cannot rename a node without an etag.");
     const normalizedName = target.kind === "file" ? normalizeMarkdownFileName(nextName) : normalizePathSegment(nextName);
@@ -450,12 +463,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCreditReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
   const moveExplorerNode = useCallback(async (target: ChildNode, targetDirectory: string) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to move nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseCreditReason) throw new Error(currentDatabaseCreditReason);
     if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Wiki Markdown files and folders can be moved.");
     if (!target.etag) throw new Error("Cannot move a node without an etag.");
     if (!isWikiPath(targetDirectory)) throw new Error("Move destination must be under /Wiki.");
@@ -473,12 +487,13 @@ export function WikiBrowser() {
     setEditState(EMPTY_EDIT_STATE);
     router.replace(hrefForPath(canisterId, databaseId, nextPath, target.kind === "file" ? view : undefined, tab, undefined, undefined, readMode));
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCreditReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, router, setEditState, tab, view]);
   const deleteExplorerNode = useCallback(async (target: ChildNode) => {
     if (!canLeaveDirtyEdit()) return false;
     if (readMode === "anonymous") throw new Error("Authenticated mode is required.");
     if (!readIdentity) throw new Error("Login with Internet Identity to delete nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
+    if (currentDatabaseCreditReason) throw new Error(currentDatabaseCreditReason);
     const targetChildren = target.kind === "folder"
       ? childNodesCache.current.get(nodeRequestKey(canisterId, databaseId, target.path, readPrincipal))
       : undefined;
@@ -501,7 +516,7 @@ export function WikiBrowser() {
       router.replace(hrefForPath(canisterId, databaseId, parentPath(target.path) ?? "/Wiki", undefined, tab, undefined, undefined, readMode));
     }
     return true;
-  }, [canLeaveDirtyEdit, canisterId, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, readPrincipal, router, selectedPath, setEditState, tab]);
+  }, [canLeaveDirtyEdit, canisterId, currentDatabaseCreditReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readMode, readPrincipal, router, selectedPath, setEditState, tab]);
 
   async function submitExplorerCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -600,7 +615,9 @@ export function WikiBrowser() {
         graphCenter={graphCenter}
         readMode={readMode}
         databaseOptions={databaseOptions}
+        currentDatabase={currentDatabase}
         currentDatabaseName={currentDatabase?.name ?? databaseId}
+        creditsConfig={creditsConfig}
         publicReadable={publicDatabaseIds.has(databaseId)}
         databaseListError={databaseListError}
         selectedPath={selectedPath}
@@ -707,6 +724,7 @@ export function WikiBrowser() {
             currentNode={currentNode.data}
             readIdentityMode={currentReadIdentityMode}
             readMode={readMode}
+            databaseCreditsError={currentDatabaseCreditReason}
             explorerRevision={explorerRevision}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
@@ -750,6 +768,7 @@ export function WikiBrowser() {
                 writeIdentity={readIdentity}
                 currentDatabaseRole={currentDatabaseRole}
                 databaseRoleError={readIdentity && !currentDatabaseRole ? databaseListError : null}
+                databaseCreditsError={currentDatabaseCreditReason}
                 onNodeSaved={refreshSelectedNodeContext}
                 onFolderIndexSaved={refreshSelectedFolderIndex}
                 onEditStateChange={setEditState}
@@ -795,6 +814,7 @@ function LeftPane({
   currentNode,
   readIdentityMode,
   readMode,
+  databaseCreditsError,
   explorerRevision,
   onSelectedExplorerNode
 }: {
@@ -809,6 +829,7 @@ function LeftPane({
   currentNode: WikiNode | null;
   readIdentityMode: "anonymous" | "user";
   readMode: "anonymous" | null;
+  databaseCreditsError: string | null;
   explorerRevision: number;
   onSelectedExplorerNode: (node: ChildNode) => void;
 }) {
@@ -823,10 +844,20 @@ function LeftPane({
         writeIdentity={readIdentity}
         readMode={readMode}
         readIdentityMode={readIdentityMode}
+        databaseCreditsError={databaseCreditsError}
       />
     );
   }
-  if (tab === "ingest") return <IngestPanel canisterId={canisterId} databaseId={databaseId} readIdentity={readIdentity} />;
+  if (tab === "ingest") {
+    return (
+      <IngestPanel
+        canisterId={canisterId}
+        databaseId={databaseId}
+        readIdentity={readIdentity}
+        databaseCreditsError={databaseCreditsError}
+      />
+    );
+  }
   return (
     <ExplorerTree
       key={explorerRevision}
@@ -1149,13 +1180,15 @@ function writeDisabledReason(
   readMode: "anonymous" | null,
   writeIdentity: Identity | null,
   currentDatabaseRole: DatabaseRole | null,
-  databaseRoleError: string | null
+  databaseRoleError: string | null,
+  databaseCreditsError: string | null
 ): string | null {
   if (readMode === "anonymous") return "Switch to authenticated mode to change files.";
   if (!writeIdentity) return "Login with Internet Identity to change files.";
   if (databaseRoleError) return databaseRoleError;
   if (!currentDatabaseRole) return "Database role unavailable.";
   if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") return "Writer or owner access required.";
+  if (databaseCreditsError) return databaseCreditsError;
   return null;
 }
 
@@ -1209,7 +1242,9 @@ function TopBar({
   graphCenter,
   readMode,
   databaseOptions,
+  currentDatabase,
   currentDatabaseName,
+  creditsConfig,
   publicReadable,
   databaseListError,
   selectedPath,
@@ -1233,7 +1268,9 @@ function TopBar({
   graphCenter: string | null;
   readMode: "anonymous" | null;
   databaseOptions: DatabaseSummary[];
+  currentDatabase: DatabaseSummary | null;
   currentDatabaseName: string;
+  creditsConfig: CreditsConfig | null;
   publicReadable: boolean;
   databaseListError: string | null;
   selectedPath: string;
@@ -1250,6 +1287,7 @@ function TopBar({
     ? hrefForPath(canisterId, databaseId, graphLinkCenter ?? "/Wiki", undefined, undefined, undefined, undefined, readMode)
     : hrefForGraph(canisterId, databaseId, graphLinkCenter, undefined, readMode);
   const visibleError = authError ?? databaseListError;
+  const credits = databaseCreditsView(currentDatabase, creditsConfig);
 
   function switchDatabase(event: ChangeEvent<HTMLSelectElement>) {
     const nextDatabaseId = event.target.value;
@@ -1345,7 +1383,7 @@ function TopBar({
           <Network size={18} aria-hidden />
           <span className="sr-only sm:not-sr-only">Graph</span>
         </Link>
-        <CycleBattery canisterId={canisterId} />
+        <DatabaseCreditsBadge credits={credits} database={currentDatabase} />
         {principal ? (
           <button className="ml-auto rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink lg:ml-0" type="button" onClick={onLogout}>
             Logout
@@ -1364,6 +1402,39 @@ function TopBar({
       </div>
     </header>
   );
+}
+
+function DatabaseCreditsBadge({ credits, database }: { credits: ReturnType<typeof databaseCreditsView>; database: DatabaseSummary | null }) {
+  const title = database
+    ? `${database.name}: ${credits.label}; ${credits.balanceCredits.toString()} credits`
+    : "Database credits unavailable";
+  const content = (
+    <>
+      <Wallet aria-hidden size={15} />
+      <span className="hidden text-xs font-semibold sm:inline">{credits.label}</span>
+      <span className="font-mono text-xs">{credits.balanceCredits.toString()}</span>
+    </>
+  );
+  const className = `hidden h-[38px] shrink-0 items-center gap-2 rounded-lg border px-3 text-sm md:flex ${databaseCreditsToneClass(credits.state)}`;
+  if (!database) {
+    return (
+      <span className={className} title={title} aria-label={title}>
+        {content}
+      </span>
+    );
+  }
+  return (
+    <Link className={`${className} no-underline`} href={databaseCreditsHref(database)} title={title} aria-label={title}>
+      {content}
+    </Link>
+  );
+}
+
+function databaseCreditsToneClass(state: ReturnType<typeof databaseCreditsView>["state"]): string {
+  if (state === "active") return "border-infoLine bg-infoSoft text-infoText";
+  if (state === "low-balance") return "border-yellow-200 bg-yellow-50 text-yellow-800";
+  if (state === "suspended") return "border-red-200 bg-red-50 text-red-700";
+  return "border-line bg-white text-muted";
 }
 
 function mergeDatabaseSummaries(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseSummary[] {
@@ -1388,15 +1459,16 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
       role: "reader",
       status: "active",
       logicalSizeBytes: "0",
-      creditsBalance: null,
+      creditsBalance: "0",
       creditsSuspendedAtMs: null,
-      archivedAtMs: null,
+      archivedAtMs: null
     },
     ...databases
   ];
 }
 
-function databaseListWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
+function databaseListWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>, creditsConfigResult: PromiseSettledResult<CreditsConfig>): string | null {
+  if (creditsConfigResult.status === "rejected") return `Credits config unavailable: ${errorMessage(creditsConfigResult.reason)}`;
   if (publicResult.status === "rejected") return `Public database list unavailable: ${errorMessage(publicResult.reason)}`;
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;

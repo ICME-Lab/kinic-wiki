@@ -1,6 +1,7 @@
 export type ApiErrorCode =
   | "canister_not_found"
   | "ic_host_unreachable"
+  | "wiki_api_version_mismatch"
   | "wiki_api_missing"
   | "invalid_canister_id"
   | "wiki_request_failed";
@@ -38,6 +39,13 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
         ? "Check that the local replica or icp local network is running and that NEXT_PUBLIC_WIKI_IC_HOST points to it."
         : "Check NEXT_PUBLIC_WIKI_IC_HOST and network connectivity to the IC gateway.",
       code: "ic_host_unreachable"
+    };
+  }
+  if (/CandidDecodeError|Cannot find field hash|subtype|type mismatch|variant, expected fields/i.test(raw)) {
+    return {
+      error: "Wiki VFS API response unavailable.",
+      hint: "The canister response could not be decoded by the browser.",
+      code: "wiki_api_version_mismatch"
     };
   }
   if (/method .*not found|no (query|update) method|does not expose|Cannot find field|subtype|type mismatch|Candid|IDL/i.test(raw)) {
