@@ -837,6 +837,64 @@ fn export_snapshot_pages_nodes_by_path() {
 }
 
 #[test]
+fn export_snapshot_pages_by_byte_budget() {
+    let (_dir, store) = new_store();
+    let content = "x".repeat(800_000);
+    write_node(&store, "/Wiki/a.md", &content, None, 10);
+    write_node(&store, "/Wiki/b.md", &content, None, 11);
+
+    let first = store
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: "default".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("byte-budgeted snapshot should succeed");
+
+    assert_eq!(first.nodes.len(), 2);
+    assert_eq!(first.nodes[0].path, "/Wiki");
+    assert_eq!(first.nodes[1].path, "/Wiki/a.md");
+    assert_eq!(first.next_cursor, Some("/Wiki/a.md".to_string()));
+
+    let second = store
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: "default".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: first.next_cursor,
+            snapshot_revision: Some(first.snapshot_revision.clone()),
+            snapshot_session_id: None,
+        })
+        .expect("second snapshot page should succeed");
+    assert_eq!(second.nodes.len(), 1);
+    assert_eq!(second.nodes[0].path, "/Wiki/b.md");
+    assert_eq!(second.next_cursor, None);
+}
+
+#[test]
+fn export_snapshot_rejects_single_node_over_byte_budget() {
+    let (_dir, store) = new_store();
+    let content = "x".repeat(1_600_000);
+    write_node(&store, "/Wiki/huge.md", &content, None, 10);
+
+    let error = store
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: "default".to_string(),
+            prefix: Some("/Wiki/huge.md".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect_err("single huge snapshot node should reject");
+
+    assert!(error.contains("byte budget"));
+}
+
+#[test]
 fn export_snapshot_allows_prefix_external_change_between_pages() {
     let (_dir, store) = new_store();
     for index in 0..101 {
@@ -1177,6 +1235,70 @@ fn fetch_updates_pages_changed_and_removed_paths_to_fixed_target() {
     assert_eq!(second.changed_nodes[0].path, "/Wiki/100.md");
     assert_eq!(second.removed_paths, Vec::<String>::new());
     assert_eq!(second.next_cursor, None);
+}
+
+#[test]
+fn fetch_updates_pages_by_byte_budget() {
+    let (_dir, store) = new_store();
+    let base = store
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: "default".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("base snapshot should succeed");
+    let content = "x".repeat(800_000);
+    write_node(&store, "/Wiki/a.md", &content, None, 10);
+    write_node(&store, "/Wiki/b.md", &content, None, 11);
+
+    let first = store
+        .fetch_updates(FetchUpdatesRequest {
+            database_id: "default".to_string(),
+            known_snapshot_revision: base.snapshot_revision,
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            target_snapshot_revision: None,
+        })
+        .expect("byte-budgeted updates should succeed");
+
+    assert_eq!(first.changed_nodes.len(), 2);
+    assert_eq!(first.changed_nodes[0].path, "/Wiki");
+    assert_eq!(first.changed_nodes[1].path, "/Wiki/a.md");
+    assert_eq!(first.next_cursor, Some("/Wiki/a.md".to_string()));
+}
+
+#[test]
+fn fetch_updates_rejects_single_node_over_byte_budget() {
+    let (_dir, store) = new_store();
+    let base = store
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: "default".to_string(),
+            prefix: Some("/Wiki/huge.md".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("base snapshot should succeed");
+    let content = "x".repeat(1_600_000);
+    write_node(&store, "/Wiki/huge.md", &content, None, 10);
+
+    let error = store
+        .fetch_updates(FetchUpdatesRequest {
+            database_id: "default".to_string(),
+            known_snapshot_revision: base.snapshot_revision,
+            prefix: Some("/Wiki/huge.md".to_string()),
+            limit: 100,
+            cursor: None,
+            target_snapshot_revision: None,
+        })
+        .expect_err("single huge update node should reject");
+
+    assert!(error.contains("byte budget"));
 }
 
 #[test]

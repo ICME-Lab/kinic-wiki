@@ -22,7 +22,14 @@ export type WriteNodeRequest = {
 
 export type WriteNodeResult = {
   created: boolean;
-  node: RecentNode;
+  node: NodeMutationAck;
+};
+
+export type NodeMutationAck = {
+  path: string;
+  kind: NodeKind;
+  updatedAt: string;
+  etag: string;
 };
 
 export type DeleteNodeRequest = {
@@ -56,7 +63,7 @@ export type MoveNodeRequest = {
 
 export type MoveNodeResult = {
   fromPath: string;
-  node: RecentNode;
+  node: NodeMutationAck;
   overwrote: boolean;
 };
 
@@ -90,7 +97,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "hot" | "restoring" | "archiving" | "archived" | "deleted";
+export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived";
 
 export type DatabaseSummary = {
   databaseId: string;
@@ -98,8 +105,9 @@ export type DatabaseSummary = {
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
+  cyclesBalance: string | null;
+  cyclesSuspendedAtMs: string | null;
   archivedAtMs: string | null;
-  deletedAtMs: string | null;
 };
 
 export type DatabaseMember = {
@@ -118,13 +126,6 @@ export type ChildNode = {
   sizeBytes: string | null;
   isVirtual: boolean;
   hasChildren: boolean;
-};
-
-export type RecentNode = {
-  path: string;
-  kind: NodeKind;
-  updatedAt: string;
-  etag: string;
 };
 
 export type LinkEdge = {

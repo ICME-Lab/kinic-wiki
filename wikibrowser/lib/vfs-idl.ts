@@ -106,6 +106,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     kind: idl.Text,
     operation_id: idl.Nat64,
     from_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
+    operation_status: idl.Text,
     created_at_ms: idl.Int64,
     ledger_fee_e8s: idl.Opt(idl.Int64),
     ledger_created_at_time_ns: idl.Opt(idl.Int64),

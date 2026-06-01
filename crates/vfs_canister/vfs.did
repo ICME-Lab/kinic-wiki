@@ -57,6 +57,7 @@ type DatabaseCycleEntryPage = record {
   next_cursor : opt nat64;
 };
 type DatabaseCyclePendingOperation = record {
+  operation_status : text;
   payment_amount_e8s : int64;
   to_owner : opt text;
   to_subaccount : opt blob;

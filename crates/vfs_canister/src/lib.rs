@@ -707,6 +707,15 @@ async fn repair_database_cycles_purchase_complete(
     })?;
     let expected = expected_cycles_purchase_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
+    let expected_cycles = u64::try_from(operation.cycles).map_err(|error| error.to_string())?;
+    with_service(|service| {
+        service.mark_database_cycles_purchase_completed(
+            operation_id,
+            &database_id,
+            &operation.caller,
+            expected_cycles,
+        )
+    })?;
     let now = now_millis();
     activate_pending_database_after_cycles_purchase_ledger_success(&database_id, now).map_err(
         |error| cycles_purchase_local_apply_error(operation_id, ledger_block_index, error),
@@ -1513,19 +1522,21 @@ fn expected_ledger_transfer(
 ) -> Result<ExpectedLedgerTransfer, String> {
     let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
     let to_owner = pending_principal(operation.to_owner.as_deref(), "to_owner")?;
-    let amount_e8s = pending_i64_to_u64(operation.payment_amount_e8s, "payment_amount_e8s")?;
-    let ledger_fee_e8s = pending_i64_to_u64(
-        operation
-            .ledger_fee_e8s
-            .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())?,
-        "ledger_fee_e8s",
-    )?;
-    let created_at_time_ns = pending_i64_to_u64(
-        operation
-            .ledger_created_at_time_ns
-            .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())?,
-        "ledger_created_at_time_ns",
-    )?;
+    let amount_e8s = u64::try_from(operation.payment_amount_e8s)
+        .map_err(|error| format!("invalid pending payment_amount_e8s: {error}"))?;
+    let ledger_fee_e8s = operation
+        .ledger_fee_e8s
+        .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())
+        .and_then(|value| {
+            u64::try_from(value).map_err(|error| format!("invalid pending ledger_fee_e8s: {error}"))
+        })?;
+    let created_at_time_ns = operation
+        .ledger_created_at_time_ns
+        .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())
+        .and_then(|value| {
+            u64::try_from(value)
+                .map_err(|error| format!("invalid pending ledger_created_at_time_ns: {error}"))
+        })?;
     Ok(ExpectedLedgerTransfer {
         from: IcrcAccount {
             owner: from_owner,
@@ -1545,10 +1556,6 @@ fn expected_ledger_transfer(
 fn pending_principal(value: Option<&str>, field: &str) -> Result<Principal, String> {
     let value = value.ok_or_else(|| format!("pending operation missing {field}"))?;
     Principal::from_text(value).map_err(|error| format!("invalid pending {field}: {error}"))
-}
-
-fn pending_i64_to_u64(value: i64, field: &str) -> Result<u64, String> {
-    u64::try_from(value).map_err(|_| format!("pending operation {field} is negative"))
 }
 
 async fn validate_ledger_transfer_block(

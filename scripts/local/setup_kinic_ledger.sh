@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Where: scripts/local/setup_kinic_ledger.sh
-# What: Prepare a project-local ICRC ledger for KINIC credit purchase smoke tests.
+# What: Prepare a project-local ICRC ledger for KINIC cycle purchase smoke tests.
 # Why: The wiki canister stores the ledger principal at init, so local smoke needs a real ledger before deploy.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

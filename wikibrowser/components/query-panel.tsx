@@ -3,8 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
-import { AlertTriangle, Clock3, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
-import { RecentPanel } from "@/components/recent-panel";
+import { AlertTriangle, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
 import { createUrlIngestRequest } from "@/lib/url-ingest";
 import { collectLintHints, type LintHint } from "@/lib/lint-hints";
 import { classifyQueryInput, type QueryAction } from "@/lib/query-actions";
@@ -54,7 +53,7 @@ export function QueryPanel({
     const action = classifyQueryInput(input, selectedPath, readIdentityMode);
     if (!action) {
       setPendingAction(null);
-      setResult({ kind: "message", tone: "error", text: "No supported operation found. Use recent, lint, a URL, or a wiki question." });
+      setResult({ kind: "message", tone: "error", text: "No supported operation found. Use lint, a URL, or a wiki question." });
       return;
     }
     setInput("");
@@ -69,7 +68,6 @@ export function QueryPanel({
       return;
     }
     setPendingAction(null);
-    if (action.kind === "recent") return;
     if (action.kind === "search") {
       await searchWiki(action);
       return;
@@ -178,7 +176,7 @@ export function QueryPanel({
           <textarea
             id="query-command"
             className="min-h-[112px] w-full resize-none rounded-lg border border-line bg-white px-3 py-2.5 text-sm leading-5 outline-none placeholder:text-muted focus:border-accent"
-            placeholder="Search keywords, or type: ask: question, lint facts, recent, https://..."
+            placeholder="Search keywords, or type: ask: question, lint facts, https://..."
             rows={4}
             value={input}
             onChange={(event) => setInput(event.target.value)}
@@ -191,14 +189,13 @@ export function QueryPanel({
       </form>
       {previewAction ? <ActionPreview action={previewAction} busy={busy} onConfirm={pendingAction ? () => void confirmQueueUrl(pendingAction) : null} /> : null}
       <QueryResultView canisterId={canisterId} databaseId={databaseId} readMode={readMode} result={result} />
-      {activeAction?.kind === "recent" ? <RecentPanel canisterId={canisterId} databaseId={databaseId} readIdentity={readIdentity} readMode={readMode} /> : null}
     </div>
   );
 }
 
 function ActionPreview({ action, busy, onConfirm }: { action: QueryAction; busy: boolean; onConfirm: (() => void) | null }) {
-  const icon = action.kind === "ask" ? <MessageSquareText size={15} /> : action.kind === "search" ? <Search size={15} /> : action.kind === "lint" ? <AlertTriangle size={15} /> : action.kind === "queue_url" ? <Link2 size={15} /> : <Clock3 size={15} />;
-  const title = action.kind === "ask" ? "LLM answer" : action.kind === "search" ? "Search wiki" : action.kind === "lint" ? "Lint note" : action.kind === "queue_url" ? "Queue URL" : "Recent nodes";
+  const icon = action.kind === "ask" ? <MessageSquareText size={15} /> : action.kind === "search" ? <Search size={15} /> : action.kind === "lint" ? <AlertTriangle size={15} /> : <Link2 size={15} />;
+  const title = action.kind === "ask" ? "LLM answer" : action.kind === "search" ? "Search wiki" : action.kind === "lint" ? "Lint note" : "Queue URL";
   const target = action.kind === "queue_url" ? action.url : action.targetPath ?? "current database";
   return (
     <div className="border-b border-line bg-paper px-3 py-2.5 text-xs">

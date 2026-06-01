@@ -1779,6 +1779,56 @@ fn pending_database_cycles_purchase_cancel_rejects_after_activation_started() {
 }
 
 #[test]
+fn cycles_purchase_rejects_archive_restore_statuses() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    let archive_info = service
+        .begin_database_archive("alpha", "owner", 2)
+        .expect("archive should begin");
+    let archiving = service
+        .validate_database_cycles_purchase("alpha", 500)
+        .expect_err("archiving database should reject purchase");
+    assert!(archiving.contains("database is archiving"));
+
+    let archive = read_archive_in_chunks(&service, "alpha", archive_info.size_bytes, 17);
+    let snapshot_hash = sha256_bytes(&archive);
+    service
+        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
+        .expect("archive should finalize");
+    let archived = service
+        .validate_database_cycles_purchase("alpha", 500)
+        .expect_err("archived database should reject purchase");
+    assert!(archived.contains("database is archived"));
+
+    service
+        .begin_database_restore("alpha", "owner", snapshot_hash, archive_info.size_bytes, 4)
+        .expect("restore should begin");
+    let restoring = service
+        .validate_database_cycles_purchase("alpha", 500)
+        .expect_err("restoring database should reject purchase");
+    assert!(restoring.contains("database is restoring"));
+}
+
+#[test]
+fn lifecycle_operations_reject_pending_cycle_purchase() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("cycle purchase should begin");
+
+    let archive = service
+        .begin_database_archive("alpha", "owner", 3)
+        .expect_err("archive should reject pending cycle operation");
+    assert!(archive.contains("pending cycle operation"));
+}
+
+#[test]
 fn old_index_schema_without_schema_migrations_stays_unsupported() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
@@ -2851,7 +2901,12 @@ fn archives_and_restores_database_bytes() {
     );
     assert_eq!(
         database_index_row(&root, "alpha"),
-        ("archived".to_string(), None, archive.size_bytes, None)
+        (
+            "archived".to_string(),
+            archiving_mount_id,
+            archive.size_bytes,
+            None,
+        )
     );
     assert!(
         service
@@ -2933,7 +2988,7 @@ fn archives_and_restores_database_bytes() {
 }
 
 #[test]
-fn restored_mount_id_is_not_reused_after_rearchive() {
+fn restore_reuses_archived_mount_id_after_rearchive() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2964,6 +3019,7 @@ fn restored_mount_id_is_not_reused_after_rearchive() {
     let restored = service
         .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 4)
         .expect("restore should begin");
+    assert_eq!(restored.mount_id, 11);
     service
         .write_database_restore_chunk("alpha", "owner", 0, &bytes)
         .expect("restore chunk should write");
@@ -2986,7 +3042,7 @@ fn restored_mount_id_is_not_reused_after_rearchive() {
     assert_ne!(beta.mount_id, restored.mount_id);
     assert_eq!(
         mount_history_row(&root, restored.mount_id),
-        ("alpha".to_string(), "restore".to_string())
+        ("alpha".to_string(), "create".to_string())
     );
 }
 
@@ -3489,14 +3545,19 @@ fn cancel_database_restore_returns_archived_database_and_removes_partial_state()
 
     assert_eq!(
         database_index_row(&root, "alpha"),
-        ("archived".to_string(), None, archive.size_bytes, None)
+        (
+            "archived".to_string(),
+            Some(restore.meta.mount_id),
+            archive.size_bytes,
+            None,
+        )
     );
     assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
     assert_eq!(database_restore_session_count(&root, "alpha"), 0);
     assert!(!restoring_file.exists());
     assert_eq!(
         mount_history_row(&root, restore.meta.mount_id),
-        ("alpha".to_string(), "restore".to_string())
+        ("alpha".to_string(), "create".to_string())
     );
 }
 
@@ -3634,19 +3695,24 @@ fn rollback_database_restore_begin_restores_archived_state() {
         .expect("restore begin should rollback");
     assert_eq!(
         database_index_row(&root, "alpha"),
-        ("archived".to_string(), None, archive.size_bytes, None)
+        (
+            "archived".to_string(),
+            Some(failed_mount_id),
+            archive.size_bytes,
+            None,
+        )
     );
     assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
     assert_eq!(database_restore_session_count(&root, "alpha"), 0);
     assert_eq!(
         mount_history_row(&root, failed_mount_id),
-        ("alpha".to_string(), "restore".to_string())
+        ("alpha".to_string(), "create".to_string())
     );
 
     let retry = service
         .begin_database_restore_session("alpha", "owner", snapshot_hash, archive.size_bytes, 7)
         .expect("restore should retry");
-    assert_ne!(retry.meta.mount_id, failed_mount_id);
+    assert_eq!(retry.meta.mount_id, failed_mount_id);
 }
 
 #[test]
@@ -3789,6 +3855,43 @@ fn append_node_validates_effective_kind_paths() {
         )
         .expect_err("kind=None under sources should be treated as file");
     assert!(error.contains("source path must use source kind"));
+
+    ensure_parent_folders(
+        &service,
+        "owner",
+        "alpha",
+        "/Sources/skill-runs/review/1700000000000.md",
+        3,
+    );
+    let error = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Sources/skill-runs/review/1700000000000.md".to_string(),
+                kind: NodeKind::File,
+                content: "bad".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            4,
+        )
+        .expect_err("skill run source path should reject file kind");
+    assert!(error.contains("source path must use source kind"));
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Sources/skill-runs/review/1700000000000.md".to_string(),
+                kind: NodeKind::Source,
+                content: "source".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            5,
+        )
+        .expect("skill run source path should accept source kind");
 
     ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/good/good.md", 3);
     let source = service

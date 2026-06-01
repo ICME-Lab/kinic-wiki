@@ -52,11 +52,13 @@ const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
 const TOKEN_CHAR_APPROX: usize = 4;
+const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
 const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
 const SNAPSHOT_REVISION_CURSOR_REQUIRED: &str = "snapshot_revision is required when cursor is set";
 const TARGET_SNAPSHOT_CURSOR_REQUIRED: &str =
     "target_snapshot_revision is required when cursor is set";
+const SYNC_RESPONSE_ITEM_TOO_LARGE: &str = "sync response item exceeds byte budget";
 const LIST_ROOT_CHILD_ROWS_SQL: &str = "\
 SELECT child.path,
        child.kind,
@@ -870,7 +872,7 @@ impl FsStore {
                 snapshot.revision,
                 limit + 1,
             )?;
-            let next_cursor = page_next_cursor(&mut nodes, limit);
+            let next_cursor = page_nodes_by_limit_and_budget(&mut nodes, limit)?;
             Ok(ExportSnapshotResponse {
                 snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
                 snapshot_session_id: None,
@@ -950,7 +952,13 @@ impl FsStore {
                 cursor.as_deref(),
                 limit + 1,
             )?;
-            let next_cursor = page_next_cursor(&mut paths, limit);
+            let limit_had_more = paths.len() > limit as usize;
+            if limit_had_more {
+                paths.truncate(limit as usize);
+            }
+            let mut next_cursor = None;
+            let mut used_bytes = sync_response_base_bytes(&target_snapshot_revision);
+            let mut last_returned_path = None;
             for path in paths {
                 if load_path_last_change_revision(conn, &path)? > target_snapshot.revision {
                     return Err(
@@ -959,10 +967,26 @@ impl FsStore {
                     );
                 }
                 let current_node = load_node(conn, &path)?;
+                let item_bytes = current_node
+                    .as_ref()
+                    .map(estimated_node_response_bytes)
+                    .unwrap_or_else(|| estimated_removed_path_response_bytes(&path));
+                if !sync_item_fits_budget(used_bytes, item_bytes) {
+                    if changed_nodes.is_empty() && removed_paths.is_empty() {
+                        return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
+                    }
+                    next_cursor = last_returned_path.clone();
+                    break;
+                }
+                used_bytes = used_bytes.saturating_add(item_bytes);
+                last_returned_path = Some(path.clone());
                 match current_node {
                     Some(node) => changed_nodes.push(node),
                     None => removed_paths.push(path),
                 }
+            }
+            if next_cursor.is_none() && limit_had_more {
+                next_cursor = last_returned_path;
             }
             Ok(FetchUpdatesResponse {
                 snapshot_revision: target_snapshot_revision,
@@ -1186,15 +1210,57 @@ fn path_in_prefix(path: &str, prefix: &str) -> bool {
     prefix == "/" || path == prefix || path.starts_with(&format!("{prefix}/"))
 }
 
-fn page_next_cursor<T>(items: &mut Vec<T>, limit: i64) -> Option<String>
-where
-    T: PageCursorPath,
-{
-    if items.len() <= limit as usize {
-        return None;
+fn page_nodes_by_limit_and_budget(
+    nodes: &mut Vec<Node>,
+    limit: i64,
+) -> Result<Option<String>, String> {
+    let limit_had_more = nodes.len() > limit as usize;
+    if limit_had_more {
+        nodes.truncate(limit as usize);
     }
-    items.truncate(limit as usize);
-    items.last().map(PageCursorPath::cursor_path)
+    let mut used_bytes = sync_response_base_bytes("");
+    let mut keep_len = 0_usize;
+    for node in nodes.iter() {
+        let item_bytes = estimated_node_response_bytes(node);
+        if !sync_item_fits_budget(used_bytes, item_bytes) {
+            if keep_len == 0 {
+                return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
+            }
+            break;
+        }
+        used_bytes = used_bytes.saturating_add(item_bytes);
+        keep_len += 1;
+    }
+    let budget_had_more = keep_len < nodes.len();
+    if budget_had_more {
+        nodes.truncate(keep_len);
+    }
+    if limit_had_more || budget_had_more {
+        return Ok(nodes.last().map(PageCursorPath::cursor_path));
+    }
+    Ok(None)
+}
+
+fn sync_item_fits_budget(used_bytes: usize, item_bytes: usize) -> bool {
+    used_bytes.saturating_add(item_bytes) <= SYNC_RESPONSE_BYTE_BUDGET
+}
+
+fn sync_response_base_bytes(revision: &str) -> usize {
+    256_usize.saturating_add(revision.len())
+}
+
+fn estimated_removed_path_response_bytes(path: &str) -> usize {
+    32_usize.saturating_add(path.len())
+}
+
+fn estimated_node_response_bytes(node: &Node) -> usize {
+    128_usize
+        .saturating_add(node.path.len())
+        .saturating_add(node.content.len())
+        .saturating_add(node.etag.len())
+        .saturating_add(node.metadata_json.len())
+        .saturating_add(std::mem::size_of_val(&node.created_at))
+        .saturating_add(std::mem::size_of_val(&node.updated_at))
 }
 
 trait PageCursorPath {

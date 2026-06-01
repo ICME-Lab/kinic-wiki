@@ -868,14 +868,21 @@ impl VfsService {
             )?;
             require_pending_operation_status(
                 &operation,
-                &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
+                &[
+                    CYCLES_OPERATION_STATUS_IN_FLIGHT,
+                    CYCLES_OPERATION_STATUS_AMBIGUOUS,
+                    CYCLES_OPERATION_STATUS_COMPLETED,
+                ],
                 "mark cycle purchase completed",
             )?;
-            update_pending_cycles_operation_status(
-                tx,
-                operation_id,
-                CYCLES_OPERATION_STATUS_COMPLETED,
-            )
+            if operation.operation_status != CYCLES_OPERATION_STATUS_COMPLETED {
+                update_pending_cycles_operation_status(
+                    tx,
+                    operation_id,
+                    CYCLES_OPERATION_STATUS_COMPLETED,
+                )?;
+            }
+            Ok(())
         })
     }
 
@@ -1230,7 +1237,7 @@ impl VfsService {
         }
         let result = self.database_store(meta)?.run_fs_migrations();
         if result.is_ok() {
-            self.refresh_logical_size(database_id)?;
+            let _ = self.refresh_logical_size(database_id);
         }
         result
     }
@@ -1293,6 +1300,7 @@ impl VfsService {
         now: i64,
     ) -> Result<DatabaseArchiveInfo, String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_no_pending_cycles_operations(database_id)?;
         let meta = self.database_meta(database_id)?;
         let size_bytes = self.database_size(&meta)?;
         self.write_index(|conn| {
@@ -1361,7 +1369,6 @@ impl VfsService {
             conn.execute(
                 "UPDATE databases
              SET status = 'archived',
-                 active_mount_id = NULL,
                  snapshot_hash = ?2,
                  restore_size_bytes = NULL,
                  archived_at_ms = ?3,
@@ -1424,13 +1431,15 @@ impl VfsService {
                 "database size exceeds limit: {size_bytes} > {MAX_DATABASE_SIZE_BYTES}"
             ));
         }
+        self.require_no_pending_cycles_operations(database_id)?;
         let rollback = self.database_restore_rollback(database_id)?;
         if rollback.status != DatabaseStatus::Archived {
             return Err("database restore can only begin from archived status".to_string());
         }
+        let mount_id = rollback
+            .active_mount_id
+            .ok_or_else(|| format!("archived database has no mount: {database_id}"))?;
         self.write_index(|tx| {
-            let mount_id = allocate_mount_id(tx)?;
-            record_mount_history(tx, database_id, mount_id, "restore", now)?;
             record_database_restore_session(tx, &rollback, now)?;
             tx.execute(
                 "DELETE FROM database_restore_chunks WHERE database_id = ?1",
@@ -1949,7 +1958,7 @@ impl VfsService {
                 store.write_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -1987,15 +1996,15 @@ impl VfsService {
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
                 store.write_node(write_request, now)
             })?;
-        self.write_source_run_session(
+        let _ = self.write_source_run_session(
             &database_id,
             &path,
             &write.node.etag,
             &session_nonce,
             caller,
             now,
-        )?;
-        self.refresh_logical_size(&database_id)?;
+        );
+        let _ = self.refresh_logical_size(&database_id);
         Ok(WriteSourceForGenerationResult {
             write,
             session_nonce,
@@ -2017,7 +2026,7 @@ impl VfsService {
                 store.write_nodes(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -2034,7 +2043,7 @@ impl VfsService {
                 store.delete_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -2057,7 +2066,7 @@ impl VfsService {
                 store.append_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -2074,7 +2083,7 @@ impl VfsService {
                 store.edit_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -2091,7 +2100,7 @@ impl VfsService {
                 store.mkdir_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -2111,7 +2120,7 @@ impl VfsService {
                 store.move_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -2216,7 +2225,7 @@ impl VfsService {
                 store.multi_edit_node(request, now)
             });
         if result.is_ok() {
-            self.refresh_logical_size(&database_id)?;
+            let _ = self.refresh_logical_size(&database_id);
         }
         result
     }
@@ -3444,6 +3453,12 @@ fn validate_database_cycles_purchase_for_conn(
     cycles: i64,
 ) -> Result<(), String> {
     let status = load_database_status(conn, database_id)?;
+    if !matches!(status, DatabaseStatus::Pending | DatabaseStatus::Active) {
+        return Err(format!(
+            "database is {}: {database_id}",
+            status_to_db(status)
+        ));
+    }
     if !database_has_owner(conn, database_id)? {
         return Err(format!("database has no owner: {database_id}"));
     }
@@ -3872,6 +3887,7 @@ fn pending_cycles_operation_to_public(
         database_id: operation.database_id,
         kind: operation.kind,
         caller: operation.caller,
+        operation_status: operation.operation_status,
         cycles: operation.cycles,
         payment_amount_e8s: operation.payment_amount_e8s,
         from_owner: operation.from_owner,
@@ -4726,7 +4742,7 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
         "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
-         WHERE status IN ('pending', 'active', 'archiving', 'restoring') AND active_mount_id IS NOT NULL
+         WHERE status IN ('pending', 'active', 'archiving', 'archived', 'restoring') AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
     )
     .map_err(|error| error.to_string())?;
@@ -4740,7 +4756,7 @@ fn load_active_databases_for_storage_billing(
     let mut stmt = conn.prepare(
         "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
-         WHERE status = 'active' AND active_mount_id IS NOT NULL
+         WHERE active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
     )
     .map_err(|error| error.to_string())?;
@@ -5732,7 +5748,7 @@ mod tests {
     }
 
     #[test]
-    fn storage_billing_loads_active_databases_only() {
+    fn storage_billing_loads_mounted_databases() {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
@@ -5744,7 +5760,8 @@ mod tests {
         for (database_id, status, mount_id) in [
             ("active", "active", Some(11_i64)),
             ("pending", "pending", Some(12_i64)),
-            ("archived", "archived", None),
+            ("archived", "archived", Some(13_i64)),
+            ("restoring", "restoring", Some(14_i64)),
             ("deleted", "deleted", None),
         ] {
             service
@@ -5769,7 +5786,10 @@ mod tests {
             .map(|meta| meta.database_id)
             .collect::<Vec<_>>();
 
-        assert_eq!(database_ids, vec!["active"]);
+        assert_eq!(
+            database_ids,
+            vec!["active", "pending", "archived", "restoring"]
+        );
     }
 
     fn set_test_database_balance(service: &VfsService, database_id: &str, balance: i64) {

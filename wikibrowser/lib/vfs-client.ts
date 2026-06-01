@@ -111,6 +111,7 @@ type RawDatabaseCyclePendingOperation = {
   operation_id: bigint;
   database_id: string;
   kind: string;
+  operation_status: string;
   cycles: bigint;
   payment_amount_e8s: bigint;
   created_at_ms: bigint;
@@ -950,6 +951,7 @@ function normalizeDatabaseCyclePendingOperation(raw: RawDatabaseCyclePendingOper
     operationId: raw.operation_id.toString(),
     databaseId: raw.database_id,
     kind: raw.kind,
+    operationStatus: raw.operation_status,
     cycles: raw.cycles.toString(),
     paymentAmountE8s: raw.payment_amount_e8s.toString(),
     createdAtMs: raw.created_at_ms.toString()

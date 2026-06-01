@@ -16,14 +16,15 @@ pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
     let is_source_path = path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX)
-        || path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX);
+        || path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX)
+        || path_matches_prefix_boundary(path, SKILL_RUNS_PREFIX);
     if *kind == NodeKind::Folder {
         return Ok(());
     }
     if *kind != NodeKind::Source {
         if is_source_path {
             return Err(format!(
-                "source path must use source kind under {RAW_SOURCES_PREFIX} or {SESSION_SOURCES_PREFIX}: {path}"
+                "source path must use source kind under {RAW_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
             ));
         }
         return Ok(());
@@ -181,9 +182,11 @@ fn validate_skill_run_source_path(path: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use vfs_types::NodeKind;
+
     use super::{
         RAW_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, normalize_wiki_remote_path,
-        validate_canonical_source_path, wiki_relative_path,
+        validate_canonical_source_path, validate_source_path_for_kind, wiki_relative_path,
     };
 
     #[test]
@@ -217,6 +220,15 @@ mod tests {
     fn canonical_source_path_accepts_skill_runs() {
         let path = format!("{SKILL_RUNS_PREFIX}/legal-review/1700000000000.md");
         assert!(validate_canonical_source_path(&path).is_ok());
+    }
+
+    #[test]
+    fn skill_runs_prefix_requires_source_kind() {
+        let path = format!("{SKILL_RUNS_PREFIX}/legal-review/1700000000000.md");
+        let error = validate_source_path_for_kind(&path, &NodeKind::File)
+            .expect_err("skill run source path should reject file kind");
+        assert!(error.contains("source kind"));
+        assert!(validate_source_path_for_kind(&path, &NodeKind::Source).is_ok());
     }
 
     #[test]

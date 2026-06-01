@@ -127,6 +127,7 @@ pub struct DatabaseCyclePendingOperation {
     pub database_id: String,
     pub kind: String,
     pub caller: String,
+    pub operation_status: String,
     pub cycles: i64,
     pub payment_amount_e8s: i64,
     pub from_owner: Option<String>,

@@ -1605,6 +1605,7 @@ mod tests {
                     database_id: database_id.to_string(),
                     kind: "cycles_purchase".to_string(),
                     caller: "caller".to_string(),
+                    operation_status: "ambiguous".to_string(),
                     cycles: 500_000,
                     payment_amount_e8s: 50_000_000_000,
                     from_owner: Some("caller".to_string()),

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BusyAction } from "./access-control";
-import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
 import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
@@ -45,7 +45,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
-  const canManage = database?.role === "owner" && !memberError;
+  const isActiveDatabase = database?.status === "active";
+  const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
+  const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
 
   const refresh = useCallback(
     async (client: AuthClient | null, nextDatabaseId: string) => {
@@ -102,13 +104,15 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
           setMemberError(`Member database list unavailable: ${errorMessage(memberResult.reason)}`);
         }
         if (identity && nextDatabase?.role === "owner") {
-          try {
-            const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
-            if (!isCurrentRefresh()) return;
-            setMembers(nextMembers);
-          } catch (cause) {
-            if (!isCurrentRefresh()) return;
-            setMemberError(errorMessage(cause));
+          if (nextDatabase.status === "active") {
+            try {
+              const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
+              if (!isCurrentRefresh()) return;
+              setMembers(nextMembers);
+            } catch (cause) {
+              if (!isCurrentRefresh()) return;
+              setMemberError(errorMessage(cause));
+            }
           }
           try {
             const pendingOperations = await listDatabaseCyclePendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
@@ -118,7 +122,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             if (!isCurrentRefresh()) return;
             setPendingOperationCount(0);
           }
-        } else if (nextDatabase?.publicReadable) {
+        } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
           try {
             const nextMembers = await listDatabaseMembersPublic(canisterId, nextDatabaseId);
             if (!isCurrentRefresh()) return;
@@ -276,7 +280,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             <Link className="text-sm text-accent no-underline hover:underline" href="/">
               Dashboard
             </Link>
-            {databaseId ? (
+            {databaseId && isActiveDatabase ? (
               <Link className="ml-3 text-sm text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
                 Skill Registry
               </Link>
@@ -297,7 +301,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {database ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
-          canManage ? (
+          canDeletePendingDatabase ? (
+            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} pendingOperationCount={pendingOperationCount} onDelete={deleteDatabase} />
+          ) : canManage ? (
             <OwnerPanel
               cyclesBalance={database.cyclesBalance}
               busy={busy}

@@ -159,6 +159,7 @@ export type DatabaseCyclePendingOperation = {
   operationId: string;
   databaseId: string;
   kind: string;
+  operationStatus: string;
   cycles: string;
   paymentAmountE8s: string;
   createdAtMs: string;

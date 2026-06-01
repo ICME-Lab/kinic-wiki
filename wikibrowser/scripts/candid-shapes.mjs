@@ -142,6 +142,7 @@ export const expectedTypes = {
       kind: "text",
       operation_id: "nat64",
       from_subaccount: "opt blob",
+      operation_status: "text",
       created_at_ms: "int64",
       ledger_fee_e8s: "opt int64",
       ledger_created_at_time_ns: "opt int64",

@@ -9,7 +9,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 1. Decide whether the inspection target is local, remote, or both.
 2. For local structure checks, inspect the relevant Markdown files directly. `kinic-vfs-cli` no longer provides local mirror lint.
 3. For remote checks, read `/Wiki/index.md` first with `read-node-context`, then inspect directly linked or role-matched notes before broad search.
-4. Use `search-remote`, `search-path-remote`, `list-nodes`, `glob-nodes`, `recent-nodes`, and link commands only to confirm or expand findings after direct note inspection.
+4. Use `search-remote`, `search-path-remote`, `list-nodes`, `glob-nodes`, and link commands only to confirm or expand findings after direct note inspection.
    - For wiki-only inspection, pass `--prefix /Wiki` or `path: "/Wiki"` unless raw source material is explicitly in scope.
 5. Group findings into:
    - duplication
@@ -52,7 +52,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 - Local lint: inspect Markdown files directly; no local mirror lint command exists.
 - Remote inspection primitives:
-  - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
   - Use `list-children` for one-level tree navigation.
   - Use `list-nodes --prefix <path> --recursive --json` for inventory, bulk repair review, and destructive operation review.
 

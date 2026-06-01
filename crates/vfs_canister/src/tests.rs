@@ -488,6 +488,63 @@ fn preview_database_cycles_purchase_rejects_invalid_target_before_approve() {
 }
 
 #[test]
+fn purchase_database_cycles_rejects_archive_restore_statuses() {
+    install_test_service();
+
+    let archive = begin_database_archive("default".to_string()).expect("archive should begin");
+    let archiving = preview_database_cycles_purchase("default".to_string(), 500)
+        .expect_err("archiving database should reject purchase preview");
+    assert!(archiving.contains("database is archiving"));
+
+    let bytes = read_database_archive_chunk(
+        "default".to_string(),
+        0,
+        archive
+            .size_bytes
+            .try_into()
+            .expect("test archive should fit in one chunk"),
+    )
+    .expect("archive chunk should read")
+    .bytes;
+    let snapshot_hash = sha256_bytes(&bytes);
+    finalize_database_archive("default".to_string(), snapshot_hash.clone())
+        .expect("archive should finalize");
+    let archived = preview_database_cycles_purchase("default".to_string(), 500)
+        .expect_err("archived database should reject purchase preview");
+    assert!(archived.contains("database is archived"));
+
+    begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
+        .expect("restore should begin");
+    let restoring = preview_database_cycles_purchase("default".to_string(), 500)
+        .expect_err("restoring database should reject purchase preview");
+    assert!(restoring.contains("database is restoring"));
+}
+
+#[test]
+fn begin_database_archive_rejects_pending_cycle_purchase() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Pending lifecycle".to_string(),
+    })
+    .expect("database should create");
+    fund_database(&database.database_id, 1_000_000, 41);
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "icrc2_transfer_from decode failed".to_string(),
+    ));
+    let _ = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ambiguous purchase should leave pending operation");
+
+    let error = begin_database_archive(database.database_id)
+        .expect_err("archive should reject pending cycle operation");
+
+    assert!(error.contains("pending cycle operation"));
+}
+
+#[test]
 fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();

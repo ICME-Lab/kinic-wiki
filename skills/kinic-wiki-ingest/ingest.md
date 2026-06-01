@@ -73,7 +73,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 ## Working Rules
 
 - Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
-- Runtime `facts.md` extraction policy currently lives in [facts_policy.rs](../../crates/vfs_cli_app/src/facts_policy.rs). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
+- Runtime `facts.md` extraction policy follows [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
 - Treat local `Wiki/` content as the human review surface.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.
@@ -125,7 +125,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Preferred primitives:
   - Bulk writes: CLI `write-nodes --input <nodes.json>`
   - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`
-  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `recent-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
+  - Single-node CLI commands: `read-node-context`, `read-node`, `write-node`, `append-node`, `edit-node`, `delete-node`, `delete-tree`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
   - Multi-node edits: use `write-nodes` only for prepared full-body replacements; otherwise build a path list, read etags, and run etag-aware per-node edits
 - Delete semantics:
   - `delete-node`: delete one node path
