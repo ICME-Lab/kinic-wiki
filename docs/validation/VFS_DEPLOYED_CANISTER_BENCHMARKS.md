@@ -13,10 +13,10 @@ Primary metrics:
 
 | Bench | Role | Main targets |
 | --- | --- | --- |
-| `canister_vfs_workload` | repeated API workload benchmark | `create`, `update`, `append`, `edit`, `move_same_dir`, `move_cross_dir`, `delete`, `read`, `list`, `search`, `mkdir`, `glob`, `recent`, `multi_edit` |
+| `canister_vfs_workload` | repeated API workload benchmark | `create`, `update`, `append`, `edit`, `move_same_dir`, `move_cross_dir`, `delete`, `read`, `list`, `search`, `mkdir`, `glob`, `multi_edit` |
 | `canister_vfs_latency` | single-update latency benchmark | `write_node`, `append_node` |
 
-`query` is treated as a documentation category covering `read`, `list`, `search`, `mkdir`, `glob`, and `recent`, not as a separate method name.
+`query` is treated as a documentation category covering `read`, `list`, `search`, `mkdir`, and `glob`, not as a separate method name.
 
 ## Fixed Conditions
 
@@ -28,7 +28,7 @@ Primary metrics:
 | Transport | `ic-agent` |
 | Cycles source | `icp canister status --json` |
 | Update cycles scope | `isolated_single_op` |
-| Query cycles scope | `isolated_single_op` for `read`, `list`, `search`, `glob`, `recent` |
+| Query cycles scope | `isolated_single_op` for `read`, `list`, `search`, `glob` |
 | Validation-only query scope | `scenario_total` for `mkdir` |
 
 `isolated_single_op` separates setup from the measured call and uses `measured_cycles_delta` plus `cycles_per_measured_request` as the main table.
@@ -102,7 +102,6 @@ If cycles cannot be collected, the benchmark should continue. Cycles fields beco
 | `search` | `search` | `search_nodes` | run a hit-producing search against a seeded corpus |
 | `mkdir` | `mkdir` | `mkdir_node` | validate a unique path per iteration |
 | `glob` | `glob` | `glob_nodes` | run `pattern=node-*.md` within the bench prefix |
-| `recent` | `recent` | `recent_nodes` | read recent nodes with `limit = min(10, file_count)` |
 | `multi_edit` | `multi_edit` | `multi_edit_node` | apply two atomic token replacements |
 
 ## Update ACK Contract

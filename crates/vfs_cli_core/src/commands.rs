@@ -15,8 +15,8 @@ use vfs_types::{
     EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -303,22 +303,6 @@ pub async fn run_vfs_command(
             } else {
                 for hit in hits {
                     println!("{}\t{:?}\t{}", hit.path, hit.kind, hit.has_children);
-                }
-            }
-        }
-        VfsCommand::RecentNodes { limit, path, json } => {
-            let hits = client
-                .recent_nodes(RecentNodesRequest {
-                    database_id: database_id.to_string(),
-                    limit,
-                    path: Some(path),
-                })
-                .await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&hits)?);
-            } else {
-                for hit in hits {
-                    println!("{}\t{}\t{}", hit.updated_at, hit.path, hit.etag);
                 }
             }
         }
@@ -1193,11 +1177,12 @@ mod tests {
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
-                status: DatabaseStatus::Hot,
+                status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
+                credits_balance: Some(100),
+                credits_suspended_at_ms: None,
                 archived_at_ms: None,
-                deleted_at_ms: None,
             }])
         }
         async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {
@@ -1368,9 +1353,6 @@ mod tests {
             unreachable!()
         }
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
-            unreachable!()
-        }
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
             unreachable!()
         }
         async fn graph_neighborhood(
