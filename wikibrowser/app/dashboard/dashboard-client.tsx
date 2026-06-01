@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BusyAction } from "./access-control";
-import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
@@ -40,7 +40,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
-  const canManage = database?.role === "owner" && database.status === "active" && !memberError;
+  const isActiveDatabase = database?.status === "active";
+  const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
+  const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
 
   const refresh = useCallback(
     async (client: AuthClient | null, nextDatabaseId: string) => {
@@ -253,7 +255,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             <Link className="text-sm text-accent no-underline hover:underline" href="/">
               Dashboard
             </Link>
-            {databaseId ? (
+            {databaseId && isActiveDatabase ? (
               <Link className="ml-3 text-sm text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
                 Skill Registry
               </Link>
@@ -271,7 +273,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {database ? <SummaryPanel database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
-          canManage ? (
+          canDeletePendingDatabase ? (
+            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
+          ) : canManage ? (
             <OwnerPanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} members={members} principal={principal ?? "anonymous"} onDelete={deleteDatabase} onGrant={grantAccess} onRename={renameDatabase} onRevoke={revokeAccess} />
           ) : database.publicReadable ? (
             <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />
