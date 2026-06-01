@@ -48,7 +48,8 @@ test("url ingest trigger enqueues URL ingest message without background work", a
       kind: "url_ingest",
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md"
+      requestPath: "/Sources/ingest-requests/1.md",
+      sessionNonce: "session-1"
     }
   ]);
 });
@@ -92,7 +93,8 @@ test("queue URL ingest message failures reject for retry", async () => {
       kind: "url_ingest",
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
-      requestPath: "/Sources/ingest-requests/1.md"
+      requestPath: "/Sources/ingest-requests/1.md",
+      sessionNonce: "session-1"
     }),
     /canisterId does not match worker canister config/
   );
@@ -114,6 +116,7 @@ function urlIngestRequest(headers: Record<string, string> = {}, body: Record<str
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "db_1",
       requestPath: "/Sources/ingest-requests/1.md",
+      sessionNonce: "session-1",
       ...body
     })
   });

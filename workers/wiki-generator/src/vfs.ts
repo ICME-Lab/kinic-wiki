@@ -77,6 +77,18 @@ type RawMkdirNodeResult = {
 type Result<T> = { Ok: T } | { Err: string };
 
 type VfsActor = {
+  check_database_write_credits: (databaseId: string) => Promise<Result<null>>;
+  check_source_run_session: (request: {
+    database_id: string;
+    source_path: string;
+    source_etag: string;
+    session_nonce: string;
+  }) => Promise<Result<null>>;
+  check_url_ingest_trigger_session: (request: {
+    database_id: string;
+    request_path: string;
+    session_nonce: string;
+  }) => Promise<Result<null>>;
   read_node: (databaseId: string, path: string) => Promise<Result<[] | [RawNode]>>;
   mkdir_node: (request: RawMkdirNodeRequest) => Promise<Result<RawMkdirNodeResult>>;
   write_node: (request: RawWriteNodeRequest) => Promise<Result<RawWriteNodeResult>>;
@@ -106,6 +118,9 @@ type VfsActor = {
 };
 
 export type VfsClient = {
+  checkDatabaseWriteCredits(databaseId: string): Promise<void>;
+  checkSourceRunSession(databaseId: string, sourcePath: string, sourceEtag: string, sessionNonce: string): Promise<void>;
+  checkUrlIngestTriggerSession(databaseId: string, requestPath: string, sessionNonce: string): Promise<void>;
   readNode(databaseId: string, path: string): Promise<WikiNode | null>;
   mkdirNode(request: MkdirNodeRequest): Promise<void>;
   writeNode(request: WriteNodeRequest): Promise<WriteNodeAck>;
@@ -125,6 +140,28 @@ export async function createVfsClient(config: WorkerConfig, identityPem: string)
     canisterId: Principal.fromText(config.canisterId)
   });
   return {
+    checkDatabaseWriteCredits: async (databaseId) => {
+      await unwrap(actor.check_database_write_credits(databaseId));
+    },
+    checkSourceRunSession: async (databaseId, sourcePath, sourceEtag, sessionNonce) => {
+      await unwrap(
+        actor.check_source_run_session({
+          database_id: databaseId,
+          source_path: sourcePath,
+          source_etag: sourceEtag,
+          session_nonce: sessionNonce
+        })
+      );
+    },
+    checkUrlIngestTriggerSession: async (databaseId, requestPath, sessionNonce) => {
+      await unwrap(
+        actor.check_url_ingest_trigger_session({
+          database_id: databaseId,
+          request_path: requestPath,
+          session_nonce: sessionNonce
+        })
+      );
+    },
     readNode: async (databaseId, path) => normalizeOptionalNode(await unwrap(actor.read_node(databaseId, path))),
     mkdirNode: async (request) => {
       await unwrap(actor.mkdir_node({ database_id: request.databaseId, path: request.path }));
