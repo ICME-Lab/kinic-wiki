@@ -8,7 +8,7 @@ import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
 import { idlFactory } from "@/lib/vfs-idl";
-import type { ChildNode, DatabaseMember, DatabaseRole, DatabaseSummary, NodeEntryKind, NodeKind, NodeMutationAck, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
+import type { ChildNode, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary, NodeEntryKind, NodeKind, NodeMutationAck, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
 type Variant = Record<string, null>;
@@ -185,6 +185,15 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   };
 }
 
+function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
+  if ("Active" in status) return "active";
+  if ("Pending" in status) return "pending";
+  if ("Restoring" in status) return "restoring";
+  if ("Archiving" in status) return "archiving";
+  if ("Archived" in status) return "archived";
+  throw new ApiError(`Unknown database status variant: ${Object.keys(status).join(",")}`, 502);
+}
+
 function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
   return { databaseId: raw.database_id, principal: raw.principal, role: normalizeDatabaseRole(raw.role), createdAtMs: raw.created_at_ms.toString() };
 }
@@ -216,14 +225,6 @@ function normalizeEntryKind(kind: Variant): NodeEntryKind {
 
 function normalizeDatabaseRole(role: Variant): DatabaseRole {
   return "Owner" in role ? "owner" : "Writer" in role ? "writer" : "reader";
-}
-
-function normalizeDatabaseStatus(status: Variant): DatabaseSummary["status"] {
-  if ("Restoring" in status) return "restoring";
-  if ("Archiving" in status) return "archiving";
-  if ("Archived" in status) return "archived";
-  if ("Pending" in status) return "pending";
-  return "active";
 }
 
 function nodeKindVariant(kind: NodeKind): Variant {
