@@ -95,20 +95,32 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
 
   const loadRole = useCallback(async (activeIdentity: Identity) => {
     try {
-      const [databases, config] = await Promise.all([
-        listDatabasesAuthenticated(canisterId, activeIdentity),
-        getCreditsConfig(canisterId)
-      ]);
+      const databases = await listDatabasesAuthenticated(canisterId, activeIdentity);
       const database = databases.find((item) => item.databaseId === databaseId) ?? null;
       setDatabaseSummary(database);
       setDatabaseRole(database?.role ?? null);
-      setCreditsConfig(config);
     } catch {
       setDatabaseSummary(null);
       setDatabaseRole(null);
       setCreditsConfig(null);
+      return;
+    }
+    try {
+      setCreditsConfig(await getCreditsConfig(canisterId));
+    } catch {
+      setCreditsConfig(null);
     }
   }, [canisterId, databaseId]);
+
+  const refreshSkillRegistry = useCallback(
+    async (activeIdentity: Identity) => {
+      await Promise.all([
+        loadCatalog(activeIdentity),
+        loadRole(activeIdentity)
+      ]);
+    },
+    [loadCatalog, loadRole]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -119,8 +131,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
         if (await client.isAuthenticated()) {
           const identity = client.getIdentity();
           setPrincipal(identity.getPrincipal().toText());
-          await loadRole(identity);
-          await loadCatalog(identity);
+          await refreshSkillRegistry(identity);
         } else {
           await loadCatalog();
         }
@@ -133,7 +144,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [loadCatalog, loadRole]);
+  }, [loadCatalog, refreshSkillRegistry]);
 
   async function login() {
     if (!authClient) return;
@@ -143,8 +154,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
       onSuccess: () => {
         const identity = authClient.getIdentity();
         setPrincipal(identity.getPrincipal().toText());
-        void loadRole(identity);
-        void loadCatalog(identity);
+        void refreshSkillRegistry(identity);
       },
       onError: (cause) => {
         setError(errorMessage(cause));
@@ -172,7 +182,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const identity = authClient?.getIdentity();
   const creditsReason = databaseCreditsDisabledReason(databaseSummary, creditsConfig);
   const writable = databaseCanWrite(databaseSummary, creditsConfig);
-  const packageManager = usePackageManager({ canisterId, databaseId, identity, writable, refresh: loadCatalog, errorMessage });
+  const packageManager = usePackageManager({ canisterId, databaseId, identity, writable, refresh: refreshSkillRegistry, errorMessage });
 
   function actionFor(skill: CatalogSkill): ActionDraft {
     return actions[skill.manifest.id] ?? DEFAULT_ACTION;
@@ -182,7 +192,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     setActions((current) => ({ ...current, [skill.manifest.id]: { ...DEFAULT_ACTION, ...current[skill.manifest.id], ...patch } }));
   }
 
-  async function runSkillAction(skill: CatalogSkill, operation: (identity: Identity, draft: ActionDraft) => Promise<void>, clearRun = false) {
+  async function runSkillAction(skill: CatalogSkill, operation: (identity: Identity, draft: ActionDraft) => Promise<void>, clearRun = false, refreshAfterSuccess = true) {
     if (!identity) {
       patchAction(skill, { error: "Login is required." });
       return;
@@ -192,7 +202,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     try {
       await operation(identity, draft);
       patchAction(skill, clearRun ? { busy: false, runTask: "", runNotes: "", message: "Operation completed." } : { busy: false, message: "Operation completed." });
-      await loadCatalog(identity);
+      if (refreshAfterSuccess) await refreshSkillRegistry(identity);
     } catch (cause) {
       patchAction(skill, { busy: false, error: errorMessage(cause) });
     }
@@ -217,7 +227,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {principal ? <span className="max-w-[320px] truncate rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">{principal}</span> : null}
-            <button className="inline-flex items-center rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={loadState === "loading"} type="button" onClick={() => void loadCatalog(authClient?.getIdentity())}>
+            <button className="inline-flex items-center rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={loadState === "loading"} type="button" onClick={() => identity ? void refreshSkillRegistry(identity) : void loadCatalog()}>
               <RefreshCw aria-hidden size={15} />
               <span className="ml-2">Refresh</span>
             </button>
@@ -295,10 +305,15 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                         ),
                       approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.path)),
                       previewProposal: (proposal) =>
-                        void runSkillAction(skill, async (activeIdentity) => {
-                          const preview = await previewApplyProposalDiff(canisterId, databaseId, activeIdentity, skill, proposal);
-                          patchAction(skill, { preview, message: `Preview ready: ${preview.targetPath}` });
-                        }),
+                        void runSkillAction(
+                          skill,
+                          async (activeIdentity) => {
+                            const preview = await previewApplyProposalDiff(canisterId, databaseId, activeIdentity, skill, proposal);
+                            patchAction(skill, { preview, message: `Preview ready: ${preview.targetPath}` });
+                          },
+                          false,
+                          false
+                        ),
                       applyProposal: (proposal) =>
                         void runSkillAction(skill, async (activeIdentity, draft) => {
                           if (!draft.preview || draft.preview.proposalPath !== proposal.path) throw new Error("Preview this proposal before applying.");
