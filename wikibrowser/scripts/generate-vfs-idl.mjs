@@ -57,8 +57,6 @@ const typeOrder = [
   "Node",
   "ChildNode",
   "NodeMutationAck",
-  "RecentNodeHit",
-  "RecentNodesRequest",
   "LinkEdge",
   "NodeContext",
   "SearchPreviewField",
@@ -97,7 +95,6 @@ const typeOrder = [
   "ResultChildren",
   "ResultLinks",
   "ResultNodeContext",
-  "ResultRecent",
   "ResultSearch",
   "ResultQueryContext",
   "ResultSourceEvidence",
@@ -151,7 +148,6 @@ const methodOrder = [
   "query_context",
   "read_node",
   "read_node_context",
-  "recent_nodes",
   "list_children",
   "outgoing_links",
   "preview_database_cycles_purchase",
@@ -380,11 +376,10 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_22") return "ResultQueryContext";
   if (normalized === "Result_25") return "ResultNode";
   if (normalized === "Result_26") return "ResultNodeContext";
-  if (normalized === "Result_27") return "ResultRecent";
-  if (normalized === "Result_28") return "ResultSearch";
-  if (normalized === "Result_29") return "ResultSourceEvidence";
+  if (normalized === "Result_27") return "ResultSearch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

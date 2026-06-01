@@ -224,11 +224,10 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_22") return "ResultQueryContext";
   if (normalized === "Result_25") return "ResultNode";
   if (normalized === "Result_26") return "ResultNodeContext";
-  if (normalized === "Result_27") return "ResultRecent";
-  if (normalized === "Result_28") return "ResultSearch";
-  if (normalized === "Result_29") return "ResultSourceEvidence";
+  if (normalized === "Result_27") return "ResultSearch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

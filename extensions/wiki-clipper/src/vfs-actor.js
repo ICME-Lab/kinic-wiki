@@ -80,13 +80,7 @@ function idlFactory({ IDL: idl }) {
     kind: NodeKind,
     path: idl.Text
   });
-  const RecentNodeHit = idl.Record({
-    updated_at: idl.Int64,
-    etag: idl.Text,
-    kind: NodeKind,
-    path: idl.Text
-  });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const WriteSourceForGenerationResult = idl.Record({
     write: WriteNodeResult,
     session_nonce: idl.Text

@@ -201,7 +201,7 @@ export const expectedTypes = {
   },
   WriteNodeResult: {
     kind: "record",
-    fields: { created: "bool", node: "RecentNodeHit" }
+    fields: { created: "bool", node: "NodeMutationAck" }
   },
   WriteSourceForGenerationRequest: {
     kind: "record",
@@ -341,14 +341,6 @@ export const expectedTypes = {
     kind: "record",
     fields: { incoming_links: "vec LinkEdge", node: "Node", outgoing_links: "vec LinkEdge" }
   },
-  RecentNodeHit: {
-    kind: "record",
-    fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
-  },
-  RecentNodesRequest: {
-    kind: "record",
-    fields: { path: "opt text", limit: "nat32", database_id: "text" }
-  },
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
   ResultCyclesBillingConfig: { kind: "variant", cases: { Ok: "CyclesBillingConfig", Err: "text" } },
   ResultCyclesPurchase: { kind: "variant", cases: { Ok: "CyclesPurchaseResult", Err: "text" } },
@@ -366,7 +358,6 @@ export const expectedTypes = {
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
-  ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
@@ -457,12 +448,11 @@ export const didTypeAliases = {
   ResultLinks: "Result_11",
   ResultNode: "Result_25",
   ResultNodeContext: "Result_26",
-  ResultRecent: "Result_27",
   ResultQueryContext: "Result_22",
-  ResultSearch: "Result_28",
-  ResultSourceEvidence: "Result_29",
+  ResultSearch: "Result_27",
+  ResultSourceEvidence: "Result_28",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_31"
+  ResultWriteSourceForGeneration: "Result_30"
 };
 
 export const expectedMethods = {
@@ -497,7 +487,6 @@ export const expectedMethods = {
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
-  recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
   repair_database_cycles_purchase_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
   repair_database_cycles_purchase_complete: { input: ["text", "nat64", "nat64"], output: "ResultCyclesPurchase", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
