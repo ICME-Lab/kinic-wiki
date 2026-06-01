@@ -252,9 +252,8 @@ mod tests {
         EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
         FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListChildrenRequest, ListNodesRequest,
         MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-        MultiEditNodeResult, Node, NodeEntry, NodeKind, NodeMutationAck, RecentNodeHit,
-        RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
-        WriteNodeRequest, WriteNodeResult,
+        MultiEditNodeResult, Node, NodeEntry, NodeKind, NodeMutationAck, SearchNodeHit,
+        SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
     };
 
     #[test]
@@ -390,10 +389,6 @@ mod tests {
         }
 
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
-            unimplemented!("not needed by github ingest tests")
-        }
-
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
             unimplemented!("not needed by github ingest tests")
         }
 

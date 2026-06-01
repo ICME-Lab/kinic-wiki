@@ -5,39 +5,56 @@ use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult,
+    AppendNodeRequest, CyclesBillingConfig, DatabaseCyclesPurchaseRequest,
+    DatabaseRestoreChunkRequest, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult,
     EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
+    IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
     WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
-use crate::cli::{DatabaseCommand, VfsCommand};
+use crate::cli::{CreditsCommand, DatabaseCommand, VfsCommand};
 use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
 };
+
+const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
 
 pub async fn run_vfs_command(
     client: &impl VfsApi,
     connection: &ResolvedConnection,
     command: VfsCommand,
 ) -> Result<()> {
-    if let VfsCommand::Database { command } = command {
-        run_database_command(client, connection, command).await?;
-        return Ok(());
-    }
     let database_id = connection.database_id.as_deref();
+    let command = match command {
+        VfsCommand::Credits { command } => {
+            run_credits_command(client, command).await?;
+            return Ok(());
+        }
+        VfsCommand::Database { command } => {
+            run_database_command(client, connection, command).await?;
+            return Ok(());
+        }
+        command => command,
+    };
     let database_id = require_database_id(database_id)?;
+    if command_requires_write_credits_available(&command) {
+        require_write_credits_available(client, database_id).await?;
+    }
     match command {
+        VfsCommand::Credits { .. } => {
+            unreachable!("credits command handled before db requirement")
+        }
         VfsCommand::Database { .. } => {
             unreachable!("database command handled before db requirement")
         }
@@ -306,22 +323,6 @@ pub async fn run_vfs_command(
                 }
             }
         }
-        VfsCommand::RecentNodes { limit, path, json } => {
-            let hits = client
-                .recent_nodes(RecentNodesRequest {
-                    database_id: database_id.to_string(),
-                    limit,
-                    path: Some(path),
-                })
-                .await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&hits)?);
-            } else {
-                for hit in hits {
-                    println!("{}\t{}\t{}", hit.updated_at, hit.path, hit.etag);
-                }
-            }
-        }
         VfsCommand::ReadNodeContext {
             path,
             link_limit,
@@ -472,6 +473,59 @@ pub async fn run_vfs_command(
     Ok(())
 }
 
+fn command_requires_write_credits_available(command: &VfsCommand) -> bool {
+    matches!(
+        command,
+        VfsCommand::WriteNode { .. }
+            | VfsCommand::AppendNode { .. }
+            | VfsCommand::EditNode { .. }
+            | VfsCommand::DeleteNode { .. }
+            | VfsCommand::DeleteTree { .. }
+            | VfsCommand::MkdirNode { .. }
+            | VfsCommand::MoveNode { .. }
+            | VfsCommand::MultiEditNode { .. }
+    )
+}
+
+async fn require_write_credits_available(client: &impl VfsApi, database_id: &str) -> Result<()> {
+    let config = client
+        .get_cycles_billing_config()
+        .await
+        .context("credits config unavailable")?;
+    let databases = client
+        .list_databases()
+        .await
+        .context("database list unavailable for credits check")?;
+    let database = databases
+        .iter()
+        .find(|database| database.database_id == database_id)
+        .ok_or_else(|| anyhow!("database credits state unavailable: {database_id}"))?;
+    if let Some(reason) = database_credits_disabled_reason(database, &config) {
+        return Err(anyhow!("{reason}"));
+    }
+    Ok(())
+}
+
+fn database_credits_disabled_reason(
+    database: &DatabaseSummary,
+    config: &CyclesBillingConfig,
+) -> Option<String> {
+    let balance = database.cycles_balance.unwrap_or(0);
+    if database.cycles_suspended_at_ms.is_some() {
+        return Some(format!(
+            "database credits are suspended: {}",
+            database.database_id
+        ));
+    }
+    if balance < config.min_update_cycles {
+        return Some(format!(
+            "database credits balance is below minimum: {} balance_cycles={} min_update_cycles={}",
+            database.database_id, balance, config.min_update_cycles
+        ));
+    }
+    None
+}
+
 fn print_links(links: Vec<LinkEdge>, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&links)?);
@@ -603,15 +657,133 @@ async fn run_database_command(
             } else {
                 for database in databases {
                     println!(
-                        "{}\t{}\t{:?}\t{:?}\t{}",
+                        "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
                         database.database_id,
                         database.name,
                         database.role,
                         database.status,
-                        database.logical_size_bytes
+                        database.logical_size_bytes,
+                        database.cycles_balance.unwrap_or(0),
+                        database
+                            .cycles_suspended_at_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string())
                     );
                 }
             }
+        }
+        DatabaseCommand::PurchaseCredits {
+            database_id,
+            credits,
+        } => {
+            let payment_amount_e8s = credits;
+            let preview = client
+                .preview_database_cycles_purchase(&database_id, payment_amount_e8s)
+                .await?;
+            let result = client
+                .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
+                    database_id: database_id.clone(),
+                    payment_amount_e8s,
+                    expected_cycles: preview.cycles,
+                    expected_config_version: preview.config_version,
+                })
+                .await?;
+            println!(
+                "{database_id}\t{}\t{}",
+                result.block_index, result.balance_cycles
+            );
+        }
+        DatabaseCommand::CreditsHistory { database_id, json } => {
+            let page = client
+                .list_database_cycle_entries(&database_id, None, 100)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                for entry in page.entries {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        entry.entry_id,
+                        entry.kind,
+                        entry.amount_cycles,
+                        entry.balance_after_cycles,
+                        entry.caller,
+                        entry.method.unwrap_or_else(|| "-".to_string()),
+                        entry
+                            .ledger_block_index
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        entry.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::CreditsPending { database_id, json } => {
+            let page = client
+                .list_database_cycle_pending_operations(&database_id, None, 100)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                for operation in page.entries {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        operation.operation_id,
+                        operation.database_id,
+                        operation.kind,
+                        operation.caller,
+                        operation.cycles,
+                        operation.payment_amount_e8s,
+                        operation.from_owner.unwrap_or_else(|| "-".to_string()),
+                        operation.to_owner.unwrap_or_else(|| "-".to_string()),
+                        operation
+                            .ledger_fee_e8s
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        operation
+                            .ledger_created_at_time_ns
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        operation.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::RepairCreditPurchaseComplete {
+            database_id,
+            operation_id,
+            block_index,
+        } => {
+            let result = client
+                .repair_database_cycles_purchase_complete(&database_id, operation_id, block_index)
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}",
+                result.block_index, result.balance_cycles
+            );
+        }
+        DatabaseCommand::RepairCreditPurchaseCancel {
+            database_id,
+            operation_id,
+        } => {
+            client
+                .repair_database_cycles_purchase_cancel(&database_id, operation_id)
+                .await?;
+            println!("{database_id}\t{operation_id}");
+        }
+        DatabaseCommand::Credits {
+            database_id,
+            credits,
+            browser_origin,
+        } => {
+            let url = database_credits_url(
+                browser_origin.as_deref(),
+                &connection.canister_id,
+                &database_id,
+                credits,
+            )?;
+            open_browser_url(&url)?;
+            println!("{url}");
         }
         DatabaseCommand::Link { database_id } => {
             let path = link_workspace_database(connection, &database_id)?;
@@ -692,6 +864,115 @@ async fn run_database_command(
         }
     }
     Ok(())
+}
+
+fn database_credits_url(
+    browser_origin: Option<&str>,
+    canister_id: &str,
+    database_id: &str,
+    credits: u64,
+) -> Result<String> {
+    let origin = browser_origin
+        .map(str::to_string)
+        .or_else(|| std::env::var("KINIC_WIKI_BROWSER_ORIGIN").ok())
+        .unwrap_or_else(|| DEFAULT_BROWSER_ORIGIN.to_string());
+    let origin = origin.trim_end_matches('/');
+    if origin.is_empty() {
+        return Err(anyhow!("browser origin must not be empty"));
+    }
+    Ok(format!(
+        "{origin}/credits?canisterId={}&databaseId={}&credits={}",
+        query_encode(canister_id),
+        query_encode(database_id),
+        credits
+    ))
+}
+
+fn query_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn open_browser_url(url: &str) -> Result<()> {
+    let status = if cfg!(target_os = "macos") {
+        ProcessCommand::new("open").arg(url).status()
+    } else if cfg!(target_os = "windows") {
+        ProcessCommand::new("rundll32")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(url)
+            .status()
+    } else {
+        ProcessCommand::new("xdg-open").arg(url).status()
+    };
+    let status = status.map_err(|error| anyhow!("failed to open browser: {error}"))?;
+    if !status.success() {
+        return Err(anyhow!("failed to open browser: exit status {status}"));
+    }
+    Ok(())
+}
+
+async fn run_credits_command(client: &impl VfsApi, command: CreditsCommand) -> Result<()> {
+    match command {
+        CreditsCommand::Config { json } => {
+            let config = client.get_cycles_billing_config().await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&CyclesBillingConfigOutput::new(
+                        config,
+                        KINIC_LEDGER_FEE_E8S
+                    ))?
+                );
+            } else {
+                for line in credits_config_lines(&config, KINIC_LEDGER_FEE_E8S) {
+                    println!("{line}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CyclesBillingConfigOutput {
+    kinic_ledger_canister_id: String,
+    sns_governance_id: String,
+    cycles_per_kinic: u64,
+    min_update_cycles: u64,
+    ledger_fee_e8s: u64,
+}
+
+impl CyclesBillingConfigOutput {
+    fn new(config: CyclesBillingConfig, ledger_fee_e8s: u64) -> Self {
+        Self {
+            kinic_ledger_canister_id: config.kinic_ledger_canister_id,
+            sns_governance_id: config.sns_governance_id,
+            cycles_per_kinic: config.cycles_per_kinic,
+            min_update_cycles: config.min_update_cycles,
+            ledger_fee_e8s,
+        }
+    }
+}
+
+fn credits_config_lines(config: &CyclesBillingConfig, ledger_fee_e8s: u64) -> Vec<String> {
+    vec![
+        format!(
+            "kinic_ledger_canister_id\t{}",
+            config.kinic_ledger_canister_id
+        ),
+        format!("sns_governance_id\t{}", config.sns_governance_id),
+        format!("cycles_per_kinic\t{}", config.cycles_per_kinic),
+        format!("min_update_cycles\t{}", config.min_update_cycles),
+        format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
+    ]
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1087,10 +1368,10 @@ fn default_metadata_json() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::run_vfs_command;
-    use crate::cli::{NodeKindArg, VfsCommand};
+    use super::{command_requires_write_credits_available, run_vfs_command};
+    use crate::cli::{CreditsCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
-    use anyhow::Result;
+    use anyhow::{Result, anyhow};
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -1106,6 +1387,15 @@ mod tests {
         entries: Vec<NodeEntry>,
         created: Mutex<u32>,
         database_lists: Mutex<u32>,
+        database_cycle_purchases: Mutex<Vec<DatabaseCyclesPurchaseRequest>>,
+        database_cycle_purchase_previews: Mutex<Vec<(String, u64)>>,
+        database_cycles_history: Mutex<Vec<String>>,
+        database_cycles_pending: Mutex<Vec<String>>,
+        database_cycle_purchase_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
+        database_cycle_purchase_repairs_cancel: Mutex<Vec<(String, u64)>>,
+        database_summaries: Mutex<Vec<DatabaseSummary>>,
+        cycles_configs: Mutex<u32>,
+        fail_cycles_config: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
         write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
@@ -1171,6 +1461,23 @@ mod tests {
         }
     }
 
+    fn database_summary(
+        database_id: &str,
+        balance_cycles: Option<u64>,
+        suspended_at_ms: Option<i64>,
+    ) -> DatabaseSummary {
+        DatabaseSummary {
+            database_id: database_id.to_string(),
+            name: database_id.to_string(),
+            status: DatabaseStatus::Active,
+            role: DatabaseRole::Owner,
+            logical_size_bytes: 42,
+            cycles_balance: balance_cycles,
+            cycles_suspended_at_ms: suspended_at_ms,
+            archived_at_ms: None,
+        }
+    }
+
     #[async_trait]
     impl VfsApi for MockClient {
         async fn status(&self, _database_id: &str) -> Result<Status> {
@@ -1184,12 +1491,140 @@ mod tests {
                 name: name.to_string(),
             })
         }
+        async fn purchase_database_cycles(
+            &self,
+            request: DatabaseCyclesPurchaseRequest,
+        ) -> Result<CyclesPurchaseResult> {
+            let cycles = request.expected_cycles;
+            self.database_cycle_purchases.lock().unwrap().push(request);
+            Ok(CyclesPurchaseResult {
+                block_index: 7,
+                balance_cycles: cycles,
+            })
+        }
+        async fn preview_database_cycles_purchase(
+            &self,
+            database_id: &str,
+            payment_amount_e8s: u64,
+        ) -> Result<DatabaseCyclesPurchasePreview> {
+            self.database_cycle_purchase_previews
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), payment_amount_e8s));
+            Ok(DatabaseCyclesPurchasePreview {
+                payment_amount_e8s,
+                cycles: payment_amount_e8s / 100_000,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                cycles_per_kinic: 1_000,
+                config_version: 3,
+            })
+        }
+        async fn list_database_cycle_entries(
+            &self,
+            database_id: &str,
+            _cursor: Option<u64>,
+            _limit: u32,
+        ) -> Result<DatabaseCycleEntryPage> {
+            self.database_cycles_history
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(DatabaseCycleEntryPage {
+                entries: vec![DatabaseCycleEntry {
+                    entry_id: 1,
+                    database_id: database_id.to_string(),
+                    kind: "credit_purchase".to_string(),
+                    amount_cycles: 500_000,
+                    balance_after_cycles: 500_000,
+                    payment_amount_e8s: Some(50_000_000_000),
+                    caller: "caller".to_string(),
+                    method: Some("purchase_database_cycles".to_string()),
+                    cycles_delta: None,
+                    cycles_per_kinic: None,
+                    ledger_block_index: Some(7),
+                    created_at_ms: 1,
+                }],
+                next_cursor: None,
+            })
+        }
+        async fn list_database_cycle_pending_operations(
+            &self,
+            database_id: &str,
+            _cursor: Option<u64>,
+            _limit: u32,
+        ) -> Result<DatabaseCyclePendingOperationPage> {
+            self.database_cycles_pending
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(DatabaseCyclePendingOperationPage {
+                entries: vec![DatabaseCyclePendingOperation {
+                    operation_id: 9,
+                    database_id: database_id.to_string(),
+                    kind: "credit_purchase".to_string(),
+                    caller: "caller".to_string(),
+                    cycles: 500_000,
+                    payment_amount_e8s: 50_000_000_000,
+                    from_owner: Some("caller".to_string()),
+                    from_subaccount: None,
+                    to_owner: Some("canister".to_string()),
+                    to_subaccount: None,
+                    ledger_fee_e8s: Some(10),
+                    ledger_created_at_time_ns: Some(1_700_000_000_000_000_000),
+                    created_at_ms: 1,
+                }],
+                next_cursor: None,
+            })
+        }
+        async fn repair_database_cycles_purchase_complete(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+            ledger_block_index: u64,
+        ) -> Result<CyclesPurchaseResult> {
+            self.database_cycle_purchase_repairs_complete
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id, ledger_block_index));
+            Ok(CyclesPurchaseResult {
+                block_index: ledger_block_index,
+                balance_cycles: 500_000,
+            })
+        }
+        async fn repair_database_cycles_purchase_cancel(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+        ) -> Result<()> {
+            self.database_cycle_purchase_repairs_cancel
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id));
+            Ok(())
+        }
+        async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
+            let mut configs = self.cycles_configs.lock().unwrap();
+            *configs += 1;
+            if *self.fail_cycles_config.lock().unwrap() {
+                return Err(anyhow!("credits config unavailable"));
+            }
+            Ok(CyclesBillingConfig {
+                kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                cycles_per_kinic: 1_000,
+                min_update_cycles: 1,
+            })
+        }
         async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
             Ok(())
         }
         async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
             let mut lists = self.database_lists.lock().unwrap();
             *lists += 1;
+            let summaries = self.database_summaries.lock().unwrap();
+            if !summaries.is_empty() {
+                return Ok(summaries.clone());
+            }
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
@@ -1371,9 +1806,6 @@ mod tests {
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
             unreachable!()
         }
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-            unreachable!()
-        }
         async fn graph_neighborhood(
             &self,
             request: GraphNeighborhoodRequest,
@@ -1431,6 +1863,202 @@ mod tests {
         .await
         .expect("write should succeed");
         assert_eq!(client.writes.lock().unwrap()[0].kind, NodeKind::Source);
+    }
+
+    #[tokio::test]
+    async fn write_node_rejects_low_cycles_balance_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(0), None)]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: true,
+            },
+        )
+        .await
+        .expect_err("low balance should reject");
+
+        assert!(error.to_string().contains("balance is below minimum"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mkdir_node_rejects_suspended_credits_before_write() {
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(20_000), Some(1))]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::MkdirNode {
+                path: "/Wiki/new".to_string(),
+                json: false,
+            },
+        )
+        .await
+        .expect_err("suspended credits should reject");
+
+        assert!(error.to_string().contains("credits are suspended"));
+    }
+
+    #[tokio::test]
+    async fn mutating_commands_reject_missing_credits_config_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            fail_cycles_config: Mutex::new(true),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("missing config should reject");
+
+        assert!(error.to_string().contains("credits config unavailable"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mutating_commands_reject_missing_database_summary_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("other", Some(20_000), None)]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("missing summary should reject");
+
+        assert!(error.to_string().contains("credits state unavailable"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn credits_gate_covers_content_mutation_commands_only() {
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::WriteNode {
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKindArg::File,
+                input: PathBuf::from("a.md"),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::AppendNode {
+                path: "/Wiki/a.md".to_string(),
+                input: PathBuf::from("a.md"),
+                kind: None,
+                metadata_json: None,
+                expected_etag: None,
+                separator: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::EditNode {
+                path: "/Wiki/a.md".to_string(),
+                old_text: "a".to_string(),
+                new_text: "b".to_string(),
+                expected_etag: None,
+                replace_all: false,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::DeleteNode {
+                path: "/Wiki/a.md".to_string(),
+                expected_etag: None,
+                expected_folder_index_etag: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::DeleteTree {
+                path: "/Wiki/a".to_string(),
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::MkdirNode {
+                path: "/Wiki/a".to_string(),
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::MoveNode {
+                from_path: "/Wiki/a.md".to_string(),
+                to_path: "/Wiki/b.md".to_string(),
+                expected_etag: None,
+                overwrite: false,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_credits_available(
+            &VfsCommand::MultiEditNode {
+                path: "/Wiki/a.md".to_string(),
+                edits_file: PathBuf::from("edits.json"),
+                expected_etag: None,
+                json: false,
+            }
+        ));
+        assert!(!command_requires_write_credits_available(
+            &VfsCommand::ReadNode {
+                path: "/Wiki/a.md".to_string(),
+                metadata_only: false,
+                fields: None,
+                json: false,
+            }
+        ));
+        assert!(!command_requires_write_credits_available(
+            &VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCredits {
+                    database_id: "alpha".to_string(),
+                    credits: 1,
+                },
+            }
+        ));
     }
 
     #[tokio::test]
@@ -1696,6 +2324,184 @@ mod tests {
         .await
         .expect("database create should succeed");
         assert_eq!(*client.created.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn database_credit_purchase_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCredits {
+                    database_id: "db_alpha".to_string(),
+                    credits: 500_000,
+                },
+            },
+        )
+        .await
+        .expect("database credit purchase should succeed");
+        assert_eq!(
+            *client.database_cycle_purchases.lock().unwrap(),
+            vec![DatabaseCyclesPurchaseRequest {
+                database_id: "db_alpha".to_string(),
+                payment_amount_e8s: 500_000,
+                expected_cycles: 5,
+                expected_config_version: 3,
+            }]
+        );
+        assert_eq!(
+            *client.database_cycle_purchase_previews.lock().unwrap(),
+            vec![("db_alpha".to_string(), 500_000)]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_credit_purchase_does_not_require_credits_precheck() {
+        let client = MockClient {
+            fail_cycles_config: Mutex::new(true),
+            ..MockClient::default()
+        };
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCredits {
+                    database_id: "db_alpha".to_string(),
+                    credits: 500_000,
+                },
+            },
+        )
+        .await
+        .expect("database credit purchase should not need credits precheck");
+        assert_eq!(
+            *client.database_cycle_purchases.lock().unwrap(),
+            vec![DatabaseCyclesPurchaseRequest {
+                database_id: "db_alpha".to_string(),
+                payment_amount_e8s: 500_000,
+                expected_cycles: 5,
+                expected_config_version: 3,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_history_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CreditsHistory {
+                    database_id: "db_alpha".to_string(),
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect("database credits-history should succeed");
+        assert_eq!(
+            *client.database_cycles_history.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_pending_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CreditsPending {
+                    database_id: "db_alpha".to_string(),
+                    json: true,
+                },
+            },
+        )
+        .await
+        .expect("database credits-pending should succeed");
+        assert_eq!(
+            *client.database_cycles_pending.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_repair_commands_call_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::RepairCreditPurchaseComplete {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 9,
+                    block_index: 77,
+                },
+            },
+        )
+        .await
+        .expect("repair credit purchase complete should succeed");
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::RepairCreditPurchaseCancel {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 10,
+                },
+            },
+        )
+        .await
+        .expect("repair credit purchase cancel should succeed");
+    }
+
+    #[test]
+    fn database_credits_url_uses_browser_origin() {
+        let url = super::database_credits_url(
+            Some("http://127.0.0.1:3000/"),
+            "aaaaa-aa",
+            "db alpha",
+            500_000,
+        )
+        .expect("url should build");
+
+        assert_eq!(
+            url,
+            "http://127.0.0.1:3000/credits?canisterId=aaaaa-aa&databaseId=db%20alpha&credits=500000"
+        );
+    }
+
+    #[tokio::test]
+    async fn credits_config_json_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Credits {
+                command: CreditsCommand::Config { json: true },
+            },
+        )
+        .await
+        .expect("credits config should succeed");
+        assert_eq!(*client.cycles_configs.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn credits_config_text_includes_governance_principal() {
+        let lines = super::credits_config_lines(
+            &CyclesBillingConfig {
+                kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                cycles_per_kinic: 1_000,
+                min_update_cycles: 1,
+            },
+            KINIC_LEDGER_FEE_E8S,
+        );
+
+        assert!(lines.contains(&"sns_governance_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
+        assert!(lines.contains(&"ledger_fee_e8s\t10000".to_string()));
     }
 
     #[tokio::test]

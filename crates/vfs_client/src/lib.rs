@@ -15,15 +15,16 @@ use vfs_types::{
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
     DatabaseCycleEntryPage, DatabaseCyclePendingOperationPage, DatabaseCyclesPurchasePreview,
     DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryManifest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 #[async_trait]
@@ -134,7 +135,7 @@ pub trait VfsApi: Sync {
     async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
         Err(anyhow!("list_databases is not implemented by this client"))
     }
-    async fn delete_database(&self, _database_id: &str) -> Result<()> {
+    async fn delete_database(&self, _request: DeleteDatabaseRequest) -> Result<()> {
         Err(anyhow!("delete_database is not implemented by this client"))
     }
     async fn begin_database_archive(&self, _database_id: &str) -> Result<DatabaseArchiveInfo> {
@@ -212,7 +213,6 @@ pub trait VfsApi: Sync {
     async fn move_node(&self, request: MoveNodeRequest) -> Result<MoveNodeResult>;
     async fn mkdir_node(&self, request: MkdirNodeRequest) -> Result<MkdirNodeResult>;
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>>;
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>>;
     async fn graph_links(&self, _request: GraphLinksRequest) -> Result<Vec<LinkEdge>> {
         Err(anyhow!("graph_links is not implemented by this client"))
     }
@@ -616,10 +616,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn delete_database(&self, database_id: &str) -> Result<()> {
-        let result: Result<(), String> = self
-            .update("delete_database", &database_id.to_string())
-            .await?;
+    async fn delete_database(&self, request: DeleteDatabaseRequest) -> Result<()> {
+        let result: Result<(), String> = self.update("delete_database", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -771,12 +769,6 @@ impl VfsApi for CanisterVfsClient {
 
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         let result: Result<Vec<GlobNodeHit>, String> = self.query("glob_nodes", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        let result: Result<Vec<RecentNodeHit>, String> =
-            self.query("recent_nodes", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

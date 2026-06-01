@@ -350,17 +350,6 @@ type QueryContextRequest = record {
   depth : nat32;
   namespace : opt text;
 };
-type RecentNodeHit = record {
-  updated_at : int64;
-  etag : text;
-  kind : NodeKind;
-  path : text;
-};
-type RecentNodesRequest = record {
-  path : opt text;
-  limit : nat32;
-  database_id : text;
-};
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : vec GlobNodeHit; Err : text };
@@ -381,12 +370,11 @@ type Result_23 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
 type Result_24 = variant { Ok : DatabaseArchiveChunk; Err : text };
 type Result_25 = variant { Ok : opt Node; Err : text };
 type Result_26 = variant { Ok : opt NodeContext; Err : text };
-type Result_27 = variant { Ok : vec RecentNodeHit; Err : text };
-type Result_28 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_29 = variant { Ok : SourceEvidence; Err : text };
+type Result_27 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_28 = variant { Ok : SourceEvidence; Err : text };
+type Result_29 = variant { Ok : vec WriteNodeResult; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
-type Result_30 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_31 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_30 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_6 = variant { Ok : EditNodeResult; Err : text };
@@ -462,7 +450,7 @@ type WriteNodeRequest = record {
   metadata_json : text;
   database_id : text;
 };
-type WriteNodeResult = record { created : bool; node : RecentNodeHit };
+type WriteNodeResult = record { created : bool; node : NodeMutationAck };
 type WriteNodesRequest = record {
   nodes : vec WriteNodeItem;
   database_id : text;
@@ -535,23 +523,22 @@ service : (CyclesBillingConfig) -> {
   read_database_archive_chunk : (text, nat64, nat32) -> (Result_24) query;
   read_node : (text, text) -> (Result_25) query;
   read_node_context : (NodeContextRequest) -> (Result_26) query;
-  recent_nodes : (RecentNodesRequest) -> (Result_27) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
   repair_database_cycles_purchase_cancel : (text, nat64) -> (Result_1);
   repair_database_cycles_purchase_complete : (text, nat64, nat64) -> (
       Result_21,
     );
   revoke_database_access : (text, text) -> (Result_1);
-  search_node_paths : (SearchNodePathsRequest) -> (Result_28) query;
-  search_nodes : (SearchNodesRequest) -> (Result_28) query;
+  search_node_paths : (SearchNodePathsRequest) -> (Result_27) query;
+  search_nodes : (SearchNodesRequest) -> (Result_27) query;
   settle_database_storage_charges : () -> (Result_1);
-  source_evidence : (SourceEvidenceRequest) -> (Result_29) query;
+  source_evidence : (SourceEvidenceRequest) -> (Result_28) query;
   status : (text) -> (Status) query;
   update_cycles_billing_config : (blob) -> (Result_1);
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_30);
+  write_nodes : (WriteNodesRequest) -> (Result_29);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_31,
+      Result_30,
     );
 }

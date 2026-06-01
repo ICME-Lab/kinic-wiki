@@ -2,18 +2,18 @@ use crate::cli::{Cli, Command, ConnectionArgs, IdentityModeArg, NodeKindArg};
 use crate::commands::run_command;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use std::cmp::Reverse;
 use std::collections::HashSet;
 use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    NodeKind, NodeMutationAck, RecentNodeHit, RecentNodesRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, CyclesBillingConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeKind,
+    NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 #[derive(Default)]
@@ -31,7 +31,6 @@ pub(crate) struct MockClient {
     pub(crate) mkdirs: std::sync::Mutex<Vec<MkdirNodeRequest>>,
     pub(crate) moves: std::sync::Mutex<Vec<MoveNodeRequest>>,
     pub(crate) globs: std::sync::Mutex<Vec<GlobNodesRequest>>,
-    pub(crate) recents: std::sync::Mutex<Vec<RecentNodesRequest>>,
     pub(crate) multi_edits: std::sync::Mutex<Vec<MultiEditNodeRequest>>,
     pub(crate) searches: std::sync::Mutex<Vec<SearchNodesRequest>>,
     pub(crate) path_searches: std::sync::Mutex<Vec<SearchNodePathsRequest>>,
@@ -57,6 +56,28 @@ impl VfsApi for MockClient {
             file_count: 0,
             source_count: 0,
         })
+    }
+
+    async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
+        Ok(CyclesBillingConfig {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            sns_governance_id: "aaaaa-aa".to_string(),
+            cycles_per_kinic: 1_000,
+            min_update_cycles: 1,
+        })
+    }
+
+    async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
+        Ok(vec![DatabaseSummary {
+            database_id: "default".to_string(),
+            name: "Default".to_string(),
+            status: DatabaseStatus::Active,
+            role: DatabaseRole::Owner,
+            logical_size_bytes: 0,
+            cycles_balance: Some(10),
+            cycles_suspended_at_ms: None,
+            archived_at_ms: None,
+        }])
     }
 
     async fn read_node(&self, _database_id: &str, _path: &str) -> Result<Option<Node>> {
@@ -200,30 +221,6 @@ impl VfsApi for MockClient {
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         self.globs.lock().expect("globs should lock").push(request);
         Ok(Vec::new())
-    }
-
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        self.recents
-            .lock()
-            .expect("recents should lock")
-            .push(request.clone());
-        let mut hits = self
-            .nodes
-            .iter()
-            .filter(|node| match &request.path {
-                Some(path) => node.path.starts_with(path),
-                None => true,
-            })
-            .map(|node| RecentNodeHit {
-                path: node.path.clone(),
-                kind: node.kind.clone(),
-                updated_at: node.updated_at,
-                etag: node.etag.clone(),
-            })
-            .collect::<Vec<_>>();
-        hits.sort_by_key(|right| Reverse(right.updated_at));
-        hits.truncate(request.limit as usize);
-        Ok(hits)
     }
 
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {

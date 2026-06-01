@@ -75,7 +75,7 @@ flowchart LR
 ### 5.3 `vfs_store`
 
 - SQLite 正本層
-- CRUD、move、append、multi edit、glob、recent、FTS search、link graph、node context、Agent Memory query、snapshot export、delta sync を集約
+- CRUD、move、append、multi edit、glob、FTS search、link graph、node context、Agent Memory query、snapshot export、delta sync を集約
 - `schema.rs` で versioned migration を適用
 - `fs_change_log` と `fs_path_state` により sync 差分を計算
 - FTS preview 生成は ranking と分離して性能劣化を抑制
@@ -109,7 +109,7 @@ flowchart LR
 - `canister_health`
 - `read_node`, `list_nodes`, `list_children`
 - `write_node`, `append_node`, `edit_node`, `delete_node`, `move_node`
-- `mkdir_node`, `glob_nodes`, `recent_nodes`, `multi_edit_node`
+- `mkdir_node`, `glob_nodes`, `multi_edit_node`
 - `search_nodes`, `search_node_paths`
 - `read_node_context`, `incoming_links`, `outgoing_links`, `graph_links`, `graph_neighborhood`
 - `memory_manifest`, `query_context`, `source_evidence`
@@ -190,12 +190,12 @@ sequenceDiagram
 | --- | --- | --- |
 | build | `build-vfs-canister.sh`, `build-vfs-canister-canbench.sh` | canister build |
 | canbench | `run_canbench_guard.sh`, `run_canbench_scale.sh`, `canbench/*.py` | canbench 集計・比較 |
-| bench | `bench/run_beam_bench.sh`, `bench/run_canister_vfs_*.sh` | beam / canister workload |
+| bench | `bench/run_canister_vfs_*.sh` | canister workload |
 | env | `setup_canbench_ci.sh` | 実行環境補助 |
 
 ### 8.3 `fixtures/`
 
-- `fixtures/beam/`: beam sample 入力
+- 現在、永続 fixture はない
 
 ### 8.4 `artifacts/`
 

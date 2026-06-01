@@ -7,9 +7,9 @@ use vfs_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodeType, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
     MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, NodeMutationAck, RecentNodeHit,
-    RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, Status, WriteNodeRequest, WriteNodeResult,
+    MultiEditNodeResult, Node, NodeEntry, NodeEntryKind, NodeKind, NodeMutationAck, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, Status, WriteNodeRequest,
+    WriteNodeResult,
 };
 
 use vfs_cli::agent_tools::{
@@ -26,7 +26,6 @@ struct ToolMockClient {
     move_requests: std::sync::Mutex<Vec<MoveNodeRequest>>,
     list_requests: std::sync::Mutex<Vec<ListNodesRequest>>,
     glob_requests: std::sync::Mutex<Vec<GlobNodesRequest>>,
-    recent_requests: std::sync::Mutex<Vec<RecentNodesRequest>>,
     context_requests: std::sync::Mutex<Vec<vfs_types::NodeContextRequest>>,
     graph_requests: std::sync::Mutex<Vec<vfs_types::GraphNeighborhoodRequest>>,
     graph_link_requests: std::sync::Mutex<Vec<vfs_types::GraphLinksRequest>>,
@@ -186,19 +185,6 @@ impl VfsApi for ToolMockClient {
         }])
     }
 
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        self.recent_requests
-            .lock()
-            .expect("recent lock should succeed")
-            .push(request);
-        Ok(vec![RecentNodeHit {
-            path: "/Wiki/a.md".to_string(),
-            kind: NodeKind::File,
-            updated_at: 2,
-            etag: "etag-a".to_string(),
-        }])
-    }
-
     async fn graph_links(
         &self,
         request: vfs_types::GraphLinksRequest,
@@ -334,10 +320,6 @@ async fn agent_tools_default_read_scopes_to_vfs_root() {
             serde_json::json!({ "database_id": "default", "pattern": "**/*.md" }),
         ),
         (
-            "recent",
-            serde_json::json!({ "database_id": "default", "limit": 5 }),
-        ),
-        (
             "search",
             serde_json::json!({ "database_id": "default", "query_text": "nested" }),
         ),
@@ -370,14 +352,6 @@ async fn agent_tools_default_read_scopes_to_vfs_root() {
     );
     assert_eq!(
         client
-            .recent_requests
-            .lock()
-            .expect("recent lock should succeed")[0]
-            .path,
-        Some("/".to_string())
-    );
-    assert_eq!(
-        client
             .search_requests
             .lock()
             .expect("search lock should succeed")[0]
@@ -398,8 +372,8 @@ async fn agent_tools_default_read_scopes_to_vfs_root() {
 fn tool_schemas_include_minimal_vfs_tools() {
     let openai = create_openai_tools();
     let anthropic = create_anthropic_tools();
-    assert_eq!(openai.len(), 22);
-    assert_eq!(anthropic.len(), 22);
+    assert_eq!(openai.len(), 21);
+    assert_eq!(anthropic.len(), 21);
 
     let openai_names = tool_names(&openai, "function");
     let anthropic_names = tool_names(&anthropic, "name");
@@ -414,7 +388,6 @@ fn tool_schemas_include_minimal_vfs_tools() {
         "mkdir",
         "mv",
         "glob",
-        "recent",
         "graph_neighborhood",
         "graph_links",
         "incoming_links",
@@ -445,9 +418,6 @@ fn read_only_tool_schemas_exclude_skill_record_run() {
 #[test]
 fn tool_schemas_cap_query_result_limits() {
     let openai = create_openai_tools();
-    let recent = openai_tool_parameters(&openai, "recent");
-    assert_eq!(recent["properties"]["limit"]["maximum"], 100);
-
     let search = openai_tool_parameters(&openai, "search");
     assert_eq!(search["properties"]["top_k"]["maximum"], 100);
     assert_eq!(
@@ -645,7 +615,7 @@ async fn anthropic_dispatch_rm_keeps_explicit_folder_index_etag() {
 }
 
 #[tokio::test]
-async fn anthropic_dispatch_routes_move_glob_recent_and_multi_edit() {
+async fn anthropic_dispatch_routes_move_glob_and_multi_edit() {
     let client = ToolMockClient::default();
 
     let moved = handle_anthropic_tool_call(
@@ -676,19 +646,6 @@ async fn anthropic_dispatch_routes_move_glob_recent_and_multi_edit() {
     .await
     .expect("glob tool should succeed");
     assert!(!globbed.is_error);
-
-    let recent = handle_anthropic_tool_call(
-        &client,
-        "recent",
-        serde_json::json!({
-            "database_id": "default",
-            "limit": 5,
-            "path": "/Wiki"
-        }),
-    )
-    .await
-    .expect("recent tool should succeed");
-    assert!(!recent.is_error);
 
     let multi_edit = handle_anthropic_tool_call(
         &client,
@@ -722,14 +679,6 @@ async fn anthropic_dispatch_routes_move_glob_recent_and_multi_edit() {
             .expect("glob lock should succeed")[0]
             .node_type,
         Some(GlobNodeType::Directory)
-    );
-    assert_eq!(
-        client
-            .recent_requests
-            .lock()
-            .expect("recent lock should succeed")[0]
-            .limit,
-        5
     );
     assert_eq!(
         client

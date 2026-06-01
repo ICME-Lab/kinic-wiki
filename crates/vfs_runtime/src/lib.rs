@@ -29,10 +29,9 @@ use vfs_types::{
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult,
 };
@@ -2130,17 +2129,6 @@ impl VfsService {
         let database_id = request.database_id.clone();
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
             store.glob_nodes(request)
-        })
-    }
-
-    pub fn recent_nodes(
-        &self,
-        caller: &str,
-        request: RecentNodesRequest,
-    ) -> Result<Vec<RecentNodeHit>, String> {
-        let database_id = request.database_id.clone();
-        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.recent_nodes(request)
         })
     }
 

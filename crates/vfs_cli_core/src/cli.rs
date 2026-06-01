@@ -56,6 +56,10 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum VfsCommand {
+    Credits {
+        #[command(subcommand)]
+        command: CreditsCommand,
+    },
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
@@ -177,14 +181,6 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
-    RecentNodes {
-        #[arg(long, help = "Maximum 100; 0 is treated as 1 by the canister")]
-        limit: u32,
-        #[arg(long, alias = "prefix", default_value = DEFAULT_VFS_ROOT_PATH)]
-        path: String,
-        #[arg(long)]
-        json: bool,
-    },
     ReadNodeContext {
         #[arg(long)]
         path: String,
@@ -273,6 +269,38 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Purchase non-refundable database credits with KINIC")]
+    PurchaseCredits { database_id: String, credits: u64 },
+    #[command(about = "List credits ledger entries for one database")]
+    CreditsHistory {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List pending credit operations for one database")]
+    CreditsPending {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Verified complete: complete a pending credit purchase with a ledger block")]
+    RepairCreditPurchaseComplete {
+        database_id: String,
+        operation_id: u64,
+        block_index: u64,
+    },
+    #[command(about = "Governance repair: cancel a pending credit purchase")]
+    RepairCreditPurchaseCancel {
+        database_id: String,
+        operation_id: u64,
+    },
+    #[command(about = "Open the browser credits purchase page for one database")]
+    Credits {
+        database_id: String,
+        credits: u64,
+        #[arg(long)]
+        browser_origin: Option<String>,
+    },
     #[command(about = "Save a workspace database link so commands can omit --database-id")]
     Link { database_id: String },
     #[command(about = "Show the currently linked workspace database")]
@@ -316,7 +344,7 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Restore one archived or deleted database from a snapshot")]
+    #[command(about = "Restore one archived database from a snapshot")]
     ArchiveRestore {
         database_id: String,
         #[arg(long)]
@@ -330,6 +358,15 @@ pub enum DatabaseCommand {
     ArchiveCancel { database_id: String },
     #[command(about = "Cancel an interrupted archive restore")]
     RestoreCancel { database_id: String },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CreditsCommand {
+    #[command(about = "Show canister credits configuration")]
+    Config {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
