@@ -14,7 +14,6 @@ This checklist records what the current FS-first contract already covers, what w
 | `move_node` / overwrite | `fs_store_vfs`, `fs_store_sync`, `vfs_canister` | covered |
 | `list_nodes` shallow / recursive / virtual directory | `fs_store_basic`, `fs_store_scale`, `vfs_canister` | covered |
 | deep `glob_nodes("**/*.md")` | `fs_store_vfs`, `fs_store_scale` | covered |
-| `recent_nodes` | `fs_store_vfs`, `vfs_canister` | covered |
 | `search_nodes` prefix filtering / deleted node suppression | `fs_store_basic`, `fs_store_scale`, `tests_sync_contract` | covered |
 | `export_snapshot` stability | `fs_store_basic`, `fs_store_sync`, `vfs_canister` | covered |
 | `fetch_updates` empty delta | `fs_store_sync`, `vfs_canister` | covered |

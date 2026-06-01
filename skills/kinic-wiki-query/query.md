@@ -28,7 +28,7 @@ Answer questions against the current wiki using the canister Agent Memory API wh
 - Do not return `insufficient evidence` while a directly linked or role-matched page remains unread.
 - Use `search-path-remote` and `search-remote` as targeted recall steps only after direct canonical-note context reads are insufficient.
 - Use `graph-neighborhood` only when incoming or outgoing links from an already-read note are relevant to the question.
-- Use `recent-nodes` for recent live nodes only. It is not a delete-aware change log.
+- Use `list-nodes --recursive` for scoped live node inventory. It is not a delete-aware change log.
 - Treat `search-path-remote` as path and basename recall.
 - Treat `search-remote` as FTS-based content recall.
 - If the question shape is still unclear after reading `/Wiki/index.md`, follow the current note roles from `docs/internal/WIKI_CANONICALITY.md` rather than inventing ad hoc search order.
@@ -80,5 +80,5 @@ Answer questions against the current wiki using the canister Agent Memory API wh
 
 - Preferred query primitives:
   - Canister Agent Memory API: `memory_manifest`, `query_context`, `source_evidence`
-  - CLI fallback commands: `read-node-context`, `read-node`, `list-children`, `list-nodes`, `search-remote`, `search-path-remote`, `recent-nodes`, `graph-neighborhood`, `incoming-links`, `outgoing-links`
+  - CLI fallback commands: `read-node-context`, `read-node`, `list-children`, `list-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`
   - Use `list-children` for one-level navigation and `list-nodes --prefix <path> --recursive --json` for inventory.

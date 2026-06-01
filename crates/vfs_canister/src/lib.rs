@@ -9,7 +9,11 @@ use std::fs::create_dir_all;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
-use candid::{CandidType, Deserialize, Principal, export_service};
+#[cfg(any(target_arch = "wasm32", test))]
+use candid::utils::decode_args;
+use candid::{CandidType, Decode, Deserialize, Nat, Principal, export_service};
+#[cfg(not(test))]
+use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
 use ic_http_certification::{
     CERTIFICATE_EXPRESSION_HEADER_NAME, DefaultCelBuilder, DefaultResponseCertification,
@@ -22,24 +26,29 @@ use ic_sqlite_vfs::{Db, DbHandle};
 use ic_stable_structures::DefaultMemoryImpl;
 #[cfg(target_arch = "wasm32")]
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
-use vfs_runtime::{DatabaseMeta, UsageEvent, VfsService};
+use vfs_runtime::{
+    CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, DatabaseMeta,
+    RequiredRole, VfsService,
+};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
-    CreateDatabaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    CreateDatabaseResult, CreditsConfig, CreditsConfigUpdate, CreditsPurchaseResult,
+    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCreditEntryPage,
+    DatabaseCreditPendingOperation, DatabaseCreditPendingOperationPage,
+    DatabaseCreditPurchasePreview, DatabaseCreditPurchaseRequest, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
+    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RecentNodeHit, RecentNodesRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -80,15 +89,200 @@ thread_local! {
     static DATABASE_HANDLES: RefCell<BTreeMap<u16, DbHandle>> = const { RefCell::new(BTreeMap::new()) };
 }
 
+#[derive(Clone, Debug)]
+enum LedgerTransferFromOutcome {
+    Completed(u64),
+    LedgerErr(String),
+    Ambiguous(String),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize)]
+struct IcrcAccount {
+    owner: Principal,
+    subaccount: Option<Vec<u8>>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct TransferArg {
+    from_subaccount: Option<Vec<u8>>,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct TransferFromArg {
+    spender_subaccount: Option<Vec<u8>>,
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct GetTransactionsRequest {
+    start: Nat,
+    length: Nat,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetTransactionsResponse {
+    transactions: Vec<LedgerTransaction>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LedgerTransaction {
+    kind: String,
+    transfer: Option<LedgerTransfer>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LedgerTransfer {
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    spender: Option<IcrcAccount>,
+}
+
+#[derive(Clone, Debug)]
+struct ExpectedLedgerTransfer {
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    ledger_fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time_ns: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentMessageRequest {
+    arg: Vec<u8>,
+    method: String,
+    user_preferences: Icrc21ConsentMessageSpec,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentMessageSpec {
+    metadata: Icrc21ConsentMessageMetadata,
+    device_spec: Option<Icrc21DeviceSpec>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentMessageMetadata {
+    utc_offset_minutes: Option<i16>,
+    language: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21DeviceSpec {
+    GenericDisplay,
+    FieldsDisplay,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21ConsentMessage {
+    GenericDisplayMessage(String),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ConsentInfo {
+    metadata: Icrc21ConsentMessageMetadata,
+    consent_message: Icrc21ConsentMessage,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21ErrorInfo {
+    description: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc21GenericError {
+    description: String,
+    error_code: Nat,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21Error {
+    GenericError(Icrc21GenericError),
+    InsufficientPayment(Icrc21ErrorInfo),
+    UnsupportedCanisterCall(Icrc21ErrorInfo),
+    ConsentMessageUnavailable(Icrc21ErrorInfo),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum Icrc21ConsentMessageResponse {
+    Ok(Icrc21ConsentInfo),
+    Err(Icrc21Error),
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct Icrc10SupportedStandard {
+    name: String,
+    url: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum TransferError {
+    BadFee { expected_fee: Nat },
+    BadBurn { min_burn_amount: Nat },
+    InsufficientFunds { balance: Nat },
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: Nat },
+    TemporarilyUnavailable,
+    GenericError { error_code: Nat, message: String },
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+enum TransferFromError {
+    BadFee { expected_fee: Nat },
+    BadBurn { min_burn_amount: Nat },
+    InsufficientFunds { balance: Nat },
+    InsufficientAllowance { allowance: Nat },
+    TooOld,
+    CreatedInFuture { ledger_time: u64 },
+    Duplicate { duplicate_of: Nat },
+    TemporarilyUnavailable,
+    GenericError { error_code: Nat, message: String },
+}
+
 #[init]
-fn init_hook() {
-    initialize_or_trap();
+fn init_hook(config: CreditsConfig) {
+    initialize_or_trap(Some(config));
     certify_http_responses();
 }
 
 #[post_upgrade]
 fn post_upgrade_hook() {
-    initialize_or_trap();
+    let config = post_upgrade_credits_config_arg().unwrap_or_else(|error| ic_cdk::trap(&error));
+    initialize_upgrade_or_trap(config);
     certify_http_responses();
 }
 
@@ -175,39 +369,23 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 
 #[update]
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
-    with_usage_derived_database_id(
-        "create_database",
-        None,
-        |service, caller, now| {
-            let meta = service.reserve_generated_database(&request.name, caller, now)?;
-            if let Err(error) = mount_database_file(&meta) {
-                let cleanup_error = service
-                    .discard_database_reservation(&meta.database_id)
-                    .err();
-                return Err(database_create_error(error, cleanup_error));
-            }
-            if let Err(error) = service.run_database_migrations(&meta.database_id) {
-                unmount_database_file(&meta.db_file_name);
-                let cleanup_error = service
-                    .discard_database_reservation(&meta.database_id)
-                    .err();
-                return Err(database_create_error(error, cleanup_error));
-            }
-            Ok(CreateDatabaseResult {
-                database_id: meta.database_id,
-                name: meta.name,
-            })
-        },
-        |result| Some(result.database_id.clone()),
-    )
+    require_authenticated_caller()?;
+    with_unmetered_update("create_database", None, |service, caller, now| {
+        let meta = service.reserve_pending_generated_database(&request.name, caller, now)?;
+        Ok(CreateDatabaseResult {
+            database_id: meta.database_id,
+            name: meta.name,
+        })
+    })
 }
 
 #[update]
 fn rename_database(request: RenameDatabaseRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_role_unmetered_update(
         "rename_database",
         Some(database_id),
+        RequiredRole::Owner,
         |service, caller, now| {
             service.rename_database(&request.database_id, caller, &request.name, now)
         },
@@ -220,9 +398,10 @@ fn grant_database_access(
     principal: String,
     role: DatabaseRole,
 ) -> Result<(), String> {
-    with_usage(
+    with_role_unmetered_update(
         "grant_database_access",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let principal = Principal::from_text(&principal)
                 .map_err(|error| format!("invalid principal: {error}"))?
@@ -234,9 +413,10 @@ fn grant_database_access(
 
 #[update]
 fn revoke_database_access(database_id: String, principal: String) -> Result<(), String> {
-    with_usage(
+    with_role_unmetered_update(
         "revoke_database_access",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, _now| {
             let principal = Principal::from_text(&principal)
                 .map_err(|error| format!("invalid principal: {error}"))?
@@ -256,20 +436,355 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
     with_service(|service| service.list_database_summaries_for_caller(&caller_text()))
 }
 
+#[query]
+fn preview_database_credit_purchase(
+    database_id: String,
+    credits: u64,
+) -> Result<DatabaseCreditPurchasePreview, String> {
+    with_service(|service| service.preview_database_credit_purchase(&database_id, credits))
+}
+
+#[query]
+fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
+    vec![Icrc10SupportedStandard {
+        name: "ICRC-21".to_string(),
+        url: "https://github.com/dfinity/ICRC/blob/main/ICRCs/ICRC-21/ICRC-21.md".to_string(),
+    }]
+}
+
 #[update]
-fn delete_database(database_id: String) -> Result<(), String> {
-    with_usage(
+fn icrc21_canister_call_consent_message(
+    request: Icrc21ConsentMessageRequest,
+) -> Icrc21ConsentMessageResponse {
+    if request.method != "purchase_database_credits" {
+        return icrc21_unsupported(format!("unsupported canister call: {}", request.method));
+    }
+    let purchase = match Decode!(&request.arg, DatabaseCreditPurchaseRequest) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            return icrc21_unavailable(format!(
+                "purchase_database_credits argument decode failed: {error}"
+            ));
+        }
+    };
+    let preview = match with_service(|service| {
+        service.preview_database_credit_purchase(&purchase.database_id, purchase.credits)
+    }) {
+        Ok(preview) => preview,
+        Err(error) => return icrc21_unsupported(error),
+    };
+    if let Err(error) = validate_credit_purchase_expectations(&purchase, &preview) {
+        return icrc21_unsupported(error);
+    }
+    let language = if request.user_preferences.metadata.language.trim().is_empty() {
+        "en".to_string()
+    } else {
+        request.user_preferences.metadata.language
+    };
+    Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+        metadata: Icrc21ConsentMessageMetadata {
+            language,
+            utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
+        },
+        consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+            "# Purchase Kinic database credits\n\nDatabase: `{database_id}`\n\nCredits: `{credits}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
+            database_id = purchase.database_id,
+            credits = purchase.credits,
+            payment = format_e8s(preview.payment_amount_e8s),
+            fee = format_e8s(preview.ledger_fee_e8s),
+            spender = canister_principal().to_text()
+        )),
+    })
+}
+
+#[update]
+async fn purchase_database_credits(
+    request: DatabaseCreditPurchaseRequest,
+) -> Result<CreditsPurchaseResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let now = now_millis();
+    let config = with_service(|service| service.credits_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let preview = with_service(|service| {
+        service.preview_database_credit_purchase(&request.database_id, request.credits)
+    })?;
+    validate_credit_purchase_expectations(&request, &preview)?;
+    let ledger_fee_e8s = preview.ledger_fee_e8s;
+    let payment_amount_e8s = preview.payment_amount_e8s;
+    let ledger_created_at_time_ns = now_nanos();
+    let canister_owner = canister_principal().to_text();
+    let operation_id = match with_service(|service| {
+        service.begin_database_credit_purchase_with_ledger_details(
+            DatabaseCreditPurchaseWithLedgerDetails {
+                database_id: &request.database_id,
+                caller: &caller,
+                credits: request.credits,
+                expected_payment_amount_e8s: request.expected_payment_amount_e8s,
+                expected_config_version: request.expected_config_version,
+                ledger: CreditsPendingLedgerDetailsInput {
+                    from_owner: &caller,
+                    from_subaccount: None,
+                    to_owner: &canister_owner,
+                    to_subaccount: None,
+                    ledger_fee_e8s,
+                    ledger_created_at_time_ns,
+                },
+                now,
+            },
+        )
+    }) {
+        Ok(operation_id) => operation_id,
+        Err(error) => return Err(error),
+    };
+    match ledger_transfer_from(
+        ledger,
+        IcrcAccount {
+            owner: caller_principal(),
+            subaccount: None,
+        },
+        IcrcAccount {
+            owner: canister_principal(),
+            subaccount: None,
+        },
+        payment_amount_e8s,
+        ledger_fee_e8s,
+        operation_id,
+        ledger_created_at_time_ns,
+    )
+    .await
+    {
+        LedgerTransferFromOutcome::Completed(block_index) => {
+            with_service(|service| {
+                service.mark_database_credit_purchase_completed(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    request.credits,
+                )
+            })
+            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
+            activate_pending_database_after_credit_purchase_ledger_success(
+                &request.database_id,
+                now,
+            )
+            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
+            #[cfg(test)]
+            if TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
+                return Err(credit_purchase_local_apply_error(
+                    operation_id,
+                    block_index,
+                    "test credit purchase apply failure".to_string(),
+                ));
+            }
+            let balance = with_service(|service| {
+                service.credit_database_purchase(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    request.credits,
+                    block_index,
+                    now,
+                )
+            })
+            .map_err(|error| credit_purchase_local_apply_error(operation_id, block_index, error))?;
+            Ok(CreditsPurchaseResult {
+                block_index,
+                balance_credits: balance,
+            })
+        }
+        LedgerTransferFromOutcome::LedgerErr(error) => {
+            let _ = with_service(|service| {
+                service.cancel_database_credit_purchase(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    request.credits,
+                )
+            });
+            Err(error)
+        }
+        LedgerTransferFromOutcome::Ambiguous(error) => {
+            match with_service(|service| {
+                service.mark_database_credit_purchase_ambiguous(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    request.credits,
+                    now,
+                )
+            }) {
+                Ok(_) => Err(format!(
+                    "credit purchase pending operation {operation_id}; manual repair required: {error}"
+                )),
+                Err(mark_error) => Err(format!(
+                    "credit purchase pending operation {operation_id}; ledger result ambiguous; mark ambiguous failed: {mark_error}; original ledger error: {error}"
+                )),
+            }
+        }
+    }
+}
+
+fn validate_credit_purchase_expectations(
+    request: &DatabaseCreditPurchaseRequest,
+    preview: &DatabaseCreditPurchasePreview,
+) -> Result<(), String> {
+    if request.expected_config_version != preview.config_version {
+        return Err(format!(
+            "credits config changed: expected version {}, current version {}",
+            request.expected_config_version, preview.config_version
+        ));
+    }
+    if request.expected_payment_amount_e8s != preview.payment_amount_e8s {
+        return Err(format!(
+            "credit purchase payment amount changed: expected {}, current {}",
+            request.expected_payment_amount_e8s, preview.payment_amount_e8s
+        ));
+    }
+    Ok(())
+}
+
+#[query]
+fn list_database_credit_entries(
+    database_id: String,
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<DatabaseCreditEntryPage, String> {
+    with_service(|service| {
+        service.list_database_credit_entries(&database_id, &caller_text(), cursor, limit)
+    })
+}
+
+#[query]
+fn list_database_credit_pending_operations(
+    database_id: String,
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<DatabaseCreditPendingOperationPage, String> {
+    with_service(|service| {
+        service.list_database_credit_pending_operations(&database_id, &caller_text(), cursor, limit)
+    })
+}
+
+#[query]
+fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResult, String> {
+    require_controller_caller()?;
+    with_service(|service| service.query_index_sql_json(&sql, limit))
+}
+
+#[update]
+async fn repair_database_credit_purchase_complete(
+    database_id: String,
+    operation_id: u64,
+    ledger_block_index: u64,
+) -> Result<CreditsPurchaseResult, String> {
+    require_authenticated_caller()?;
+    let config = with_service(|service| service.credits_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let operation = with_service(|service| {
+        service.get_database_credit_pending_operation_for_complete(&database_id, operation_id)
+    })?;
+    let expected = expected_credit_purchase_transfer(&operation)?;
+    validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
+    with_service(|service| {
+        service.mark_database_credit_purchase_repair_completed(&database_id, operation_id)
+    })?;
+    let now = now_millis();
+    activate_pending_database_after_credit_purchase_ledger_success(&database_id, now).map_err(
+        |error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error),
+    )?;
+    let balance = with_service(|service| {
+        service.repair_database_credit_purchase_complete(
+            &database_id,
+            operation_id,
+            ledger_block_index,
+            now,
+        )
+    })
+    .map_err(|error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error))?;
+    Ok(CreditsPurchaseResult {
+        block_index: ledger_block_index,
+        balance_credits: balance,
+    })
+}
+
+fn activate_pending_database_after_credit_purchase_ledger_success(
+    database_id: &str,
+    now: i64,
+) -> Result<(), String> {
+    let activation = with_service(|service| {
+        service.activate_pending_database_for_credit_purchase(database_id, now)
+    })?;
+    if let Some(meta) = &activation {
+        if let Err(error) = mount_database_file(meta) {
+            return Err(database_create_error(error, None));
+        }
+        if let Err(error) =
+            with_service(|service| service.run_pending_database_migrations(database_id))
+        {
+            unmount_database_file(&meta.db_file_name);
+            return Err(database_create_error(error, None));
+        }
+    }
+    Ok(())
+}
+
+fn credit_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+    format!(
+        "credit purchase payment completed but local credit application failed; pending operation {operation_id} can be completed with verified ledger block {block_index}: {cause}"
+    )
+}
+
+#[update]
+fn repair_database_credit_purchase_cancel(
+    database_id: String,
+    operation_id: u64,
+) -> Result<(), String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    with_service(|service| {
+        service.repair_database_credit_purchase_cancel(
+            &database_id,
+            operation_id,
+            &caller,
+            now_millis(),
+        )
+    })
+}
+
+#[query]
+fn get_credits_config() -> Result<CreditsConfig, String> {
+    with_service(|service| service.credits_config())
+}
+
+#[update]
+fn update_credits_config(payload: Vec<u8>) -> Result<(), String> {
+    require_authenticated_caller()?;
+    let update = Decode!(&payload, CreditsConfigUpdate)
+        .map_err(|error| format!("invalid credits config payload: {error}"))?;
+    with_unmetered_update("update_credits_config", None, |service, caller, _now| {
+        service.update_credits_config(update, caller).map(|_| ())
+    })
+}
+
+#[update]
+fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
+    let database_id = request.database_id.clone();
+    with_role_unmetered_update(
         "delete_database",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
-            let meta = service.list_databases().and_then(|databases| {
-                databases
-                    .into_iter()
-                    .find(|meta| meta.database_id == database_id)
-                    .ok_or_else(|| format!("database not found: {database_id}"))
-            })?;
-            service.delete_database(&database_id, caller, now)?;
-            unmount_database_file(&meta.db_file_name);
+            let meta = service
+                .list_databases()?
+                .into_iter()
+                .find(|meta| meta.database_id == database_id);
+            service.delete_database(request, caller, now)?;
+            if let Some(meta) = meta {
+                unmount_database_file(&meta.db_file_name);
+            }
             Ok(())
         },
     )
@@ -277,9 +792,10 @@ fn delete_database(database_id: String) -> Result<(), String> {
 
 #[update]
 fn begin_database_archive(database_id: String) -> Result<DatabaseArchiveInfo, String> {
-    with_usage(
+    with_role_metered_update(
         "begin_database_archive",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| service.begin_database_archive(&database_id, caller, now),
     )
 }
@@ -299,9 +815,10 @@ fn read_database_archive_chunk(
 
 #[update]
 fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Result<(), String> {
-    with_usage(
+    with_role_metered_update(
         "finalize_database_archive",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta =
                 service.finalize_database_archive(&database_id, caller, snapshot_hash, now)?;
@@ -313,9 +830,10 @@ fn finalize_database_archive(database_id: String, snapshot_hash: Vec<u8>) -> Res
 
 #[update]
 fn cancel_database_archive(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_role_metered_update(
         "cancel_database_archive",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             service.cancel_database_archive(&database_id, caller, now)?;
             Ok(())
@@ -329,9 +847,10 @@ fn begin_database_restore(
     snapshot_hash: Vec<u8>,
     size_bytes: u64,
 ) -> Result<(), String> {
-    with_usage(
+    with_role_metered_update(
         "begin_database_restore",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let restore = service.begin_database_restore_session(
                 &database_id,
@@ -356,9 +875,10 @@ fn begin_database_restore(
 #[update]
 fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_role_metered_update(
         "write_database_restore_chunk",
         Some(database_id),
+        RequiredRole::Owner,
         |service, caller, _now| {
             service.write_database_restore_chunk(
                 &request.database_id,
@@ -372,9 +892,10 @@ fn write_database_restore_chunk(request: DatabaseRestoreChunkRequest) -> Result<
 
 #[update]
 fn finalize_database_restore(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_role_metered_update(
         "finalize_database_restore",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta = service.finalize_database_restore(&database_id, caller, now)?;
             mount_database_file(&meta)
@@ -384,9 +905,10 @@ fn finalize_database_restore(database_id: String) -> Result<(), String> {
 
 #[update]
 fn cancel_database_restore(database_id: String) -> Result<(), String> {
-    with_usage(
+    with_role_metered_update(
         "cancel_database_restore",
         Some(database_id.clone()),
+        RequiredRole::Owner,
         |service, caller, now| {
             let meta = service.cancel_database_restore(&database_id, caller, now)?;
             unmount_database_file(&meta.db_file_name);
@@ -398,9 +920,12 @@ fn cancel_database_restore(database_id: String) -> Result<(), String> {
 #[update]
 fn write_node(request: WriteNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("write_node", Some(database_id), |service, caller, now| {
-        service.write_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "write_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.write_node(caller, request, now),
+    )
 }
 
 #[update]
@@ -408,9 +933,10 @@ fn write_source_for_generation(
     request: WriteSourceForGenerationRequest,
 ) -> Result<WriteSourceForGenerationResult, String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_role_metered_update(
         "write_source_for_generation",
         Some(database_id),
+        RequiredRole::Writer,
         |service, caller, now| service.write_source_for_generation(caller, request, now),
     )
 }
@@ -418,9 +944,12 @@ fn write_source_for_generation(
 #[update]
 fn write_nodes(request: WriteNodesRequest) -> Result<Vec<WriteNodeResult>, String> {
     let database_id = request.database_id.clone();
-    with_usage("write_nodes", Some(database_id), |service, caller, now| {
-        service.write_nodes(caller, request, now)
-    })
+    with_role_metered_update(
+        "write_nodes",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.write_nodes(caller, request, now),
+    )
 }
 
 #[update]
@@ -428,9 +957,10 @@ fn authorize_url_ingest_trigger_session(
     request: UrlIngestTriggerSessionRequest,
 ) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_role_metered_update(
         "authorize_url_ingest_trigger_session",
         Some(database_id),
+        RequiredRole::Writer,
         |service, caller, now| service.authorize_url_ingest_trigger_session(caller, request, now),
     )
 }
@@ -442,12 +972,18 @@ fn check_url_ingest_trigger_session(
     with_service(|service| service.check_url_ingest_trigger_session(request, now_millis()))
 }
 
+#[query]
+fn check_database_write_credits(database_id: String) -> Result<(), String> {
+    with_service(|service| service.check_database_write_credits(&database_id, &caller_text()))
+}
+
 #[update]
 fn authorize_ops_answer_session(request: OpsAnswerSessionRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_role_metered_update(
         "authorize_ops_answer_session",
         Some(database_id),
+        RequiredRole::Reader,
         |service, caller, now| service.authorize_ops_answer_session(caller, request, now),
     )
 }
@@ -467,51 +1003,61 @@ fn check_source_run_session(request: SourceRunSessionCheckRequest) -> Result<(),
 #[update]
 fn append_node(request: AppendNodeRequest) -> Result<WriteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("append_node", Some(database_id), |service, caller, now| {
-        service.append_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "append_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.append_node(caller, request, now),
+    )
 }
 
 #[update]
 fn edit_node(request: EditNodeRequest) -> Result<EditNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("edit_node", Some(database_id), |service, caller, now| {
-        service.edit_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "edit_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.edit_node(caller, request, now),
+    )
 }
 
 #[update]
 fn delete_node(request: DeleteNodeRequest) -> Result<DeleteNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("delete_node", Some(database_id), |service, caller, now| {
-        service.delete_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "delete_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.delete_node(caller, request, now),
+    )
 }
 
 #[update]
 fn move_node(request: MoveNodeRequest) -> Result<MoveNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("move_node", Some(database_id), |service, caller, now| {
-        service.move_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "move_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.move_node(caller, request, now),
+    )
 }
 
 #[update]
 fn mkdir_node(request: MkdirNodeRequest) -> Result<MkdirNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage("mkdir_node", Some(database_id), |service, caller, now| {
-        service.mkdir_node(caller, request, now)
-    })
+    with_role_metered_update(
+        "mkdir_node",
+        Some(database_id),
+        RequiredRole::Writer,
+        |service, caller, now| service.mkdir_node(caller, request, now),
+    )
 }
 
 #[query]
 fn glob_nodes(request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>, String> {
     with_service(|service| service.glob_nodes(&caller_text(), request))
-}
-
-#[query]
-fn recent_nodes(request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>, String> {
-    with_service(|service| service.recent_nodes(&caller_text(), request))
 }
 
 #[query]
@@ -552,9 +1098,10 @@ fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, Str
 #[update]
 fn multi_edit_node(request: MultiEditNodeRequest) -> Result<MultiEditNodeResult, String> {
     let database_id = request.database_id.clone();
-    with_usage(
+    with_role_metered_update(
         "multi_edit_node",
         Some(database_id),
+        RequiredRole::Writer,
         |service, caller, now| service.multi_edit_node(caller, request, now),
     )
 }
@@ -579,22 +1126,72 @@ fn fetch_updates(request: FetchUpdatesRequest) -> Result<FetchUpdatesResponse, S
     with_service(|service| service.fetch_fs_updates(&caller_text(), request))
 }
 
-fn initialize_or_trap() {
-    initialize_service().unwrap_or_else(|error| ic_cdk::trap(&error));
+fn initialize_or_trap(config: Option<CreditsConfig>) {
+    initialize_service_with_config(config).unwrap_or_else(|error| ic_cdk::trap(&error));
 }
 
-fn initialize_service() -> Result<(), String> {
+fn initialize_upgrade_or_trap(config: Option<CreditsConfig>) {
+    initialize_service_for_upgrade(config).unwrap_or_else(|error| ic_cdk::trap(&error));
+}
+
+fn initialize_service_with_config(config: Option<CreditsConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
     let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
     #[cfg(target_arch = "wasm32")]
     let service = VfsService::stable(database_handle);
-    service.run_index_migrations()?;
+    if let Some(config) = config {
+        service.run_index_migrations_with_config(config)?;
+    } else {
+        service.run_index_migrations()?;
+    }
     for meta in service.list_databases()? {
         mount_database_file(&meta)?;
     }
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
     Ok(())
+}
+
+fn initialize_service_for_upgrade(config: Option<CreditsConfig>) -> Result<(), String> {
+    initialize_sqlite_storage()?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
+    #[cfg(target_arch = "wasm32")]
+    let service = VfsService::stable(database_handle);
+    service.run_index_migrations_for_upgrade(config)?;
+    for meta in service.list_databases()? {
+        mount_database_file(&meta)?;
+    }
+    SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
+    Ok(())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn parse_upgrade_credits_config_arg(bytes: &[u8]) -> Result<Option<CreditsConfig>, String> {
+    if bytes.is_empty() || bytes == b"DIDL\0\0" {
+        return Ok(None);
+    }
+    if let Ok((config,)) = decode_args::<(CreditsConfig,)>(bytes) {
+        return Ok(Some(config));
+    }
+    if let Ok((config,)) = decode_args::<(Option<CreditsConfig>,)>(bytes) {
+        return Ok(config);
+    }
+    Err(
+        "post_upgrade credits config arg must be empty, CreditsConfig, or opt CreditsConfig"
+            .to_string(),
+    )
+}
+
+fn post_upgrade_credits_config_arg() -> Result<Option<CreditsConfig>, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        parse_upgrade_credits_config_arg(&ic_cdk::api::msg_arg_data())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(None)
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -645,11 +1242,84 @@ fn unmount_database_file(_db_file_name: &str) {}
 #[cfg(test)]
 thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
+    static TEST_LEDGER_TRANSACTIONS: RefCell<Vec<(u64, LedgerTransaction)>> = const { RefCell::new(Vec::new()) };
+    static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
+    static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
+    static TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
 }
 
 #[cfg(test)]
 fn fail_next_mount_database_file_for_test() {
     TEST_MOUNT_DATABASE_FILE_FAIL_ONCE.with(|flag| flag.replace(true));
+}
+
+#[cfg(test)]
+fn fail_next_credit_database_purchase_apply_for_test() {
+    TEST_CREDIT_DATABASE_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
+}
+
+#[cfg(test)]
+fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOutcome) {
+    TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|slot| {
+        slot.replace(Some(outcome));
+    });
+}
+
+#[cfg(test)]
+fn set_ledger_transaction_for_test(block_index: u64, transaction: LedgerTransaction) {
+    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().push((block_index, transaction));
+    });
+}
+
+#[cfg(test)]
+fn clear_ledger_transactions_for_test() {
+    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().clear();
+    });
+}
+
+#[cfg(test)]
+fn set_test_caller_principal_for_test(principal: Principal) {
+    TEST_CALLER_PRINCIPAL.with(|slot| {
+        slot.replace(Some(principal));
+    });
+}
+
+#[cfg(test)]
+fn record_test_ledger_memo(memo: &[u8]) {
+    TEST_LAST_LEDGER_MEMO.with(|slot| {
+        slot.replace(Some(memo.to_vec()));
+    });
+}
+
+#[cfg(test)]
+fn record_test_ledger_from(from: &IcrcAccount) {
+    TEST_LAST_LEDGER_FROM.with(|slot| {
+        slot.replace(Some(from.clone()));
+    });
+}
+
+#[cfg(test)]
+fn last_ledger_memo_for_test() -> Option<Vec<u8>> {
+    TEST_LAST_LEDGER_MEMO.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+fn last_ledger_from_for_test() -> Option<IcrcAccount> {
+    TEST_LAST_LEDGER_FROM.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+fn clear_last_ledger_memo_for_test() {
+    TEST_LAST_LEDGER_MEMO.with(|slot| {
+        slot.replace(None);
+    });
+    TEST_LAST_LEDGER_FROM.with(|slot| {
+        slot.replace(None);
+    });
 }
 
 fn database_create_error(error: String, cleanup_error: Option<String>) -> String {
@@ -659,14 +1329,96 @@ fn database_create_error(error: String, cleanup_error: Option<String>) -> String
     }
 }
 
+fn icrc21_unsupported(description: String) -> Icrc21ConsentMessageResponse {
+    Icrc21ConsentMessageResponse::Err(Icrc21Error::UnsupportedCanisterCall(Icrc21ErrorInfo {
+        description,
+    }))
+}
+
+fn icrc21_unavailable(description: String) -> Icrc21ConsentMessageResponse {
+    Icrc21ConsentMessageResponse::Err(Icrc21Error::ConsentMessageUnavailable(Icrc21ErrorInfo {
+        description,
+    }))
+}
+
+fn format_e8s(amount_e8s: u64) -> String {
+    let whole = amount_e8s / 100_000_000;
+    let fractional = amount_e8s % 100_000_000;
+    if fractional == 0 {
+        return whole.to_string();
+    }
+    let mut fraction = format!("{fractional:08}");
+    while fraction.ends_with('0') {
+        fraction.pop();
+    }
+    format!("{whole}.{fraction}")
+}
+
 fn caller_text() -> String {
     #[cfg(test)]
     {
-        "2vxsx-fae".to_string()
+        test_caller_principal().to_text()
     }
     #[cfg(not(test))]
     {
         ic_cdk::api::msg_caller().to_text()
+    }
+}
+
+fn caller_principal() -> Principal {
+    #[cfg(test)]
+    {
+        test_caller_principal()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::msg_caller()
+    }
+}
+
+#[cfg(test)]
+fn test_caller_principal() -> Principal {
+    TEST_CALLER_PRINCIPAL.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .copied()
+            .unwrap_or_else(Principal::anonymous)
+    })
+}
+
+fn require_authenticated_caller() -> Result<(), String> {
+    if caller_principal() == Principal::anonymous() {
+        return Err("anonymous caller not allowed".to_string());
+    }
+    Ok(())
+}
+
+fn require_controller_caller() -> Result<(), String> {
+    let caller = caller_principal();
+    #[cfg(test)]
+    {
+        if caller == Principal::management_canister() {
+            return Ok(());
+        }
+    }
+    #[cfg(not(test))]
+    {
+        if ic_cdk::api::is_controller(&caller) {
+            return Ok(());
+        }
+    }
+    Err("caller is not a canister controller".to_string())
+}
+
+#[allow(dead_code)]
+fn canister_principal() -> Principal {
+    #[cfg(test)]
+    {
+        Principal::anonymous()
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::canister_self()
     }
 }
 
@@ -692,22 +1444,289 @@ fn cycle_balance() -> u128 {
     }
 }
 
-fn with_usage<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
+fn now_nanos() -> u64 {
+    #[cfg(test)]
+    {
+        1_700_000_000_000_000_000
+    }
+    #[cfg(not(test))]
+    {
+        ic_cdk::api::time()
+    }
+}
+
+fn expected_credit_purchase_transfer(
+    operation: &DatabaseCreditPendingOperation,
+) -> Result<ExpectedLedgerTransfer, String> {
+    if operation.kind != "credit_purchase" {
+        return Err("pending credit operation kind mismatch".to_string());
+    }
+    expected_ledger_transfer(operation, "credit_purchase")
+}
+
+fn expected_ledger_transfer(
+    operation: &DatabaseCreditPendingOperation,
+    memo_kind: &str,
+) -> Result<ExpectedLedgerTransfer, String> {
+    let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
+    let to_owner = pending_principal(operation.to_owner.as_deref(), "to_owner")?;
+    let amount_e8s = operation.payment_amount_e8s;
+    let ledger_fee_e8s = operation
+        .ledger_fee_e8s
+        .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())?;
+    let created_at_time_ns = operation
+        .ledger_created_at_time_ns
+        .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())?;
+    Ok(ExpectedLedgerTransfer {
+        from: IcrcAccount {
+            owner: from_owner,
+            subaccount: operation.from_subaccount.clone(),
+        },
+        to: IcrcAccount {
+            owner: to_owner,
+            subaccount: operation.to_subaccount.clone(),
+        },
+        amount_e8s,
+        ledger_fee_e8s,
+        memo: credit_operation_memo(memo_kind, operation.operation_id),
+        created_at_time_ns,
+    })
+}
+
+fn pending_principal(value: Option<&str>, field: &str) -> Result<Principal, String> {
+    let value = value.ok_or_else(|| format!("pending operation missing {field}"))?;
+    Principal::from_text(value).map_err(|error| format!("invalid pending {field}: {error}"))
+}
+
+async fn validate_ledger_transfer_block(
+    ledger: Principal,
+    block_index: u64,
+    expected: ExpectedLedgerTransfer,
+) -> Result<(), String> {
+    let transaction = ledger_transaction(ledger, block_index).await?;
+    if transaction.kind != "transfer" {
+        return Err(format!(
+            "ledger transaction kind mismatch: {}",
+            transaction.kind
+        ));
+    }
+    let transfer = transaction
+        .transfer
+        .ok_or_else(|| "ledger transaction missing transfer".to_string())?;
+    if transfer.from != expected.from {
+        return Err("ledger transaction from account mismatch".to_string());
+    }
+    if transfer.to != expected.to {
+        return Err("ledger transaction to account mismatch".to_string());
+    }
+    if nat_to_u64(&transfer.amount)? != expected.amount_e8s {
+        return Err("ledger transaction amount mismatch".to_string());
+    }
+    let fee = transfer
+        .fee
+        .as_ref()
+        .ok_or_else(|| "ledger transaction missing fee".to_string())?;
+    if nat_to_u64(fee)? != expected.ledger_fee_e8s {
+        return Err("ledger transaction fee mismatch".to_string());
+    }
+    if transfer.memo.as_deref() != Some(expected.memo.as_slice()) {
+        return Err("ledger transaction memo mismatch".to_string());
+    }
+    if transfer.created_at_time != Some(expected.created_at_time_ns) {
+        return Err("ledger transaction created_at_time mismatch".to_string());
+    }
+    Ok(())
+}
+
+async fn ledger_transaction(
+    ledger: Principal,
+    block_index: u64,
+) -> Result<LedgerTransaction, String> {
+    #[cfg(test)]
+    {
+        let _ = ledger;
+        TEST_LEDGER_TRANSACTIONS.with(|slot| {
+            slot.borrow()
+                .iter()
+                .find(|(index, _)| *index == block_index)
+                .map(|(_, transaction)| transaction.clone())
+                .ok_or_else(|| format!("test ledger transaction not found: {block_index}"))
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let response = Call::bounded_wait(ledger, "get_transactions")
+            .with_arg(GetTransactionsRequest {
+                start: Nat::from(block_index),
+                length: Nat::from(1_u64),
+            })
+            .await
+            .map_err(|error| format!("get_transactions call failed: {error:?}"))?;
+        let response: GetTransactionsResponse = response
+            .candid()
+            .map_err(|error| format!("get_transactions decode failed: {error}"))?;
+        response
+            .transactions
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("ledger transaction not found: {block_index}"))
+    }
+}
+
+async fn ledger_transfer_from(
+    ledger: Principal,
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    ledger_fee_e8s: u64,
+    operation_id: u64,
+    created_at_time_ns: u64,
+) -> LedgerTransferFromOutcome {
+    let memo = credit_operation_memo("credit_purchase", operation_id);
+    #[cfg(test)]
+    {
+        record_test_ledger_from(&from);
+        let _ = (ledger, to, amount_e8s, ledger_fee_e8s, created_at_time_ns);
+        record_test_ledger_memo(&memo);
+        TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
+            outcome
+                .borrow_mut()
+                .take()
+                .unwrap_or(LedgerTransferFromOutcome::Completed(1))
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let arg = TransferFromArg {
+            spender_subaccount: None,
+            from,
+            to,
+            amount: Nat::from(amount_e8s),
+            fee: Some(Nat::from(ledger_fee_e8s)),
+            memo: Some(memo),
+            created_at_time: Some(created_at_time_ns),
+        };
+        let response = Call::bounded_wait(ledger, "icrc2_transfer_from")
+            .with_arg(arg)
+            .await
+            .map_err(|error| {
+                LedgerTransferFromOutcome::Ambiguous(format!(
+                    "icrc2_transfer_from call failed: {error:?}"
+                ))
+            });
+        let response = match response {
+            Ok(response) => response,
+            Err(outcome) => return outcome,
+        };
+        let result: Result<Nat, TransferFromError> = match response.candid().map_err(|error| {
+            LedgerTransferFromOutcome::Ambiguous(format!(
+                "icrc2_transfer_from decode failed: {error}"
+            ))
+        }) {
+            Ok(result) => result,
+            Err(outcome) => return outcome,
+        };
+        match result {
+            Ok(block_index) => match nat_to_u64(&block_index) {
+                Ok(block_index) => LedgerTransferFromOutcome::Completed(block_index),
+                Err(error) => LedgerTransferFromOutcome::Ambiguous(error),
+            },
+            Err(error) => transfer_from_error_outcome(error),
+        }
+    }
+}
+
+fn transfer_from_error_outcome(error: TransferFromError) -> LedgerTransferFromOutcome {
+    match error {
+        TransferFromError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
+            Ok(block_index) => LedgerTransferFromOutcome::Completed(block_index),
+            Err(error) => LedgerTransferFromOutcome::Ambiguous(error),
+        },
+        error => {
+            LedgerTransferFromOutcome::LedgerErr(format!("icrc2_transfer_from failed: {error:?}"))
+        }
+    }
+}
+
+fn nat_to_u64(value: &Nat) -> Result<u64, String> {
+    value
+        .0
+        .to_string()
+        .parse::<u64>()
+        .map_err(|_| "nat exceeds u64".to_string())
+}
+
+fn credit_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
+    format!("kinic:vfs:{kind}:{operation_id}").into_bytes()
+}
+
+fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>
 where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
-    with_usage_derived_database_id(method, database_id, f, |_| None)
+    let _ = (method, database_id);
+    let caller = caller_text();
+    let now = now_millis();
+    SERVICE.with(|slot| {
+        let borrowed = slot.borrow();
+        let service = borrowed
+            .as_ref()
+            .ok_or_else(|| "wiki service is not initialized".to_string())?;
+        f(service, &caller, now)
+    })
 }
 
-fn with_usage_derived_database_id<T, F, D>(
+fn with_role_metered_update<T, F>(
     method: &str,
     database_id: Option<String>,
+    required_role: RequiredRole,
     f: F,
-    database_id_from_success: D,
 ) -> Result<T, String>
 where
     F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
-    D: FnOnce(&T) -> Option<String>,
+{
+    let authorization_database_id = database_id.clone();
+    with_authorized_metered_update(
+        method,
+        database_id,
+        |service, caller| {
+            let database_id = authorization_database_id
+                .as_deref()
+                .ok_or_else(|| "database_id is required for role metering".to_string())?;
+            service.prepare_metered_update(database_id, caller, required_role)
+        },
+        f,
+    )
+}
+
+fn with_role_unmetered_update<T, F>(
+    method: &str,
+    database_id: Option<String>,
+    required_role: RequiredRole,
+    f: F,
+) -> Result<T, String>
+where
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
+{
+    let authorization_database_id = database_id.clone();
+    with_unmetered_update(method, database_id, |service, caller, now| {
+        let database_id = authorization_database_id
+            .as_deref()
+            .ok_or_else(|| "database_id is required for role check".to_string())?;
+        service.require_database_role(database_id, caller, required_role)?;
+        f(service, caller, now)
+    })
+}
+
+fn with_authorized_metered_update<T, A, F>(
+    method: &str,
+    database_id: Option<String>,
+    authorize: A,
+    f: F,
+) -> Result<T, String>
+where
+    A: FnOnce(&VfsService, &str) -> Result<CreditsConfig, String>,
+    F: FnOnce(&VfsService, &str, i64) -> Result<T, String>,
 {
     let caller = caller_text();
     let now = now_millis();
@@ -717,21 +1736,23 @@ where
         let service = borrowed
             .as_ref()
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
+        let credits_config = authorize(service, &caller)?;
         let result = f(service, &caller, now);
         let after_cycles = cycle_balance();
         let cycles_delta = before_cycles.saturating_sub(after_cycles);
-        let error = result.as_ref().err().map(String::as_str);
-        let derived_database_id = result.as_ref().ok().and_then(database_id_from_success);
-        let usage_database_id = database_id.as_deref().or(derived_database_id.as_deref());
-        let _ = service.record_usage_event(UsageEvent {
-            method,
-            database_id: usage_database_id,
-            caller: &caller,
-            success: result.is_ok(),
-            cycles_delta,
-            error,
-            now,
-        });
+        if result.is_ok()
+            && let Some(database_id) = database_id.as_deref()
+            && let Err(error) = service.charge_database_update(
+                &credits_config,
+                database_id,
+                &caller,
+                method,
+                cycles_delta,
+                now,
+            )
+        {
+            ic_cdk::trap(format!("credits charge failed after update: {error}"));
+        }
         result
     })
 }
@@ -769,7 +1790,6 @@ fn memory_capabilities() -> Vec<MemoryCapability> {
             "graph_neighborhood",
             "Auxiliary local link graph around one node",
         ),
-        ("recent_nodes", "Auxiliary recent live-node listing"),
     ]
     .into_iter()
     .map(|(name, description)| MemoryCapability {
@@ -993,7 +2013,15 @@ fn normalize_candid_interface(interface: String) -> String {
         "CreateDatabaseResult",
         "RenameDatabaseRequest",
     );
-    ensure_rename_database_request(ensure_outgoing_links_request(normalized))
+    let normalized = normalize_candid_method_input(
+        &normalized,
+        "authorize_url_ingest_trigger_session",
+        "OpsAnswerSessionRequest",
+        "UrlIngestTriggerSessionRequest",
+    );
+    ensure_url_ingest_trigger_session_request(ensure_rename_database_request(
+        ensure_outgoing_links_request(normalized),
+    ))
 }
 
 fn normalize_candid_method_input(
@@ -1041,6 +2069,16 @@ fn ensure_rename_database_request(interface: String) -> String {
     interface.replace(
         "type DatabaseArchiveChunk = record {",
         "type RenameDatabaseRequest = record { name : text; database_id : text };\ntype DatabaseArchiveChunk = record {",
+    )
+}
+
+fn ensure_url_ingest_trigger_session_request(interface: String) -> String {
+    if interface.contains("type UrlIngestTriggerSessionRequest = record {") {
+        return interface;
+    }
+    interface.replace(
+        "type WriteNodeItem = record {",
+        "type UrlIngestTriggerSessionRequest = record {\n  session_nonce : text;\n  database_id : text;\n};\ntype WriteNodeItem = record {",
     )
 }
 

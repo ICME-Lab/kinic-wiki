@@ -150,7 +150,7 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       const error = saveResponse?.error || "source save failed";
       await deps.writeStatus(errorStatus(error, url));
       await deps.setBadge("ERR", "#b42318");
-      if (error === "UNAUTHENTICATED") {
+      if (shouldOpenSettingsForError(error)) {
         await deps.openSettings();
       }
       return { ok: false, error };
@@ -211,14 +211,14 @@ async function saveSource(capture, overrideConfig, sender) {
       config
     });
   } catch (error) {
-    if (error instanceof Error && error.message === "UNAUTHENTICATED") {
+    if (error instanceof Error && shouldOpenSettingsForError(error.message)) {
       await openSettingsOnce();
     }
     throw error;
   }
   if (!result?.ok) {
     const message = result?.error || "raw source save failed";
-    if (message === "UNAUTHENTICATED") {
+    if (shouldOpenSettingsForError(message)) {
       await openSettingsOnce();
     }
     throw new Error(message);
@@ -349,6 +349,10 @@ function errorStatus(message, url = "") {
     message,
     updatedAt: new Date().toISOString()
   };
+}
+
+function shouldOpenSettingsForError(message) {
+  return message === "UNAUTHENTICATED" || /credits|balance/i.test(String(message || ""));
 }
 
 function setupRequiredStatus(url = "") {

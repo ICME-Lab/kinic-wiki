@@ -7,8 +7,44 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-IDS_FILE="${REPO_ROOT}/.icp/cache/mappings/local-wiki.ids.json"
-REPLICA_HOST="${REPLICA_HOST:-http://127.0.0.1:8001}"
+ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local-wiki}"
+IDS_FILE="${REPO_ROOT}/.icp/cache/mappings/${ICP_ENVIRONMENT}.ids.json"
+SMOKE_CREDIT_PURCHASE_CREDITS="${SMOKE_CREDIT_PURCHASE_CREDITS:-1000}"
+SMOKE_CREDIT_PURCHASE_COUNT="${SMOKE_CREDIT_PURCHASE_COUNT:-3}"
+SMOKE_CREDITS_ALLOWANCE_E8S="${SMOKE_CREDITS_ALLOWANCE_E8S:-400000000}"
+
+case "${ICP_ENVIRONMENT}" in
+  local | local-wiki) ;;
+  *)
+    echo "ICP_ENVIRONMENT must be local or local-wiki for local smoke" >&2
+    exit 1
+    ;;
+esac
+
+current_identity_principal() {
+  icp identity principal
+}
+
+network_api_url() {
+  icp network status -e "${ICP_ENVIRONMENT}" --json \
+    | node -e '
+      const fs = require("fs");
+      const status = JSON.parse(fs.readFileSync(0, "utf8"));
+      if (typeof status.api_url !== "string" || status.api_url.trim() === "") {
+        process.exit(1);
+      }
+      process.stdout.write(status.api_url.replace(/\/$/, ""));
+    '
+}
+
+validate_unsigned_integer() {
+  local name="$1"
+  local value="${!name:-}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
+    echo "${name} must be an unsigned integer" >&2
+    exit 1
+  fi
+}
 
 resolve_canister_id() {
   if [[ -n "${VFS_CANISTER_ID:-}" ]]; then
@@ -36,7 +72,7 @@ resolve_canister_id() {
 
 canister_has_module() {
   local canister_id="$1"
-  icp canister status "$canister_id" -e local-wiki --json \
+  icp canister status "$canister_id" -e "${ICP_ENVIRONMENT}" --json \
     | node -e '
       const fs = require("fs");
       const status = JSON.parse(fs.readFileSync(0, "utf8"));
@@ -44,23 +80,121 @@ canister_has_module() {
     '
 }
 
+wiki_ledger_canister_id() {
+  icp canister call wiki get_credits_config '()' -e "${ICP_ENVIRONMENT}" -o candid 2>/dev/null \
+    | awk -F'"' '/kinic_ledger_canister_id/ { print $2; exit }'
+}
+
+deploy_wiki() {
+  ICP_ENVIRONMENT="${ICP_ENVIRONMENT}" \
+    KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID}" \
+    SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID}" \
+    bash scripts/local/deploy_wiki.sh "$@"
+}
+
+approve_credits_allowance() {
+  local canister_id="$1"
+  echo "approving ${SMOKE_CREDITS_ALLOWANCE_E8S} e8s for wiki canister ${canister_id}" >&2
+  local approve_result
+  if ! approve_result="$(icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc2_approve \
+    "(record { spender = record { owner = principal \"${canister_id}\"; subaccount = null }; amount = ${SMOKE_CREDITS_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
+    -e "${ICP_ENVIRONMENT}" -o candid)"; then
+    echo "KINIC approve failed. Ensure the current identity has enough local KINIC balance for ${SMOKE_CREDIT_PURCHASE_COUNT} credit purchases plus ledger fees." >&2
+    exit 1
+  fi
+  if [[ "${approve_result}" == *"Err"* ]]; then
+    echo "KINIC approve returned an error: ${approve_result}" >&2
+    echo "Ensure the current identity has enough local KINIC balance for ${SMOKE_CREDIT_PURCHASE_COUNT} credit purchases plus ledger fees." >&2
+    exit 1
+  fi
+}
+
+candid_nat64_field() {
+  local field="$1"
+  node -e '
+    const fs = require("fs");
+    const [field] = process.argv.slice(1);
+    const text = fs.readFileSync(0, "utf8");
+    const match = text.match(new RegExp(`${field}\\s*=\\s*([0-9_]+)\\s*:\\s*nat64`));
+    if (!match) process.exit(1);
+    process.stdout.write(match[1].replaceAll("_", ""));
+  ' "$field"
+}
+
+purchase_smoke_database_credits() {
+  local database_id="$1"
+  local credits="$2"
+  echo "purchasing ${credits} credits for smoke database ${database_id}" >&2
+  local preview_result
+  if ! preview_result="$(icp canister call "${CANISTER_ID}" preview_database_credit_purchase \
+    "(\"${database_id}\", ${credits} : nat64)" \
+    -e "${ICP_ENVIRONMENT}" -o candid)"; then
+    echo "credit purchase preview failed for ${database_id}" >&2
+    exit 1
+  fi
+  if [[ "${preview_result}" == *"Err"* ]]; then
+    echo "credit purchase preview returned an error for ${database_id}: ${preview_result}" >&2
+    exit 1
+  fi
+
+  local expected_payment_amount_e8s
+  local expected_config_version
+  expected_payment_amount_e8s="$(printf '%s' "${preview_result}" | candid_nat64_field payment_amount_e8s)"
+  expected_config_version="$(printf '%s' "${preview_result}" | candid_nat64_field config_version)"
+
+  local purchase_result
+  if ! purchase_result="$(icp canister call "${CANISTER_ID}" purchase_database_credits \
+    "(record { database_id = \"${database_id}\"; credits = ${credits} : nat64; expected_payment_amount_e8s = ${expected_payment_amount_e8s} : nat64; expected_config_version = ${expected_config_version} : nat64 })" \
+    -e "${ICP_ENVIRONMENT}" -o candid)"; then
+    echo "credit purchase failed for ${database_id}" >&2
+    exit 1
+  fi
+  if [[ "${purchase_result}" == *"Err"* ]]; then
+    echo "credit purchase returned an error for ${database_id}: ${purchase_result}" >&2
+    exit 1
+  fi
+}
+
 cd "${REPO_ROOT}"
+validate_unsigned_integer SMOKE_CREDIT_PURCHASE_CREDITS
+validate_unsigned_integer SMOKE_CREDIT_PURCHASE_COUNT
+validate_unsigned_integer SMOKE_CREDITS_ALLOWANCE_E8S
+if [[ -z "${SNS_GOVERNANCE_ID:-}" ]]; then
+  export SNS_GOVERNANCE_ID="$(current_identity_principal)"
+fi
+
+if [[ -z "${REPLICA_HOST:-}" ]]; then
+  REPLICA_HOST="$(network_api_url)"
+fi
+export REPLICA_HOST
+
+LEDGER_SETUP_OUTPUT="$(ICP_ENVIRONMENT="${ICP_ENVIRONMENT}" bash scripts/local/setup_kinic_ledger.sh)"
+KINIC_LEDGER_CANISTER_ID="${LEDGER_SETUP_OUTPUT#KINIC_LEDGER_CANISTER_ID=}"
+export KINIC_LEDGER_CANISTER_ID
+export SMOKE_CREDIT_PURCHASE_CREDITS
 
 if ! CANISTER_ID="$(resolve_canister_id)"; then
-  echo "local wiki canister id not found; deploying wiki to local-wiki environment" >&2
-  icp deploy -e local-wiki
+  echo "local wiki canister id not found; deploying wiki to ${ICP_ENVIRONMENT} environment" >&2
+  deploy_wiki
   CANISTER_ID="$(resolve_canister_id)"
 fi
 if canister_has_module "$CANISTER_ID" >/dev/null 2>&1; then
-  echo "deploying current wiki canister to local-wiki environment" >&2
+  CURRENT_LEDGER_CANISTER_ID="$(wiki_ledger_canister_id || true)"
+  if [[ "${CURRENT_LEDGER_CANISTER_ID}" != "${KINIC_LEDGER_CANISTER_ID}" ]]; then
+    echo "wiki ledger mismatch (${CURRENT_LEDGER_CANISTER_ID:-missing}); reinstalling wiki for ${KINIC_LEDGER_CANISTER_ID}" >&2
+    deploy_wiki --mode reinstall
+  else
+    echo "deploying current wiki canister to ${ICP_ENVIRONMENT} environment" >&2
+    deploy_wiki
+  fi
 else
-  echo "local wiki canister ${CANISTER_ID} missing installed module; deploying wiki to local-wiki environment" >&2
+  echo "local wiki canister ${CANISTER_ID} missing installed module; deploying wiki to ${ICP_ENVIRONMENT} environment" >&2
+  deploy_wiki
 fi
-icp deploy -e local-wiki
 CANISTER_ID="$(resolve_canister_id)"
 
 export CANISTER_ID
-export REPLICA_HOST
+approve_credits_allowance "${CANISTER_ID}"
 
 echo "running local canister archive/restore smoke against ${CANISTER_ID} at ${REPLICA_HOST}" >&2
 TMP_DIR="$(mktemp -d)"
@@ -69,7 +203,7 @@ STATE_FILE="${TMP_DIR}/local_canister_archive_restore_state.json"
 cargo run -p kinic-vfs-cli --bin local_canister_archive_restore_smoke -- --state-output "$STATE_FILE"
 
 echo "upgrading local wiki canister before persistence verification" >&2
-icp deploy -e local-wiki --mode upgrade
+deploy_wiki --mode upgrade
 cargo run -p kinic-vfs-cli --bin local_canister_archive_restore_smoke -- --verify-state "$STATE_FILE"
 
 INPUT_FILE="${TMP_DIR}/smoke.md"
@@ -83,6 +217,7 @@ CLI_DB_NAME="${CLI_DB_NAME:-Archive smoke CLI}"
 CLI_DB="$(cd "$CLI_WORKSPACE" && "${VFS[@]}" database create "$CLI_DB_NAME")"
 (
   cd "$CLI_WORKSPACE"
+  purchase_smoke_database_credits "$CLI_DB" "$SMOKE_CREDIT_PURCHASE_CREDITS"
   "${VFS[@]}" --database-id "$CLI_DB" write-node --path /Wiki/smoke.md --input "$INPUT_FILE"
   "${VFS[@]}" database archive-export "$CLI_DB" --output "$ARCHIVE_FILE" --chunk-size 65536 --json
   "${VFS[@]}" database archive-restore "$CLI_DB" --input "$ARCHIVE_FILE" --chunk-size 65536 --json

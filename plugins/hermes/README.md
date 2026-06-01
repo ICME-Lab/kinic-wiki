@@ -71,7 +71,7 @@ Metrics route:
 確認:
 
 ```bash
-target/debug/kinic-vfs-cli recent-nodes --path /Sources/skill-runs --limit 20 --json
+target/debug/kinic-vfs-cli list-nodes --prefix /Sources/skill-runs --recursive --json
 ls ~/.kinic/pending-runs
 tail ~/.kinic/hermes-plugin.log
 ```

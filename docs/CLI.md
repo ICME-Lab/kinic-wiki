@@ -30,6 +30,8 @@ Internet Identity-backed identities are the default authenticated path. Non-II `
 Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to select a different canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
+`recent-nodes` and the canister `recent_nodes` query were removed. Use `list-nodes --prefix <path> --recursive --json` for scoped inventory, or `search-remote` / `search-path-remote` for recall.
+
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
 ```
@@ -43,7 +45,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.
 
 `--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.
 
-List, search, recent, and graph commands default to the VFS root `/`.
+List, search, and graph commands default to the VFS root `/`.
 Pass `--prefix /Wiki` or `--path /Wiki` when the human-facing wiki tree is the intended scope.
 
 Without `--canister-id`, the CLI reads configuration from:
@@ -80,13 +82,15 @@ Create a database before reading or writing:
 ```bash
 DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
+# Complete the first credit purchase in the browser wallet flow before writes:
+# https://wiki.kinic.xyz/credits?canisterId=<canister-id>&databaseId=$DB_ID
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success.
+`database create <database-name>` creates a generated pending database ID and prints it on success. The DB becomes writable after the first successful credit purchase in the browser wallet flow.
 `database list` prints databases attached to the caller principal.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
@@ -223,7 +227,6 @@ Common read and write commands:
 - `delete-tree --path /Wiki/obsolete-scope --json`
 - `move-node --from-path /Wiki/a.md --to-path /Wiki/b.md`
 - `glob-nodes "**/*.md" --path /Wiki --json`
-- `recent-nodes 20 --path /Wiki --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
 Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.

@@ -70,9 +70,8 @@ createDatabaseForm.addEventListener("submit", async (event) => {
       },
       name
     );
-    await saveDatabaseSelection(created.databaseId);
     await refreshAuthAndDatabases(created);
-    statusText.textContent = "Database created";
+    statusText.textContent = "Database created. Purchase credits before capture.";
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : String(error);
   } finally {
@@ -101,7 +100,7 @@ async function send(message) {
 
 async function saveDatabaseSelection(databaseId) {
   await send({ type: "save-config", config: { databaseId } });
-  statusText.textContent = databaseId ? "Database selected" : "No writable hot databases found.";
+  statusText.textContent = databaseId ? "Database selected" : "No writable active databases found.";
 }
 
 async function refreshAuthAndDatabases(preferredDatabase = null) {
@@ -140,7 +139,7 @@ async function refreshAuthAndDatabases(preferredDatabase = null) {
   statusText.textContent = "Database selected";
 }
 
-function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No writable hot databases found.") {
+function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No writable active databases found.") {
   databaseSelect.textContent = "";
   if (databases.length === 0) {
     const option = document.createElement("option");
@@ -154,13 +153,21 @@ function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No 
   for (const database of databases) {
     const option = document.createElement("option");
     option.value = database.databaseId;
-    option.textContent = databaseOptionLabel(database, nameCounts.get(databaseNameKey(database.name)) || 1);
+    const label = databaseOptionLabel(database, nameCounts.get(databaseNameKey(database.name)) || 1);
+    option.disabled = !database.writeCreditsAvailable;
+    option.textContent = database.writeCreditsAvailable ? label : `${label} - ${database.creditsReason}`;
     option.title = database.databaseId;
     databaseSelect.append(option);
   }
-  databaseSelect.value = databases.some((database) => database.databaseId === selectedDatabaseId)
+  const selectable = databases.filter((database) => database.writeCreditsAvailable);
+  if (selectable.length === 0) {
+    databaseSelect.value = "";
+    databaseSelect.disabled = true;
+    return "";
+  }
+  databaseSelect.value = selectable.some((database) => database.databaseId === selectedDatabaseId)
     ? selectedDatabaseId
-    : databases[0].databaseId;
+    : selectable[0].databaseId;
   databaseSelect.disabled = false;
   return databaseSelect.value;
 }

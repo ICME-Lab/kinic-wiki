@@ -1851,6 +1851,7 @@ dependencies = [
  "kinic-vfs-client",
  "kinic-vfs-types",
  "kinic-wiki-domain",
+ "proptest",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3503,9 +3504,11 @@ dependencies = [
 name = "vfs-runtime"
 version = "0.1.0"
 dependencies = [
+ "candid",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
  "kinic-wiki-domain",
+ "proptest",
  "rusqlite",
  "sha2 0.10.9",
  "tempfile",
@@ -3519,6 +3522,7 @@ dependencies = [
  "hex",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
+ "proptest",
  "pulldown-cmark",
  "rusqlite",
  "sha2 0.10.9",

@@ -56,7 +56,7 @@
   <rect class="box" x="832" y="210" width="316" height="126" fill="#ffffff"/>
   <text class="label" x="852" y="240">vfs_store</text>
   <text class="body" x="852" y="265">SQLite source of truth</text>
-  <text class="small" x="852" y="288">CRUD, append, edit, move, delete, glob, recent</text>
+  <text class="small" x="852" y="288">CRUD, append, edit, move, delete, glob</text>
   <text class="small" x="852" y="311">FTS search, snapshot export, delta sync, etag</text>
   <rect class="box" x="832" y="356" width="316" height="72" fill="#ffffff"/>
   <text class="label" x="852" y="386">schema.rs</text>
