@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 IDS_FILE="${REPO_ROOT}/.icp/cache/mappings/local-wiki.ids.json"
-REPLICA_HOST="${REPLICA_HOST:-http://127.0.0.1:8001}"
+REPLICA_HOST="${REPLICA_HOST:-http://127.0.0.1:8011}"
 
 resolve_canister_id() {
   if [[ -n "${VFS_CANISTER_ID:-}" ]]; then

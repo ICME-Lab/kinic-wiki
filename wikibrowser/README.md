@@ -28,8 +28,8 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> da
 
 ```bash
 # local icp network
-NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8001
-NEXT_PUBLIC_II_PROVIDER_URL=http://id.ai.localhost:8001
+NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011
+NEXT_PUBLIC_II_PROVIDER_URL=http://id.ai.localhost:8011
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<local-wiki-canister-id>
 
 # mainnet / Cloudflare Workers

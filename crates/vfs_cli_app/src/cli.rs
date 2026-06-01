@@ -1483,7 +1483,7 @@ mod tests {
             "kinic-vfs-cli",
             "--local",
             "--replica-host",
-            "http://127.0.0.1:8001",
+            "http://127.0.0.1:8011",
             "status",
         ]);
         assert!(parsed.is_err());

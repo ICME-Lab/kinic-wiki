@@ -38,7 +38,7 @@ Use `--local` for the default local replica host, or `--replica-host` for a proj
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --local --database-id <database-id> status
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.1:8001 --database-id <database-id> status
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.1:8011 --database-id <database-id> status
 ```
 
 `--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.

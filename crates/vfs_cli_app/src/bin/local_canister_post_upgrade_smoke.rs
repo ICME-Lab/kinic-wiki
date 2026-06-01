@@ -25,7 +25,7 @@ struct SmokeState {
 async fn main() -> Result<()> {
     let args = parse_args()?;
     let replica_host =
-        env::var("REPLICA_HOST").unwrap_or_else(|_| "http://127.0.0.1:8001".to_string());
+        env::var("REPLICA_HOST").unwrap_or_else(|_| "http://127.0.0.1:8011".to_string());
     let canister_id = env::var("CANISTER_ID")
         .or_else(|_| env::var("VFS_CANISTER_ID"))
         .context("CANISTER_ID or VFS_CANISTER_ID is required")?;

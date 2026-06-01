@@ -19,7 +19,7 @@ Create a database, write one file, and grant anonymous reader access for Browser
 
 ```bash
 CANISTER_ID=<local-wiki-canister-id>
-REPLICA_HOST=http://127.0.0.1:8001
+REPLICA_HOST=http://127.0.0.1:8011
 KINIC_LEDGER_CANISTER_ID="$(cat .icp/cache/local-kinic-ledger/local-wiki.id)"
 DB_NAME="${DB_NAME:-Public Smoke}"
 DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" database create "$DB_NAME")"
@@ -39,7 +39,7 @@ Start the Browser with local env values:
 
 ```bash
 cd wikibrowser
-NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8001 \
+NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011 \
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID="$CANISTER_ID" \
 pnpm dev
 ```
@@ -66,7 +66,7 @@ That script runs the dedicated Rust archive/restore smoke and then verifies the 
 - `database archive-restore`
 - `read-node`
 
-The Rust smoke also verifies the deployed local canister path for archive/restore, upgrade persistence, FTS search, outgoing links, and isolation between two databases. The script targets the project-local replica with `--replica-host http://127.0.0.1:8001`.
+The Rust smoke also verifies the deployed local canister path for archive/restore, upgrade persistence, FTS search, outgoing links, and isolation between two databases. The script targets the project-local replica from `icp network status`.
 
 ## Public Deployment Smoke
 
