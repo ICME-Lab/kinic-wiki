@@ -59,12 +59,12 @@ function parseDidFields(body) {
 }
 
 function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\(\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.trim();
+    const line = raw.replace(/\s+/g, " ").trim();
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
     if (!match) continue;
     methods[match[1]] = {
       input: splitShapes(match[2]),
@@ -183,22 +183,21 @@ function normalizeShape(value) {
 
 function normalizeResultAlias(value) {
   const normalized = normalizeShape(value).replace(/,$/, "").trim();
-  if (normalized === "Result_10") return "ResultLinks";
-  if (normalized === "Result_11") return "ResultChildren";
+  if (normalized === "Result_11") return "ResultLinks";
+  if (normalized === "Result_12") return "ResultChildren";
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_5") return "ResultDeleteNode";
-  if (normalized === "Result_12") return "ResultMembers";
-  if (normalized === "Result_13") return "ResultDatabases";
-  if (normalized === "Result_15") return "ResultMkdirNode";
-  if (normalized === "Result_16") return "ResultMoveNode";
-  if (normalized === "Result_17") return "ResultQueryContext";
-  if (normalized === "Result_19") return "ResultNode";
-  if (normalized === "Result_20") return "ResultNodeContext";
-  if (normalized === "Result_21") return "ResultRecent";
-  if (normalized === "Result_22") return "ResultSearch";
-  if (normalized === "Result_23") return "ResultSourceEvidence";
-  if (normalized === "Result_25") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_15") return "ResultMembers";
+  if (normalized === "Result_16") return "ResultDatabases";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_19") return "ResultMoveNode";
+  if (normalized === "Result_22") return "ResultQueryContext";
+  if (normalized === "Result_25") return "ResultNode";
+  if (normalized === "Result_26") return "ResultNodeContext";
+  if (normalized === "Result_27") return "ResultSearch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

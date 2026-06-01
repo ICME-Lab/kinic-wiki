@@ -25,6 +25,25 @@ fn install_test_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
+    service
+        .begin_database_credit_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .and_then(|operation_id| {
+            service.mark_database_credit_purchase_completed(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+            )?;
+            service.credit_database_purchase(
+                operation_id,
+                "default",
+                "2vxsx-fae",
+                1_000_000,
+                1,
+                1_700_000_000_001,
+            )
+        })
+        .expect("default database should have write credits available");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -428,6 +447,14 @@ fn mkdir_node_request_type_is_fixed_at_interface_boundary() {
         assert!(
             has_method_input(did, "mkdir_node", "MkdirNodeRequest"),
             "mkdir_node must consume MkdirNodeRequest at the interface boundary",
+        );
+        assert!(
+            has_method_input(
+                did,
+                "authorize_url_ingest_trigger_session",
+                "UrlIngestTriggerSessionRequest"
+            ),
+            "authorize_url_ingest_trigger_session must consume UrlIngestTriggerSessionRequest",
         );
         assert!(
             has_query_method_input(did, "outgoing_links", "OutgoingLinksRequest"),

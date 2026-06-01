@@ -48,7 +48,7 @@ cd "${REPO_ROOT}"
 
 if ! CANISTER_ID="$(resolve_canister_id)"; then
   echo "local wiki canister id not found; deploying wiki to local-wiki environment" >&2
-  icp deploy -e local-wiki
+  scripts/local/deploy_wiki.sh
   CANISTER_ID="$(resolve_canister_id)"
 fi
 if canister_has_module "$CANISTER_ID" >/dev/null 2>&1; then
@@ -56,7 +56,7 @@ if canister_has_module "$CANISTER_ID" >/dev/null 2>&1; then
 else
   echo "local wiki canister ${CANISTER_ID} missing installed module; deploying wiki to local-wiki environment" >&2
 fi
-icp deploy -e local-wiki
+scripts/local/deploy_wiki.sh
 CANISTER_ID="$(resolve_canister_id)"
 
 export CANISTER_ID
@@ -69,7 +69,7 @@ STATE_FILE="${TMP_DIR}/local_canister_archive_restore_state.json"
 cargo run -p kinic-vfs-cli --bin local_canister_archive_restore_smoke -- --state-output "$STATE_FILE"
 
 echo "upgrading local wiki canister before persistence verification" >&2
-icp deploy -e local-wiki --mode upgrade
+MODE=upgrade scripts/local/deploy_wiki.sh
 cargo run -p kinic-vfs-cli --bin local_canister_archive_restore_smoke -- --verify-state "$STATE_FILE"
 
 INPUT_FILE="${TMP_DIR}/smoke.md"

@@ -177,14 +177,6 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
-    RecentNodes {
-        #[arg(long, help = "Maximum 100; 0 is treated as 1 by the canister")]
-        limit: u32,
-        #[arg(long, alias = "prefix", default_value = DEFAULT_VFS_ROOT_PATH)]
-        path: String,
-        #[arg(long)]
-        json: bool,
-    },
     ReadNodeContext {
         #[arg(long)]
         path: String,

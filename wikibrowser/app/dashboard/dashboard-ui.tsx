@@ -47,7 +47,8 @@ export function SummaryPanel({
   publicReadable: boolean;
 }) {
   const routable = isRoutableDatabaseId(databaseId);
-  const openHref = routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
+  const active = database?.status === "active";
+  const openHref = active && routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
       <Field label="Principal" value={principal} />
@@ -73,6 +74,24 @@ export function SummaryPanel({
           <span>Share</span>
         </a>
       ) : null}
+    </section>
+  );
+}
+
+export function PendingDatabasePanel(props: {
+  busy: boolean;
+  busyAction: BusyAction | null;
+  databaseId: string;
+  databaseName: string;
+  onDelete: () => Promise<string | null>;
+}) {
+  return (
+    <section className="rounded-lg border border-line bg-paper shadow-sm">
+      <div className="grid gap-2 border-b border-line px-4 py-4">
+        <h2 className="text-lg font-semibold text-ink">Reserved database</h2>
+        <p className="text-sm leading-6 text-muted">This database is reserved until the first credit purchase completes. VFS, skills, and member management are available after activation.</p>
+      </div>
+      <DatabaseDangerZone busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
     </section>
   );
 }

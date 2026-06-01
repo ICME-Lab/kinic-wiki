@@ -251,13 +251,12 @@ assert.equal(parseModeTab("query"), "query");
 assert.equal(parseModeTab("sources"), "explorer");
 assert.deepEqual(queryAnswerSearchTerms("vetkeyについて教えて"), ["vetkey"]);
 assert.deepEqual(queryAnswerSearchTerms("What does the wiki say about vetKey?"), ["vetKey"]);
-assert.equal(parseModeTab("recent"), "explorer");
 assert.equal(readIdentityMode(null, true, true, true, true), "user");
 assert.equal(readIdentityMode(null, true, false, true, true), "anonymous");
 assert.equal(readIdentityMode("anonymous", true, true, true, true), "anonymous");
 assert.equal(readIdentityMode(null, false, false, false, true), "anonymous");
 assert.equal(classifyQueryInput("https://example.com/a", "/Wiki", "user").kind, "queue_url");
-assert.equal(classifyQueryInput("recent", "/Wiki", "user").kind, "recent");
+assert.equal(classifyQueryInput("recent", "/Wiki", "user").kind, "search");
 assert.equal(classifyQueryInput("lint facts", "/Wiki/current.md", "user").targetPath, "/Wiki/facts.md");
 assert.deepEqual(classifyQueryInput("budget", "/Wiki", "anonymous"), {
   kind: "search",

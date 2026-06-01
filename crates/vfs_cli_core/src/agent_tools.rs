@@ -9,8 +9,8 @@ use vfs_types::{
     AppendNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, ListNodesRequest, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeKind,
-    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, WriteNodeRequest,
+    OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    WriteNodeRequest,
 };
 
 use crate::cli::DEFAULT_VFS_ROOT_PATH;
@@ -22,7 +22,7 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
-pub const READ_ONLY_TOOL_NAMES: [&str; 13] = [
+pub const READ_ONLY_TOOL_NAMES: [&str; 12] = [
     "read",
     "read_context",
     "ls",
@@ -31,7 +31,6 @@ pub const READ_ONLY_TOOL_NAMES: [&str; 13] = [
     "skill_find",
     "skill_inspect",
     "skill_read",
-    "recent",
     "graph_neighborhood",
     "graph_links",
     "incoming_links",
@@ -187,12 +186,6 @@ async fn dispatch_tool_call_impl(
                 json!({ "hits": client.glob_nodes(GlobNodesRequest { database_id: database_id(args.database_id)?, pattern: args.pattern, path: Some(args.path.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string())), node_type: args.node_type }).await? }),
             )
         }
-        "recent" => {
-            let args: RecentArgs = serde_json::from_value(input)?;
-            tool_ok(
-                json!({ "hits": client.recent_nodes(RecentNodesRequest { database_id: database_id(args.database_id)?, limit: args.limit.unwrap_or(10), path: Some(args.path.unwrap_or_else(|| DEFAULT_VFS_ROOT_PATH.to_string())) }).await? }),
-            )
-        }
         "graph_neighborhood" => {
             let args: GraphNeighborhoodArgs = serde_json::from_value(input)?;
             tool_ok(
@@ -322,7 +315,6 @@ fn tool_names_slice() -> &'static [&'static str] {
         "mkdir",
         "mv",
         "glob",
-        "recent",
         "graph_neighborhood",
         "graph_links",
         "incoming_links",
@@ -374,7 +366,6 @@ fn tool_specs() -> Vec<ToolSpec> {
             "Match node paths with shell-style glob patterns.",
             glob_schema(),
         ),
-        ToolSpec::new("recent", "List recently updated nodes.", recent_schema()),
         ToolSpec::new(
             "graph_neighborhood",
             "Read local link graph edges around a center path.",
@@ -460,9 +451,6 @@ fn move_schema() -> Value {
 }
 fn glob_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"pattern":{"type":"string"},"path":{"type":"string"},"node_type":{"type":"string","enum":["file","directory","any"]}},"required":["database_id","pattern"],"additionalProperties":false})
-}
-fn recent_schema() -> Value {
-    json!({"type":"object","properties":{"database_id":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":100},"path":{"type":"string"}},"required":["database_id"],"additionalProperties":false})
 }
 fn graph_neighborhood_schema() -> Value {
     json!({"type":"object","properties":{"database_id":{"type":"string"},"center_path":{"type":"string"},"depth":{"type":"integer","minimum":1,"maximum":2},"limit":{"type":"integer","minimum":1,"maximum":100}},"required":["database_id","center_path"],"additionalProperties":false})
@@ -565,12 +553,6 @@ struct GlobArgs {
     pattern: String,
     path: Option<String>,
     node_type: Option<GlobNodeType>,
-}
-#[derive(Deserialize)]
-struct RecentArgs {
-    database_id: Option<String>,
-    limit: Option<u32>,
-    path: Option<String>,
 }
 #[derive(Deserialize)]
 struct GraphNeighborhoodArgs {

@@ -45,6 +45,28 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_map_limit<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    limit: usize,
+    mut f: F,
+) -> Result<Vec<T>>
+where
+    P: Params,
+    F: FnMut(&Row<'_>) -> Result<T>,
+{
+    let mut rows = statement.query(params)?;
+    let mut output = Vec::new();
+    while output.len() < limit {
+        let Some(row) = rows.next()? else {
+            break;
+        };
+        output.push(f(row)?);
+    }
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn last_insert_rowid(conn: &Connection) -> Result<i64> {
     Ok(conn.last_insert_rowid())
 }
@@ -267,6 +289,28 @@ where
     F: FnMut(&Row<'_>) -> Result<T>,
 {
     statement.query_all(params.as_params(), f)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn query_map_limit<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    limit: usize,
+    mut f: F,
+) -> Result<Vec<T>>
+where
+    P: Params,
+    F: FnMut(&Row<'_>) -> Result<T>,
+{
+    let mut rows = statement.query(params.as_params())?;
+    let mut output = Vec::new();
+    while output.len() < limit {
+        let Some(row) = rows.next_row()? else {
+            break;
+        };
+        output.push(f(&row)?);
+    }
+    Ok(output)
 }
 
 #[cfg(target_arch = "wasm32")]

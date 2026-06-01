@@ -9,8 +9,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use vfs_client::VfsApi;
 use vfs_types::{
-    ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, RecentNodesRequest,
-    SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, SearchNodesRequest,
+    SearchPreviewMode, WriteNodeRequest,
 };
 
 const PRIVATE_SKILL_ROOT: &str = "/Wiki/skills";
@@ -164,24 +164,13 @@ pub async fn inspect_skill(client: &impl VfsApi, database_id: &str, id: &str) ->
             files.insert(relative_path.to_string(), true);
         }
     }
-    let recent_runs = client
-        .recent_nodes(RecentNodesRequest {
-            database_id: database_id.to_string(),
-            path: Some(format!("{SKILL_RUN_ROOT}/{id}")),
-            limit: 5,
-        })
-        .await?
-        .into_iter()
-        .map(|hit| hit.path)
-        .collect::<Vec<_>>();
     let run_summary = run_summary(client, database_id, id).await?;
     Ok(json!({
         "id": id,
         "base_path": base_path,
         "manifest": manifest,
         "files": files,
-        "run_summary": run_summary,
-        "recent_runs": recent_runs
+        "run_summary": run_summary
     }))
 }
 

@@ -16,7 +16,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     created_at: idl.Int64,
     metadata_json: idl.Text
   });
-  const RecentNodeHit = idl.Record({
+  const NodeMutationAck = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
     kind: NodeKind,
@@ -82,7 +82,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     changed_nodes: idl.Vec(Node),
     next_cursor: idl.Opt(idl.Text)
   });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const MkdirNodeResult = idl.Record({ created: idl.Bool, path: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });

@@ -170,46 +170,7 @@ function DatabaseSection({
           </thead>
           <tbody>
             {rows.map((database) => (
-              <tr key={database.databaseId} className="border-t border-line">
-                <td className="px-4 py-3">
-                  <div className="flex min-w-[180px] flex-wrap items-center gap-2">
-                    <span className="font-semibold text-ink">{database.name}</span>
-                    <span className="font-mono text-[11px] text-muted">{database.databaseId}</span>
-                    {mode === "member" && database.publicReadable ? <span className="rounded border border-line bg-white px-1.5 py-0.5 text-[11px] font-medium text-muted">Public</span> : null}
-                  </div>
-                </td>
-                <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
-                <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
-                <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
-                <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
-                <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    {isRoutableDatabaseId(database.databaseId) ? (
-                      <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
-                        Open
-                      </Link>
-                    ) : <span className="text-muted">-</span>}
-                    {mode === "member" && database.publicReadable && isRoutableDatabaseId(database.databaseId) ? (
-                      <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
-                        Open public
-                      </Link>
-                    ) : null}
-                  </div>
-                </td>
-                <td className="px-4 py-3">{database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
-                {mode === "member" ? (
-                  <td className="px-4 py-3">
-                    <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
-                      Registry
-                    </Link>
-                  </td>
-                ) : null}
-                <td className="px-4 py-3">
-                  <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
-                    Access
-                  </Link>
-                </td>
-              </tr>
+              <DatabaseTableRow key={database.databaseId} database={database} mode={mode} />
             ))}
           </tbody>
         </table>
@@ -218,7 +179,56 @@ function DatabaseSection({
   );
 }
 
+function DatabaseTableRow({ database, mode }: { database: DatabaseRow; mode: "member" | "public" }) {
+  const active = isActiveRoutableDatabase(database);
+  return (
+    <tr className="border-t border-line">
+      <td className="px-4 py-3">
+        <div className="flex min-w-[180px] flex-wrap items-center gap-2">
+          <span className="font-semibold text-ink">{database.name}</span>
+          <span className="font-mono text-[11px] text-muted">{database.databaseId}</span>
+          {mode === "member" && database.publicReadable ? <span className="rounded border border-line bg-white px-1.5 py-0.5 text-[11px] font-medium text-muted">Public</span> : null}
+        </div>
+      </td>
+      <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
+      <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
+      <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
+      <td className="px-4 py-3 text-muted">{databaseMarker(database)}</td>
+      <td className="px-4 py-3">
+        <div className="flex flex-wrap gap-2">
+          {active ? (
+            <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+              Open
+            </Link>
+          ) : <span className="text-muted">-</span>}
+          {active && mode === "member" && database.publicReadable ? (
+            <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
+              Open public
+            </Link>
+          ) : null}
+        </div>
+      </td>
+      <td className="px-4 py-3">{active && database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
+      {mode === "member" ? (
+        <td className="px-4 py-3">
+          {active ? (
+            <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
+              Registry
+            </Link>
+          ) : <span className="text-muted">-</span>}
+        </td>
+      ) : null}
+      <td className="px-4 py-3">
+        <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
+          Access
+        </Link>
+      </td>
+    </tr>
+  );
+}
+
 function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "member" | "public" }) {
+  const active = isActiveRoutableDatabase(database);
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
@@ -233,22 +243,24 @@ function DatabaseMobileCard({ database, mode }: { database: DatabaseRow; mode: "
         <DatabaseCardMeta label="Archive" value={databaseMarker(database)} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
-        {isRoutableDatabaseId(database.databaseId) ? (
+        {active ? (
           <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
             Open
           </Link>
         ) : null}
-        {mode === "member" && database.publicReadable && isRoutableDatabaseId(database.databaseId) ? (
+        {active && mode === "member" && database.publicReadable ? (
           <Link className="text-accent no-underline hover:underline" href={openPublicDatabaseHref(database)}>
             Open public
           </Link>
         ) : null}
         {mode === "member" ? (
-          <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
-            Registry
-          </Link>
+          active ? (
+            <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(database.databaseId)}`}>
+              Registry
+            </Link>
+          ) : null
         ) : null}
-        {database.publicReadable && isRoutableDatabaseId(database.databaseId) ? <ShareDatabaseLink database={database} /> : null}
+        {active && database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
         <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(database.databaseId)}`}>
           Access
         </Link>
@@ -290,8 +302,8 @@ export function CreatedDatabasePanel({ databaseId, name }: { databaseId: string;
   return (
     <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-ink">
       Created <span className="font-semibold">{name}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
-      <Link className="text-accent no-underline hover:underline" href={`/${encodeURIComponent(databaseId)}/Wiki`}>
-        Open
+      <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(databaseId)}`}>
+        Manage reservation
       </Link>
     </div>
   );
@@ -312,9 +324,14 @@ function formatBytes(value: string): string {
 }
 
 function databaseMarker(database: DatabaseSummary): string {
-  if (database.deletedAtMs) return `Deleted ${formatTimestamp(database.deletedAtMs)}`;
   if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
+  if (database.status === "pending") return "Pending";
+  if (database.creditsSuspendedAtMs) return `Suspended ${formatTimestamp(database.creditsSuspendedAtMs)}`;
   return "-";
+}
+
+function isActiveRoutableDatabase(database: DatabaseRow): boolean {
+  return database.status === "active" && isRoutableDatabaseId(database.databaseId);
 }
 
 function openDatabaseHref(database: DatabaseRow): string {

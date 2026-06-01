@@ -5,8 +5,8 @@ use vfs_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest,
     GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, ListNodesRequest,
     MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, RecentNodesRequest,
-    SearchNodePathsRequest, SearchPreviewMode, SourceEvidenceRequest, WriteNodeRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, SearchNodePathsRequest,
+    SearchPreviewMode, SourceEvidenceRequest, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -1610,74 +1610,6 @@ fn glob_nodes_tolerates_existing_paths_longer_than_previous_match_limit() {
         .expect("glob should succeed even with long stored paths");
     assert_eq!(hits.len(), 2);
     assert!(hits.iter().any(|hit| hit.path == "/Wiki/short.md"));
-}
-
-#[test]
-fn recent_nodes_orders_by_updated_at_after_delete_removes_old_entry() {
-    let (_dir, store) = new_store();
-    let first = store
-        .append_node(
-            AppendNodeRequest {
-                database_id: "default".to_string(),
-                path: "/Wiki/one.md".to_string(),
-                content: "one".to_string(),
-                expected_etag: None,
-                separator: None,
-                metadata_json: None,
-                kind: None,
-            },
-            10,
-        )
-        .expect("first create should succeed");
-    let second = store
-        .append_node(
-            AppendNodeRequest {
-                database_id: "default".to_string(),
-                path: "/Wiki/two.md".to_string(),
-                content: "two".to_string(),
-                expected_etag: None,
-                separator: None,
-                metadata_json: None,
-                kind: None,
-            },
-            20,
-        )
-        .expect("second create should succeed");
-    store
-        .delete_node(
-            vfs_types::DeleteNodeRequest {
-                database_id: "default".to_string(),
-                path: "/Wiki/one.md".to_string(),
-                expected_etag: Some(first.node.etag),
-                expected_folder_index_etag: None,
-            },
-            30,
-        )
-        .expect("delete should succeed");
-
-    let visible = store
-        .recent_nodes(RecentNodesRequest {
-            database_id: "default".to_string(),
-            limit: 5,
-            path: Some("/Wiki".to_string()),
-        })
-        .expect("recent visible should succeed");
-    assert!(
-        visible
-            .iter()
-            .any(|node| node.path == "/Wiki/two.md" && node.etag == second.node.etag)
-    );
-    assert!(!visible.iter().any(|node| node.path == "/Wiki/one.md"));
-
-    let all = store
-        .recent_nodes(RecentNodesRequest {
-            database_id: "default".to_string(),
-            limit: 5,
-            path: Some("/Wiki".to_string()),
-        })
-        .expect("recent all should succeed");
-    assert!(all.iter().any(|node| node.path == "/Wiki/two.md"));
-    assert!(!all.iter().any(|node| node.path == "/Wiki/one.md"));
 }
 
 #[test]

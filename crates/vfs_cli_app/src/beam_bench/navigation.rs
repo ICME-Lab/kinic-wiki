@@ -284,8 +284,8 @@ mod tests {
         ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
         GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
         MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node,
-        NodeEntry, NodeEntryKind, NodeKind, RecentNodeHit, RecentNodesRequest,
-        SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest, WriteNodeResult,
+        NodeEntry, NodeEntryKind, NodeKind, SearchNodePathsRequest, SearchNodesRequest,
+        WriteNodeRequest, WriteNodeResult,
     };
 
     use super::{
@@ -461,9 +461,6 @@ mod tests {
             unreachable!()
         }
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
-            unreachable!()
-        }
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
             unreachable!()
         }
         async fn multi_edit_node(

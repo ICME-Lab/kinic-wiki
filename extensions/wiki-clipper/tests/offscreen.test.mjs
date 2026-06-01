@@ -266,15 +266,15 @@ test("authStatus returns principal without identity", async () => {
   }
 });
 
-test("listWritableDatabases returns hot writable database summaries", async () => {
+test("listWritableDatabases returns active writable database summaries", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
       async list_databases() {
         return {
           Ok: [
-            rawDatabase("team-db", "Team Wiki", "Writer", "Hot"),
-            rawDatabase("reader-db", "Read Wiki", "Reader", "Hot"),
+            rawDatabase("team-db", "Team Wiki", "Writer", "Active"),
+            rawDatabase("reader-db", "Read Wiki", "Reader", "Active"),
             rawDatabase("old-db", "Old Wiki", "Owner", "Archived")
           ]
         };
@@ -287,7 +287,7 @@ test("listWritableDatabases returns hot writable database summaries", async () =
         databaseId: "team-db",
         name: "Team Wiki",
         role: "Writer",
-        status: "Hot",
+        status: "Active",
         logicalSizeBytes: "0"
       }
     ]);
@@ -321,6 +321,7 @@ function rawDatabase(databaseId, name, role, status) {
     status: { [status]: null },
     logical_size_bytes: 0n,
     archived_at_ms: [],
-    deleted_at_ms: []
+    credits_balance: [],
+    credits_suspended_at_ms: []
   };
 }

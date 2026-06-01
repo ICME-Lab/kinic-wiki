@@ -21,11 +21,11 @@ import type {
   NodeContext,
   NodeEntryKind,
   NodeKind,
+  NodeMutationAck,
   QueryContext,
   QueryAnswerSessionCheckRequest,
   QueryAnswerSessionCheckResult,
   QueryAnswerSessionRequest,
-  RecentNode,
   SearchNodeHit,
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
@@ -61,7 +61,8 @@ type RawDatabaseSummary = {
   database_id: string;
   name: string;
   archived_at_ms: [] | [bigint];
-  deleted_at_ms: [] | [bigint];
+  credits_balance: [] | [bigint];
+  credits_suspended_at_ms: [] | [bigint];
 };
 
 type RawCreateDatabaseResult = {
@@ -87,7 +88,7 @@ type RawChild = {
   has_children: boolean;
 };
 
-type RawRecent = {
+type RawNodeMutationAck = {
   path: string;
   kind: Variant;
   updated_at: bigint;
@@ -105,7 +106,7 @@ type RawWriteNodeRequest = {
 
 type RawWriteNodeResult = {
   created: boolean;
-  node: RawRecent;
+  node: RawNodeMutationAck;
 };
 
 type RawWriteSourceForGenerationRequest = {
@@ -153,7 +154,7 @@ type RawMoveNodeRequest = {
 
 type RawMoveNodeResult = {
   from_path: string;
-  node: RawRecent;
+  node: RawNodeMutationAck;
   overwrote: boolean;
 };
 
@@ -222,7 +223,7 @@ type VfsActor = {
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
-  delete_database: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
+  delete_database: (request: { database_id: string }) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
@@ -233,9 +234,6 @@ type VfsActor = {
   rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
-  recent_nodes: (request: { database_id: string; path: [] | [string]; limit: number }) => Promise<
-    { Ok: RawRecent[] } | { Err: string }
-  >;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
@@ -410,7 +408,7 @@ export async function createDatabaseAuthenticated(canisterId: string, identity: 
 export async function deleteDatabaseAuthenticated(canisterId: string, identity: Identity, databaseId: string): Promise<void> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.delete_database(databaseId);
+    const result = await actor.delete_database({ database_id: databaseId });
     if ("Err" in result) {
       throw new Error(result.Err);
     }
@@ -443,7 +441,7 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
     }
     return {
       created: result.Ok.created,
-      node: normalizeRecentNode(result.Ok.node)
+      node: normalizeNodeMutationAck(result.Ok.node)
     };
   });
 }
@@ -469,7 +467,7 @@ export async function writeSourceForGenerationAuthenticated(
     return {
       write: {
         created: result.Ok.write.created,
-        node: normalizeRecentNode(result.Ok.write.node)
+        node: normalizeNodeMutationAck(result.Ok.write.node)
       },
       sessionNonce: result.Ok.session_nonce
     };
@@ -521,7 +519,7 @@ export async function moveNodeAuthenticated(canisterId: string, identity: Identi
     }
     return {
       fromPath: result.Ok.from_path,
-      node: normalizeRecentNode(result.Ok.node),
+      node: normalizeNodeMutationAck(result.Ok.node),
       overwrote: result.Ok.overwrote
     };
   });
@@ -663,19 +661,6 @@ export async function listChildren(canisterId: string, databaseId: string, path:
       throwCanisterError(result.Err);
     }
     return sortChildNodes(result.Ok.map(normalizeChild));
-  });
-}
-
-export async function recentNodes(canisterId: string, databaseId: string, limit: number, identity?: Identity, path: string | null = null): Promise<RecentNode[]> {
-  return callVfs(async () => {
-    const actor = await createReadActor(canisterId, identity);
-    const result = await actor.recent_nodes({ database_id: databaseId, path: path ? [path] : [], limit });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return result.Ok.map((node) => ({
-      ...normalizeRecentNode(node)
-    }));
   });
 }
 
@@ -822,8 +807,9 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
+    creditsBalance: raw.credits_balance[0]?.toString() ?? null,
+    creditsSuspendedAtMs: raw.credits_suspended_at_ms[0]?.toString() ?? null,
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
-    deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
 }
 
@@ -836,7 +822,7 @@ function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
   };
 }
 
-function normalizeRecentNode(raw: RawRecent): RecentNode {
+function normalizeNodeMutationAck(raw: RawNodeMutationAck): NodeMutationAck {
   return {
     path: raw.path,
     kind: normalizeNodeKind(raw.kind),
@@ -977,10 +963,10 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   if ("Archived" in status) {
     return "archived";
   }
-  if ("Deleted" in status) {
-    return "deleted";
+  if ("Pending" in status) {
+    return "pending";
   }
-  return "hot";
+  return "active";
 }
 
 function isLocalHost(host: string): boolean {

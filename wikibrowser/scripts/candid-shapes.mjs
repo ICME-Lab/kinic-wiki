@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Pending: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -11,12 +11,14 @@ export const expectedTypes = {
       database_id: "text",
       name: "text",
       archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      credits_balance: "opt nat64",
+      credits_suspended_at_ms: "opt int64"
     }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
+  DeleteDatabaseRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -71,7 +73,7 @@ export const expectedTypes = {
   },
   WriteNodeResult: {
     kind: "record",
-    fields: { created: "bool", node: "RecentNodeHit" }
+    fields: { created: "bool", node: "NodeMutationAck" }
   },
   WriteSourceForGenerationRequest: {
     kind: "record",
@@ -191,11 +193,6 @@ export const expectedTypes = {
       namespace: "opt text"
     }
   },
-  RecentNodeHit: {
-    kind: "record",
-    fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" }
-  },
-  RecentNodesRequest: { kind: "record", fields: { path: "opt text", limit: "nat32", database_id: "text" } },
   GraphLinksRequest: { kind: "record", fields: { limit: "nat32", database_id: "text", prefix: "text" } },
   GraphNeighborhoodRequest: { kind: "record", fields: { center_path: "text", limit: "nat32", database_id: "text", depth: "nat32" } },
   IncomingLinksRequest: { kind: "record", fields: { path: "text", limit: "nat32", database_id: "text" } },
@@ -229,7 +226,6 @@ export const expectedTypes = {
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
-  ResultRecent: { kind: "variant", cases: { Ok: "vec RecentNodeHit", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
   ResultWriteSourceForGeneration: {
@@ -298,24 +294,23 @@ export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
   RenameDatabaseRequest: "CreateDatabaseResult",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
-  ResultChildren: "Result_11",
+  ResultChildren: "Result_12",
   ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_13",
+  ResultDatabases: "Result_16",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_15",
-  ResultMoveNode: "Result_16",
-  ResultMembers: "Result_12",
+  ResultMkdirNode: "Result_18",
+  ResultMoveNode: "Result_19",
+  ResultMembers: "Result_15",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultLinks: "Result_10",
-  ResultNode: "Result_19",
-  ResultNodeContext: "Result_20",
-  ResultQueryContext: "Result_17",
-  ResultRecent: "Result_21",
-  ResultSearch: "Result_22",
-  ResultSourceEvidence: "Result_23",
+  ResultLinks: "Result_11",
+  ResultNode: "Result_25",
+  ResultNodeContext: "Result_26",
+  ResultQueryContext: "Result_22",
+  ResultSearch: "Result_27",
+  ResultSourceEvidence: "Result_28",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_25"
+  ResultWriteSourceForGeneration: "Result_30"
 };
 
 export const expectedMethods = {
@@ -326,7 +321,7 @@ export const expectedMethods = {
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
-  delete_database: { input: ["text"], output: "ResultUnit", mode: "update" },
+  delete_database: { input: ["DeleteDatabaseRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
   rename_database: { input: ["RenameDatabaseRequest"], output: "ResultUnit", mode: "update" },
@@ -343,7 +338,6 @@ export const expectedMethods = {
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
-  recent_nodes: { input: ["RecentNodesRequest"], output: "ResultRecent", mode: "query" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },

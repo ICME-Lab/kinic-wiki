@@ -20,9 +20,9 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
     NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceEvidence, SourceEvidenceRef, SourceEvidenceRequest, Status,
-    WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
+    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 use crate::{
@@ -452,45 +452,6 @@ impl FsStore {
                 }
             }
             Ok(hits)
-        })
-    }
-
-    pub fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>, String> {
-        let prefix = request
-            .path
-            .as_deref()
-            .map(|value| normalize_node_path(value, true))
-            .transpose()?
-            .unwrap_or_else(|| "/".to_string());
-        self.read_conn(|conn| {
-            let mut sql = String::from(
-                "SELECT path, kind, updated_at, etag
-             FROM fs_nodes WHERE 1 = 1",
-            );
-            let mut values = Vec::new();
-            if prefix != "/" {
-                let (scope_sql, scope_values) = prefix_filter_sql(&prefix, values.len() + 1);
-                sql.push_str(&scope_sql);
-                values.extend(scope_values);
-            }
-            let limit = capped_query_limit(request.limit);
-            sql.push_str(&format!(
-                " ORDER BY updated_at DESC, path ASC LIMIT {limit}"
-            ));
-            let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-            crate::sqlite::query_map(
-                &mut stmt,
-                crate::sqlite::params_from_values(&values),
-                |row| {
-                    Ok(RecentNodeHit {
-                        path: crate::sqlite::row_get::<String>(row, 0)?,
-                        kind: node_kind_from_db(&crate::sqlite::row_get::<String>(row, 1)?)?,
-                        updated_at: crate::sqlite::row_get::<i64>(row, 2)?,
-                        etag: crate::sqlite::row_get::<String>(row, 3)?,
-                    })
-                },
-            )
-            .map_err(|error| error.to_string())
         })
     }
 

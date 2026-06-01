@@ -24,51 +24,105 @@ Stable-memory mount IDs are partitioned by purpose:
 - `11..=32767`: user DB slots
 - `32768..=65534`: reserved
 
-The index DB tracks database metadata and membership. User DBs hold VFS node data, search data, and link data.
-The index DB also stores an internal `usage_events` ledger for update calls.
+The index DB tracks database metadata, membership, and credits history. User DBs hold VFS node data, search data, and link data.
 
-Hot, archiving, or restoring DBs consume one active user DB slot. Archived and deleted DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database.
+The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
+
+Pending DBs have index metadata and credit accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful credit purchase activates it.
 
 ## Status
 
 Databases move through five statuses:
 
-- `hot`: mounted and usable for VFS read/write/search/list
+- `pending`: metadata reserved, no mounted SQLite DB yet, only listing, credit purchase/repair, and delete are available
+- `active`: mounted and usable for VFS read/write/search/list
 - `archiving`: mounted for chunk export, VFS operations rejected until finalize succeeds
 - `archived`: not mounted, active mount released, snapshot metadata retained
-- `deleted`: not mounted, active mount released, not restorable unless an external archive was taken first
 - `restoring`: mounted for chunk import, VFS operations rejected until finalize succeeds
 
-Only `hot` DBs are available to normal VFS APIs.
+Only `active` DBs are available to normal VFS APIs.
 
 ## Size Tracking
 
 `logical_size_bytes` tracks the SQLite file size for a database.
 
-It is updated after VFS mutations and restore finalization. It is useful for visibility and planning, but it is not a stable-memory billing or shrink metric.
+It is updated after VFS mutations and restore finalization. It is useful for visibility and planning, but it is not a stable-memory credits or shrink metric.
 
 Deleting or archiving a DB releases the active mount. It does not imply that canister stable memory shrinks or that the stable-memory mount ID is reused.
 
-## Usage Ledger
+## Credits
 
-`usage_events` records update calls only. Query calls are not recorded.
+KINIC credits uses one internal DB-scoped balance:
 
-Each event stores method, database ID when present, caller principal, success flag, observed cycle delta, error text, and timestamp.
-The cycle delta is an operational observation from canister balance before and after the update, not a guaranteed one-to-one IC billing statement.
-Only the latest 100,000 events are retained. The ledger is internal operational material, not a guaranteed billing statement.
+- DB credits balance: KINIC pulled from the external ledger directly into a reserved DB
+
+DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB credits balance without allocating a stable-memory mount ID. The DB remains `pending` and credits-suspended until its first successful credit purchase activates the mounted SQLite DB.
+
+While a DB is pending, callers can use `list_databases`, `preview_database_credit_purchase`, `purchase_database_credits`, credit purchase repair/list/cancel endpoints, and `delete_database`. `rename_database`, `grant_database_access`, `revoke_database_access`, `list_database_members`, and VFS read/write/search/list APIs require activation first.
+
+External ledger calls are limited to DB credit purchase:
+
+- `preview_database_credit_purchase(database_id, credits)` returns `payment_amount_e8s`, `ledger_fee_e8s`, `credits_per_kinic`, and `config_version`.
+- `purchase_database_credits(DatabaseCreditPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints credits into that DB credits balance. The request must include the previewed `expected_payment_amount_e8s` and `expected_config_version`; mismatch rejects before pending operation creation and before ledger transfer. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
+
+Any authenticated caller can credit purchase an existing DB that still has an owner, including callers with no DB role. `preview_database_credit_purchase` is intentionally callable by anonymous callers so wallet UIs can validate a database target before requesting approval. The payer is recorded in the DB ledger entry. Reader and writer credits history redacts payer/caller principals, while DB owner and SNS governance can read full payer/caller details. Once the ledger call starts, completion, cancellation, or ambiguous recording resolves the started operation even if membership changes during the await.
+
+Successful DB update calls are charged after execution. The charge is:
+
+```text
+ceil(cycles_delta / 1_000_000_000)
+```
+
+The default purchase rate is `1 KINIC = 1000 credits`, controlled by `credits_per_kinic`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credits` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
+
+`database_credit_ledger` is the credits source of truth. `amount_credits` is the effective credits delta applied to the DB balance, and `balance_after_credits` is the resulting balance. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
+
+Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance and include `operation_status` for repair decisions. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
+
+`kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credits_per_kinic` or `min_update_credits` actually changes.
+
+`scripts/deploy/wiki_credits_args.sh` is the shared deploy-arg generator. `scripts/local/deploy_wiki.sh` deploys to `local-wiki`; if `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. `KINIC_LEDGER_CANISTER_ID` is always explicit. The deploy scripts do not create a ledger canister.
+
+Fresh install and reinstall do not support no-arg deploy. A pre-credits schema upgrade also requires `CreditsConfig`. After credits config has been initialized, no-arg post-upgrade can reuse stored config, but official deploy and upgrade steps still pass `CreditsConfig` every time. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. Production and staging principal values are managed as deploy environment variables, not committed repo data. These principal values cannot be changed after init.
+
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. `scripts/smoke/local_canister_post_upgrade.sh` verifies deploy with `CreditsConfig`, pending DB persistence, and upgrade with the same config. Ledger-backed credit purchase smoke is separate.
+
+Normal operator flow:
+
+1. Owner creates a pending DB with `create_database(display_name)`.
+2. Payer previews the DB credit purchase, then approves the VFS canister on the KINIC ICRC-2 ledger for the DB credit amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
+3. Payer calls `purchase_database_credits` with the previewed expected amount and config version. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance credit both complete.
+4. Successful DB updates consume DB credits balance.
+5. DB delete discards any remaining credits.
+
+URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or credits-config-unavailable DBs as not writable. Browser and worker paths re-check credits before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
+
+Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented.
+
+If DB credit purchase receives an explicit ledger error, the credit purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `credit_purchase_ambiguous` with `amount_credits = 0`. If the ledger transfer succeeds but local DB activation or credit application fails, the operation remains pending and the error returns the pending `operation_id` and `ledger_block_index` for verified completion. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so completion can validate the exact transfer.
+
+Pending operations block DB delete until they are resolved:
+
+- `repair_database_credit_purchase_complete(database_id, operation_id, ledger_block_index)`
+- `repair_database_credit_purchase_cancel(database_id, operation_id)`
+
+Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is allowed only for the original payer or DB owner, and is rejected once pending DB activation has started. Cancel writes `credit_purchase_repair_cancelled` with the cancel caller, pending payment amount, current balance, `amount_credits = 0`, and no ledger block index. DB owner and SNS governance can inspect pending operations.
 
 ## Delete
 
-`delete_database` is owner-only.
+`delete_database(DeleteDatabaseRequest)` is owner-only.
 
-Delete is a soft delete in the index:
+Delete is a hard delete:
 
-- status becomes `deleted`
-- active mount ID is cleared
-- logical size is set to `0`
+- the SQLite DB file is removed where file deletion is available
+- DB membership, credits, pending operations, restore chunks, restore sessions, and transient sessions are removed from the index
+- `database_mount_history` is retained so the stable-memory mount ID is not reused by another DB in v1
 - the stable-memory mount ID is not reused by another DB in v1
 
+Delete requires no pending credit purchase operations. The request carries only `database_id`. Remaining DB credits are discarded with the deleted index rows.
+
 Delete is treated as irreversible. If recovery is required, archive first and store the exported bytes outside the canister.
+Deleted DBs are absent from `list_databases` and subsequent DB operations return `database not found`.
 
 ## Archive
 
@@ -82,7 +136,7 @@ Archive is a low-level snapshot byte export flow:
 The canister does not persist archive bytes. The caller owns external storage and retry behavior.
 
 `snapshot_hash` must be the 32-byte SHA-256 digest of the exported SQLite bytes.
-If hash verification fails, the DB stays `archiving`; the caller can reread bytes and retry finalize or call `cancel_database_archive(database_id)` to return the DB to `hot`.
+If hash verification fails, the DB stays `archiving`; the caller can reread bytes and retry finalize or call `cancel_database_archive(database_id)` to return the DB to `active`.
 `cancel_database_archive` is owner-only and only valid while the DB is `archiving`.
 Archive reads reject chunks larger than 1 MiB.
 Finalize computes the digest by reading the whole SQLite file in one update. Large DBs can increase instruction and cycle cost; a future archive flow can move this to incremental chunk hashing.
@@ -91,15 +145,15 @@ Finalize computes the digest by reading the whole SQLite file in one update. Lar
 
 Restore is a low-level snapshot byte import flow:
 
-1. `begin_database_restore(database_id, snapshot_hash, size_bytes)` moves an archived or deleted DB to `restoring` and allocates a new slot.
+1. `begin_database_restore(database_id, snapshot_hash, size_bytes)` moves an archived DB to `restoring` and allocates a new slot.
 2. `write_database_restore_chunk(database_id, offset, bytes)` writes imported bytes.
-3. `finalize_database_restore(database_id)` checks file size and SHA-256 digest, runs DB migrations, and returns the DB to `hot`.
+3. `finalize_database_restore(database_id)` checks file size and SHA-256 digest, runs DB migrations, and returns the DB to `active`.
 
-Restore can only begin from `archived` or `deleted`. It cannot begin from `hot` or while already `restoring`.
-If the canister cannot mount the newly allocated DB file during begin, the DB rolls back to its previous `archived` or `deleted` state. The failed mount ID remains in mount history and is not reused.
+Restore can only begin from `archived`. It cannot begin from `active` or while already `restoring`.
+If the canister cannot mount the newly allocated DB file during begin, the DB rolls back to its previous `archived` state. The failed mount ID remains in mount history and is not reused.
 
 If finalize fails because the file size is wrong, the DB stays `restoring`. The caller can write missing bytes and retry finalize.
-If the restore must be abandoned, `cancel_database_restore(database_id)` returns the DB to the pre-restore `archived` or `deleted` state and removes partial restore chunks and bytes. The restore mount ID remains in mount history and is not reused.
+If the restore must be abandoned, `cancel_database_restore(database_id)` returns the DB to the pre-restore `archived` state and removes partial restore chunks and bytes. The restore mount ID remains in mount history and is not reused.
 Restore rejects chunks larger than 1 MiB and declared DB sizes larger than `i64::MAX`.
 Restore finalize also hashes the whole restored SQLite file in one update, so large imports have the same instruction and cycle-cost concern as archive finalize.
 
@@ -114,10 +168,9 @@ Busy DBs may require caller retry by restarting the snapshot export flow.
 - At most 32757 lifetime user DB slots per canister: mount IDs `11..=32767`.
 - Archive export and restore import chunks are limited to 1 MiB.
 - Declared restore DB size must fit the runtime database size limit, currently `i64::MAX`.
-- v1 does not treat archived or deleted slots as reusable concurrent capacity.
+- v1 does not treat archived slots as reusable concurrent capacity.
 
 ## Follow-ups
 
-- `delete_database` currently deletes the SQLite file before marking the DB `deleted`. A later lifecycle change should add a `deleting` state or equivalent two-phase flow before reordering this safely.
 - The CLI exposes archive export/import as `database archive-export` and `database archive-restore`. External object storage integration is still caller-owned.
 - Caffeine or external object storage integration is out of scope for v1.
