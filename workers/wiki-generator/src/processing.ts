@@ -15,6 +15,11 @@ export type ManualRunContext = {
   vfs: VfsClient;
 };
 
+export type QueueMessageEnvelope =
+  | { kind: "valid"; message: QueueMessage }
+  | { kind: "legacy_url_ingest_missing_nonce"; canisterId: string; databaseId: string; requestPath: string }
+  | { kind: "invalid"; reason: string };
+
 type ExternalCostGateInput = {
   databaseId: string;
   sourcePath?: string;
@@ -72,6 +77,22 @@ export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage
   await processSourceQueueMessage(env, message);
 }
 
+export async function processQueueMessageEnvelope(
+  env: RuntimeEnv,
+  envelope: QueueMessageEnvelope,
+  context?: { config?: WorkerConfig; vfs?: VfsClient }
+): Promise<void> {
+  if (envelope.kind === "valid") {
+    await processQueueMessage(env, envelope.message);
+    return;
+  }
+  if (envelope.kind === "legacy_url_ingest_missing_nonce") {
+    await failLegacyUrlIngestMessage(env, envelope, context);
+    return;
+  }
+  console.warn("invalid wiki-generator queue message acked", envelope.reason);
+}
+
 export async function processSourceQueueMessageForTest(
   env: RuntimeEnv,
   message: SourceQueueMessage,
@@ -121,7 +142,11 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, generated.targetPath, source.path);
   } catch (error) {
     const messageText = errorMessage(error);
-    if (error instanceof ExternalCostGateError || deepSeekAttempted) {
+    if (error instanceof ExternalCostGateError) {
+      await markQueueFailed(env, vfs, message, messageText);
+      return;
+    }
+    if (deepSeekAttempted) {
       await bestEffortMarkQueueFailed(env, vfs, message, messageText);
       return;
     }
@@ -138,6 +163,9 @@ class ExternalCostGateError extends Error {
 
 async function ensureExternalCostAllowed(vfs: VfsClient, input: ExternalCostGateInput): Promise<void> {
   try {
+    if (input.requestPath && !input.sessionNonce) {
+      throw new Error("sessionNonce is required for request-bound source generation");
+    }
     if (input.requestPath && input.sessionNonce) {
       await vfs.checkUrlIngestTriggerSession(input.databaseId, input.requestPath, input.sessionNonce);
       return;
@@ -222,7 +250,7 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if (typeof value.canisterId !== "string") return null;
     if (typeof value.databaseId !== "string") return null;
     if (typeof value.requestPath !== "string") return null;
-    if (typeof value.sessionNonce !== "string") return null;
+    if (typeof value.sessionNonce !== "string" || value.sessionNonce.length === 0) return null;
     return {
       kind: "url_ingest",
       canisterId: value.canisterId,
@@ -232,6 +260,43 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     };
   }
   return null;
+}
+
+export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope {
+  const message = parseQueueMessage(value);
+  if (message) return { kind: "valid", message };
+  if (isObject(value) && value.kind === "url_ingest") {
+    if (typeof value.canisterId !== "string") return { kind: "invalid", reason: "url_ingest canisterId is missing" };
+    if (typeof value.databaseId !== "string") return { kind: "invalid", reason: "url_ingest databaseId is missing" };
+    if (typeof value.requestPath !== "string") return { kind: "invalid", reason: "url_ingest requestPath is missing" };
+    if (typeof value.sessionNonce !== "string" || value.sessionNonce.length === 0) {
+      return {
+        kind: "legacy_url_ingest_missing_nonce",
+        canisterId: value.canisterId,
+        databaseId: value.databaseId,
+        requestPath: value.requestPath
+      };
+    }
+  }
+  return { kind: "invalid", reason: "queue message shape is invalid" };
+}
+
+async function failLegacyUrlIngestMessage(
+  env: RuntimeEnv,
+  message: { canisterId: string; databaseId: string; requestPath: string },
+  context?: { config?: WorkerConfig; vfs?: VfsClient }
+): Promise<void> {
+  const config = context?.config ?? loadConfig(env);
+  if (message.canisterId !== config.canisterId) {
+    console.warn("legacy url_ingest queue message targets a different canister");
+    return;
+  }
+  if (!message.requestPath.startsWith("/Sources/ingest-requests/") || !message.requestPath.endsWith(".md")) {
+    console.warn("legacy url_ingest queue message has a non-canonical request path");
+    return;
+  }
+  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
+  await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, "sessionNonce is required for url_ingest queue message");
 }
 
 async function generateFromSource(

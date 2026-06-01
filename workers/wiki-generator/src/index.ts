@@ -2,7 +2,7 @@
 // What: Cloudflare Worker entrypoints for manual, URL ingest, and queue triggers.
 // Why: Generation should run outside the wiki browser UI server.
 import { isAuthorized } from "./auth.js";
-import { parseManualRunInput, parseQueueMessage, processQueueMessage, runManual } from "./processing.js";
+import { parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, runManual } from "./processing.js";
 import { parseUrlIngestTriggerInput, UrlIngestTriggerError, validateUrlIngestTriggerInput } from "./url-ingest.js";
 import type { QueueMessage } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
@@ -30,7 +30,7 @@ export default {
         return jsonResponse({ error: errorMessage(error) }, status);
       }
       await env.WIKI_GENERATION_QUEUE.send({ kind: "url_ingest", ...input });
-      return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath, sessionNonce: input.sessionNonce }, 202);
+      return jsonResponse({ accepted: true, databaseId: input.databaseId, requestPath: input.requestPath }, 202);
     }
     if (request.method !== "POST" || url.pathname !== "/run") {
       return jsonResponse({ error: "not found" }, 404);
@@ -56,13 +56,9 @@ export default {
 
   async queue(batch, env): Promise<void> {
     for (const message of batch.messages) {
-      const parsed = parseQueueMessage(message.body);
-      if (!parsed) {
-        message.ack();
-        continue;
-      }
+      const parsed = parseQueueMessageEnvelope(message.body);
       try {
-        await processQueueMessage(env, parsed);
+        await processQueueMessageEnvelope(env, parsed);
       } catch (error) {
         console.error("wiki-generator queue message failed", errorMessage(error));
         throw error;

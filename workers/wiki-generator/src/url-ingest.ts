@@ -103,21 +103,23 @@ export async function processUrlIngestRequest(
   config: WorkerConfig,
   databaseId: string,
   request: UrlIngestRequest,
-  sessionNonce?: string
+  sessionNonce: string
 ): Promise<void> {
   let current: UrlIngestRequest | null = request;
   try {
     current = await claimIngestRequest(vfs, databaseId, request);
     if (!current) return;
+    if (!sessionNonce) {
+      await bestEffortWriteRequestState(vfs, databaseId, current, { status: "failed", error: "sessionNonce is required" });
+      return;
+    }
     let sourceAck: WriteNodeAck | null = null;
     if (current.status === "fetching") {
-      if (sessionNonce) {
-        try {
-          await vfs.checkUrlIngestTriggerSession(databaseId, current.path, sessionNonce);
-        } catch (error) {
-          await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", error: errorMessage(error) });
-          return;
-        }
+      try {
+        await vfs.checkUrlIngestTriggerSession(databaseId, current.path, sessionNonce);
+      } catch (error) {
+        await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", error: errorMessage(error) });
+        return;
       }
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
       const sourcePath = await sourcePathForUrl(config.sourcePrefix, fetched.finalUrl);
@@ -304,7 +306,7 @@ async function reprocessLatestIfRecoverable(
   config: WorkerConfig,
   databaseId: string,
   requestPath: string,
-  sessionNonce?: string
+  sessionNonce: string
 ): Promise<void> {
   const latest = await readUrlIngestRequest(vfs, databaseId, requestPath);
   if (!latest || latest.status !== "source_written") return;
@@ -336,6 +338,23 @@ async function bestEffortWriteLatestRequestState(
   try {
     await writeLatestRequestState(vfs, databaseId, requestPath, updates);
   } catch (error) {
+    console.warn("failed to record URL ingest non-retry failure", errorMessage(error));
+  }
+}
+
+async function bestEffortWriteRequestState(
+  vfs: VfsClient,
+  databaseId: string,
+  request: UrlIngestRequest,
+  updates: { status: UrlIngestRequest["status"]; claimedAt?: string | null; sourcePath?: string | null; targetPath?: string | null; error?: string | null }
+): Promise<void> {
+  try {
+    await writeRequestState(vfs, databaseId, request, updates);
+  } catch (error) {
+    if (isEtagMismatch(error)) {
+      await bestEffortWriteLatestRequestState(vfs, databaseId, request.path, updates);
+      return;
+    }
     console.warn("failed to record URL ingest non-retry failure", errorMessage(error));
   }
 }

@@ -94,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 function parseTriggerRequest(value: unknown): TriggerRequest | string {
-  if (!isRecord(value)) return "canisterId, databaseId, and requestPath are required";
+  if (!isRecord(value)) return "canisterId, databaseId, requestPath, and sessionNonce are required";
   const canisterId = value.canisterId;
   const databaseId = value.databaseId;
   const requestPath = value.requestPath;

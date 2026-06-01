@@ -40,8 +40,7 @@ test("url ingest trigger enqueues URL ingest message without background work", a
   assert.deepEqual(await response.json(), {
     accepted: true,
     databaseId: "db_1",
-    requestPath: "/Sources/ingest-requests/1.md",
-    sessionNonce: "session-1"
+    requestPath: "/Sources/ingest-requests/1.md"
   });
   assert.equal(context.waitUntilCount, 0);
   assert.deepEqual(queue.messages, [
