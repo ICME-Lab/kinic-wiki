@@ -2,7 +2,7 @@
 
 `kinic-vfs-cli` is published as the single operator binary for database setup, scripted writes, archive/restore, and Skill Registry maintenance. The Browser remains the primary public UI.
 
-Primary distribution is npm. The npm package downloads GitHub Release assets and verifies SHA-256 checksums. Homebrew is optional follow-up packaging. Cargo install is a Rust-user fallback; crates.io publication is deferred.
+Primary distribution is npm. The npm package downloads GitHub Release assets and verifies SHA-256 checksums. Cargo install is a Rust-user fallback; crates.io publication is deferred.
 
 ## npm
 
@@ -72,37 +72,6 @@ shasum -a 256 -c kinic-vfs-cli-v0.1.3-macos-arm64.sha256
 tar -xzf kinic-vfs-cli-v0.1.3-macos-arm64.tar.gz
 ./kinic-vfs-cli --help
 ./kinic-vfs-cli --version
-```
-
-## Homebrew
-
-Homebrew packaging is optional. The standard tap is `ICME-Lab/homebrew-tap`. If the tap does not exist yet, create it first.
-
-After a GitHub Release is available:
-
-1. Read the release checksum:
-
-   ```bash
-   shasum -a 256 kinic-vfs-cli-v0.1.3-macos-arm64.tar.gz
-   ```
-
-2. Copy [`../packaging/homebrew/Formula/kinic-vfs-cli.rb`](../packaging/homebrew/Formula/kinic-vfs-cli.rb) into `ICME-Lab/homebrew-tap`.
-
-3. Replace the placeholder `sha256` with the release checksum.
-
-4. Validate inside the tap repo:
-
-   ```bash
-   brew audit --strict --online kinic-vfs-cli
-   brew install ICME-Lab/tap/kinic-vfs-cli
-   brew test kinic-vfs-cli
-   ```
-
-Before release assets exist, only local syntax and style checks are expected to pass:
-
-```bash
-ruby -c packaging/homebrew/Formula/kinic-vfs-cli.rb
-brew style packaging/homebrew/Formula/kinic-vfs-cli.rb
 ```
 
 ## CI Artifacts
