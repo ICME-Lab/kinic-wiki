@@ -59,10 +59,10 @@ jobs:
           }
 
           set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types)/|docs/DB_LIFECYCLE\.md|scripts/build-vfs-canister\.sh)'
-          set_output rust_all '^(Cargo\.toml|crates/(vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
+          set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output cli '^(crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
-          set_output wikibrowser '^wikibrowser/'
-          set_output extension '^extensions/wiki-clipper/'
+          set_output wikibrowser '^(wikibrowser/|crates/vfs_canister/vfs\.did)'
+          set_output extension '^(extensions/wiki-clipper/|crates/vfs_canister/vfs\.did)'
           set_output wiki_generator '^workers/wiki-generator/'
           set_output skill_registry_web '^(skill-registry-web/|wikibrowser/app/skills/|wikibrowser/scripts/check-skill-registry\.mjs|skills/)'
 

@@ -582,6 +582,10 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
         .expect("database ledger should load")
         .entries;
     assert!(entries.is_empty());
+    let pending = list_database_cycle_pending_operations(database.database_id, None, 10)
+        .expect("pending operations should load")
+        .entries;
+    assert!(pending.is_empty());
 }
 
 #[test]
