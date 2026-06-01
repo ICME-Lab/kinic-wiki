@@ -49,6 +49,7 @@ __pycache__/
 
 # Generated copies and store assets
 /extensions/wiki-clipper/store-listing/assets/*.png
+/extensions/wiki-clipper/store-listing/screenshots/*.png
 
 # Obsidian plugin artifacts
 /plugins/kinic-wiki/node_modules/
