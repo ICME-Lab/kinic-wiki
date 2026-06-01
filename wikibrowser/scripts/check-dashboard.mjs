@@ -203,7 +203,7 @@ assert.match(dashboardDangerZone, /This action is irreversible\. Archive first i
 assert.match(dashboardDangerZone, /Type database ID to confirm/);
 assert.match(dashboardDangerZone, /typedDatabaseId === props\.databaseId/);
 assert.match(dashboardDangerZone, /disabled=\{props\.busy \|\| !deleteConfirmed\}/);
-assert.match(vfsIdl, /delete_database: idl\.Func\(\[idl\.Text\], \[ResultUnit\], \[\]\)/);
+assert.match(vfsIdl, /delete_database: idl\.Func\(\[DeleteDatabaseRequest\], \[ResultUnit\], \[\]\)/);
 assert.doesNotMatch(homePage, /process\.env\.KINIC_WIKI_CANISTER_ID/);
 assert.doesNotMatch(dashboardClient, /process\.env\.KINIC_WIKI_CANISTER_ID/);
 

@@ -988,6 +988,33 @@ impl VfsService {
         })
     }
 
+    pub fn mark_database_credit_purchase_repair_completed(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<(), String> {
+        self.write_index(|tx| {
+            let operation = load_pending_credits_operation(tx, operation_id)?;
+            require_pending_database_kind(&operation, database_id, "credit_purchase")?;
+            require_pending_operation_status(
+                &operation,
+                &[
+                    CREDIT_OPERATION_STATUS_AMBIGUOUS,
+                    CREDIT_OPERATION_STATUS_COMPLETED,
+                ],
+                "complete credit purchase repair",
+            )?;
+            if operation.operation_status == CREDIT_OPERATION_STATUS_AMBIGUOUS {
+                update_pending_credits_operation_status(
+                    tx,
+                    operation_id,
+                    CREDIT_OPERATION_STATUS_COMPLETED,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn repair_database_credit_purchase_complete(
         &self,
         database_id: &str,

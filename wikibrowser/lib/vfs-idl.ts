@@ -7,11 +7,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Hot: idl.Null,
+    Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
     Archived: idl.Null,
-    Deleted: idl.Null
+    Pending: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -20,11 +20,13 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     database_id: idl.Text,
     name: idl.Text,
     archived_at_ms: idl.Opt(idl.Int64),
-    deleted_at_ms: idl.Opt(idl.Int64)
+    credits_balance: idl.Opt(idl.Nat64),
+    credits_suspended_at_ms: idl.Opt(idl.Int64)
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
+  const DeleteDatabaseRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
     role: DatabaseRole,
@@ -56,12 +58,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     size_bytes: idl.Opt(idl.Nat64),
     has_children: idl.Bool,
     is_virtual: idl.Bool
-  });
-  const RecentNodeHit = idl.Record({
-    path: idl.Text,
-    kind: NodeKind,
-    updated_at: idl.Int64,
-    etag: idl.Text
   });
   const NodeMutationAck = idl.Record({
     path: idl.Text,
@@ -137,7 +133,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     truncated: idl.Bool
   });
   const ListChildrenRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
-  const RecentNodesRequest = idl.Record({ path: idl.Opt(idl.Text), limit: idl.Nat32, database_id: idl.Text });
   const IncomingLinksRequest = idl.Record({ path: idl.Text, limit: idl.Nat32, database_id: idl.Text });
   const OutgoingLinksRequest = idl.Record({ path: idl.Text, limit: idl.Nat32, database_id: idl.Text });
   const GraphLinksRequest = idl.Record({ prefix: idl.Text, limit: idl.Nat32, database_id: idl.Text });
@@ -223,7 +218,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const SourceEvidenceRequest = idl.Record({ node_path: idl.Text, database_id: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultChildren = idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text });
-  const ResultRecent = idl.Variant({ Ok: idl.Vec(RecentNodeHit), Err: idl.Text });
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
@@ -232,7 +226,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
   const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
   const ResultWriteSourceForGeneration = idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text });
@@ -254,7 +248,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
-    delete_database: idl.Func([idl.Text], [ResultUnit], []),
+    delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
@@ -270,7 +264,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
-    recent_nodes: idl.Func([RecentNodesRequest], [ResultRecent], ["query"]),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),

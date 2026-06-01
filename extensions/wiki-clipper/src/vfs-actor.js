@@ -17,11 +17,11 @@ export async function createVfsActor({ canisterId, host, identity }) {
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Hot: idl.Null,
+    Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
     Archived: idl.Null,
-    Deleted: idl.Null
+    Pending: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -30,7 +30,8 @@ function idlFactory({ IDL: idl }) {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     archived_at_ms: idl.Opt(idl.Int64),
-    deleted_at_ms: idl.Opt(idl.Int64)
+    credits_balance: idl.Opt(idl.Nat64),
+    credits_suspended_at_ms: idl.Opt(idl.Int64)
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
@@ -66,19 +67,23 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     session_nonce: idl.Text
   });
-  const RecentNodeHit = idl.Record({
+  const UrlIngestTriggerSessionRequest = idl.Record({
+    database_id: idl.Text,
+    session_nonce: idl.Text
+  });
+  const NodeMutationAck = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
     kind: NodeKind,
     path: idl.Text
   });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const WriteSourceForGenerationResult = idl.Record({
     write: WriteNodeResult,
     session_nonce: idl.Text
   });
   return idl.Service({
-    authorize_url_ingest_trigger_session: idl.Func([OpsAnswerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
+    authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
@@ -112,7 +117,7 @@ export async function listWritableDatabases(config) {
 
 export function normalizeWritableDatabases(rawDatabases) {
   return rawDatabases.map(normalizeDatabaseSummary).filter((database) => {
-    return database.status === "Hot" && (database.role === "Owner" || database.role === "Writer");
+    return database.status === "Active" && (database.role === "Owner" || database.role === "Writer");
   });
 }
 

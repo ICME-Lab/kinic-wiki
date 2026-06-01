@@ -1386,10 +1386,11 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
       databaseId,
       name: databaseId,
       role: "reader",
-      status: "hot",
+      status: "active",
       logicalSizeBytes: "0",
+      creditsBalance: null,
+      creditsSuspendedAtMs: null,
       archivedAtMs: null,
-      deletedAtMs: null
     },
     ...databases
   ];

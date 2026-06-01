@@ -312,8 +312,9 @@ function formatBytes(value: string): string {
 }
 
 function databaseMarker(database: DatabaseSummary): string {
-  if (database.deletedAtMs) return `Deleted ${formatTimestamp(database.deletedAtMs)}`;
   if (database.archivedAtMs) return `Archived ${formatTimestamp(database.archivedAtMs)}`;
+  if (database.status === "pending") return "Pending";
+  if (database.creditsSuspendedAtMs) return `Suspended ${formatTimestamp(database.creditsSuspendedAtMs)}`;
   return "-";
 }
 

@@ -7,14 +7,14 @@ It stores durable wiki nodes in an Internet Computer canister and exposes them t
 
 Vector databases are useful for retrieving nearby text fragments from large corpora. Agent memory has a different shape. Agents need stable places for current decisions, source evidence, open questions, operating procedures, and relationships between notes.
 
-Kinic Wiki uses a canister-backed file system as that memory layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/raw/...`. Agents can search it, follow paths and links, inspect recent changes, and update notes with `etag` guarded writes.
+Kinic Wiki uses a canister-backed file system as that memory layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/raw/...`. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
 
 For many medium-sized agent workflows, structured file-system search is often more useful than embedding-only retrieval. A result is not just a similar chunk; it is a named, linked, updateable knowledge node.
 
 ## What It Provides
 
 - Browser access for public and private wiki databases
-- Path-based reads, writes, search, recent nodes, and link graph inspection
+- Path-based reads, writes, search, and link graph inspection
 - `etag` guarded edits for safer agent and operator workflows
 - Skill Registry packages for discovering, evaluating, and improving agent skills
 - Read-only Agent Memory API methods for direct canister clients

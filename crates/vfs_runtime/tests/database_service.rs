@@ -2205,6 +2205,35 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
 }
 
 #[test]
+fn verified_repair_mark_blocks_cancel_before_credit_apply() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("complete", "owner", 1)
+        .expect("database should create");
+    let operation_id = service
+        .begin_database_credit_purchase("complete", "payer", 500, 2)
+        .expect("credit purchase should begin");
+    service
+        .mark_database_credit_purchase_ambiguous(operation_id, "complete", "payer", 500, 3)
+        .expect("credit purchase ambiguity should record");
+
+    service
+        .mark_database_credit_purchase_repair_completed("complete", operation_id)
+        .expect("verified repair should mark operation completed");
+    let cancel_error = service
+        .repair_database_credit_purchase_cancel("complete", operation_id, "owner", 4)
+        .expect_err("completed repair should not be cancellable");
+    assert!(cancel_error.contains("credit purchase operation is completed"));
+
+    let balance = service
+        .repair_database_credit_purchase_complete("complete", operation_id, 77, 5)
+        .expect("completed repair should still credit database");
+    assert_eq!(balance, 500);
+    assert_eq!(database_credits_balance(&root, "complete"), 500);
+    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
+}
+
+#[test]
 fn database_rename_requires_owner() {
     let (service, root) = service_with_root();
     service

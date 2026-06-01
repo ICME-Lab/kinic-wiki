@@ -79,9 +79,11 @@ Credits history redacts payer/caller principals for reader and writer callers. D
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credits_per_kinic` or `min_update_credits` actually changes.
 
-`scripts/local/deploy_wiki.sh` carries local development init args. If `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local credit purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
+`scripts/deploy/wiki_credits_args.sh` is the shared deploy-arg generator. `scripts/local/deploy_wiki.sh` deploys to `local-wiki`; if `SNS_GOVERNANCE_ID` is unset, local deploy uses `icp identity principal`. `KINIC_LEDGER_CANISTER_ID` is always explicit. The deploy scripts do not create a ledger canister.
 
-Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. These principal values cannot be changed after init.
+Fresh install and reinstall do not support no-arg deploy. A pre-credits schema upgrade also requires `CreditsConfig`. After credits config has been initialized, no-arg post-upgrade can reuse stored config, but official deploy and upgrade steps still pass `CreditsConfig` every time. Production deploy must use `scripts/mainnet/deploy_wiki.sh` with `KINIC_LEDGER_CANISTER_ID` and `SNS_GOVERNANCE_ID`; the script rejects unset, empty, or anonymous values before install. Production and staging principal values are managed as deploy environment variables, not committed repo data. These principal values cannot be changed after init.
+
+Unit tests do not deploy a ledger. They mock ledger transfer outcomes inside the canister test harness. `scripts/smoke/local_canister_post_upgrade.sh` verifies deploy with `CreditsConfig`, pending DB persistence, and upgrade with the same config. Ledger-backed credit purchase smoke is separate.
 
 Normal operator flow:
 

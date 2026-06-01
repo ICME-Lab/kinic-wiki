@@ -30,6 +30,8 @@ Internet Identity-backed identities are the default authenticated path. Non-II `
 Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to select a different canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
+`recent-nodes` and the canister `recent_nodes` query were removed. Use `list-nodes --prefix <path> --recursive --json` for scoped inventory, or `search-remote` / `search-path-remote` for recall.
+
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
 ```

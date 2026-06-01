@@ -688,6 +688,9 @@ async fn repair_database_credit_purchase_complete(
     })?;
     let expected = expected_credit_purchase_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
+    with_service(|service| {
+        service.mark_database_credit_purchase_repair_completed(&database_id, operation_id)
+    })?;
     let now = now_millis();
     activate_pending_database_after_credit_purchase_ledger_success(&database_id, now).map_err(
         |error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error),

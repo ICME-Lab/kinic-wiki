@@ -12,13 +12,14 @@ use ic_agent::{
 use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
-    DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseMember, DatabaseRestoreChunkRequest,
-    DatabaseRole, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    CreditsConfig, DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
@@ -37,6 +38,11 @@ pub trait VfsApi: Sync {
     }
     async fn memory_manifest(&self) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
+    }
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        Err(anyhow!(
+            "get_credits_config is not implemented by this client"
+        ))
     }
     async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
@@ -379,6 +385,11 @@ impl VfsApi for CanisterVfsClient {
         self.query("memory_manifest", &()).await
     }
 
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        let result: Result<CreditsConfig, String> = self.query("get_credits_config", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
@@ -447,7 +458,12 @@ impl VfsApi for CanisterVfsClient {
 
     async fn delete_database(&self, database_id: &str) -> Result<()> {
         let result: Result<(), String> = self
-            .update("delete_database", &database_id.to_string())
+            .update(
+                "delete_database",
+                &DeleteDatabaseRequest {
+                    database_id: database_id.to_string(),
+                },
+            )
             .await?;
         result.map_err(|error| anyhow!(error))
     }

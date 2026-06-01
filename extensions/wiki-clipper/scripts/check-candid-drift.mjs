@@ -9,7 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", fields: { Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Pending: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -19,7 +19,8 @@ const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      credits_balance: "opt nat64",
+      credits_suspended_at_ms: "opt int64"
     }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
@@ -62,13 +63,14 @@ const expectedTypes = {
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
   OpsAnswerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
-  RecentNodeHit: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
-  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } },
+  UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
+  NodeMutationAck: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
+  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "NodeMutationAck" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 
 const expectedMethods = {
-  authorize_url_ingest_trigger_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
+  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
@@ -115,12 +117,12 @@ function parseDidFields(body) {
 }
 
 function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\(\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.trim();
+    const line = raw.replace(/\s+/g, " ").trim();
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
     if (!match || !(match[1] in expectedMethods)) continue;
     methods[match[1]] = {
       input: splitDidInputs(match[2]),
@@ -178,10 +180,10 @@ function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_4") return "ResultCreateDatabase";
-  if (normalized === "Result_13") return "ResultDatabases";
-  if (normalized === "Result_15") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultNode";
-  if (normalized === "Result_25") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_16") return "ResultDatabases";
+  if (normalized === "Result_18") return "ResultMkdirNode";
+  if (normalized === "Result_25") return "ResultNode";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
