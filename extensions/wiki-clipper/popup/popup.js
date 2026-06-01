@@ -70,9 +70,8 @@ createDatabaseForm.addEventListener("submit", async (event) => {
       },
       name
     );
-    await saveDatabaseSelection(created.databaseId);
     await refreshAuthAndDatabases(created);
-    statusText.textContent = "Database created";
+    statusText.textContent = "Database created. Purchase credits before capture.";
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : String(error);
   } finally {
@@ -101,7 +100,7 @@ async function send(message) {
 
 async function saveDatabaseSelection(databaseId) {
   await send({ type: "save-config", config: { databaseId } });
-  statusText.textContent = databaseId ? "Database selected" : "No writable hot databases found.";
+  statusText.textContent = databaseId ? "Database selected" : "No writable active databases found.";
 }
 
 async function refreshAuthAndDatabases(preferredDatabase = null) {
@@ -140,7 +139,7 @@ async function refreshAuthAndDatabases(preferredDatabase = null) {
   statusText.textContent = "Database selected";
 }
 
-function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No writable hot databases found.") {
+function renderDatabaseOptions(databases, selectedDatabaseId, placeholder = "No writable active databases found.") {
   databaseSelect.textContent = "";
   if (databases.length === 0) {
     const option = document.createElement("option");

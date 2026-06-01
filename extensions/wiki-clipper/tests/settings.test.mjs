@@ -132,7 +132,7 @@ test("create database name validation trims and rejects empty names", () => {
   assert.throws(() => validateCreateDatabaseName("  "), /Database name is required/);
 });
 
-test("database dropdown options include only hot owner and writer databases", () => {
+test("database dropdown options include only active owner and writer databases", () => {
   const databases = normalizeWritableDatabases([
     rawDatabase("owner-db", "Owner", "Active"),
     rawDatabase("writer-db", "Writer", "Active"),
@@ -157,8 +157,11 @@ test("database dropdown labels prefer names and disambiguate duplicates", () => 
   assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
 });
 
-test("preferred created database is kept when database list query is stale", () => {
-  assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", name: "Created Wiki" }), [
+test("preferred created database is kept only when it is active and writable", () => {
+  assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", name: "Created Wiki" }), []);
+  assert.deepEqual(mergePreferredDatabase([], rawDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], rawDatabase("reader-db", "Reader", "Active", "Read Wiki")), []);
+  assert.deepEqual(mergePreferredDatabase([], rawDatabase("db_created", "Owner", "Active", "Created Wiki")), [
     {
       databaseId: "db_created",
       name: "Created Wiki",

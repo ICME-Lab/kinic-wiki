@@ -266,7 +266,7 @@ test("authStatus returns principal without identity", async () => {
   }
 });
 
-test("listWritableDatabases returns hot writable database summaries", async () => {
+test("listWritableDatabases returns active writable database summaries", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
