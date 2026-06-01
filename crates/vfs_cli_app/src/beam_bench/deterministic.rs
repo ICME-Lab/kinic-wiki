@@ -450,8 +450,8 @@ mod tests {
         ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
         GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
         MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node,
-        NodeEntry, RecentNodeHit, RecentNodesRequest, SearchNodeHit, SearchNodePathsRequest,
-        SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+        NodeEntry, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+        WriteNodeRequest, WriteNodeResult,
     };
 
     struct MockClient {
@@ -495,9 +495,6 @@ mod tests {
             unreachable!()
         }
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
-            unreachable!()
-        }
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
             unreachable!()
         }
         async fn multi_edit_node(

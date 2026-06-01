@@ -290,7 +290,7 @@ def read_run_paths(cli: str, paths: list[str]) -> list[dict[str, str]]:
 
 
 def read_corrections(cli: str, skill_id: str) -> list[dict[str, str]]:
-    output = run_cli(cli, "recent-nodes", "--path", f"/Sources/skill-runs/{skill_id}", "--limit", "100", "--json")
+    output = run_cli(cli, "list-nodes", "--prefix", f"/Sources/skill-runs/{skill_id}", "--recursive", "--json")
     entries = json.loads(output)
     paths = [
         entry.get("path", "")

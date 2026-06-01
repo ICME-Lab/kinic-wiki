@@ -25,11 +25,11 @@ import type {
   NodeContext,
   NodeEntryKind,
   NodeKind,
+  NodeMutationAck,
   QueryContext,
   QueryAnswerSessionCheckRequest,
   QueryAnswerSessionCheckResult,
   QueryAnswerSessionRequest,
-  RecentNode,
   SearchNodeHit,
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
@@ -110,6 +110,7 @@ type RawDatabaseCreditPendingOperation = {
   operation_id: bigint;
   database_id: string;
   kind: string;
+  operation_status: string;
   credits: bigint;
   payment_amount_e8s: bigint;
   created_at_ms: bigint;
@@ -126,7 +127,7 @@ type RawChild = {
   has_children: boolean;
 };
 
-type RawRecent = {
+type RawNodeMutationAck = {
   path: string;
   kind: Variant;
   updated_at: bigint;
@@ -144,7 +145,7 @@ type RawWriteNodeRequest = {
 
 type RawWriteNodeResult = {
   created: boolean;
-  node: RawRecent;
+  node: RawNodeMutationAck;
 };
 
 type RawWriteSourceForGenerationRequest = {
@@ -192,7 +193,7 @@ type RawMoveNodeRequest = {
 
 type RawMoveNodeResult = {
   from_path: string;
-  node: RawRecent;
+  node: RawNodeMutationAck;
   overwrote: boolean;
 };
 
@@ -528,7 +529,7 @@ export async function writeNodeAuthenticated(canisterId: string, identity: Ident
     }
     return {
       created: result.Ok.created,
-      node: normalizeRecentNode(result.Ok.node)
+      node: normalizeNodeMutationAck(result.Ok.node)
     };
   });
 }
@@ -554,7 +555,7 @@ export async function writeSourceForGenerationAuthenticated(
     return {
       write: {
         created: result.Ok.write.created,
-        node: normalizeRecentNode(result.Ok.write.node)
+        node: normalizeNodeMutationAck(result.Ok.write.node)
       },
       sessionNonce: result.Ok.session_nonce
     };
@@ -606,7 +607,7 @@ export async function moveNodeAuthenticated(canisterId: string, identity: Identi
     }
     return {
       fromPath: result.Ok.from_path,
-      node: normalizeRecentNode(result.Ok.node),
+      node: normalizeNodeMutationAck(result.Ok.node),
       overwrote: result.Ok.overwrote
     };
   });
@@ -932,13 +933,14 @@ function normalizeDatabaseCreditPendingOperation(raw: RawDatabaseCreditPendingOp
     operationId: raw.operation_id.toString(),
     databaseId: raw.database_id,
     kind: raw.kind,
+    operationStatus: raw.operation_status,
     credits: raw.credits.toString(),
     paymentAmountE8s: raw.payment_amount_e8s.toString(),
     createdAtMs: raw.created_at_ms.toString()
   };
 }
 
-function normalizeRecentNode(raw: RawRecent): RecentNode {
+function normalizeNodeMutationAck(raw: RawNodeMutationAck): NodeMutationAck {
   return {
     path: raw.path,
     kind: normalizeNodeKind(raw.kind),

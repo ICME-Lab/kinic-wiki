@@ -52,7 +52,7 @@ type RawWriteNodeRequest = {
   expected_etag: [] | [string];
 };
 
-type RawRecentNodeHit = {
+type RawNodeMutationAck = {
   path: string;
   kind: Variant;
   etag: string;
@@ -61,7 +61,7 @@ type RawRecentNodeHit = {
 
 type RawWriteNodeResult = {
   created: boolean;
-  node: RawRecentNodeHit;
+  node: RawNodeMutationAck;
 };
 
 type RawMkdirNodeRequest = {
@@ -201,7 +201,7 @@ function normalizeNode(raw: RawNode): WikiNode {
   };
 }
 
-function normalizeWriteNodeAck(raw: RawRecentNodeHit): WriteNodeAck {
+function normalizeWriteNodeAck(raw: RawNodeMutationAck): WriteNodeAck {
   return {
     path: raw.path,
     kind: normalizeKind(raw.kind),

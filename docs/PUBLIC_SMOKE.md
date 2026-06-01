@@ -6,10 +6,12 @@ Use this flow before publishing a Browser build with CLI setup instructions. The
 
 ```bash
 icp network start -d -e local-wiki
-icp deploy -e local-wiki
+KINIC_LEDGER_CANISTER_ID=<local-ledger-or-test-principal> scripts/local/deploy_wiki.sh
 ```
 
 Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
+The wiki canister constructor requires `CreditsConfig`; no-arg fresh install and reinstall are unsupported.
+Local smoke may use any non-anonymous principal as `KINIC_LEDGER_CANISTER_ID` until a ledger-backed credit purchase smoke is run.
 
 ## CLI and Browser Read Smoke
 
@@ -48,7 +50,7 @@ pnpm --dir wikibrowser smoke:errors -- --base-url http://127.0.0.1:3000 --databa
 Run the combined canister and CLI archive smoke:
 
 ```bash
-CANISTER_ID=<local-wiki-canister-id> scripts/smoke/local_canister_archive_restore.sh
+KINIC_LEDGER_CANISTER_ID=<local-ledger-or-test-principal> CANISTER_ID=<local-wiki-canister-id> scripts/smoke/local_canister_archive_restore.sh
 ```
 
 That script runs the dedicated Rust archive/restore smoke and then verifies the public CLI commands:
@@ -58,6 +60,16 @@ That script runs the dedicated Rust archive/restore smoke and then verifies the 
 - `read-node`
 
 The Rust smoke also verifies the deployed local canister path for archive/restore, upgrade persistence, FTS search, outgoing links, and isolation between two databases. The script targets the project-local replica with `--replica-host http://127.0.0.1:8001`.
+
+## Post-upgrade Args Smoke
+
+Run the constructor and upgrade argument smoke:
+
+```bash
+KINIC_LEDGER_CANISTER_ID=<local-ledger-or-test-principal> scripts/smoke/local_canister_post_upgrade.sh
+```
+
+This deploys with `CreditsConfig`, creates one pending DB, upgrades with the same config, then verifies `get_credits_config` and DB metadata persistence. It does not perform a ledger credit purchase.
 
 ## Public Deployment Smoke
 

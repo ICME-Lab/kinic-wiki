@@ -22,9 +22,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     name: idl.Text,
+    archived_at_ms: idl.Opt(idl.Int64),
     credits_balance: idl.Opt(idl.Nat64),
-    credits_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64)
+    credits_suspended_at_ms: idl.Opt(idl.Int64)
   });
   const CreditsConfig = idl.Record({
     credits_per_kinic: idl.Nat64,
@@ -100,8 +100,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     next_cursor: idl.Opt(idl.Nat64)
   });
   const DatabaseCreditPendingOperation = idl.Record({
-    credits: idl.Int64,
-    payment_amount_e8s: idl.Int64,
+    credits: idl.Nat64,
+    operation_status: idl.Text,
+    payment_amount_e8s: idl.Nat64,
     to_owner: idl.Opt(idl.Text),
     to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
     from_owner: idl.Opt(idl.Text),
@@ -109,8 +110,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     operation_id: idl.Nat64,
     from_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
     created_at_ms: idl.Int64,
-    ledger_fee_e8s: idl.Opt(idl.Int64),
-    ledger_created_at_time_ns: idl.Opt(idl.Int64),
+    ledger_fee_e8s: idl.Opt(idl.Nat64),
+    ledger_created_at_time_ns: idl.Opt(idl.Nat64),
     database_id: idl.Text,
     caller: idl.Text
   });

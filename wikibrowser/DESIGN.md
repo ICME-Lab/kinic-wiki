@@ -39,6 +39,6 @@ The product is not a database admin UI. It should feel like a lightweight knowle
 - Markdown rendering
 - Raw / rendered split toggle
 - Search results with snippets
-- Recent nodes
+- Search and link graph inspection
 - Lint warnings panel
 - Provenance jump from Wiki note to `/Sources/raw`

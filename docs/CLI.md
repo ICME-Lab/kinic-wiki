@@ -30,6 +30,8 @@ Internet Identity-backed identities are the default authenticated path. Non-II `
 Mainnet commands default to the Kinic VFS canister. Use `--canister-id` only to select a different canister explicitly. DB-backed VFS commands require an explicit database selection from `--database-id`, `VFS_DATABASE_ID`, `.kinic/config.toml`, or user config. No production `default` database is created implicitly.
 This is a breaking change for older single-DB clients that omitted `database_id`.
 
+`recent-nodes` and the canister `recent_nodes` query were removed. Use `list-nodes --prefix <path> --recursive --json` for scoped inventory, or `search-remote` / `search-path-remote` for recall.
+
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> --database-id <database-id> status
 ```
@@ -43,7 +45,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --replica-host http://127.0.0.
 
 `--replica-host` takes precedence over configured hosts. `--database-id` takes precedence over `VFS_DATABASE_ID`.
 
-List, search, recent, and graph commands default to the VFS root `/`.
+List, search, and graph commands default to the VFS root `/`.
 Pass `--prefix /Wiki` or `--path /Wiki` when the human-facing wiki tree is the intended scope.
 
 Without `--canister-id`, the CLI reads configuration from:
@@ -223,7 +225,6 @@ Common read and write commands:
 - `delete-tree --path /Wiki/obsolete-scope --json`
 - `move-node --from-path /Wiki/a.md --to-path /Wiki/b.md`
 - `glob-nodes "**/*.md" --path /Wiki --json`
-- `recent-nodes 20 --path /Wiki --json`
 
 Use `list-children` for one-level tree views and UI-style navigation.
 Use `list-nodes --prefix <path> --recursive --json` for bulk repair, lint, inventory, and destructive operation review.

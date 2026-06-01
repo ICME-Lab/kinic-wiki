@@ -10,9 +10,9 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
+      archived_at_ms: "opt int64",
       credits_balance: "opt nat64",
-      credits_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64"
+      credits_suspended_at_ms: "opt int64"
     }
   },
   CreditsConfig: {
@@ -133,8 +133,9 @@ export const expectedTypes = {
   DatabaseCreditPendingOperation: {
     kind: "record",
     fields: {
-      credits: "int64",
-      payment_amount_e8s: "int64",
+      credits: "nat64",
+      operation_status: "text",
+      payment_amount_e8s: "nat64",
       to_owner: "opt text",
       to_subaccount: "opt blob",
       from_owner: "opt text",
@@ -142,8 +143,8 @@ export const expectedTypes = {
       operation_id: "nat64",
       from_subaccount: "opt blob",
       created_at_ms: "int64",
-      ledger_fee_e8s: "opt int64",
-      ledger_created_at_time_ns: "opt int64",
+      ledger_fee_e8s: "opt nat64",
+      ledger_created_at_time_ns: "opt nat64",
       database_id: "text",
       caller: "text"
     }

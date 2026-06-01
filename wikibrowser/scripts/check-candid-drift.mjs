@@ -76,9 +76,9 @@ function parseDidMethods(source) {
   const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.trim();
+    const line = raw.replace(/\s+/g, " ").trim();
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
     if (!match) continue;
     methods[match[1]] = {
       input: splitShapes(match[2]),

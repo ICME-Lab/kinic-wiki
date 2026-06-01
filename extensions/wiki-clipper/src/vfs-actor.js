@@ -17,12 +17,11 @@ export async function createVfsActor({ canisterId, host, identity }) {
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Hot: idl.Null,
-    Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null
+    Archived: idl.Null,
+    Pending: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -30,9 +29,9 @@ function idlFactory({ IDL: idl }) {
     role: DatabaseRole,
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
+    archived_at_ms: idl.Opt(idl.Int64),
     credits_balance: idl.Opt(idl.Nat64),
-    credits_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64)
+    credits_suspended_at_ms: idl.Opt(idl.Int64)
   });
   const CreditsConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,

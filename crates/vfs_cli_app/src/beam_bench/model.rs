@@ -257,7 +257,6 @@ Runtime constraints:
   - list-nodes
   - search-remote
   - search-path-remote
-  - recent-nodes
   - graph-neighborhood
   - graph-links
   - incoming-links
@@ -496,7 +495,6 @@ fn parse_wiki_cli_subcommand(command: &str) -> Option<&'static str> {
             "list-nodes" => return Some("list-nodes"),
             "search-remote" => return Some("search-remote"),
             "search-path-remote" => return Some("search-path-remote"),
-            "recent-nodes" => return Some("recent-nodes"),
             "graph-neighborhood" => return Some("graph-neighborhood"),
             "graph-links" => return Some("graph-links"),
             "incoming-links" => return Some("incoming-links"),

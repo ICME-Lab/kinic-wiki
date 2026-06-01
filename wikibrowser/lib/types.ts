@@ -22,7 +22,14 @@ export type WriteNodeRequest = {
 
 export type WriteNodeResult = {
   created: boolean;
-  node: RecentNode;
+  node: NodeMutationAck;
+};
+
+export type NodeMutationAck = {
+  path: string;
+  kind: NodeKind;
+  updatedAt: string;
+  etag: string;
 };
 
 export type WriteSourceForGenerationRequest = {
@@ -77,7 +84,7 @@ export type MoveNodeRequest = {
 
 export type MoveNodeResult = {
   fromPath: string;
-  node: RecentNode;
+  node: NodeMutationAck;
   overwrote: boolean;
 };
 
@@ -158,6 +165,7 @@ export type DatabaseCreditPendingOperation = {
   operationId: string;
   databaseId: string;
   kind: string;
+  operationStatus: string;
   credits: string;
   paymentAmountE8s: string;
   createdAtMs: string;
@@ -172,13 +180,6 @@ export type ChildNode = {
   sizeBytes: string | null;
   isVirtual: boolean;
   hasChildren: boolean;
-};
-
-export type RecentNode = {
-  path: string;
-  kind: NodeKind;
-  updatedAt: string;
-  etag: string;
 };
 
 export type LinkEdge = {

@@ -15,8 +15,8 @@ use vfs_types::{
     EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest,
     MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, RecentNodesRequest, SearchNodePathsRequest, SearchNodesRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -303,22 +303,6 @@ pub async fn run_vfs_command(
             } else {
                 for hit in hits {
                     println!("{}\t{:?}\t{}", hit.path, hit.kind, hit.has_children);
-                }
-            }
-        }
-        VfsCommand::RecentNodes { limit, path, json } => {
-            let hits = client
-                .recent_nodes(RecentNodesRequest {
-                    database_id: database_id.to_string(),
-                    limit,
-                    path: Some(path),
-                })
-                .await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&hits)?);
-            } else {
-                for hit in hits {
-                    println!("{}\t{}\t{}", hit.updated_at, hit.path, hit.etag);
                 }
             }
         }
@@ -1369,9 +1353,6 @@ mod tests {
             unreachable!()
         }
         async fn glob_nodes(&self, _request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
-            unreachable!()
-        }
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
             unreachable!()
         }
         async fn graph_neighborhood(

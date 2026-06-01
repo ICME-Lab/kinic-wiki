@@ -18,9 +18,9 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
+      archived_at_ms: "opt int64",
       credits_balance: "opt nat64",
-      credits_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64"
+      credits_suspended_at_ms: "opt int64"
     }
   },
   CreditsConfig: {
@@ -77,8 +77,7 @@ const expectedTypes = {
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 const actorExpectedTypes = {
-  ...expectedTypes,
-  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
+  ...expectedTypes
 };
 
 const expectedMethods = {
@@ -132,10 +131,10 @@ function parseDidFields(body) {
 function parseDidMethods(source) {
   const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
-  for (const raw of service.split(";")) {
+for (const raw of service.split(";")) {
     const line = raw.trim().replace(/\s+/g, " ");
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
     if (!match || !(match[1] in expectedMethods)) continue;
     methods[match[1]] = {
       input: splitDidInputs(match[2]),

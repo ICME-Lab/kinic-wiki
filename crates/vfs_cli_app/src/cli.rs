@@ -228,15 +228,6 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List recently changed nodes under a path")]
-    RecentNodes {
-        #[arg(long, help = "Maximum 100; 0 is treated as 1 by the canister")]
-        limit: u32,
-        #[arg(long, alias = "prefix", default_value = WIKI_ROOT_PATH)]
-        path: String,
-        #[arg(long)]
-        json: bool,
-    },
     #[command(
         about = "Read one node with incoming and outgoing link context; agents should prefer --json"
     )]
@@ -692,7 +683,6 @@ impl Command {
             | Self::ListNodes { .. }
             | Self::ListChildren { .. }
             | Self::GlobNodes { .. }
-            | Self::RecentNodes { .. }
             | Self::ReadNodeContext { .. }
             | Self::GraphNeighborhood { .. }
             | Self::GraphLinks { .. }
@@ -714,7 +704,6 @@ impl Command {
             | Self::ListNodes { .. }
             | Self::ListChildren { .. }
             | Self::GlobNodes { .. }
-            | Self::RecentNodes { .. }
             | Self::ReadNodeContext { .. }
             | Self::GraphNeighborhood { .. }
             | Self::GraphLinks { .. }
@@ -879,11 +868,6 @@ impl Command {
                 pattern: pattern.clone(),
                 path: path.clone(),
                 node_type: *node_type,
-                json: *json,
-            }),
-            Self::RecentNodes { limit, path, json } => Some(VfsCommand::RecentNodes {
-                limit: *limit,
-                path: path.clone(),
                 json: *json,
             }),
             Self::ReadNodeContext {
@@ -1428,20 +1412,6 @@ mod tests {
         assert_eq!(query_text, "incident");
         assert_eq!(prefix, "/Wiki/run");
         assert!(json);
-
-        let recent = Cli::parse_from([
-            "kinic-vfs-cli",
-            "recent-nodes",
-            "--limit",
-            "7",
-            "--prefix",
-            "/Sources",
-        ]);
-        let Command::RecentNodes { limit, path, .. } = recent.command else {
-            panic!("expected recent-nodes command");
-        };
-        assert_eq!(limit, 7);
-        assert_eq!(path, "/Sources");
 
         let read = Cli::parse_from([
             "kinic-vfs-cli",
