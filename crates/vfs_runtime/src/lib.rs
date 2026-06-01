@@ -979,6 +979,7 @@ impl VfsService {
             require_pending_operation_status(
                 &operation,
                 &[
+                    CREDIT_OPERATION_STATUS_IN_FLIGHT,
                     CREDIT_OPERATION_STATUS_AMBIGUOUS,
                     CREDIT_OPERATION_STATUS_COMPLETED,
                 ],
@@ -999,12 +1000,13 @@ impl VfsService {
             require_pending_operation_status(
                 &operation,
                 &[
+                    CREDIT_OPERATION_STATUS_IN_FLIGHT,
                     CREDIT_OPERATION_STATUS_AMBIGUOUS,
                     CREDIT_OPERATION_STATUS_COMPLETED,
                 ],
                 "complete credit purchase repair",
             )?;
-            if operation.operation_status == CREDIT_OPERATION_STATUS_AMBIGUOUS {
+            if operation.operation_status != CREDIT_OPERATION_STATUS_COMPLETED {
                 update_pending_credits_operation_status(
                     tx,
                     operation_id,

@@ -7,7 +7,9 @@ use std::task::{Context, Poll, Waker};
 use candid::{Encode, Nat, Principal};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
-use vfs_runtime::VfsService;
+use vfs_runtime::{
+    CreditsPendingLedgerDetailsInput, DatabaseCreditPurchaseWithLedgerDetails, VfsService,
+};
 use vfs_types::{
     AppendNodeRequest, CreateDatabaseRequest, CreditsConfig, CreditsConfigUpdate,
     DatabaseCreditPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus,
@@ -726,7 +728,7 @@ fn repair_cancel_rejects_in_flight_credit_purchase() {
 }
 
 #[test]
-fn repair_complete_rejects_in_flight_credit_purchase() {
+fn repair_complete_accepts_verified_in_flight_credit_purchase() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
@@ -734,22 +736,70 @@ fn repair_complete_rejects_in_flight_credit_purchase() {
     })
     .expect("database should create");
     let caller = Principal::management_canister().to_text();
+    let canister_owner = Principal::management_canister().to_text();
+    let preview = preview_database_credit_purchase(database.database_id.clone(), 500)
+        .expect("credit purchase preview should load");
     let operation_id = SERVICE.with(|slot| {
         slot.borrow()
             .as_ref()
             .expect("service should be installed")
-            .begin_database_credit_purchase(&database.database_id, &caller, 500, 1_700_000_000_000)
+            .begin_database_credit_purchase_with_ledger_details(
+                DatabaseCreditPurchaseWithLedgerDetails {
+                    database_id: &database.database_id,
+                    caller: &caller,
+                    credits: 500,
+                    expected_payment_amount_e8s: preview.payment_amount_e8s,
+                    expected_config_version: preview.config_version,
+                    ledger: CreditsPendingLedgerDetailsInput {
+                        from_owner: &caller,
+                        from_subaccount: None,
+                        to_owner: &canister_owner,
+                        to_subaccount: None,
+                        ledger_fee_e8s: preview.ledger_fee_e8s,
+                        ledger_created_at_time_ns: 1_700_000_000_000_000_000,
+                    },
+                    now: 1_700_000_000_000,
+                },
+            )
             .expect("credit purchase should begin")
     });
+    let pending = list_database_credit_pending_operations(database.database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].operation_id, operation_id);
+    assert!(
+        list_database_credit_entries(database.database_id.clone(), None, 10)
+            .expect("ledger should load")
+            .entries
+            .is_empty()
+    );
+    set_ledger_transaction_for_test(42, pending_credit_purchase_transaction(&pending[0]));
 
-    let error = block_on_ready(repair_database_credit_purchase_complete(
-        database.database_id,
+    let result = block_on_ready(repair_database_credit_purchase_complete(
+        database.database_id.clone(),
         operation_id,
         42,
     ))
-    .expect_err("in-flight purchase complete should reject");
+    .expect("verified in-flight purchase should complete");
 
-    assert!(error.contains("credit purchase operation is in_flight"));
+    assert_eq!(result.block_index, 42);
+    assert_eq!(result.balance_credits, 500);
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+    let pending = list_database_credit_pending_operations(database.database_id.clone(), None, 10)
+        .expect("pending should load")
+        .entries;
+    assert!(pending.is_empty());
+    let entries = list_database_credit_entries(database.database_id, None, 10)
+        .expect("ledger should load")
+        .entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "credit_purchase_repair_complete");
+    assert_eq!(entries[0].caller, caller);
+    assert_eq!(entries[0].ledger_block_index, Some(42));
 }
 
 #[test]
