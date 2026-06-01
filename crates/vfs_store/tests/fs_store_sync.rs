@@ -1257,7 +1257,7 @@ fn fetch_updates_pages_by_byte_budget() {
     let first = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
-            known_snapshot_revision: base.snapshot_revision,
+            known_snapshot_revision: base.snapshot_revision.clone(),
             prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
@@ -1265,10 +1265,23 @@ fn fetch_updates_pages_by_byte_budget() {
         })
         .expect("byte-budgeted updates should succeed");
 
-    assert_eq!(first.changed_nodes.len(), 2);
-    assert_eq!(first.changed_nodes[0].path, "/Wiki");
-    assert_eq!(first.changed_nodes[1].path, "/Wiki/a.md");
+    assert_eq!(first.changed_nodes.len(), 1);
+    assert_eq!(first.changed_nodes[0].path, "/Wiki/a.md");
     assert_eq!(first.next_cursor, Some("/Wiki/a.md".to_string()));
+
+    let second = store
+        .fetch_updates(FetchUpdatesRequest {
+            database_id: "default".to_string(),
+            known_snapshot_revision: base.snapshot_revision,
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: first.next_cursor,
+            target_snapshot_revision: Some(first.snapshot_revision),
+        })
+        .expect("second byte-budgeted updates page should succeed");
+    assert_eq!(second.changed_nodes.len(), 1);
+    assert_eq!(second.changed_nodes[0].path, "/Wiki/b.md");
+    assert_eq!(second.next_cursor, None);
 }
 
 #[test]

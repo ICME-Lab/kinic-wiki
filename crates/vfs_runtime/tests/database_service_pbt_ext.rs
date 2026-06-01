@@ -453,7 +453,7 @@ proptest! {
     }
 
     #[test]
-    fn database_service_pbt_mount_history_never_reuses_ids(
+    fn database_service_pbt_restore_does_not_allocate_mount_ids(
         operations in prop::collection::vec(mount_operation_strategy(), 1..30),
     ) {
         let env = service_with_root();
@@ -490,7 +490,6 @@ proptest! {
                             .finalize_database_archive(database_id, OWNER, hash.clone(), now + 1)
                             .expect("archive should finalize");
                         finalize_restore_from_bytes(service, database_id, &bytes, hash, size, bytes.len() / 2, now + 2);
-                        expected_mount_events += 1;
                     }
                 }
                 _ => {}

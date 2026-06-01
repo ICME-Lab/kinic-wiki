@@ -175,11 +175,7 @@ fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
 
     let (status, mount_id) = status_and_mount(service, database_id);
     assert_eq!(status, model.status);
-    if matches!(status, DatabaseStatus::Archived) {
-        assert_eq!(mount_id, None);
-    } else {
-        assert!(mount_id.is_some());
-    }
+    assert!(mount_id.is_some());
 
     let infos = service.list_database_infos().expect("infos should load");
     let mut mount_ids = infos
@@ -204,16 +200,19 @@ fn apply_operation(
 ) {
     match operation {
         RuntimeOp::PurchaseDatabaseCycles { amount } => {
-            let purchased_cycles = purchase_database_cycles(
+            let result = purchase_database_cycles(
                 service,
                 database_id,
                 OWNER,
                 amount,
                 step as u64 + 10,
                 step,
-            )
-            .expect("database cycle purchase should succeed");
-            model.database_cycles += purchased_cycles;
+            );
+            if model.status == DatabaseStatus::Active {
+                model.database_cycles += result.expect("database cycle purchase should succeed");
+            } else {
+                assert!(result.is_err());
+            }
         }
         RuntimeOp::Charge { cycles_delta } => {
             let config = service
