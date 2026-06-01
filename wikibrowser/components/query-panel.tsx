@@ -195,7 +195,7 @@ export function QueryPanel({
 
 function ActionPreview({ action, busy, onConfirm }: { action: QueryAction; busy: boolean; onConfirm: (() => void) | null }) {
   const icon = action.kind === "ask" ? <MessageSquareText size={15} /> : action.kind === "search" ? <Search size={15} /> : action.kind === "lint" ? <AlertTriangle size={15} /> : <Link2 size={15} />;
-  const title = action.kind === "ask" ? "LLM answer" : action.kind === "search" ? "Search wiki" : action.kind === "lint" ? "Lint note" : action.kind === "queue_url" ? "Queue URL" : "Recent nodes";
+  const title = action.kind === "ask" ? "LLM answer" : action.kind === "search" ? "Search wiki" : action.kind === "lint" ? "Lint note" : "Queue URL";
   const target = action.kind === "queue_url" ? action.url : action.targetPath ?? "current database";
   return (
     <div className="border-b border-line bg-paper px-3 py-2.5 text-xs">

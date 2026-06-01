@@ -70,9 +70,8 @@ createDatabaseForm.addEventListener("submit", async (event) => {
       },
       name
     );
-    await saveDatabaseSelection(created.databaseId);
     await refreshAuthAndDatabases(created);
-    statusText.textContent = "Database created";
+    statusText.textContent = "Database created. Purchase credits before capture.";
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : String(error);
   } finally {

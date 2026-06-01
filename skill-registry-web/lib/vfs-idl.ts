@@ -7,12 +7,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Hot: idl.Null,
-    Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null
+    Archived: idl.Null,
+    Pending: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -20,7 +19,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     name: idl.Text,
-    archived_at_ms: idl.Opt(idl.Int64)
+    archived_at_ms: idl.Opt(idl.Int64),
+    credits_balance: idl.Opt(idl.Nat64),
+    credits_suspended_at_ms: idl.Opt(idl.Int64)
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
@@ -56,12 +57,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     size_bytes: idl.Opt(idl.Nat64),
     has_children: idl.Bool,
     is_virtual: idl.Bool
-  });
-  const RecentNodeHit = idl.Record({
-    path: idl.Text,
-    kind: NodeKind,
-    updated_at: idl.Int64,
-    etag: idl.Text
   });
   const NodeMutationAck = idl.Record({
     path: idl.Text,
@@ -216,7 +211,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
   const DeleteNodeResult = idl.Record({ path: idl.Text });
   const ResultDeleteNode = idl.Variant({ Ok: DeleteNodeResult, Err: idl.Text });

@@ -14,10 +14,7 @@ const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
-const browserExpectedTypes = {
-  ...expectedTypes,
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
-};
+const browserExpectedTypes = expectedTypes;
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
@@ -76,9 +73,9 @@ function parseDidMethods(source) {
   const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.trim();
+    const line = raw.replace(/\s+/g, " ").trim();
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
     if (!match) continue;
     methods[match[1]] = {
       input: splitShapes(match[2]),

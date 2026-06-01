@@ -33,7 +33,6 @@ pub enum WorkloadOperation {
     Search,
     Mkdir,
     Glob,
-    Recent,
     MultiEdit,
 }
 
@@ -52,7 +51,6 @@ impl ValueEnum for WorkloadOperation {
             Self::Search,
             Self::Mkdir,
             Self::Glob,
-            Self::Recent,
             Self::MultiEdit,
         ]
     }
@@ -71,7 +69,6 @@ impl ValueEnum for WorkloadOperation {
             Self::Search => "search",
             Self::Mkdir => "mkdir",
             Self::Glob => "glob",
-            Self::Recent => "recent",
             Self::MultiEdit => "multi-edit",
         }))
     }
@@ -92,7 +89,6 @@ impl Serialize for WorkloadOperation {
             WorkloadOperation::Search => "search",
             WorkloadOperation::Mkdir => "mkdir",
             WorkloadOperation::Glob => "glob",
-            WorkloadOperation::Recent => "recent",
             WorkloadOperation::MultiEdit => "multi_edit",
         })
     }
@@ -113,7 +109,6 @@ pub fn openai_tool_for_workload(op: WorkloadOperation) -> (&'static str, Option<
         WorkloadOperation::Search => ("search", None),
         WorkloadOperation::Mkdir => ("mkdir", None),
         WorkloadOperation::Glob => ("glob", None),
-        WorkloadOperation::Recent => ("recent", None),
         WorkloadOperation::MultiEdit => ("multi_edit", None),
     }
 }
@@ -411,7 +406,7 @@ mod tests {
     #[test]
     fn workload_operation_value_enum_lists_all_variants() {
         use super::ValueEnum;
-        assert_eq!(super::WorkloadOperation::value_variants().len(), 14);
+        assert_eq!(super::WorkloadOperation::value_variants().len(), 13);
     }
 
     #[test]

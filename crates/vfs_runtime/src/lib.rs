@@ -776,7 +776,7 @@ impl VfsService {
                 DatabaseLedgerInsert {
                     database_id,
                     kind: "credit_purchase_ambiguous",
-                    amount_credits: credits,
+                    amount_credits: 0,
                     balance_after_credits: balance,
                     payment_amount_e8s: Some(operation.payment_amount_e8s),
                     caller,
@@ -950,7 +950,7 @@ impl VfsService {
             let mut entries = crate::sqlite::query_map(
                 &mut stmt,
                 params![database_id, after, i64::from(limit) + 1],
-                map_database_credits_pending_operation,
+                map_pending_credits_operation,
             )
             .map_err(|error| error.to_string())?;
             let next_cursor = if entries.len() > limit as usize {
@@ -959,6 +959,10 @@ impl VfsService {
             } else {
                 None
             };
+            let entries = entries
+                .into_iter()
+                .map(pending_credits_operation_to_public)
+                .collect::<Result<Vec<_>, _>>()?;
             Ok(DatabaseCreditPendingOperationPage {
                 entries,
                 next_cursor,
@@ -979,12 +983,41 @@ impl VfsService {
             require_pending_operation_status(
                 &operation,
                 &[
+                    CREDIT_OPERATION_STATUS_IN_FLIGHT,
                     CREDIT_OPERATION_STATUS_AMBIGUOUS,
                     CREDIT_OPERATION_STATUS_COMPLETED,
                 ],
                 "complete credit purchase repair",
             )?;
-            Ok(pending_credits_operation_to_public(operation))
+            pending_credits_operation_to_public(operation)
+        })
+    }
+
+    pub fn mark_database_credit_purchase_repair_completed(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<(), String> {
+        self.write_index(|tx| {
+            let operation = load_pending_credits_operation(tx, operation_id)?;
+            require_pending_database_kind(&operation, database_id, "credit_purchase")?;
+            require_pending_operation_status(
+                &operation,
+                &[
+                    CREDIT_OPERATION_STATUS_IN_FLIGHT,
+                    CREDIT_OPERATION_STATUS_AMBIGUOUS,
+                    CREDIT_OPERATION_STATUS_COMPLETED,
+                ],
+                "complete credit purchase repair",
+            )?;
+            if operation.operation_status != CREDIT_OPERATION_STATUS_COMPLETED {
+                update_pending_credits_operation_status(
+                    tx,
+                    operation_id,
+                    CREDIT_OPERATION_STATUS_COMPLETED,
+                )?;
+            }
+            Ok(())
         })
     }
 
@@ -1077,7 +1110,7 @@ impl VfsService {
                 DatabaseLedgerInsert {
                     database_id,
                     kind: "credit_purchase_repair_cancelled",
-                    amount_credits: operation.credits,
+                    amount_credits: 0,
                     balance_after_credits: balance,
                     payment_amount_e8s: Some(operation.payment_amount_e8s),
                     caller,
@@ -1578,6 +1611,7 @@ impl VfsService {
         now: i64,
     ) -> Result<(), String> {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
+        self.require_database_not_pending(database_id)?;
         if caller == principal && role != DatabaseRole::Owner {
             return Err("owner cannot downgrade own access".to_string());
         }
@@ -2279,6 +2313,14 @@ impl VfsService {
                 DatabaseStatus::Restoring,
             ],
         )
+    }
+
+    fn require_database_not_pending(&self, database_id: &str) -> Result<(), String> {
+        let status = self.read_index(|conn| load_database_status(conn, database_id))?;
+        if status == DatabaseStatus::Pending {
+            return Err(format!("database is pending: {database_id}"));
+        }
+        Ok(())
     }
 
     fn database_meta_with_statuses(
@@ -3686,31 +3728,38 @@ fn map_pending_credits_operation(
     })
 }
 
-fn map_database_credits_pending_operation(
-    row: &crate::sqlite::Row<'_>,
-) -> crate::sqlite::Result<DatabaseCreditPendingOperation> {
-    let operation = map_pending_credits_operation(row)?;
-    Ok(pending_credits_operation_to_public(operation))
-}
-
 fn pending_credits_operation_to_public(
     operation: PendingCreditsOperation,
-) -> DatabaseCreditPendingOperation {
-    DatabaseCreditPendingOperation {
+) -> Result<DatabaseCreditPendingOperation, String> {
+    Ok(DatabaseCreditPendingOperation {
         operation_id: operation.operation_id,
         database_id: operation.database_id,
         kind: operation.kind,
         caller: operation.caller,
-        credits: operation.credits,
-        payment_amount_e8s: operation.payment_amount_e8s,
+        operation_status: operation.operation_status,
+        credits: non_negative_i64_to_u64(operation.credits, "credits")?,
+        payment_amount_e8s: non_negative_i64_to_u64(
+            operation.payment_amount_e8s,
+            "payment_amount_e8s",
+        )?,
         from_owner: operation.from_owner,
         from_subaccount: operation.from_subaccount,
         to_owner: operation.to_owner,
         to_subaccount: operation.to_subaccount,
-        ledger_fee_e8s: operation.ledger_fee_e8s,
-        ledger_created_at_time_ns: operation.ledger_created_at_time_ns,
+        ledger_fee_e8s: operation
+            .ledger_fee_e8s
+            .map(|value| non_negative_i64_to_u64(value, "ledger_fee_e8s"))
+            .transpose()?,
+        ledger_created_at_time_ns: operation
+            .ledger_created_at_time_ns
+            .map(|value| non_negative_i64_to_u64(value, "ledger_created_at_time_ns"))
+            .transpose()?,
         created_at_ms: operation.created_at_ms,
-    }
+    })
+}
+
+fn non_negative_i64_to_u64(value: i64, field: &str) -> Result<u64, String> {
+    u64::try_from(value).map_err(|_| format!("pending operation {field} is negative"))
 }
 
 struct DatabaseLedgerInsert<'a> {

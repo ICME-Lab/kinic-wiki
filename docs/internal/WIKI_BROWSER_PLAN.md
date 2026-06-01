@@ -41,11 +41,10 @@
     - `GET /api/site/[canisterId]/children?path=/Wiki/...`
     - `GET /api/site/[canisterId]/search-path?q=...`
     - `GET /api/site/[canisterId]/search?q=...`
-    - `GET /api/site/[canisterId]/recent?limit=...`
   - JSON の bigint 系値は string で返す
 
 - UI は read-only 3 ペインにする。
-  - 左: Explorer / Search / Recent tabs
+  - 左: Explorer / Search tabs
   - 中央: Markdown Preview / Raw 切替
   - 右: Inspector
   - mobile は drawer 化する desktop-first responsive
@@ -77,7 +76,7 @@ URL state:
 
 - selected node: route path
 - `view=preview|raw`
-- `tab=explorer|search|recent`
+- `tab=explorer|search`
 - `q=...`
 - expanded tree state は URL に載せない
 
@@ -102,7 +101,7 @@ URL state:
 - UI:
   - `/site/[canisterId]` が `/Wiki` を開く
   - `/site/[canisterId]/Wiki/...` が該当 node を開く
-  - tree 展開、search、recent、preview/raw 切替が動く
+  - tree 展開、search、preview/raw 切替が動く
   - inspector が metadata / links / hints を表示する
   - Playwright で desktop と mobile 表示を確認する
 

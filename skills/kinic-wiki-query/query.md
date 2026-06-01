@@ -28,6 +28,7 @@ Answer questions against the current wiki using the canister Agent Memory API wh
 - Do not return `insufficient evidence` while a directly linked or role-matched page remains unread.
 - Use `search-path-remote` and `search-remote` as targeted recall steps only after direct canonical-note context reads are insufficient.
 - Use `graph-neighborhood` only when incoming or outgoing links from an already-read note are relevant to the question.
+- Use `list-nodes --recursive` for scoped live node inventory. It is not a delete-aware change log.
 - Treat `search-path-remote` as path and basename recall.
 - Treat `search-remote` as FTS-based content recall.
 - If the question shape is still unclear after reading `/Wiki/index.md`, follow the current note roles from `docs/internal/WIKI_CANONICALITY.md` rather than inventing ad hoc search order.

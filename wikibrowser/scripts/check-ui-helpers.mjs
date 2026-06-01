@@ -264,6 +264,7 @@ assert.deepEqual(classifyQueryInput("topic", "/Wiki", "user"), {
   identityMode: "user",
   query: "topic"
 });
+assert.equal(classifyQueryInput("recent", "/Wiki", "user").kind, "search");
 assert.equal(classifyQueryInput("lint facts", "/Wiki/current.md", "user").targetPath, "/Wiki/facts.md");
 assert.deepEqual(classifyQueryInput("budget", "/Wiki", "anonymous"), {
   kind: "search",

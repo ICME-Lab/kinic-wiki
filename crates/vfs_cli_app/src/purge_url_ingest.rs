@@ -537,10 +537,6 @@ mod tests {
             unimplemented!()
         }
 
-        async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-            unimplemented!()
-        }
-
         async fn multi_edit_node(
             &self,
             _request: MultiEditNodeRequest,
