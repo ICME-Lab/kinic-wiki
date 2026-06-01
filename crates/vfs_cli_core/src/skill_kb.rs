@@ -164,13 +164,35 @@ pub async fn inspect_skill(client: &impl VfsApi, database_id: &str, id: &str) ->
             files.insert(relative_path.to_string(), true);
         }
     }
+    let mut recent_run_entries = client
+        .list_nodes(ListNodesRequest {
+            database_id: database_id.to_string(),
+            prefix: format!("{SKILL_RUN_ROOT}/{id}"),
+            recursive: true,
+        })
+        .await?
+        .into_iter()
+        .filter(|entry| entry.kind == NodeEntryKind::File)
+        .collect::<Vec<_>>();
+    recent_run_entries.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let recent_runs = recent_run_entries
+        .into_iter()
+        .take(5)
+        .map(|entry| entry.path)
+        .collect::<Vec<_>>();
     let run_summary = run_summary(client, database_id, id).await?;
     Ok(json!({
         "id": id,
         "base_path": base_path,
         "manifest": manifest,
         "files": files,
-        "run_summary": run_summary
+        "run_summary": run_summary,
+        "recent_runs": recent_runs
     }))
 }
 

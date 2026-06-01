@@ -82,13 +82,15 @@ Create a database before reading or writing:
 ```bash
 DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
+# Complete the first credit purchase in the browser wallet flow before writes:
+# https://wiki.kinic.xyz/credits?canisterId=<canister-id>&databaseId=$DB_ID
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success.
+`database create <database-name>` creates a generated pending database ID and prints it on success. The DB becomes writable after the first successful credit purchase in the browser wallet flow.
 `database list` prints databases attached to the caller principal.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
