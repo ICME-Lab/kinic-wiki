@@ -116,9 +116,9 @@ assert.doesNotMatch(homePage, /if \(publicResult\.status === "rejected"\) return
 assert.match(apiErrors, /wiki_api_version_mismatch/);
 assert.match(apiErrors, /Wiki VFS API response unavailable\./);
 assert.match(apiErrors, /CandidDecodeError\|Cannot find field hash\|subtype\|type mismatch\|variant, expected fields/);
-assert.match(vfsIdl, /Hot: idl\.Null/);
+assert.doesNotMatch(vfsIdl, /Hot: idl\.Null/);
 assert.match(vfsIdl, /Pending: idl\.Null/);
-assert.match(vfsClient, /if \("Hot" in status\) \{\s*return "active";\s*\}/);
+assert.doesNotMatch(vfsClient, /if \("Hot" in status\)/);
 assert.match(vfsClient, /if \("Pending" in status\) \{\s*return "pending";\s*\}/);
 assert.match(homePage, /myDatabases = databases\.filter\(\(database\) => database\.member\)/);
 assert.match(homePage, /publicDatabases = databases\.filter\(\(database\) => !database\.member && database\.publicReadable\)/);

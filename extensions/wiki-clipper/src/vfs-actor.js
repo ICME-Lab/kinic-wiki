@@ -169,8 +169,7 @@ function normalizeDatabaseSummary(raw) {
 }
 
 function normalizeDatabaseStatus(status) {
-  const key = variantKey(status);
-  return key === "Hot" ? "Active" : key;
+  return variantKey(status);
 }
 
 export async function getCreditsConfigOrNull(actor) {

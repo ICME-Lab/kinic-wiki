@@ -8,20 +8,7 @@ const root = join(here, "..", "..");
 const didPath = join(root, "crates", "vfs_canister", "vfs.did");
 const idlPath = join(here, "..", "lib", "vfs-idl.ts");
 
-const browserExpectedTypes = {
-  ...expectedTypes,
-  DatabaseStatus: {
-    kind: "variant",
-    cases: {
-      Hot: "null",
-      Pending: "null",
-      Active: "null",
-      Restoring: "null",
-      Archiving: "null",
-      Archived: "null"
-    }
-  }
-};
+const browserExpectedTypes = expectedTypes;
 
 const typeOrder = [
   "CanisterHealth",

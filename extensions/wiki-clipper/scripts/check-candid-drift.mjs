@@ -131,7 +131,7 @@ function parseDidFields(body) {
 function parseDidMethods(source) {
   const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
-for (const raw of service.split(";")) {
+  for (const raw of service.split(";")) {
     const line = raw.trim().replace(/\s+/g, " ");
     if (!line) continue;
     const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);

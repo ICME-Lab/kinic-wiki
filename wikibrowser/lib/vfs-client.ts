@@ -1075,9 +1075,6 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   if ("Active" in status) {
     return "active";
   }
-  if ("Hot" in status) {
-    return "active";
-  }
   if ("Pending" in status) {
     return "pending";
   }
