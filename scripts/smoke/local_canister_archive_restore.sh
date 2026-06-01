@@ -109,6 +109,52 @@ approve_credits_allowance() {
   fi
 }
 
+candid_nat64_field() {
+  local field="$1"
+  node -e '
+    const fs = require("fs");
+    const [field] = process.argv.slice(1);
+    const text = fs.readFileSync(0, "utf8");
+    const match = text.match(new RegExp(`${field}\\s*=\\s*([0-9_]+)\\s*:\\s*nat64`));
+    if (!match) process.exit(1);
+    process.stdout.write(match[1].replaceAll("_", ""));
+  ' "$field"
+}
+
+purchase_smoke_database_credits() {
+  local database_id="$1"
+  local credits="$2"
+  echo "purchasing ${credits} credits for smoke database ${database_id}" >&2
+  local preview_result
+  if ! preview_result="$(icp canister call "${CANISTER_ID}" preview_database_credit_purchase \
+    "(\"${database_id}\", ${credits} : nat64)" \
+    -e "${ICP_ENVIRONMENT}" -o candid)"; then
+    echo "credit purchase preview failed for ${database_id}" >&2
+    exit 1
+  fi
+  if [[ "${preview_result}" == *"Err"* ]]; then
+    echo "credit purchase preview returned an error for ${database_id}: ${preview_result}" >&2
+    exit 1
+  fi
+
+  local expected_payment_amount_e8s
+  local expected_config_version
+  expected_payment_amount_e8s="$(printf '%s' "${preview_result}" | candid_nat64_field payment_amount_e8s)"
+  expected_config_version="$(printf '%s' "${preview_result}" | candid_nat64_field config_version)"
+
+  local purchase_result
+  if ! purchase_result="$(icp canister call "${CANISTER_ID}" purchase_database_credits \
+    "(record { database_id = \"${database_id}\"; credits = ${credits} : nat64; expected_payment_amount_e8s = ${expected_payment_amount_e8s} : nat64; expected_config_version = ${expected_config_version} : nat64 })" \
+    -e "${ICP_ENVIRONMENT}" -o candid)"; then
+    echo "credit purchase failed for ${database_id}" >&2
+    exit 1
+  fi
+  if [[ "${purchase_result}" == *"Err"* ]]; then
+    echo "credit purchase returned an error for ${database_id}: ${purchase_result}" >&2
+    exit 1
+  fi
+}
+
 cd "${REPO_ROOT}"
 validate_unsigned_integer SMOKE_CREDIT_PURCHASE_CREDITS
 validate_unsigned_integer SMOKE_CREDIT_PURCHASE_COUNT
@@ -171,7 +217,7 @@ CLI_DB_NAME="${CLI_DB_NAME:-Archive smoke CLI}"
 CLI_DB="$(cd "$CLI_WORKSPACE" && "${VFS[@]}" database create "$CLI_DB_NAME")"
 (
   cd "$CLI_WORKSPACE"
-  "${VFS[@]}" database purchase-credits "$CLI_DB" "$SMOKE_CREDIT_PURCHASE_CREDITS"
+  purchase_smoke_database_credits "$CLI_DB" "$SMOKE_CREDIT_PURCHASE_CREDITS"
   "${VFS[@]}" --database-id "$CLI_DB" write-node --path /Wiki/smoke.md --input "$INPUT_FILE"
   "${VFS[@]}" database archive-export "$CLI_DB" --output "$ARCHIVE_FILE" --chunk-size 65536 --json
   "${VFS[@]}" database archive-restore "$CLI_DB" --input "$ARCHIVE_FILE" --chunk-size 65536 --json

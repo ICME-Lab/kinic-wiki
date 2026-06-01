@@ -17,6 +17,7 @@ test("queueUrlIngest writes request and triggers via wiki route", async () => {
     createVfsActor: async (config) => {
       calls.push(["create", config.identity, config.databaseId]);
       return {
+        ...writeCreditsActorMethods(),
         async authorize_url_ingest_trigger_session(request) {
           calls.push(["session", request.database_id, request.session_nonce]);
           return { Ok: null };
@@ -67,6 +68,7 @@ test("queueUrlIngest keeps request result when trigger fails", async () => {
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     fetch: async () => new Response("nope", { status: 502 }),
     createVfsActor: async () => ({
+      ...writeCreditsActorMethods(),
       async mkdir_node(request) {
         return { Ok: { created: true, path: request.path } };
       },
@@ -99,6 +101,7 @@ test("queueUrlIngest rejects before writing when session authorize fails", async
       return Response.json({ accepted: true });
     },
     createVfsActor: async () => ({
+      ...writeCreditsActorMethods(),
       async write_node() {
         calls.push(["write"]);
         return { Ok: { created: true, node: { etag: "etag-request" } } };
@@ -132,6 +135,7 @@ test("queueUrlIngest reuses session nonce inside ttl", async () => {
       return Response.json({ accepted: true });
     },
     createVfsActor: async () => ({
+      ...writeCreditsActorMethods(),
       async authorize_url_ingest_trigger_session(request) {
         calls.push(["session", request.session_nonce]);
         return { Ok: null };
@@ -171,6 +175,7 @@ test("saveRawSource writes with authenticated identity", async () => {
     createVfsActor: async (config) => {
       calls.push(["create", config.identity, config.databaseId]);
       return {
+        ...writeCreditsActorMethods(),
         async read_node(databaseId, path) {
           calls.push(["read", databaseId, path]);
           return { Ok: [{ etag: "etag-1" }] };
@@ -225,6 +230,67 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   }
 });
 
+test("queueUrlIngest rejects low credit balance before writing", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCreditsActorMethods({ balanceCredits: 9_999n }),
+      async authorize_url_ingest_trigger_session() {
+        calls.push(["session"]);
+        return { Ok: null };
+      },
+      async mkdir_node() {
+        calls.push(["mkdir"]);
+        return { Ok: { created: true, path: "/Sources" } };
+      },
+      async write_node() {
+        calls.push(["write"]);
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
+      }
+    })
+  });
+  try {
+    await assert.rejects(
+      () => queueUrlIngest({ url: "https://example.com/#x", title: "Example" }, config()),
+      /minimum update balance/
+    );
+
+    assert.deepEqual(calls, []);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("saveRawSource rejects suspended credits before writing", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCreditsActorMethods({ suspendedAtMs: 1n }),
+      async read_node() {
+        calls.push(["read"]);
+        return { Ok: [] };
+      },
+      async mkdir_node() {
+        calls.push(["mkdir"]);
+        return { Ok: { created: true, path: "/Sources" } };
+      },
+      async write_node() {
+        calls.push(["write"]);
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
+      }
+    })
+  });
+  try {
+    await assert.rejects(() => saveRawSource(rawSource(), config()), /credits are suspended/);
+
+    assert.deepEqual(calls, []);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("triggerSourceGeneration calls source run route with issued source-run session", async () => {
   const fetchCalls = [];
   setOffscreenDepsForTest({
@@ -266,17 +332,27 @@ test("authStatus returns principal without identity", async () => {
   }
 });
 
-test("listWritableDatabases returns hot writable database summaries", async () => {
+test("listWritableDatabases returns active writable database summaries", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
       async list_databases() {
         return {
           Ok: [
-            rawDatabase("team-db", "Team Wiki", "Writer", "Hot"),
-            rawDatabase("reader-db", "Read Wiki", "Reader", "Hot"),
+            rawDatabase("team-db", "Team Wiki", "Writer", "Active"),
+            rawDatabase("reader-db", "Read Wiki", "Reader", "Active"),
             rawDatabase("old-db", "Old Wiki", "Owner", "Archived")
           ]
+        };
+      },
+      async get_credits_config() {
+        return {
+          Ok: {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+            sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            credits_per_kinic: 1n,
+            min_update_credits: 10_000n
+          }
         };
       }
     })
@@ -287,8 +363,12 @@ test("listWritableDatabases returns hot writable database summaries", async () =
         databaseId: "team-db",
         name: "Team Wiki",
         role: "Writer",
-        status: "Hot",
-        logicalSizeBytes: "0"
+        status: "Active",
+        logicalSizeBytes: "0",
+        creditsBalance: "20000",
+        creditsSuspendedAtMs: null,
+        writeCreditsAvailable: true,
+        creditsReason: null
       }
     ]);
   } finally {
@@ -313,6 +393,37 @@ function config() {
   };
 }
 
+function writeCreditsActorMethods({ databaseId = "team-db", balanceCredits = 20_000n, suspendedAtMs = null } = {}) {
+  return {
+    async list_databases() {
+      return {
+        Ok: [
+          {
+            database_id: databaseId,
+            name: "Team DB",
+            role: { Writer: null },
+            status: { Active: null },
+            logical_size_bytes: 0n,
+            credits_balance: [balanceCredits],
+            credits_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
+            archived_at_ms: []
+          }
+        ]
+      };
+    },
+    async get_credits_config() {
+      return {
+        Ok: {
+          kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+          sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+          credits_per_kinic: 1n,
+          min_update_credits: 10_000n
+        }
+      };
+    }
+  };
+}
+
 function rawDatabase(databaseId, name, role, status) {
   return {
     database_id: databaseId,
@@ -320,7 +431,8 @@ function rawDatabase(databaseId, name, role, status) {
     role: { [role]: null },
     status: { [status]: null },
     logical_size_bytes: 0n,
-    archived_at_ms: [],
-    deleted_at_ms: []
+    credits_balance: [20_000n],
+    credits_suspended_at_ms: [],
+    archived_at_ms: []
   };
 }

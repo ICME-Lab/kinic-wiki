@@ -36,7 +36,7 @@ export function HelpPanel() {
           <HelpItem
             icon={<MessageSquareText aria-hidden size={17} />}
             title="Query"
-            body="The Query tab searches by default. Use ask: for an LLM answer, lint for note checks, recent for updates, or paste a URL to queue ingest."
+            body="The Query tab searches by default. Use ask: for an LLM answer, lint for note checks, or paste a URL to queue ingest."
           />
           <HelpItem
             icon={<FileText aria-hidden size={17} />}

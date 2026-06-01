@@ -688,6 +688,9 @@ async fn repair_database_credit_purchase_complete(
     })?;
     let expected = expected_credit_purchase_transfer(&operation)?;
     validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
+    with_service(|service| {
+        service.mark_database_credit_purchase_repair_completed(&database_id, operation_id)
+    })?;
     let now = now_millis();
     activate_pending_database_after_credit_purchase_ledger_success(&database_id, now).map_err(
         |error| credit_purchase_local_apply_error(operation_id, ledger_block_index, error),
@@ -1467,19 +1470,13 @@ fn expected_ledger_transfer(
 ) -> Result<ExpectedLedgerTransfer, String> {
     let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
     let to_owner = pending_principal(operation.to_owner.as_deref(), "to_owner")?;
-    let amount_e8s = pending_i64_to_u64(operation.payment_amount_e8s, "payment_amount_e8s")?;
-    let ledger_fee_e8s = pending_i64_to_u64(
-        operation
-            .ledger_fee_e8s
-            .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())?,
-        "ledger_fee_e8s",
-    )?;
-    let created_at_time_ns = pending_i64_to_u64(
-        operation
-            .ledger_created_at_time_ns
-            .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())?,
-        "ledger_created_at_time_ns",
-    )?;
+    let amount_e8s = operation.payment_amount_e8s;
+    let ledger_fee_e8s = operation
+        .ledger_fee_e8s
+        .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())?;
+    let created_at_time_ns = operation
+        .ledger_created_at_time_ns
+        .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())?;
     Ok(ExpectedLedgerTransfer {
         from: IcrcAccount {
             owner: from_owner,
@@ -1499,10 +1496,6 @@ fn expected_ledger_transfer(
 fn pending_principal(value: Option<&str>, field: &str) -> Result<Principal, String> {
     let value = value.ok_or_else(|| format!("pending operation missing {field}"))?;
     Principal::from_text(value).map_err(|error| format!("invalid pending {field}: {error}"))
-}
-
-fn pending_i64_to_u64(value: i64, field: &str) -> Result<u64, String> {
-    u64::try_from(value).map_err(|_| format!("pending operation {field} is negative"))
 }
 
 async fn validate_ledger_transfer_block(
