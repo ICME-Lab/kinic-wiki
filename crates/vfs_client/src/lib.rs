@@ -22,9 +22,9 @@ use vfs_types::{
     ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RecentNodeHit, RecentNodesRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 #[async_trait]
@@ -213,9 +213,6 @@ pub trait VfsApi: Sync {
     async fn move_node(&self, request: MoveNodeRequest) -> Result<MoveNodeResult>;
     async fn mkdir_node(&self, request: MkdirNodeRequest) -> Result<MkdirNodeResult>;
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>>;
-    async fn recent_nodes(&self, _request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        Err(anyhow!("recent_nodes is not implemented by this client"))
-    }
     async fn graph_links(&self, _request: GraphLinksRequest) -> Result<Vec<LinkEdge>> {
         Err(anyhow!("graph_links is not implemented by this client"))
     }
@@ -771,12 +768,6 @@ impl VfsApi for CanisterVfsClient {
 
     async fn glob_nodes(&self, request: GlobNodesRequest) -> Result<Vec<GlobNodeHit>> {
         let result: Result<Vec<GlobNodeHit>, String> = self.query("glob_nodes", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn recent_nodes(&self, request: RecentNodesRequest) -> Result<Vec<RecentNodeHit>> {
-        let result: Result<Vec<RecentNodeHit>, String> =
-            self.query("recent_nodes", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

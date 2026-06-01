@@ -10,7 +10,6 @@ pub const WIKI_ENTITIES_PREFIX: &str = "/Wiki/entities";
 pub const WIKI_CONCEPTS_PREFIX: &str = "/Wiki/concepts";
 pub const SKILL_REGISTRY_ROOT: &str = "/Wiki/skills";
 pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = SKILL_REGISTRY_ROOT;
-pub const WIKI_BEAM_SECTION_TITLE: &str = "Benchmarks";
 pub const RAW_SOURCES_PREFIX: &str = "/Sources/raw";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
