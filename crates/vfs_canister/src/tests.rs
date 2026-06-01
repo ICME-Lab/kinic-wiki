@@ -179,21 +179,12 @@ fn pending_credit_purchase_transaction(
                 .expect("to owner should parse"),
             subaccount: operation.to_subaccount.clone(),
         },
-        operation
-            .payment_amount_e8s
-            .try_into()
-            .expect("amount should fit"),
-        operation
-            .ledger_fee_e8s
-            .expect("ledger fee")
-            .try_into()
-            .expect("fee should fit"),
+        operation.payment_amount_e8s,
+        operation.ledger_fee_e8s.expect("ledger fee"),
         format!("kinic:vfs:credit_purchase:{}", operation.operation_id).into_bytes(),
         operation
             .ledger_created_at_time_ns
-            .expect("ledger created_at")
-            .try_into()
-            .expect("created_at should fit"),
+            .expect("ledger created_at"),
     )
 }
 
@@ -588,7 +579,7 @@ fn purchase_database_credits_records_ambiguous_transfer_from() {
         .entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
-    assert_eq!(entries[0].amount_credits, 500);
+    assert_eq!(entries[0].amount_credits, 0);
     assert_eq!(entries[0].balance_after_credits, 0);
     assert_eq!(entries[0].ledger_block_index, None);
     assert_eq!(
@@ -627,7 +618,10 @@ fn purchase_database_credits_mount_failure_keeps_pending_operation_for_repair() 
         .entries;
     assert_eq!(pending.len(), 1);
     assert!(error.contains(&format!("pending operation {}", pending[0].operation_id)));
-    assert_eq!(pending[0].ledger_fee_e8s, Some(KINIC_LEDGER_FEE_E8S as i64));
+    assert_eq!(pending[0].operation_status, "completed");
+    assert_eq!(pending[0].credits, 500);
+    assert_eq!(pending[0].payment_amount_e8s, 50_000_000);
+    assert_eq!(pending[0].ledger_fee_e8s, Some(KINIC_LEDGER_FEE_E8S));
     assert!(
         list_database_credit_entries(database.database_id.clone(), None, 10)
             .expect("ledger should load")
@@ -768,6 +762,10 @@ fn repair_complete_accepts_verified_in_flight_credit_purchase() {
         .entries;
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].operation_id, operation_id);
+    assert_eq!(pending[0].operation_status, "in_flight");
+    assert_eq!(pending[0].credits, 500);
+    assert_eq!(pending[0].payment_amount_e8s, 50_000_000);
+    assert_eq!(pending[0].ledger_fee_e8s, Some(KINIC_LEDGER_FEE_E8S));
     assert!(
         list_database_credit_entries(database.database_id.clone(), None, 10)
             .expect("ledger should load")
@@ -862,6 +860,8 @@ fn authenticated_caller_can_complete_verified_ambiguous_credit_purchase() {
         .entries;
     assert_eq!(entries[0].kind, "credit_purchase_ambiguous");
     assert_eq!(entries[1].kind, "credit_purchase_repair_complete");
+    assert_eq!(entries[0].amount_credits, 0);
+    assert_eq!(entries[1].amount_credits, 500);
     assert_eq!(entries[1].caller, payer);
     assert_ne!(entries[1].caller, repair_caller.to_text());
     assert_eq!(entries[1].ledger_block_index, Some(77));
@@ -983,6 +983,9 @@ fn repair_credit_purchase_cancel_removes_ambiguous_operation() {
             "credit_purchase_repair_cancelled"
         ]
     );
+    assert_eq!(entries[0].amount_credits, 0);
+    assert_eq!(entries[1].amount_credits, 0);
+    assert_eq!(entries[1].balance_after_credits, 0);
 }
 
 #[test]
@@ -1637,6 +1640,25 @@ fn create_database_returns_result() {
     })
     .expect_err("pending DB should reject reads");
     assert!(pending_read.contains("database is pending"));
+    let pending_members = list_database_members(result.database_id.clone())
+        .expect_err("pending DB should reject member listing");
+    assert!(pending_members.contains("database is pending"));
+    let pending_rename = rename_database(RenameDatabaseRequest {
+        database_id: result.database_id.clone(),
+        name: "Renamed".to_string(),
+    })
+    .expect_err("pending DB should reject rename");
+    assert!(pending_rename.contains("database is pending"));
+    let pending_grant = grant_database_access(
+        result.database_id.clone(),
+        "aaaaa-aa".to_string(),
+        DatabaseRole::Reader,
+    )
+    .expect_err("pending DB should reject grants");
+    assert!(pending_grant.contains("database is pending"));
+    let pending_revoke = revoke_database_access(result.database_id.clone(), "aaaaa-aa".to_string())
+        .expect_err("pending DB should reject revokes");
+    assert!(pending_revoke.contains("database is pending"));
 
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
     block_on_ready(purchase_database_credits(credit_purchase_request(

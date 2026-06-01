@@ -63,8 +63,11 @@ jobs:
 
           public_api_pattern='^(crates/vfs_canister/vfs\.did|crates/vfs_types/|crates/vfs_canister/src/lib\.rs)'
           deploy_pattern='^scripts/(deploy|local|mainnet|smoke)/'
+          canister_pattern="^(Cargo\.toml|Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_store|vfs_types|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/build-vfs-canister\.sh)|$deploy_pattern"
 
-          set_output canister "^(Cargo\.toml|Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_store|vfs_types|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/build-vfs-canister\.sh)|$deploy_pattern"
+          printf '%s\n' 'crates/vfs_store/src/lib.rs' | grep -Eq "$canister_pattern"
+
+          set_output canister "$canister_pattern"
           set_output rust_all "^(Cargo\.toml|crates/(vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|vfs_types|wiki_domain|ic_sqlite_vfs_probe)/|crates/vfs_canister/(src/lib\.rs|vfs\.did)|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)"
           set_output cli "^(crates/(vfs_cli_app|vfs_cli_core|vfs_client|vfs_types)/|crates/vfs_canister/(src/lib\.rs|vfs\.did)|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(deploy|local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))"
           set_output wikibrowser "^wikibrowser/|$public_api_pattern"

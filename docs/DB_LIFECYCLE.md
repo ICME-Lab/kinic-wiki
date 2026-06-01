@@ -34,7 +34,7 @@ Pending DBs have index metadata and credit accounts but no stable-memory mount I
 
 Databases move through five statuses:
 
-- `pending`: metadata reserved, no mounted SQLite DB yet, only credit purchase and owner management are available
+- `pending`: metadata reserved, no mounted SQLite DB yet, only listing, credit purchase/repair, and delete are available
 - `active`: mounted and usable for VFS read/write/search/list
 - `archiving`: mounted for chunk export, VFS operations rejected until finalize succeeds
 - `archived`: not mounted, active mount released, snapshot metadata retained
@@ -58,6 +58,8 @@ KINIC credits uses one internal DB-scoped balance:
 
 DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB credits balance without allocating a stable-memory mount ID. The DB remains `pending` and credits-suspended until its first successful credit purchase activates the mounted SQLite DB.
 
+While a DB is pending, callers can use `list_databases`, `preview_database_credit_purchase`, `purchase_database_credits`, credit purchase repair/list/cancel endpoints, and `delete_database`. `rename_database`, `grant_database_access`, `revoke_database_access`, `list_database_members`, and VFS read/write/search/list APIs require activation first.
+
 External ledger calls are limited to DB credit purchase:
 
 - `preview_database_credit_purchase(database_id, credits)` returns `payment_amount_e8s`, `ledger_fee_e8s`, `credits_per_kinic`, and `config_version`.
@@ -73,9 +75,9 @@ ceil(cycles_delta / 1_000_000_000)
 
 The default purchase rate is `1 KINIC = 1000 credits`, controlled by `credits_per_kinic`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`. Before a metered update, the caller role is checked first, then the DB credits balance must be at least `min_update_credits` and the DB must not be suspended. Non-members receive access errors without learning credits state. If the post-update charge exceeds the DB credits balance, the remaining balance is fully consumed, the DB is suspended, and the update result remains successful.
 
-`database_credit_ledger` is the credits source of truth. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
+`database_credit_ledger` is the credits source of truth. `amount_credits` is the effective credits delta applied to the DB balance, and `balance_after_credits` is the resulting balance. Successful charged update calls are recorded there directly. Ledger-backed credit purchase and repair entries store ledger block indexes in `ledger_block_index`.
 
-Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
+Credits history redacts payer/caller principals for reader and writer callers. DB owner and SNS governance can read full credits history. Pending credit operations remain visible only to DB owner and SNS governance and include `operation_status` for repair decisions. New credits history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
 `kinic_ledger_canister_id` and `sns_governance_id` are fixed at init. SNS governance may update only rate and minimum-balance fields by calling `update_credits_config` with a Candid-encoded `CreditsConfigUpdate` blob. `config_version` starts at `1` and increments only when `credits_per_kinic` or `min_update_credits` actually changes.
 
@@ -97,14 +99,14 @@ URL ingest and query-answer sessions can expire after issuance if the DB becomes
 
 Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented.
 
-If DB credit purchase receives an explicit ledger error, the credit purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `credit_purchase_ambiguous`. If the ledger transfer succeeds but local DB activation or credit application fails, the operation remains pending and the error returns the pending `operation_id` and `ledger_block_index` for verified completion. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so completion can validate the exact transfer.
+If DB credit purchase receives an explicit ledger error, the credit purchase is cancelled. If the inter-canister call or response decoding is ambiguous, the operation remains pending and the DB ledger records `credit_purchase_ambiguous` with `amount_credits = 0`. If the ledger transfer succeeds but local DB activation or credit application fails, the operation remains pending and the error returns the pending `operation_id` and `ledger_block_index` for verified completion. Pending operations store the expected ledger from/to accounts, fee, memo inputs, and `created_at_time` so completion can validate the exact transfer.
 
 Pending operations block DB delete until they are resolved:
 
 - `repair_database_credit_purchase_complete(database_id, operation_id, ledger_block_index)`
 - `repair_database_credit_purchase_cancel(database_id, operation_id)`
 
-Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is allowed only for the original payer or DB owner, and is rejected once pending DB activation has started. Cancel writes `credit_purchase_repair_cancelled` with the cancel caller, pending payment amount, current balance, and no ledger block index. DB owner and SNS governance can inspect pending operations.
+Complete checks the ledger transaction at `ledger_block_index` against the pending operation before changing DB credits balance. The canister entrypoint accepts any non-anonymous caller when the ledger block proves the payment; the official CLI defaults to Internet Identity and requires explicit `--allow-non-ii-identity` opt-in for non-II operator identities. The completed ledger entry records the original payer from the pending operation as `caller`, not the repair executor. If local activation or credit application fails during complete, the pending operation remains and the returned error includes the operation and block identifiers. Cancel repair is allowed only for the original payer or DB owner, and is rejected once pending DB activation has started. Cancel writes `credit_purchase_repair_cancelled` with the cancel caller, pending payment amount, current balance, `amount_credits = 0`, and no ledger block index. DB owner and SNS governance can inspect pending operations.
 
 ## Delete
 

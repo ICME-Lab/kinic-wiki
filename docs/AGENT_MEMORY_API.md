@@ -85,5 +85,4 @@ The response returns the wiki `node_path` and refs with source path, linking pat
 
 - The Agent Memory API v1 is read-only.
 - Writes must use CLI commands, VFS mutation APIs, or the shared tool dispatcher.
-- `recent_changes` is not part of v1. Use `list_nodes` or `search_nodes` with an explicit scope when live nodes are needed.
 - `memory_summary` is not part of v1. Use `query_context` with a summary-style task when a maintained overview is needed.

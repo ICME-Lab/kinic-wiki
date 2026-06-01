@@ -1553,6 +1553,36 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
             .expect_err("pending DB should reject VFS reads")
             .contains("database is pending")
     );
+    assert!(
+        service
+            .rename_database(&pending.database_id, "owner", "Renamed", 2)
+            .expect_err("pending DB should reject rename")
+            .contains("database is pending")
+    );
+    assert!(
+        service
+            .grant_database_access(
+                &pending.database_id,
+                "owner",
+                "reader",
+                DatabaseRole::Reader,
+                2
+            )
+            .expect_err("pending DB should reject grants")
+            .contains("database is pending")
+    );
+    assert!(
+        service
+            .revoke_database_access(&pending.database_id, "owner", "reader")
+            .expect_err("pending DB should reject revokes")
+            .contains("database is pending")
+    );
+    assert!(
+        service
+            .list_database_members(&pending.database_id, "owner")
+            .expect_err("pending DB should reject member listing")
+            .contains("database is pending")
+    );
     service
         .validate_database_credit_purchase(&pending.database_id, 500)
         .expect("anonymous preview should accept pending DB credit purchase");
@@ -1601,6 +1631,21 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
         mount_history_row(&root, 11),
         (pending.database_id.clone(), "activate".to_string())
     );
+}
+
+#[test]
+fn pending_database_can_be_deleted_before_activation() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("Delete pending", "owner", 1)
+        .expect("pending database should create");
+
+    service
+        .delete_database(delete_request(&pending.database_id), "owner", 2)
+        .expect("pending database should delete");
+
+    assert_eq!(database_member_count(&root, &pending.database_id), 0);
+    assert!(!database_index_row_exists(&root, &pending.database_id));
 }
 
 #[test]
@@ -2014,6 +2059,10 @@ fn pending_credits_operations_are_visible_to_owner_and_governance_only() {
     assert_eq!(owner_page.entries.len(), 1);
     assert_eq!(owner_page.entries[0].kind, "credit_purchase");
     assert_eq!(owner_page.entries[0].caller, "payer");
+    assert_eq!(owner_page.entries[0].operation_status, "in_flight");
+    assert_eq!(owner_page.entries[0].credits, 500);
+    assert_eq!(owner_page.entries[0].payment_amount_e8s, 50_000_000);
+    assert_eq!(owner_page.entries[0].ledger_fee_e8s, Some(0));
 
     let governance_page = service
         .list_database_credit_pending_operations("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
@@ -2159,6 +2208,11 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
     service
         .mark_database_credit_purchase_ambiguous(cancel, "cancel", "payer", 700, 3)
         .expect("credit purchase ambiguity should record");
+    let pending = service
+        .list_database_credit_pending_operations("complete", "owner", None, 10)
+        .expect("owner should list ambiguous pending operations")
+        .entries;
+    assert_eq!(pending[0].operation_status, "ambiguous");
 
     let balance = service
         .repair_database_credit_purchase_complete("complete", complete, 77, 4)
@@ -2190,6 +2244,10 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
         .list_database_credit_entries("complete", "owner", None, 10)
         .expect("credits entries should load")
         .entries;
+    assert_eq!(entries[0].amount_credits, 0);
+    assert_eq!(entries[0].balance_after_credits, 0);
+    assert_eq!(entries[1].amount_credits, 500);
+    assert_eq!(entries[1].balance_after_credits, 500);
     assert_eq!(entries[0].caller, "payer");
     assert_eq!(entries[1].caller, "payer");
     assert_eq!(entries[1].ledger_block_index, Some(77));
@@ -2199,6 +2257,9 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
         .expect("cancel entries should load")
         .entries;
     assert_eq!(cancel_entries[1].caller, "owner");
+    assert_eq!(cancel_entries[0].amount_credits, 0);
+    assert_eq!(cancel_entries[0].balance_after_credits, 0);
+    assert_eq!(cancel_entries[1].amount_credits, 0);
     assert_eq!(cancel_entries[1].payment_amount_e8s, Some(70_000_000));
     assert_eq!(cancel_entries[1].balance_after_credits, 0);
     assert_eq!(cancel_entries[1].ledger_block_index, None);

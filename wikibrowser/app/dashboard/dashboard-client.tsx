@@ -40,7 +40,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
-  const canManage = database?.role === "owner" && !memberError;
+  const canManage = database?.role === "owner" && database.status === "active" && !memberError;
 
   const refresh = useCallback(
     async (client: AuthClient | null, nextDatabaseId: string) => {
@@ -91,7 +91,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         if (memberResult.status === "rejected") {
           setMemberError(`Member database list unavailable: ${errorMessage(memberResult.reason)}`);
         }
-        if (identity && nextDatabase?.role === "owner") {
+        if (identity && nextDatabase?.role === "owner" && nextDatabase.status === "active") {
           try {
             const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
             if (!isCurrentRefresh()) return;
@@ -100,7 +100,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             if (!isCurrentRefresh()) return;
             setMemberError(errorMessage(cause));
           }
-        } else if (nextDatabase?.publicReadable) {
+        } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
           try {
             const nextMembers = await listDatabaseMembersPublic(canisterId, nextDatabaseId);
             if (!isCurrentRefresh()) return;
