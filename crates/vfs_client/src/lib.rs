@@ -40,6 +40,11 @@ pub trait VfsApi: Sync {
     async fn memory_manifest(&self) -> Result<MemoryManifest> {
         Err(anyhow!("memory_manifest is not implemented by this client"))
     }
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        Err(anyhow!(
+            "get_credits_config is not implemented by this client"
+        ))
+    }
     async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
@@ -105,11 +110,6 @@ pub trait VfsApi: Sync {
     ) -> Result<()> {
         Err(anyhow!(
             "repair_database_credit_purchase_cancel is not implemented by this client"
-        ))
-    }
-    async fn get_credits_config(&self) -> Result<CreditsConfig> {
-        Err(anyhow!(
-            "get_credits_config is not implemented by this client"
         ))
     }
     async fn grant_database_access(
@@ -447,6 +447,11 @@ impl VfsApi for CanisterVfsClient {
         self.query("memory_manifest", &()).await
     }
 
+    async fn get_credits_config(&self) -> Result<CreditsConfig> {
+        let result: Result<CreditsConfig, String> = self.query("get_credits_config", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
     async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
@@ -566,11 +571,6 @@ impl VfsApi for CanisterVfsClient {
                 &operation_id,
             )
             .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn get_credits_config(&self) -> Result<CreditsConfig> {
-        let result: Result<CreditsConfig, String> = self.query("get_credits_config", &()).await?;
         result.map_err(|error| anyhow!(error))
     }
 

@@ -1867,7 +1867,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "candid",
  "chrono",
  "clap",
  "kinic-vfs-client",
@@ -3523,6 +3522,7 @@ dependencies = [
  "hex",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
+ "proptest",
  "pulldown-cmark",
  "rusqlite",
  "sha2 0.10.9",

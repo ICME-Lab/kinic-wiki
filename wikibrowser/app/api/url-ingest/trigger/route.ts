@@ -82,7 +82,7 @@ export async function POST(request: Request): Promise<Response> {
         authorization: `Bearer ${token}`,
         "content-type": "application/json"
       },
-      body: JSON.stringify({ canisterId: input.canisterId, databaseId: input.databaseId, requestPath: input.requestPath })
+      body: JSON.stringify({ canisterId: input.canisterId, databaseId: input.databaseId, requestPath: input.requestPath, sessionNonce: input.sessionNonce })
     });
     if (!response.ok) {
       return jsonError(`worker trigger failed: HTTP ${response.status}`, 502, origin);
@@ -94,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 function parseTriggerRequest(value: unknown): TriggerRequest | string {
-  if (!isRecord(value)) return "canisterId, databaseId, and requestPath are required";
+  if (!isRecord(value)) return "canisterId, databaseId, requestPath, and sessionNonce are required";
   const canisterId = value.canisterId;
   const databaseId = value.databaseId;
   const requestPath = value.requestPath;

@@ -7,12 +7,11 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, CreditsConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeKind,
-    NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
+    NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
     WriteNodeRequest, WriteNodeResult,
 };
 
@@ -56,28 +55,6 @@ impl VfsApi for MockClient {
             file_count: 0,
             source_count: 0,
         })
-    }
-
-    async fn get_credits_config(&self) -> Result<CreditsConfig> {
-        Ok(CreditsConfig {
-            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
-            sns_governance_id: "aaaaa-aa".to_string(),
-            credits_per_kinic: 1_000,
-            min_update_credits: 1,
-        })
-    }
-
-    async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
-        Ok(vec![DatabaseSummary {
-            database_id: "default".to_string(),
-            name: "Default".to_string(),
-            status: DatabaseStatus::Active,
-            role: DatabaseRole::Owner,
-            logical_size_bytes: 0,
-            credits_balance: Some(10),
-            credits_suspended_at_ms: None,
-            archived_at_ms: None,
-        }])
     }
 
     async fn read_node(&self, _database_id: &str, _path: &str) -> Result<Option<Node>> {

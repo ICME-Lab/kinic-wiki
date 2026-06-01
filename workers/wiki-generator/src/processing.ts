@@ -8,11 +8,24 @@ import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage
 import { sourceIdFromPath, validateCanonicalSourcePath } from "./source-path.js";
 import { markIngestRequestCompleted, markIngestRequestFailed, triggerUrlIngestRequest } from "./url-ingest.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
-import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiNode, WorkerConfig } from "./types.js";
+import type { ManualRunInput, QueueMessage, SearchNodeHit, SourceQueueMessage, WikiDraft, WikiNode, WorkerConfig } from "./types.js";
 import type { RuntimeEnv } from "./env.js";
 
 export type ManualRunContext = {
   vfs: VfsClient;
+};
+
+export type QueueMessageEnvelope =
+  | { kind: "valid"; message: QueueMessage }
+  | { kind: "legacy_url_ingest_missing_nonce"; canisterId: string; databaseId: string; requestPath: string }
+  | { kind: "invalid"; reason: string };
+
+type ExternalCostGateInput = {
+  databaseId: string;
+  sourcePath?: string;
+  sourceEtag?: string;
+  requestPath?: string;
+  sessionNonce?: string;
 };
 
 export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?: ManualRunContext): Promise<Response> {
@@ -29,12 +42,20 @@ export async function runManual(env: RuntimeEnv, input: ManualRunInput, context?
       kind: "source",
       databaseId: input.databaseId,
       sourcePath: input.sourcePath,
-      sourceEtag: input.sourceEtag
+      sourceEtag: input.sourceEtag,
+      sessionNonce: input.sessionNonce
     });
     return jsonResponse({ queued: enqueued, sourcePath: input.sourcePath, sourceEtag: input.sourceEtag }, 202);
   }
 
-  const generated = await generateFromSource(env, vfs, config, input.databaseId, source);
+  const generated = await generateFromSource(env, vfs, config, input.databaseId, source, () =>
+    ensureExternalCostAllowed(vfs, {
+      databaseId: input.databaseId,
+      sourcePath: input.sourcePath,
+      sourceEtag: input.sourceEtag,
+      sessionNonce: input.sessionNonce
+    })
+  );
   return jsonResponse(
     {
       dryRun: true,
@@ -56,21 +77,63 @@ export async function processQueueMessage(env: RuntimeEnv, message: QueueMessage
   await processSourceQueueMessage(env, message);
 }
 
-async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage): Promise<void> {
-  const config = loadConfig(env);
+export async function processQueueMessageEnvelope(
+  env: RuntimeEnv,
+  envelope: QueueMessageEnvelope,
+  context?: { config?: WorkerConfig; vfs?: VfsClient }
+): Promise<void> {
+  if (envelope.kind === "valid") {
+    await processQueueMessage(env, envelope.message);
+    return;
+  }
+  if (envelope.kind === "legacy_url_ingest_missing_nonce") {
+    await failLegacyUrlIngestMessage(env, envelope, context);
+    return;
+  }
+  console.warn("invalid wiki-generator queue message acked", envelope.reason);
+}
+
+export async function processSourceQueueMessageForTest(
+  env: RuntimeEnv,
+  message: SourceQueueMessage,
+  context: { config: WorkerConfig; vfs: VfsClient }
+): Promise<void> {
+  await processSourceQueueMessage(env, message, context);
+}
+
+async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMessage, context?: { config: WorkerConfig; vfs: VfsClient }): Promise<void> {
+  const config = context?.config ?? loadConfig(env);
   validateCanonicalSourcePath(message.sourcePath, config.sourcePrefix);
   const job = await loadJob(env.DB, message.databaseId, message.sourcePath);
   if (shouldSkipJob(job, message.sourceEtag)) {
     return;
   }
-  const vfs = await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM);
+  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
   const source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
   if (source.etag !== message.sourceEtag) {
     return;
   }
   await markProcessing(env.DB, message);
+  let deepSeekAttempted = false;
   try {
-    const generated = await generateFromSource(env, vfs, config, message.databaseId, source);
+    const generated = await generateFromSource(
+      env,
+      vfs,
+      config,
+      message.databaseId,
+      source,
+      () =>
+        ensureExternalCostAllowed(vfs, {
+          databaseId: message.databaseId,
+          sourcePath: message.sourcePath,
+          sourceEtag: message.sourceEtag,
+          requestPath: message.requestPath,
+          sessionNonce: message.sessionNonce
+        }),
+      () => {
+        deepSeekAttempted = true;
+      }
+    );
     await writeGeneratedPage(vfs, message.databaseId, generated.targetPath, generated.content, source.path);
     await markCompleted(env.DB, message, generated.targetPath);
     if (message.requestPath) {
@@ -79,10 +142,56 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     await bestEffortAppendWorkerLog(vfs, message.databaseId, config.targetRoot, generated.targetPath, source.path);
   } catch (error) {
     const messageText = errorMessage(error);
-    await markFailed(env.DB, message, messageText);
-    if (message.requestPath) {
-      await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
+    if (error instanceof ExternalCostGateError) {
+      await markQueueFailed(env, vfs, message, messageText);
+      return;
     }
+    if (deepSeekAttempted) {
+      await bestEffortMarkQueueFailed(env, vfs, message, messageText);
+      return;
+    }
+    await markQueueFailed(env, vfs, message, messageText);
+  }
+}
+
+class ExternalCostGateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ExternalCostGateError";
+  }
+}
+
+async function ensureExternalCostAllowed(vfs: VfsClient, input: ExternalCostGateInput): Promise<void> {
+  try {
+    if (input.requestPath && !input.sessionNonce) {
+      throw new Error("sessionNonce is required for request-bound source generation");
+    }
+    if (input.requestPath && input.sessionNonce) {
+      await vfs.checkUrlIngestTriggerSession(input.databaseId, input.requestPath, input.sessionNonce);
+      return;
+    }
+    if (input.sessionNonce && input.sourcePath && input.sourceEtag) {
+      await vfs.checkSourceRunSession(input.databaseId, input.sourcePath, input.sourceEtag, input.sessionNonce);
+      return;
+    }
+    await vfs.checkDatabaseWriteCredits(input.databaseId);
+  } catch (error) {
+    throw new ExternalCostGateError(errorMessage(error));
+  }
+}
+
+async function markQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
+  await markFailed(env.DB, message, messageText);
+  if (message.requestPath) {
+    await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, messageText);
+  }
+}
+
+async function bestEffortMarkQueueFailed(env: RuntimeEnv, vfs: VfsClient, message: SourceQueueMessage, messageText: string): Promise<void> {
+  try {
+    await markQueueFailed(env, vfs, message, messageText);
+  } catch (error) {
+    console.warn("failed to record source generation non-retry failure", errorMessage(error));
   }
 }
 
@@ -101,12 +210,23 @@ export function parseManualRunInput(value: unknown): ManualRunInput | string {
   const databaseId = value.databaseId;
   const sourcePath = value.sourcePath;
   const sourceEtag = value.sourceEtag;
+  const sessionNonce = value.sessionNonce;
   const dryRun = value.dryRun;
   if (typeof databaseId !== "string" || databaseId.length === 0) return "databaseId is required";
   if (typeof sourcePath !== "string" || sourcePath.length === 0) return "sourcePath is required";
   if (typeof sourceEtag !== "string" || sourceEtag.length === 0) return "sourceEtag is required";
+  if (sessionNonce !== undefined && (typeof sessionNonce !== "string" || sessionNonce.length === 0)) {
+    return "sessionNonce must be a non-empty string";
+  }
+  if (typeof sessionNonce === "string" && sessionNonce.length > 128) return "sessionNonce is too long";
   if (dryRun !== undefined && typeof dryRun !== "boolean") return "dryRun must be a boolean";
-  return { databaseId, sourcePath, sourceEtag, dryRun: dryRun ?? false };
+  return {
+    databaseId,
+    sourcePath,
+    sourceEtag,
+    sessionNonce: typeof sessionNonce === "string" ? sessionNonce : undefined,
+    dryRun: dryRun ?? false
+  };
 }
 
 export function parseQueueMessage(value: unknown): QueueMessage | null {
@@ -116,31 +236,86 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     if (typeof value.sourcePath !== "string") return null;
     if (typeof value.sourceEtag !== "string") return null;
     if ("requestPath" in value && value.requestPath !== undefined && typeof value.requestPath !== "string") return null;
+    if ("sessionNonce" in value && value.sessionNonce !== undefined && typeof value.sessionNonce !== "string") return null;
     return {
       kind: "source",
       databaseId: value.databaseId,
       sourcePath: value.sourcePath,
       sourceEtag: value.sourceEtag,
-      requestPath: typeof value.requestPath === "string" ? value.requestPath : undefined
+      requestPath: typeof value.requestPath === "string" ? value.requestPath : undefined,
+      sessionNonce: typeof value.sessionNonce === "string" ? value.sessionNonce : undefined
     };
   }
   if (value.kind === "url_ingest") {
     if (typeof value.canisterId !== "string") return null;
     if (typeof value.databaseId !== "string") return null;
     if (typeof value.requestPath !== "string") return null;
+    if (typeof value.sessionNonce !== "string" || value.sessionNonce.length === 0) return null;
     return {
       kind: "url_ingest",
       canisterId: value.canisterId,
       databaseId: value.databaseId,
-      requestPath: value.requestPath
+      requestPath: value.requestPath,
+      sessionNonce: value.sessionNonce
     };
   }
   return null;
 }
 
-async function generateFromSource(env: RuntimeEnv, vfs: VfsClient, config: WorkerConfig, databaseId: string, source: WikiNode): Promise<GeneratedPage> {
+export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope {
+  const message = parseQueueMessage(value);
+  if (message) return { kind: "valid", message };
+  if (isObject(value) && value.kind === "url_ingest") {
+    if (typeof value.canisterId !== "string") return { kind: "invalid", reason: "url_ingest canisterId is missing" };
+    if (typeof value.databaseId !== "string") return { kind: "invalid", reason: "url_ingest databaseId is missing" };
+    if (typeof value.requestPath !== "string") return { kind: "invalid", reason: "url_ingest requestPath is missing" };
+    if (typeof value.sessionNonce !== "string" || value.sessionNonce.length === 0) {
+      return {
+        kind: "legacy_url_ingest_missing_nonce",
+        canisterId: value.canisterId,
+        databaseId: value.databaseId,
+        requestPath: value.requestPath
+      };
+    }
+  }
+  return { kind: "invalid", reason: "queue message shape is invalid" };
+}
+
+async function failLegacyUrlIngestMessage(
+  env: RuntimeEnv,
+  message: { canisterId: string; databaseId: string; requestPath: string },
+  context?: { config?: WorkerConfig; vfs?: VfsClient }
+): Promise<void> {
+  const config = context?.config ?? loadConfig(env);
+  if (message.canisterId !== config.canisterId) {
+    console.warn("legacy url_ingest queue message targets a different canister");
+    return;
+  }
+  if (!message.requestPath.startsWith("/Sources/ingest-requests/") || !message.requestPath.endsWith(".md")) {
+    console.warn("legacy url_ingest queue message has a non-canonical request path");
+    return;
+  }
+  const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
+  await markIngestRequestFailed(vfs, message.databaseId, message.requestPath, "sessionNonce is required for url_ingest queue message");
+}
+
+async function generateFromSource(
+  env: RuntimeEnv,
+  vfs: VfsClient,
+  config: WorkerConfig,
+  databaseId: string,
+  source: WikiNode,
+  beforeDeepSeek?: () => Promise<void>,
+  afterDeepSeekAttempt?: () => void
+): Promise<GeneratedPage> {
   const contextHits = await loadContext(vfs, databaseId, source, config);
-  const draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
+  await beforeDeepSeek?.();
+  let draft: WikiDraft;
+  try {
+    draft = await generateDraft(source, contextHits, config, env.DEEPSEEK_API_KEY);
+  } finally {
+    afterDeepSeekAttempt?.();
+  }
   validateDraftSources(draft, source.path);
   const targetPath = `${config.targetRoot}/${slugForGeneratedPage(draft, sourceIdFromPath(source.path, config.sourcePrefix))}.md`;
   return {

@@ -16,7 +16,7 @@ Raw web sources keep URL provenance only. Request/source correspondence is track
 Trusted servers trigger a single request with bearer-authenticated `POST /url-ingest`:
 
 ```json
-{ "canisterId": "xis3j-paaaa-aaaai-axumq-cai", "databaseId": "db_...", "requestPath": "/Sources/ingest-requests/<request-id>.md" }
+{ "canisterId": "xis3j-paaaa-aaaai-axumq-cai", "databaseId": "db_...", "requestPath": "/Sources/ingest-requests/<request-id>.md", "sessionNonce": "<authorized-session-nonce>" }
 ```
 
 For each queued request it:
@@ -30,6 +30,8 @@ For each queued request it:
 The worker identity in `KINIC_WIKI_WORKER_IDENTITY_PEM` must have writer access to the target database.
 Use the exact PEM output from `icp identity export <identity-name>`.
 New databases include the default LLM writer service principal as a `writer` member. That automatic grant is part of the URL ingest permission model: if an owner revokes the service principal, URL ingest session authorization and checks fail until writer access is restored.
+Session checks are not permanent capability grants. The canister rejects them after credits suspension or low balance, and the worker re-checks immediately before external URL fetch and DeepSeek generation.
+Manual `/run` and source queue jobs without a browser session call `check_database_write_credits` before DeepSeek; the worker identity must be writer or owner.
 
 ## Cloudflare Setup
 
@@ -49,9 +51,10 @@ After `d1 create`, copy the returned database id into `wrangler.jsonc`.
 Use this order when enabling WikiBrowser URL ingest:
 
 1. Deploy this Worker with `KINIC_WIKI_WORKER_TOKEN` and `KINIC_WIKI_WORKER_IDENTITY_PEM` set.
-2. Grant the Worker identity writer access to target databases, or keep the default LLM writer service principal grant.
-3. Set WikiBrowser `KINIC_WIKI_GENERATOR_URL` to this Worker URL.
-4. Set the same `KINIC_WIKI_WORKER_TOKEN` as a WikiBrowser runtime secret.
-5. Run a smoke from WikiBrowser's `/<database-id>/Wiki?tab=ingest` route and confirm `/Sources/ingest-requests/...` plus `/Sources/raw/...` output.
+2. Confirm the target canister exposes `authorize_url_ingest_trigger_session`, `check_url_ingest_trigger_session`, `check_source_run_session`, and `check_database_write_credits`.
+3. Grant the Worker identity writer access to target databases, or keep the default LLM writer service principal grant.
+4. Set WikiBrowser `KINIC_WIKI_GENERATOR_URL` to this Worker URL.
+5. Set the same `KINIC_WIKI_WORKER_TOKEN` as a WikiBrowser runtime secret.
+6. Run a smoke from WikiBrowser's `/<database-id>/Wiki?tab=ingest` route and confirm `/Sources/ingest-requests/...` plus `/Sources/raw/...` output.
 
 PDF, authenticated pages, and multi-URL batching are out of scope for this worker path.

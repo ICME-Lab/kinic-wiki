@@ -92,7 +92,8 @@ await withEnv(
       assert.deepEqual(JSON.parse(init?.body), {
         canisterId: "aaaaa-aa",
         databaseId: "db_1",
-        requestPath: "/Sources/ingest-requests/1.md"
+        requestPath: "/Sources/ingest-requests/1.md",
+        sessionNonce: "session-1"
       });
       return Response.json({ accepted: true }, { status: 202 });
     }, async () => {
@@ -157,6 +158,7 @@ await withEnv(
         databaseId: "db_1",
         sourcePath: "/Sources/raw/web/abc.md",
         sourceEtag: "etag-source",
+        sessionNonce: "session-1",
         dryRun: false
       });
       return Response.json({ queued: true }, { status: 202 });
@@ -206,6 +208,13 @@ await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY
   });
   const deniedSession = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
   assert.equal(deniedSession.status, 403);
+
+  await withMockFetch(async () => {
+    throw new Error("DeepSeek should not be called");
+  }, async () => {
+    const deniedWithoutFetch = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
+    assert.equal(deniedWithoutFetch.status, 403);
+  });
 
   queryAnswerRouteModule.setQueryAnswerDepsForTest({
     checkSession: async () => ({ principal: "principal-1" }),

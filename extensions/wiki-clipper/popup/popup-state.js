@@ -14,8 +14,13 @@ export function databaseOptionLabel(database, sameNameCount = 1) {
 }
 
 export function mergePreferredDatabase(databases, preferredDatabase) {
-  const preferredDatabaseId = String(preferredDatabase?.databaseId || "").trim();
+  const preferredDatabaseId = String(preferredDatabase?.databaseId || preferredDatabase?.database_id || "").trim();
+  const role = databaseRoleLabel(preferredDatabase?.role);
+  const status = databaseStatusLabel(preferredDatabase?.status);
   if (!preferredDatabaseId || databases.some((database) => database.databaseId === preferredDatabaseId)) {
+    return databases;
+  }
+  if (status !== "Active" || (role !== "Owner" && role !== "Writer")) {
     return databases;
   }
   return [
@@ -23,9 +28,9 @@ export function mergePreferredDatabase(databases, preferredDatabase) {
     {
       databaseId: preferredDatabaseId,
       name: String(preferredDatabase.name || preferredDatabaseId),
-      role: "Owner",
-      status: "Hot",
-      logicalSizeBytes: "0"
+      role,
+      status,
+      logicalSizeBytes: String(preferredDatabase.logicalSizeBytes || preferredDatabase.logical_size_bytes || "0")
     }
   ];
 }
@@ -50,5 +55,11 @@ function shortDatabaseId(databaseId) {
 function databaseRoleLabel(role) {
   if (typeof role === "string") return role.trim();
   if (role && typeof role === "object") return Object.keys(role)[0] || "";
+  return "";
+}
+
+function databaseStatusLabel(status) {
+  if (typeof status === "string") return status.trim();
+  if (status && typeof status === "object") return Object.keys(status)[0] || "";
   return "";
 }

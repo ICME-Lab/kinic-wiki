@@ -30,12 +30,12 @@ assert.equal(
   "/alpha/Wiki/space%20name.md?view=edit"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/conversations/日本語記事.md"),
-  "/alpha/Wiki/conversations/%E6%97%A5%E6%9C%AC%E8%AA%9E%E8%A8%98%E4%BA%8B.md"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "query", undefined, undefined, "anonymous"),
+  "/alpha/Wiki?tab=query&read=anonymous"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "recent", undefined, undefined, "anonymous"),
-  "/alpha/Wiki?tab=recent&read=anonymous"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/conversations/日本語記事.md"),
+  "/alpha/Wiki/conversations/%E6%97%A5%E6%9C%AC%E8%AA%9E%E8%A8%98%E4%BA%8B.md"
 );
 assert.equal(
   hrefForSearch("t63gs-up777-77776-aaaba-cai", "alpha", "", "path"),

@@ -5,12 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BusyAction } from "./access-control";
-import { AuthControls, OwnerPanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CreditsConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
+  getCreditsConfig,
   grantDatabaseAccessAuthenticated,
+  listDatabaseCreditPendingOperationsAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
@@ -29,7 +32,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
+  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
+  const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -40,7 +45,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
-  const canManage = database?.role === "owner" && !memberError;
+  const isActiveDatabase = database?.status === "active";
+  const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
+  const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
 
   const refresh = useCallback(
     async (client: AuthClient | null, nextDatabaseId: string) => {
@@ -54,7 +61,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       if (!nextDatabaseId) {
         setPrincipal(client?.getIdentity().getPrincipal().toText() ?? null);
         setDatabases([]);
+        setCreditsConfig(null);
         setMembers([]);
+        setPendingOperationCount(0);
         setError(null);
         setWarning(null);
         setMemberError(null);
@@ -67,7 +76,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setMemberError(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [publicResult, memberResult] = await Promise.allSettled([
+        const [creditsResult, publicResult, memberResult] = await Promise.allSettled([
+          getCreditsConfig(canisterId),
           listDatabasesPublic(canisterId),
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
@@ -84,14 +94,16 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         const nextDatabase = nextDatabases.find((item) => item.databaseId === nextDatabaseId) ?? null;
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
+        setCreditsConfig(creditsResult.status === "fulfilled" ? creditsResult.value : null);
         setMembers([]);
+        setPendingOperationCount(0);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
         }
         if (memberResult.status === "rejected") {
           setMemberError(`Member database list unavailable: ${errorMessage(memberResult.reason)}`);
         }
-        if (identity && nextDatabase?.role === "owner") {
+        if (identity && nextDatabase?.role === "owner" && nextDatabase.status === "active") {
           try {
             const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
             if (!isCurrentRefresh()) return;
@@ -100,7 +112,15 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             if (!isCurrentRefresh()) return;
             setMemberError(errorMessage(cause));
           }
-        } else if (nextDatabase?.publicReadable) {
+          try {
+            const pendingOperations = await listDatabaseCreditPendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
+            if (!isCurrentRefresh()) return;
+            setPendingOperationCount(pendingOperations.length);
+          } catch {
+            if (!isCurrentRefresh()) return;
+            setPendingOperationCount(0);
+          }
+        } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
           try {
             const nextMembers = await listDatabaseMembersPublic(canisterId, nextDatabaseId);
             if (!isCurrentRefresh()) return;
@@ -164,7 +184,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     await authClient.logout();
     setPrincipal(null);
     setDatabases([]);
+    setCreditsConfig(null);
     setMembers([]);
+    setPendingOperationCount(0);
     setError(null);
     setWarning(null);
     setMemberError(null);
@@ -230,11 +252,14 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
   async function deleteDatabase(): Promise<string | null> {
     if (!authClient || !databaseId) return "Login with Internet Identity to delete database.";
+    if (!database) return "Database summary unavailable.";
     setBusy(true);
     setBusyAction({ kind: "delete" });
     setActionMessage(null);
     try {
-      await deleteDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseId);
+      await deleteDatabaseAuthenticated(canisterId, authClient.getIdentity(), {
+        databaseId
+      });
       router.replace("/dashboard");
       return null;
     } catch (cause) {
@@ -253,7 +278,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             <Link className="text-sm text-accent no-underline hover:underline" href="/">
               Dashboard
             </Link>
-            {databaseId ? (
+            {databaseId && isActiveDatabase ? (
               <Link className="ml-3 text-sm text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
                 Skill Registry
               </Link>
@@ -261,18 +286,36 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             <h1 className="mt-2 text-3xl font-semibold text-ink">{database?.name ?? "Database access"}</h1>
             <p className="mt-1 font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
           </div>
-          <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
+          <div className="flex flex-wrap items-center gap-2">
+            {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
+            <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
+          </div>
         </header>
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
 
-        {database ? <SummaryPanel database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
+        {database ? <SummaryPanel creditsConfig={creditsConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
-          canManage ? (
-            <OwnerPanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} members={members} principal={principal ?? "anonymous"} onDelete={deleteDatabase} onGrant={grantAccess} onRename={renameDatabase} onRevoke={revokeAccess} />
+          canDeletePendingDatabase ? (
+            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
+          ) : canManage ? (
+            <OwnerPanel
+              creditsBalance={database.creditsBalance}
+              busy={busy}
+              busyAction={busyAction}
+              databaseId={databaseId}
+              databaseName={database.name}
+              members={members}
+              pendingOperationCount={pendingOperationCount}
+              principal={principal ?? "anonymous"}
+              onDelete={deleteDatabase}
+              onGrant={grantAccess}
+              onRename={renameDatabase}
+              onRevoke={revokeAccess}
+            />
           ) : database.publicReadable ? (
             <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />
           ) : principal ? (

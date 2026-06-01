@@ -8,8 +8,8 @@ import { Plus, TerminalSquare } from "lucide-react";
 import { CreateDatabaseDialog } from "./create-database-dialog";
 import { AuthControls, CreatedDatabasePanel, DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { DatabaseSummary } from "@/lib/types";
-import { createDatabaseAuthenticated, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
+import { createDatabaseAuthenticated, getCreditsConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import type { DatabaseRow } from "./home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -20,6 +20,7 @@ export default function HomePage() {
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseRow[]>([]);
+  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [publicError, setPublicError] = useState<string | null>(null);
@@ -44,7 +45,8 @@ export default function HomePage() {
       setWarning(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [publicResult, memberResult] = await Promise.allSettled([
+        const [creditsResult, publicResult, memberResult] = await Promise.allSettled([
+          getCreditsConfig(canisterId),
           listDatabasesPublic(canisterId),
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
@@ -56,9 +58,10 @@ export default function HomePage() {
         const nextDatabases = mergeDatabaseRows(memberDatabases, publicDatabases);
         if (!isCurrentRefresh()) return;
         setDatabases(nextDatabases);
+        setCreditsConfig(creditsResult.status === "fulfilled" ? creditsResult.value : null);
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setPublicError(publicResult.status === "rejected" ? `Public database list unavailable: ${errorMessage(publicResult.reason)}` : null);
-        setWarning(listWarning(publicResult, memberResult));
+        setWarning(listWarning(memberResult));
         setLoadState("ready");
       } catch (cause) {
         if (!isCurrentRefresh()) return;
@@ -112,6 +115,7 @@ export default function HomePage() {
     if (!authClient) return;
     await authClient.logout();
     setPrincipal(null);
+    setCreditsConfig(null);
     setCreatedDatabase(null);
     setCreateDialogOpen(false);
     setNewDatabaseName("");
@@ -219,7 +223,7 @@ export default function HomePage() {
                 </button>
               </div>
             </section>
-            <DatabaseBody loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody creditsConfig={creditsConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </>
         ) : (
           <section className="rounded-lg border border-line bg-paper shadow-sm">
@@ -229,7 +233,7 @@ export default function HomePage() {
                 <p className="mt-1 text-sm leading-6 text-muted">Public databases open without login. Login with Internet Identity to show My databases linked to your principal.</p>
               </div>
             </div>
-            <DatabaseBody loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody creditsConfig={creditsConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </section>
         )}
       </section>
@@ -249,7 +253,7 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
   return [...rows.values()].sort((left, right) => left.databaseId.localeCompare(right.databaseId));
 }
 
-function listWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
+function listWarning(memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;
 }

@@ -3,10 +3,10 @@
 // Why: Optional worker log writes must not decide source generation status.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestEffortAppendWorkerLog, parseManualRunInput, runManual } from "../src/processing.js";
-import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck } from "../src/types.js";
+import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, runManual } from "../src/processing.js";
+import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
-import { testEnv, TestQueue, TestVfsClient } from "./url-ingest-fixtures.js";
+import { testEnv, TestQueue, TestVfsClient, workerConfig } from "./url-ingest-fixtures.js";
 
 test("manual source run queues the validated source etag", async () => {
   const queue = new TestQueue();
@@ -17,6 +17,7 @@ test("manual source run queues the validated source etag", async () => {
     databaseId: "db_1",
     sourcePath: "/Sources/raw/web/abc.md",
     sourceEtag: "etag-authorized",
+    sessionNonce: "session-1",
     dryRun: false
   }, { vfs });
 
@@ -26,6 +27,7 @@ test("manual source run queues the validated source etag", async () => {
   const message = queue.messages[0];
   if (message?.kind !== "source") throw new Error("source queue message expected");
   assert.equal(message.sourceEtag, "etag-authorized");
+  assert.equal(message.sessionNonce, "session-1");
 });
 
 test("manual source run rejects etag mismatch without queueing", async () => {
@@ -102,6 +104,18 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
 
 test("manual source run input requires source etag", () => {
   assert.equal(parseManualRunInput({ databaseId: "db_1", sourcePath: "/Sources/raw/web/abc.md" }), "sourceEtag is required");
+  assert.deepEqual(parseManualRunInput({
+    databaseId: "db_1",
+    sourcePath: "/Sources/raw/web/abc.md",
+    sourceEtag: "etag-source",
+    sessionNonce: "session-1"
+  }), {
+    databaseId: "db_1",
+    sourcePath: "/Sources/raw/web/abc.md",
+    sourceEtag: "etag-source",
+    sessionNonce: "session-1",
+    dryRun: false
+  });
 });
 
 test("worker log append failure is non-fatal", async () => {
@@ -120,8 +134,192 @@ test("worker log append failure is non-fatal", async () => {
   }
 });
 
+test("legacy url ingest queue message without nonce marks request failed", async () => {
+  const vfs = new TestVfsClient();
+  vfs.requestNode = ingestRequestNode();
+  const envelope = parseQueueMessageEnvelope({
+    kind: "url_ingest",
+    canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+    databaseId: "db_1",
+    requestPath: "/Sources/ingest-requests/1.md"
+  });
+
+  assert.equal(envelope.kind, "legacy_url_ingest_missing_nonce");
+  await processQueueMessageEnvelope(testEnv(new TestQueue()), envelope, { config: workerConfig(), vfs });
+
+  assert.equal(vfs.lastRequest?.status, "failed");
+  assert.match(vfs.lastRequest?.error ?? "", /sessionNonce is required/);
+  assert.equal(parseQueueMessageEnvelope({ kind: "url_ingest", canisterId: "xis3j-paaaa-aaaai-axumq-cai", databaseId: "db_1" }).kind, "invalid");
+  assert.equal(
+    parseQueueMessageEnvelope({
+      kind: "url_ingest",
+      canisterId: "xis3j-paaaa-aaaai-axumq-cai",
+      databaseId: "db_1",
+      requestPath: "/Sources/ingest-requests/1.md",
+      sessionNonce: ""
+    }).kind,
+    "legacy_url_ingest_missing_nonce"
+  );
+});
+
+test("source queue write credits check failure does not call DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({});
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      testEnv(new TestQueue()),
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ failWriteCredits: true }) }
+    );
+
+    assert.equal(deepSeekCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("source queue source run session check failure does not call DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  const sourceSessionChecks: SourceSessionCheck[] = [];
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({});
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      testEnv(new TestQueue()),
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { config: workerConfig(), vfs: sourceVfs({ failSourceRunSession: true, sourceSessionChecks }) }
+    );
+
+    assert.deepEqual(sourceSessionChecks, [
+      { databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
+    ]);
+    assert.equal(deepSeekCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("source queue uses source run session before DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  const sourceSessionChecks: SourceSessionCheck[] = [];
+  const writtenPages: WriteNodeRequest[] = [];
+  const db = new RecordingD1();
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { config: workerConfig(), vfs: sourceVfs({ sourceSessionChecks, writtenPages }) }
+    );
+
+    assert.deepEqual(sourceSessionChecks, [
+      { databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
+    ]);
+    assert.equal(deepSeekCalls, 1);
+    assert.equal(writtenPages.length, 2);
+    assert.equal(writtenPages[0]?.path, "/Wiki/conversations/project-notes.md");
+    assert.match(writtenPages[0]?.content ?? "", /## Summary/);
+    assert.ok(db.runs.some((run) => run.query.includes("SET status = 'completed'")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("request-bound source queue without session nonce fails before DeepSeek", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  const requestWrites: WriteNodeRequest[] = [];
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      testEnv(new TestQueue()),
+      {
+        kind: "source",
+        databaseId: "db_1",
+        sourcePath: "/Sources/raw/a/a.md",
+        sourceEtag: "etag-source",
+        requestPath: "/Sources/ingest-requests/1.md"
+      },
+      { config: workerConfig(), vfs: sourceVfs({ requestNode: ingestRequestNode(), requestWrites }) }
+    );
+
+    assert.equal(deepSeekCalls, 0);
+    assert.equal(requestWrites.length, 1);
+    assert.match(requestWrites[0]?.content ?? "", /status: "failed"/);
+    assert.match(requestWrites[0]?.content ?? "", /sessionNonce is required/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("request-bound source queue retries when gate failure cannot be recorded", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    await assert.rejects(
+      processSourceQueueMessageForTest(
+        testEnv(new TestQueue()),
+        {
+          kind: "source",
+          databaseId: "db_1",
+          sourcePath: "/Sources/raw/a/a.md",
+          sourceEtag: "etag-source",
+          requestPath: "/Sources/ingest-requests/1.md"
+        },
+        { config: workerConfig(), vfs: sourceVfs({ requestNode: ingestRequestNode(), failRequestWrite: true }) }
+      ),
+      /request failed status write failed/
+    );
+
+    assert.equal(deepSeekCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("failed status write after DeepSeek is non-retry", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: new FailingD1AfterFirstRun() },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs({ failDraftWrite: true }) }
+    );
+
+    assert.equal(deepSeekCalls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function failingLogVfs(): VfsClient {
   return {
+    checkDatabaseWriteCredits: async (): Promise<void> => {},
+    checkSourceRunSession: async (): Promise<void> => {},
+    checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => ({
       path,
       kind: "file",
@@ -137,6 +335,177 @@ function failingLogVfs(): VfsClient {
     exportSnapshot: async (): Promise<ExportSnapshotPage> => ({ snapshotRevision: "rev", nodes: [], nextCursor: null }),
     fetchUpdates: async (): Promise<FetchUpdatesPage> => ({ snapshotRevision: "rev", changedNodes: [], removedPaths: [], nextCursor: null })
   };
+}
+
+type SourceSessionCheck = {
+  databaseId: string;
+  sourcePath: string;
+  sourceEtag: string;
+  sessionNonce: string;
+};
+
+function sourceVfs(
+  options: {
+    failWriteCredits?: boolean;
+    failDraftWrite?: boolean;
+    failSourceRunSession?: boolean;
+    sourceSessionChecks?: SourceSessionCheck[];
+    writtenPages?: WriteNodeRequest[];
+    requestNode?: WikiNode;
+    requestWrites?: WriteNodeRequest[];
+    failRequestWrite?: boolean;
+  } = {}
+): VfsClient {
+  return {
+    checkDatabaseWriteCredits: async (): Promise<void> => {
+      if (options.failWriteCredits) throw new Error("database credits are suspended");
+    },
+    checkSourceRunSession: async (databaseId, sourcePath, sourceEtag, sessionNonce): Promise<void> => {
+      options.sourceSessionChecks?.push({ databaseId, sourcePath, sourceEtag, sessionNonce });
+      if (options.failSourceRunSession) throw new Error("source run session denied");
+    },
+    checkUrlIngestTriggerSession: async (): Promise<void> => {},
+    readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => {
+      if (path === "/Sources/raw/a/a.md") {
+        return {
+          path,
+          kind: "source",
+          content: "raw",
+          etag: "etag-source",
+          metadataJson: "{}"
+        };
+      }
+      if (path === options.requestNode?.path) return options.requestNode;
+      return null;
+    },
+    writeNode: async (request): Promise<WriteNodeAck> => {
+      if (options.failDraftWrite) throw new Error("write failed after DeepSeek");
+      if (request.path === options.requestNode?.path) {
+        if (options.failRequestWrite) throw new Error("request failed status write failed");
+        options.requestWrites?.push(request);
+      } else {
+        options.writtenPages?.push(request);
+      }
+      return { path: request.path, kind: request.kind, etag: "etag-write" };
+    },
+    mkdirNode: async (): Promise<void> => {},
+    searchNodes: async (): Promise<SearchNodeHit[]> => [],
+    exportSnapshot: async (): Promise<ExportSnapshotPage> => ({ snapshotRevision: "rev", nodes: [], nextCursor: null }),
+    fetchUpdates: async (): Promise<FetchUpdatesPage> => ({ snapshotRevision: "rev", changedNodes: [], removedPaths: [], nextCursor: null })
+  };
+}
+
+function draftJson(): string {
+  return JSON.stringify({
+    title: "Project Notes",
+    slug: "project-notes",
+    labels: {
+      summary: "Summary",
+      key_facts: "Key facts",
+      decisions: "Decisions",
+      open_questions: "Open questions",
+      follow_ups: "Follow-ups",
+      related_context: "Related context",
+      provenance: "Provenance",
+      none: "None"
+    },
+    summary: "Short summary",
+    key_facts: [{ text: "Fact", source_path: "/Sources/raw/a/a.md" }],
+    decisions: [],
+    open_questions: [],
+    follow_ups: []
+  });
+}
+
+function ingestRequestNode(): WikiNode {
+  return {
+    path: "/Sources/ingest-requests/1.md",
+    kind: "file",
+    content: [
+      "---",
+      "kind: kinic.url_ingest_request",
+      "schema_version: 1",
+      "status: generating",
+      'url: "https://example.com/a"',
+      'requested_by: "aaaaa-aa"',
+      'requested_at: "2026-05-12T00:00:00.000Z"',
+      'claimed_at: "2026-05-12T00:00:01.000Z"',
+      'source_path: "/Sources/raw/a/a.md"',
+      "target_path: null",
+      "finished_at: null",
+      "error: null",
+      "---",
+      "",
+      "# URL Ingest Request"
+    ].join("\n"),
+    etag: "etag-request",
+    metadataJson: "{}"
+  };
+}
+
+class RecordingD1 implements D1Database {
+  readonly runs: { query: string; values: D1Value[] }[] = [];
+
+  prepare(query: string): D1PreparedStatement {
+    return new RecordingD1Statement(query, this.runs);
+  }
+}
+
+class RecordingD1Statement implements D1PreparedStatement {
+  private values: D1Value[] = [];
+
+  constructor(
+    readonly query: string,
+    private readonly runs: { query: string; values: D1Value[] }[]
+  ) {}
+
+  bind(...values: D1Value[]): D1PreparedStatement {
+    this.values = values;
+    return this;
+  }
+
+  async first<T = unknown>(): Promise<T | null> {
+    return null;
+  }
+
+  async run(): Promise<unknown> {
+    this.runs.push({ query: this.query, values: this.values });
+    return { query: this.query, values: this.values };
+  }
+}
+
+class FailingD1AfterFirstRun implements D1Database {
+  private runCount = 0;
+
+  prepare(query: string): D1PreparedStatement {
+    return new FailingD1Statement(query, () => {
+      this.runCount += 1;
+      return this.runCount;
+    });
+  }
+}
+
+class FailingD1Statement implements D1PreparedStatement {
+  private values: D1Value[] = [];
+
+  constructor(
+    private readonly query: string,
+    private readonly nextRunCount: () => number
+  ) {}
+
+  bind(...values: D1Value[]): D1PreparedStatement {
+    this.values = values;
+    return this;
+  }
+
+  async first<T = unknown>(): Promise<T | null> {
+    return null;
+  }
+
+  async run(): Promise<unknown> {
+    if (this.nextRunCount() > 1) throw new Error("failed status write failed");
+    return { query: this.query, values: this.values };
+  }
 }
 
 function sourceNode(etag: string): WikiNode {
