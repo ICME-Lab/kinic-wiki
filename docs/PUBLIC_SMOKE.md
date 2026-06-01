@@ -4,14 +4,14 @@ Use this flow before publishing a Browser build with CLI setup instructions. The
 
 ## Local Canister
 
-The local credits smoke prepares a project-local ICRC ledger when `KINIC_LEDGER_CANISTER_ID` is unset. Set `KINIC_LEDGER_WASM` if the ICRC ledger wasm is not in a known local cache path. `scripts/local/deploy_wiki.sh` defaults `SNS_GOVERNANCE_ID` to `icp identity principal` when it is not set.
+The local cycles smoke prepares a project-local ICRC ledger when `KINIC_LEDGER_CANISTER_ID` is unset. Set `KINIC_LEDGER_WASM` if the ICRC ledger wasm is not in a known local cache path. `scripts/local/deploy_wiki.sh` defaults `SNS_GOVERNANCE_ID` to `icp identity principal` when it is not set.
 
 ```bash
 icp network start -d -e local-wiki
 ICP_ENVIRONMENT=local-wiki scripts/smoke/local_canister_archive_restore.sh
 ```
 
-The smoke stores the generated ledger ID in `.icp/cache/local-kinic-ledger/local-wiki.id`, deploys the wiki with that ledger ID, approves the wiki canister on the ledger, and verifies archive/restore plus CLI credit purchase. Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
+The smoke stores the generated ledger ID in `.icp/cache/local-kinic-ledger/local-wiki.id`, deploys the wiki with that ledger ID, approves the wiki canister on the ledger, and verifies archive/restore plus CLI cycle purchase. Resolve the local wiki canister ID from `.icp/cache/mappings/local-wiki.ids.json`, or pass `CANISTER_ID` explicitly.
 
 ## CLI and Browser Read Smoke
 
@@ -27,7 +27,7 @@ icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc2_approve \
   "(record { spender = record { owner = principal \"${CANISTER_ID}\"; subaccount = null }; amount = 200000000 : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
   -e local-wiki -o candid
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" \
-  database purchase-credits "$DB_ID" 1000
+  database purchase-cycles "$DB_ID" 1
 printf '# Public Smoke\n\nalpha browser smoke\n' > /tmp/llm-wiki-smoke.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" --database-id "$DB_ID" \
   write-node --path /Wiki/smoke.md --input /tmp/llm-wiki-smoke.md
@@ -61,7 +61,7 @@ ICP_ENVIRONMENT=local-wiki scripts/smoke/local_canister_archive_restore.sh
 
 That script runs the dedicated Rust archive/restore smoke and then verifies the public CLI commands:
 
-- `database purchase-credits`
+- `database purchase-cycles`
 - `database archive-export`
 - `database archive-restore`
 - `read-node`

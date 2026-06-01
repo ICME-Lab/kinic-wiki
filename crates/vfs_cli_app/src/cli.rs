@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, CreditsCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
+    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
     SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
@@ -24,10 +24,10 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
-    #[command(about = "Show KINIC credits configuration")]
-    Credits {
+    #[command(about = "Show KINIC cycles configuration")]
+    Cycles {
         #[command(subcommand)]
-        command: CreditsCommand,
+        command: CyclesCommand,
     },
     #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
     Database {
@@ -645,15 +645,15 @@ pub enum GitHubIngestCommand {
 impl Command {
     pub fn requires_identity(&self) -> bool {
         match self {
-            Self::Credits { command: _ } => false,
+            Self::Cycles { command: _ } => false,
             Self::Database { command } => matches!(
                 command,
                 DatabaseCommand::Create { .. }
-                    | DatabaseCommand::PurchaseCredits { .. }
-                    | DatabaseCommand::CreditsHistory { .. }
-                    | DatabaseCommand::CreditsPending { .. }
-                    | DatabaseCommand::RepairCreditPurchaseComplete { .. }
-                    | DatabaseCommand::RepairCreditPurchaseCancel { .. }
+                    | DatabaseCommand::PurchaseCycles { .. }
+                    | DatabaseCommand::CyclesHistory { .. }
+                    | DatabaseCommand::CyclesPending { .. }
+                    | DatabaseCommand::RepairCyclesPurchaseComplete { .. }
+                    | DatabaseCommand::RepairCyclesPurchaseCancel { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
@@ -724,7 +724,7 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
-            | Self::Credits { .. }
+            | Self::Cycles { .. }
             | Self::Identity { .. }
             | Self::Hermes { .. }
             | Self::Codex { .. }
@@ -760,7 +760,7 @@ impl Command {
 
     pub fn as_vfs_command(&self) -> Option<VfsCommand> {
         match self {
-            Self::Credits { command } => Some(VfsCommand::Credits {
+            Self::Cycles { command } => Some(VfsCommand::Cycles {
                 command: command.clone(),
             }),
             Self::Database { command } => Some(VfsCommand::Database {
@@ -969,7 +969,7 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeCommand, Cli, CodexCommand, Command, CreditsCommand, DatabaseCommand, HermesCommand,
+        ClaudeCommand, Cli, CodexCommand, Command, CyclesCommand, DatabaseCommand, HermesCommand,
         IdentityModeArg, NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg,
         SkillStatusArg,
     };
@@ -1089,53 +1089,49 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "purchase-credits",
+            "purchase-cycles",
             "db_alpha",
-            "500000",
+            "1.25",
         ]);
         let Command::Database {
-            command:
-                DatabaseCommand::PurchaseCredits {
-                    database_id,
-                    credits,
-                },
+            command: DatabaseCommand::PurchaseCycles { database_id, kinic },
         } = cli.command
         else {
-            panic!("expected database credit purchase command");
+            panic!("expected database cycle purchase command");
         };
         assert_eq!(database_id, "db_alpha");
-        assert_eq!(credits, 500_000);
+        assert_eq!(kinic, "1.25");
 
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "credits",
+            "cycles",
             "db_alpha",
-            "500000",
+            "1.25",
             "--browser-origin",
             "http://127.0.0.1:3000",
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::Credits {
+                DatabaseCommand::Cycles {
                     database_id,
-                    credits,
+                    kinic,
                     browser_origin,
                 },
         } = cli.command
         else {
-            panic!("expected database credits command");
+            panic!("expected database cycles command");
         };
         assert_eq!(database_id, "db_alpha");
-        assert_eq!(credits, 500_000);
+        assert_eq!(kinic, "1.25");
         assert_eq!(browser_origin.as_deref(), Some("http://127.0.0.1:3000"));
 
-        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "credits-history", "db_alpha"]);
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
         let Command::Database {
-            command: DatabaseCommand::CreditsHistory { database_id, json },
+            command: DatabaseCommand::CyclesHistory { database_id, json },
         } = cli.command
         else {
-            panic!("expected database credits-history command");
+            panic!("expected database cycles-history command");
         };
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
@@ -1143,15 +1139,15 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "credits-pending",
+            "cycles-pending",
             "db_alpha",
             "--json",
         ]);
         let Command::Database {
-            command: DatabaseCommand::CreditsPending { database_id, json },
+            command: DatabaseCommand::CyclesPending { database_id, json },
         } = cli.command
         else {
-            panic!("expected database credits-pending command");
+            panic!("expected database cycles-pending command");
         };
         assert_eq!(database_id, "db_alpha");
         assert!(json);
@@ -1159,21 +1155,21 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "repair-credit-purchase-complete",
+            "repair-cycles-purchase-complete",
             "db_alpha",
             "9",
             "77",
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::RepairCreditPurchaseComplete {
+                DatabaseCommand::RepairCyclesPurchaseComplete {
                     database_id,
                     operation_id,
                     block_index,
                 },
         } = cli.command
         else {
-            panic!("expected repair-credit purchase-complete command");
+            panic!("expected repair-cycle purchase-complete command");
         };
         assert_eq!(database_id, "db_alpha");
         assert_eq!(operation_id, 9);
@@ -1182,19 +1178,19 @@ mod tests {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "repair-credit-purchase-cancel",
+            "repair-cycles-purchase-cancel",
             "db_alpha",
             "9",
         ]);
         let Command::Database {
             command:
-                DatabaseCommand::RepairCreditPurchaseCancel {
+                DatabaseCommand::RepairCyclesPurchaseCancel {
                     database_id,
                     operation_id,
                 },
         } = cli.command
         else {
-            panic!("expected repair-credit purchase-cancel command");
+            panic!("expected repair-cycle purchase-cancel command");
         };
         assert_eq!(database_id, "db_alpha");
         assert_eq!(operation_id, 9);
@@ -1257,13 +1253,13 @@ mod tests {
     }
 
     #[test]
-    fn main_cli_parses_credits_commands() {
-        let cli = Cli::parse_from(["kinic-vfs-cli", "credits", "config"]);
-        let Command::Credits {
-            command: CreditsCommand::Config { json },
+    fn main_cli_parses_cycles_commands() {
+        let cli = Cli::parse_from(["kinic-vfs-cli", "cycles", "config"]);
+        let Command::Cycles {
+            command: CyclesCommand::Config { json },
         } = cli.command
         else {
-            panic!("expected credits config command");
+            panic!("expected cycles config command");
         };
         assert!(!json);
     }
@@ -1327,39 +1323,39 @@ mod tests {
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
 
-        let credits_config = Cli::parse_from(["kinic-vfs-cli", "credits", "config"]);
-        assert!(!credits_config.command.requires_identity());
-        assert!(!credits_config.command.probes_anonymous_database_read());
+        let cycles_config = Cli::parse_from(["kinic-vfs-cli", "cycles", "config"]);
+        assert!(!cycles_config.command.requires_identity());
+        assert!(!cycles_config.command.probes_anonymous_database_read());
 
-        let database_credit_purchase = Cli::parse_from([
+        let database_cycles_purchase = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "purchase-credits",
+            "purchase-cycles",
             "db_alpha",
-            "500000",
+            "1.25",
         ]);
-        assert!(database_credit_purchase.command.requires_identity());
+        assert!(database_cycles_purchase.command.requires_identity());
 
-        let database_credits_history =
-            Cli::parse_from(["kinic-vfs-cli", "database", "credits-history", "db_alpha"]);
-        assert!(database_credits_history.command.requires_identity());
+        let database_cycles_history =
+            Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
+        assert!(database_cycles_history.command.requires_identity());
 
-        let database_credits_pending =
-            Cli::parse_from(["kinic-vfs-cli", "database", "credits-pending", "db_alpha"]);
-        assert!(database_credits_pending.command.requires_identity());
+        let database_cycles_pending =
+            Cli::parse_from(["kinic-vfs-cli", "database", "cycles-pending", "db_alpha"]);
+        assert!(database_cycles_pending.command.requires_identity());
 
         let database_repair = Cli::parse_from([
             "kinic-vfs-cli",
             "database",
-            "repair-credit-purchase-cancel",
+            "repair-cycles-purchase-cancel",
             "db_alpha",
             "9",
         ]);
         assert!(database_repair.command.requires_identity());
 
-        let database_credits =
-            Cli::parse_from(["kinic-vfs-cli", "database", "credits", "db_alpha", "500000"]);
-        assert!(!database_credits.command.requires_identity());
+        let database_cycles =
+            Cli::parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"]);
+        assert!(!database_cycles.command.requires_identity());
     }
 
     #[test]

@@ -78,30 +78,30 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --da
 Create a database before reading or writing:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> credits config
-# Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI credit purchase. The allowance must cover the DB credit amount plus ledger transfer fee.
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> cycles config
+# Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI cycle purchase. The allowance must cover the KINIC amount plus ledger transfer fee.
 DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-credits "$DB_ID" 500000
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database credits "$DB_ID" 500000
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database credits-history "$DB_ID"
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database credits-pending "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-cycles "$DB_ID" 1.25
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles "$DB_ID" 1.25
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-history "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-pending "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" <principal> reader
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`credits config` prints the KINIC ledger canister, SNS governance principal, `credits_per_kinic`, `min_update_credits`, and fixed ledger transfer fee `10_000 e8s`. Runtime consumption is fixed at `1 credit = 1_000_000_000 cycles`.
-`database create <database-name>` creates a generated pending database ID with zero DB credits balance and prints it on success. It does not allocate a DB mount until the first successful credit purchase.
-`database purchase-credits <database-id> <credits>` previews the purchase, then pulls the previewed KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds credits to the DB credits balance. Any authenticated payer can purchase credits for an existing DB. The allowance must include the previewed ledger transfer fee.
-`database credits <database-id> <credits>` opens `https://wiki.kinic.xyz/credits?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, previews the DB credit purchase before approve, approves `preview.payment_amount_e8s + preview.ledger_fee_e8s` with a 30 minute expiry, and passes the previewed expected amount/config version to purchase. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
-`database credits-history <database-id> [--json]` lists DB credits ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and SNS governance see full details.
-`database credits-pending <database-id> [--json]` lists pending credit operations. DB owner and SNS governance can read it.
-`database repair-credit-purchase-complete <database-id> <operation-id> <ledger-block-index>` resolves a pending credit purchase after the canister verifies the ledger block against the pending operation. Any authenticated caller may run it.
-`database repair-credit-purchase-cancel <database-id> <operation-id>` is accepted only from the configured SNS governance principal. Use cancel only when governance has verified that the original ledger transfer did not execute.
-`database list` prints databases attached to the caller principal, including DB credit balance and suspension time.
-Successful DB updates consume DB credits balance. Browser write surfaces disable writes when the DB is suspended, below `min_update_credits`, or credits config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB credits balance changes.
+`cycles config` prints the KINIC ledger canister, SNS governance principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `10_000 e8s`.
+`database create <database-name>` creates a generated pending database ID with zero DB cycles balance and prints it on success. It does not allocate a DB mount until the first successful cycle purchase.
+`database purchase-cycles <database-id> <kinic>` previews the purchase, then pulls the previewed KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds raw cycles to the DB cycles balance. Any authenticated payer can purchase cycles for an existing DB. The allowance must include the previewed ledger transfer fee.
+`database cycles <database-id> <kinic>` opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, previews the DB cycle purchase before approve, approves `preview.payment_amount_e8s + preview.ledger_fee_e8s` with a 30 minute expiry, and passes the previewed expected cycles/config version to purchase. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
+`database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and SNS governance see full details.
+`database cycles-pending <database-id> [--json]` lists pending cycle operations. DB owner and SNS governance can read it.
+`database repair-cycles-purchase-complete <database-id> <operation-id> <ledger-block-index>` resolves a pending cycle purchase after the canister verifies the ledger block against the pending operation. Any authenticated caller may run it.
+`database repair-cycles-purchase-cancel <database-id> <operation-id>` is accepted only from the configured SNS governance principal. Use cancel only when governance has verified that the original ledger transfer did not execute.
+`database list` prints databases attached to the caller principal, including DB cycles balance and suspension time.
+Successful DB updates consume DB cycles balance. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 

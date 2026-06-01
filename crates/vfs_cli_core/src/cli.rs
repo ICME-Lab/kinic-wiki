@@ -56,9 +56,9 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum VfsCommand {
-    Credits {
+    Cycles {
         #[command(subcommand)]
-        command: CreditsCommand,
+        command: CyclesCommand,
     },
     Database {
         #[command(subcommand)]
@@ -269,35 +269,35 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Purchase non-refundable database credits with KINIC")]
-    PurchaseCredits { database_id: String, credits: u64 },
-    #[command(about = "List credits ledger entries for one database")]
-    CreditsHistory {
+    #[command(about = "Purchase non-refundable database cycles with KINIC")]
+    PurchaseCycles { database_id: String, kinic: String },
+    #[command(about = "List cycles ledger entries for one database")]
+    CyclesHistory {
         database_id: String,
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List pending credit operations for one database")]
-    CreditsPending {
+    #[command(about = "List pending cycle operations for one database")]
+    CyclesPending {
         database_id: String,
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Verified complete: complete a pending credit purchase with a ledger block")]
-    RepairCreditPurchaseComplete {
+    #[command(about = "Verified complete: complete a pending cycle purchase with a ledger block")]
+    RepairCyclesPurchaseComplete {
         database_id: String,
         operation_id: u64,
         block_index: u64,
     },
-    #[command(about = "Governance repair: cancel a pending credit purchase")]
-    RepairCreditPurchaseCancel {
+    #[command(about = "Governance repair: cancel a pending cycle purchase")]
+    RepairCyclesPurchaseCancel {
         database_id: String,
         operation_id: u64,
     },
-    #[command(about = "Open the browser credits purchase page for one database")]
-    Credits {
+    #[command(about = "Open the browser cycles purchase page for one database")]
+    Cycles {
         database_id: String,
-        credits: u64,
+        kinic: String,
         #[arg(long)]
         browser_origin: Option<String>,
     },
@@ -361,8 +361,8 @@ pub enum DatabaseCommand {
 }
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum CreditsCommand {
-    #[command(about = "Show canister credits configuration")]
+pub enum CyclesCommand {
+    #[command(about = "Show canister cycles configuration")]
     Config {
         #[arg(long)]
         json: bool,
