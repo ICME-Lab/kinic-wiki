@@ -73,8 +73,7 @@ const expectedTypes = {
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
   UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
   NodeMutationAck: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
-  RecentNodeHit: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
-  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "RecentNodeHit" } },
+  WriteNodeResult: { kind: "record", fields: { created: "bool", node: "NodeMutationAck" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 const actorExpectedTypes = {
@@ -198,7 +197,7 @@ function normalizeDidResult(value) {
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_25") return "ResultNode";
-  if (normalized === "Result_31") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
