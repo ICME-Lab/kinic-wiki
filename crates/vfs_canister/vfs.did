@@ -26,10 +26,10 @@ type ChildNode = record {
 type CreateDatabaseRequest = record { name : text };
 type CreateDatabaseResult = record { name : text; database_id : text };
 type CyclesBillingConfig = record {
+  billing_authority_id : text;
   kinic_ledger_canister_id : text;
   cycles_per_kinic : nat64;
   min_update_cycles : nat64;
-  sns_governance_id : text;
 };
 type CyclesPurchaseResult = record {
   block_index : nat64;

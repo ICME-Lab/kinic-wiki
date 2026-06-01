@@ -986,7 +986,7 @@ async fn run_cycles_command(client: &impl VfsApi, command: CyclesCommand) -> Res
 #[derive(Debug, serde::Serialize)]
 struct CyclesBillingConfigOutput {
     kinic_ledger_canister_id: String,
-    sns_governance_id: String,
+    billing_authority_id: String,
     cycles_per_kinic: u64,
     min_update_cycles: u64,
     ledger_fee_e8s: u64,
@@ -996,7 +996,7 @@ impl CyclesBillingConfigOutput {
     fn new(config: CyclesBillingConfig, ledger_fee_e8s: u64) -> Self {
         Self {
             kinic_ledger_canister_id: config.kinic_ledger_canister_id,
-            sns_governance_id: config.sns_governance_id,
+            billing_authority_id: config.billing_authority_id,
             cycles_per_kinic: config.cycles_per_kinic,
             min_update_cycles: config.min_update_cycles,
             ledger_fee_e8s,
@@ -1010,7 +1010,7 @@ fn cycles_config_lines(config: &CyclesBillingConfig, ledger_fee_e8s: u64) -> Vec
             "kinic_ledger_canister_id\t{}",
             config.kinic_ledger_canister_id
         ),
-        format!("sns_governance_id\t{}", config.sns_governance_id),
+        format!("billing_authority_id\t{}", config.billing_authority_id),
         format!("cycles_per_kinic\t{}", config.cycles_per_kinic),
         format!("min_update_cycles\t{}", config.min_update_cycles),
         format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
@@ -1652,7 +1652,7 @@ mod tests {
             }
             Ok(CyclesBillingConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
-                sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 1,
             })
@@ -2557,18 +2557,18 @@ mod tests {
     }
 
     #[test]
-    fn cycles_config_text_includes_governance_principal() {
+    fn cycles_config_text_includes_billing_authority_principal() {
         let lines = super::cycles_config_lines(
             &CyclesBillingConfig {
                 kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
-                sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 1,
             },
             KINIC_LEDGER_FEE_E8S,
         );
 
-        assert!(lines.contains(&"sns_governance_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
+        assert!(lines.contains(&"billing_authority_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
         assert!(lines.contains(&"ledger_fee_e8s\t10000".to_string()));
     }
 

@@ -30,7 +30,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64,
     kinic_ledger_canister_id: idl.Text,
-    sns_governance_id: idl.Text
+    billing_authority_id: idl.Text
   });
   const CyclesPurchaseResult = idl.Record({ block_index: idl.Nat64, balance_cycles: idl.Nat64 });
   const DatabaseCyclesPurchasePreview = idl.Record({

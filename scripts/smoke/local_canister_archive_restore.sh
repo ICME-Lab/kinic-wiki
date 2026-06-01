@@ -82,14 +82,14 @@ canister_has_module() {
 }
 
 wiki_ledger_canister_id() {
-  icp canister call wiki get_credits_config '()' -e "${ICP_ENVIRONMENT}" -o candid 2>/dev/null \
+  icp canister call wiki get_cycles_billing_config '()' -e "${ICP_ENVIRONMENT}" -o candid 2>/dev/null \
     | awk -F'"' '/kinic_ledger_canister_id/ { print $2; exit }'
 }
 
 deploy_wiki() {
   ICP_ENVIRONMENT="${ICP_ENVIRONMENT}" \
     KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID}" \
-    SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID}" \
+    BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID}" \
     bash scripts/local/deploy_wiki.sh "$@"
 }
 
@@ -114,8 +114,8 @@ cd "${REPO_ROOT}"
 validate_unsigned_integer SMOKE_CYCLE_PURCHASE_E8S
 validate_unsigned_integer SMOKE_CYCLE_PURCHASE_COUNT
 validate_unsigned_integer SMOKE_CYCLES_ALLOWANCE_E8S
-if [[ -z "${SNS_GOVERNANCE_ID:-}" ]]; then
-  export SNS_GOVERNANCE_ID="$(current_identity_principal)"
+if [[ -z "${BILLING_AUTHORITY_ID:-}" ]]; then
+  export BILLING_AUTHORITY_ID="$(current_identity_principal)"
 fi
 
 if [[ -z "${REPLICA_HOST:-}" ]]; then

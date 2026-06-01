@@ -21,7 +21,7 @@ export const expectedTypes = {
       cycles_per_kinic: "nat64",
       min_update_cycles: "nat64",
       kinic_ledger_canister_id: "text",
-      sns_governance_id: "text"
+      billing_authority_id: "text"
     }
   },
   CyclesPurchaseResult: {

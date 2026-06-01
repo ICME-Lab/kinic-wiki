@@ -60,7 +60,7 @@ type RawCanisterHealth = {
 
 type RawCyclesBillingConfig = {
   kinic_ledger_canister_id: string;
-  sns_governance_id: string;
+  billing_authority_id: string;
   cycles_per_kinic: bigint;
   min_update_cycles: bigint;
 };
@@ -907,7 +907,7 @@ function normalizeCanisterHealth(raw: RawCanisterHealth): CanisterHealth {
 function normalizeCyclesBillingConfig(raw: RawCyclesBillingConfig): CyclesBillingConfig {
   return {
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
-    snsGovernanceId: raw.sns_governance_id,
+    billingAuthorityId: raw.billing_authority_id,
     cyclesPerKinic: raw.cycles_per_kinic.toString(),
     minUpdateCycles: raw.min_update_cycles.toString()
   };

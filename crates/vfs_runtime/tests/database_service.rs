@@ -1719,8 +1719,13 @@ fn direct_cycles_purchase_cancel_rejects_non_in_flight_operations() {
         1
     );
     service
-        .repair_database_cycles_purchase_cancel("ambiguous-cancel", ambiguous, "payer", 5)
-        .expect("ambiguous operation should remain repair cancellable");
+        .repair_database_cycles_purchase_cancel(
+            "ambiguous-cancel",
+            ambiguous,
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            5,
+        )
+        .expect("ambiguous operation should remain repair cancellable by authority");
     assert_eq!(
         database_pending_operation_count(&root, "ambiguous-cancel"),
         0
@@ -1753,7 +1758,12 @@ fn pending_database_cycles_purchase_cancel_rejects_after_activation_started() {
     assert_eq!(meta.mount_id, 11);
 
     let error = service
-        .repair_database_cycles_purchase_cancel(&pending.database_id, operation_id, "payer", 5)
+        .repair_database_cycles_purchase_cancel(
+            &pending.database_id,
+            operation_id,
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            5,
+        )
         .expect_err("started activation should require complete repair");
 
     assert!(error.contains("complete cycle purchase repair"));
@@ -2058,7 +2068,7 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
 }
 
 #[test]
-fn pending_cycles_operations_are_visible_to_owner_and_governance_only() {
+fn pending_cycles_operations_are_visible_to_owner_and_authority_only() {
     let (service, _root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2080,10 +2090,10 @@ fn pending_cycles_operations_are_visible_to_owner_and_governance_only() {
     assert_eq!(owner_page.entries[0].kind, "cycles_purchase");
     assert_eq!(owner_page.entries[0].caller, "payer");
 
-    let governance_page = service
+    let billing_authority_page = service
         .list_database_cycle_pending_operations("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
-        .expect("governance should list pending operations");
-    assert_eq!(governance_page.entries.len(), 1);
+        .expect("billing authority should list pending operations");
+    assert_eq!(billing_authority_page.entries.len(), 1);
 
     for caller in ["writer", "reader", "2vxsx-fae"] {
         let error = service
@@ -2097,9 +2107,9 @@ fn pending_cycles_operations_are_visible_to_owner_and_governance_only() {
 }
 
 #[test]
-fn repair_cycles_purchase_cancel_allows_payer_or_owner_only() {
+fn repair_cycles_purchase_cancel_allows_configured_authority_only() {
     let (service, root) = service_with_root();
-    for database_id in ["payer-cancel", "owner-cancel", "reject-cancel"] {
+    for database_id in ["payer-reject", "owner-reject", "authority-cancel"] {
         service
             .create_database(database_id, "owner", 1)
             .expect("database should create");
@@ -2111,68 +2121,72 @@ fn repair_cycles_purchase_cancel_allows_payer_or_owner_only() {
             .expect("reader should be granted");
     }
 
-    let payer_cancel = service
-        .begin_database_cycles_purchase("payer-cancel", "payer", 500, 4)
-        .expect("payer cancel operation should begin");
-    let payer_cancel_cycles = cycles_for_payment(&service, "payer-cancel", 500);
+    let payer_reject = service
+        .begin_database_cycles_purchase("payer-reject", "payer", 500, 4)
+        .expect("payer reject operation should begin");
+    let payer_reject_cycles = cycles_for_payment(&service, "payer-reject", 500);
     service
         .mark_database_cycles_purchase_ambiguous(
-            payer_cancel,
-            "payer-cancel",
+            payer_reject,
+            "payer-reject",
             "payer",
-            payer_cancel_cycles,
+            payer_reject_cycles,
             5,
         )
-        .expect("payer cancel should mark ambiguous");
-    service
-        .repair_database_cycles_purchase_cancel("payer-cancel", payer_cancel, "payer", 6)
-        .expect("payer should cancel own pending purchase");
-    assert_eq!(database_pending_operation_count(&root, "payer-cancel"), 0);
+        .expect("payer reject should mark ambiguous");
+    let error = service
+        .repair_database_cycles_purchase_cancel("payer-reject", payer_reject, "payer", 6)
+        .expect_err("payer should not cancel own ambiguous purchase");
+    assert!(error.contains("not cycles purchase cancel authority"));
+    assert_eq!(database_pending_operation_count(&root, "payer-reject"), 1);
 
-    let owner_cancel = service
-        .begin_database_cycles_purchase("owner-cancel", "payer", 700, 7)
-        .expect("owner cancel operation should begin");
-    let owner_cancel_cycles = cycles_for_payment(&service, "owner-cancel", 700);
+    let owner_reject = service
+        .begin_database_cycles_purchase("owner-reject", "payer", 700, 7)
+        .expect("owner reject operation should begin");
+    let owner_reject_cycles = cycles_for_payment(&service, "owner-reject", 700);
     service
         .mark_database_cycles_purchase_ambiguous(
-            owner_cancel,
-            "owner-cancel",
+            owner_reject,
+            "owner-reject",
             "payer",
-            owner_cancel_cycles,
+            owner_reject_cycles,
             8,
         )
-        .expect("owner cancel should mark ambiguous");
+        .expect("owner reject should mark ambiguous");
+    let error = service
+        .repair_database_cycles_purchase_cancel("owner-reject", owner_reject, "owner", 9)
+        .expect_err("owner should not cancel ambiguous purchase");
+    assert!(error.contains("not cycles purchase cancel authority"));
+    assert_eq!(database_pending_operation_count(&root, "owner-reject"), 1);
+
+    let authority_cancel = service
+        .begin_database_cycles_purchase("authority-cancel", "payer", 900, 10)
+        .expect("authority cancel operation should begin");
+    let authority_cancel_cycles = cycles_for_payment(&service, "authority-cancel", 900);
     service
-        .repair_database_cycles_purchase_cancel("owner-cancel", owner_cancel, "owner", 9)
-        .expect("owner should cancel pending purchase");
+        .mark_database_cycles_purchase_ambiguous(
+            authority_cancel,
+            "authority-cancel",
+            "payer",
+            authority_cancel_cycles,
+            11,
+        )
+        .expect("authority cancel should mark ambiguous");
+    service
+        .repair_database_cycles_purchase_cancel(
+            "authority-cancel",
+            authority_cancel,
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            12,
+        )
+        .expect("authority should cancel pending purchase");
     assert_eq!(
-        database_ledger_kinds(&root, "owner-cancel"),
+        database_ledger_kinds(&root, "authority-cancel"),
         vec![
             "cycles_purchase_ambiguous",
             "cycles_purchase_repair_cancelled"
         ]
     );
-
-    let reject_cancel = service
-        .begin_database_cycles_purchase("reject-cancel", "payer", 900, 10)
-        .expect("reject cancel operation should begin");
-    let reject_cancel_cycles = cycles_for_payment(&service, "reject-cancel", 900);
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            reject_cancel,
-            "reject-cancel",
-            "payer",
-            reject_cancel_cycles,
-            11,
-        )
-        .expect("reject cancel should mark ambiguous");
-    for caller in ["writer", "reader", "outsider"] {
-        let error = service
-            .repair_database_cycles_purchase_cancel("reject-cancel", reject_cancel, caller, 12)
-            .expect_err("non-payer non-owner should reject");
-        assert!(error.contains("not cycle purchase payer or database owner"));
-        assert_eq!(database_pending_operation_count(&root, "reject-cancel"), 1);
-    }
 }
 
 #[test]
@@ -2211,12 +2225,12 @@ fn cycles_history_redacts_principals_for_non_owner_readers() {
         .remove(0);
     assert_eq!(owner_entry.caller, "payer-principal");
 
-    let governance_entry = service
+    let billing_authority_entry = service
         .list_database_cycle_entries("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
-        .expect("governance should list history without membership")
+        .expect("billing authority should list history without membership")
         .entries
         .remove(0);
-    assert_eq!(governance_entry.caller, "payer-principal");
+    assert_eq!(billing_authority_entry.caller, "payer-principal");
 
     let error = service
         .list_database_cycle_entries("alpha", "outsider", None, 10)
@@ -2225,7 +2239,7 @@ fn cycles_history_redacts_principals_for_non_owner_readers() {
 }
 
 #[test]
-fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
+fn verified_complete_allows_authenticated_caller_and_authority_cancel() {
     let (service, root) = service_with_root();
     service
         .create_database("complete", "owner", 1)
@@ -2253,8 +2267,8 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
         .expect("authenticated caller should complete verified cycle purchase");
     assert_eq!(balance, complete_cycles);
     service
-        .repair_database_cycles_purchase_cancel("cancel", cancel, "owner", 4)
-        .expect("owner should cancel ambiguous cycle purchase after verification");
+        .repair_database_cycles_purchase_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
+        .expect("authority should cancel ambiguous cycle purchase after verification");
 
     assert_eq!(
         database_cycles_balance(&root, "complete"),
@@ -2289,7 +2303,7 @@ fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
         .list_database_cycle_entries("cancel", "owner", None, 10)
         .expect("cancel entries should load")
         .entries;
-    assert_eq!(cancel_entries[1].caller, "owner");
+    assert_eq!(cancel_entries[1].caller, "rrkah-fqaaa-aaaaa-aaaaq-cai");
     assert_eq!(cancel_entries[1].payment_amount_e8s, Some(700));
     assert_eq!(cancel_entries[1].balance_after_cycles, 0);
     assert_eq!(cancel_entries[1].ledger_block_index, None);

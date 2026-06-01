@@ -130,7 +130,7 @@ export type DeleteDatabaseRequest = {
 
 export type CyclesBillingConfig = {
   kinicLedgerCanisterId: string;
-  snsGovernanceId: string;
+  billingAuthorityId: string;
   cyclesPerKinic: string;
   minUpdateCycles: string;
 };

@@ -205,7 +205,7 @@ fn pending_cycles_purchase_transaction(
 fn explicit_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
-        sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         cycles_per_kinic: 1_000,
         min_update_cycles: 1,
     }
@@ -217,11 +217,11 @@ fn cycles_billing_config_rejects_anonymous_principals() {
     let root = dir.keep();
     let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
     let mut config = explicit_cycles_billing_config();
-    config.sns_governance_id = Principal::anonymous().to_text();
+    config.billing_authority_id = Principal::anonymous().to_text();
 
     let error = service
         .run_index_migrations_with_config(config)
-        .expect_err("anonymous governance should reject");
+        .expect_err("anonymous billing authority should reject");
 
     assert!(error.contains("principal must not be anonymous"));
 }
@@ -361,8 +361,9 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
     });
 }
 
-fn test_governance_principal() -> Principal {
-    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("governance principal should parse")
+fn test_billing_authority_principal() -> Principal {
+    Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
+        .expect("billing authority principal should parse")
 }
 
 struct AuthenticatedCallerGuard;
@@ -503,7 +504,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
                     cycles_per_kinic: 100_000_000,
                     min_update_cycles: 1,
                 },
-                &test_governance_principal().to_text(),
+                &test_billing_authority_principal().to_text(),
             )
             .expect("cycles config should update");
     });
@@ -541,7 +542,7 @@ fn purchase_database_cycles_rejects_stale_preview_before_ledger_call() {
                     cycles_per_kinic: 1_000_000_000_000,
                     min_update_cycles: 2,
                 },
-                &test_governance_principal().to_text(),
+                &test_billing_authority_principal().to_text(),
             )
             .expect("cycles config should update");
     });
@@ -707,6 +708,8 @@ fn repair_complete_succeeds_after_activation_started_and_cycle_apply_failed() {
             .entries
             .is_empty()
     );
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
     let cancel_error = repair_database_cycles_purchase_cancel(
         database.database_id.clone(),
         pending[0].operation_id,
@@ -746,6 +749,8 @@ fn repair_cancel_rejects_in_flight_cycles_purchase() {
             .expect("cycle purchase should begin")
     });
 
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
     let error = repair_database_cycles_purchase_cancel(database.database_id, operation_id)
         .expect_err("in-flight purchase cancel should reject");
 
@@ -812,7 +817,7 @@ fn authenticated_caller_can_complete_verified_ambiguous_cycles_purchase() {
     }
 
     let repair_caller = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
-        .expect("non-governance principal should parse");
+        .expect("non-billing authority principal should parse");
     {
         let _authenticated = AuthenticatedCallerGuard::install_principal(repair_caller);
         let result = block_on_ready(repair_database_cycles_purchase_complete(
@@ -850,7 +855,7 @@ fn authenticated_caller_can_complete_verified_ambiguous_cycles_purchase() {
     ))
     .expect_err("second complete should reject missing pending operation");
     assert!(error.contains("pending cycle operation not found"));
-    let entries = list_database_cycle_entries(database_id, None, 10)
+    let entries = list_database_cycle_entries(database_id.clone(), None, 10)
         .expect("database ledger should load")
         .entries;
     assert_eq!(entries.len(), 2);
@@ -908,6 +913,8 @@ fn repair_cycles_purchase_cancel_removes_ambiguous_operation() {
     install_empty_test_service();
     let operation_id;
     let database_id;
+    let payer =
+        Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("payer principal should parse");
     {
         let _owner = AuthenticatedCallerGuard::install();
         let database = create_database(CreateDatabaseRequest {
@@ -915,6 +922,9 @@ fn repair_cycles_purchase_cancel_removes_ambiguous_operation() {
         })
         .expect("database should create");
         database_id = database.database_id;
+    }
+    {
+        let _payer = AuthenticatedCallerGuard::install_principal(payer);
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
             "icrc2_transfer_from call failed".to_string(),
         ));
@@ -923,22 +933,29 @@ fn repair_cycles_purchase_cancel_removes_ambiguous_operation() {
             500,
         )))
         .expect_err("ambiguous cycle purchase should stay pending");
+    }
+    {
+        let _owner = AuthenticatedCallerGuard::install();
         operation_id = list_database_cycle_pending_operations(database_id.clone(), None, 10)
             .expect("pending should load")
             .entries[0]
             .operation_id;
 
-        let third_party = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
-            .expect("third party principal should parse");
-        let _third_party = AuthenticatedCallerGuard::install_principal(third_party);
         let error = repair_database_cycles_purchase_cancel(database_id.clone(), operation_id)
-            .expect_err("third party cancel should reject");
-        assert!(error.contains("not cycle purchase payer or database owner"));
+            .expect_err("owner cancel should reject");
+        assert!(error.contains("not cycles purchase cancel authority"));
+    }
+    {
+        let _payer = AuthenticatedCallerGuard::install_principal(payer);
+        let error = repair_database_cycles_purchase_cancel(database_id.clone(), operation_id)
+            .expect_err("payer cancel should reject");
+        assert!(error.contains("not cycles purchase cancel authority"));
     }
 
-    let _owner = AuthenticatedCallerGuard::install();
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
     repair_database_cycles_purchase_cancel(database_id.clone(), operation_id)
-        .expect("owner should cancel ambiguous cycle purchase after verification");
+        .expect("authority should cancel ambiguous cycle purchase after verification");
     assert_eq!(
         database_status_and_mount(&database_id),
         (DatabaseStatus::Pending, None)
@@ -947,7 +964,7 @@ fn repair_cycles_purchase_cancel_removes_ambiguous_operation() {
         .expect("pending should load")
         .entries;
     assert!(pending.is_empty());
-    let entries = list_database_cycle_entries(database_id, None, 10)
+    let entries = list_database_cycle_entries(database_id.clone(), None, 10)
         .expect("ledger should load")
         .entries;
     assert_eq!(
@@ -960,6 +977,13 @@ fn repair_cycles_purchase_cancel_removes_ambiguous_operation() {
             "cycles_purchase_repair_cancelled"
         ]
     );
+    let error = block_on_ready(repair_database_cycles_purchase_complete(
+        database_id.clone(),
+        operation_id,
+        90,
+    ))
+    .expect_err("cancelled operation should not complete");
+    assert!(error.contains("pending cycle operation not found"));
 }
 
 #[test]
@@ -1234,7 +1258,7 @@ fn install_low_balance_default_service() {
         .grant_database_access(
             "default",
             "2vxsx-fae",
-            &test_governance_principal().to_text(),
+            &test_billing_authority_principal().to_text(),
             DatabaseRole::Writer,
             1_700_000_000_002,
         )
@@ -1245,7 +1269,7 @@ fn install_low_balance_default_service() {
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 2_000_000,
             },
-            &test_governance_principal().to_text(),
+            &test_billing_authority_principal().to_text(),
         )
         .expect("minimum balance should update");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
@@ -1455,8 +1479,11 @@ fn suspended_database_allows_owner_management_operations() {
 fn low_balance_database_allows_owner_revoke_and_delete() {
     install_low_balance_default_service();
 
-    revoke_database_access("default".to_string(), test_governance_principal().to_text())
-        .expect("low-balance database owner should revoke");
+    revoke_database_access(
+        "default".to_string(),
+        test_billing_authority_principal().to_text(),
+    )
+    .expect("low-balance database owner should revoke");
     super::delete_database(delete_database_request("default"))
         .expect("low-balance database owner should delete");
 }

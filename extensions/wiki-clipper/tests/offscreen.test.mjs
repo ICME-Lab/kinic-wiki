@@ -349,7 +349,7 @@ test("listWritableDatabases returns active writable database summaries", async (
         return {
           Ok: {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
-            sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
             cycles_per_kinic: 1n,
             min_update_cycles: 10_000n
           }
@@ -415,7 +415,7 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
       return {
         Ok: {
           kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
-          sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+          billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
           cycles_per_kinic: 1n,
           min_update_cycles: 10_000n
         }

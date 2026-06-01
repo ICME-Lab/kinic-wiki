@@ -4,7 +4,7 @@ Use this flow before publishing a Browser build with CLI setup instructions. The
 
 ## Local Canister
 
-The local cycles smoke prepares a project-local ICRC ledger when `KINIC_LEDGER_CANISTER_ID` is unset. Set `KINIC_LEDGER_WASM` if the ICRC ledger wasm is not in a known local cache path. `scripts/local/deploy_wiki.sh` defaults `SNS_GOVERNANCE_ID` to `icp identity principal` when it is not set.
+The local cycles smoke prepares a project-local ICRC ledger when `KINIC_LEDGER_CANISTER_ID` is unset. Set `KINIC_LEDGER_WASM` if the ICRC ledger wasm is not in a known local cache path. `scripts/local/deploy_wiki.sh` defaults `BILLING_AUTHORITY_ID` to `icp identity principal` when it is not set.
 
 ```bash
 icp network start -d -e local-wiki

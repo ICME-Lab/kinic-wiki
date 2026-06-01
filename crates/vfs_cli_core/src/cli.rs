@@ -289,7 +289,7 @@ pub enum DatabaseCommand {
         operation_id: u64,
         block_index: u64,
     },
-    #[command(about = "Governance repair: cancel a pending cycle purchase")]
+    #[command(about = "Billing authority repair: cancel a pending cycle purchase")]
     RepairCyclesPurchaseCancel {
         database_id: String,
         operation_id: u64,

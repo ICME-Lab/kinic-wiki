@@ -92,14 +92,14 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.m
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
 ```
 
-`cycles config` prints the KINIC ledger canister, SNS governance principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `10_000 e8s`.
+`cycles config` prints the KINIC ledger canister, billing authority principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `10_000 e8s`.
 `database create <database-name>` creates a generated pending database ID with zero DB cycles balance and prints it on success. It does not allocate a DB mount until the first successful cycle purchase.
 `database purchase-cycles <database-id> <kinic>` previews the purchase, then pulls the previewed KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds raw cycles to the DB cycles balance. Any authenticated payer can purchase cycles for an existing DB. The allowance must include the previewed ledger transfer fee.
 `database cycles <database-id> <kinic>` opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, previews the DB cycle purchase before approve, approves `preview.payment_amount_e8s + preview.ledger_fee_e8s` with a 30 minute expiry, and passes the previewed expected cycles/config version to purchase. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
-`database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and SNS governance see full details.
-`database cycles-pending <database-id> [--json]` lists pending cycle operations. DB owner and SNS governance can read it.
+`database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
+`database cycles-pending <database-id> [--json]` lists pending cycle operations. DB owner and billing authority can read it.
 `database repair-cycles-purchase-complete <database-id> <operation-id> <ledger-block-index>` resolves a pending cycle purchase after the canister verifies the ledger block against the pending operation. Any authenticated caller may run it.
-`database repair-cycles-purchase-cancel <database-id> <operation-id>` is accepted only from the configured SNS governance principal. Use cancel only when governance has verified that the original ledger transfer did not execute.
+`database repair-cycles-purchase-cancel <database-id> <operation-id>` is accepted only from the configured `billing_authority_id` principal. Use cancel only after the operator has verified that the original ledger transfer did not execute.
 `database list` prints databases attached to the caller principal, including DB cycles balance and suspension time.
 Successful DB updates consume DB cycles balance. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
 

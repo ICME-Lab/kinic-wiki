@@ -330,14 +330,14 @@ impl VfsService {
     ) -> Result<CyclesBillingConfig, String> {
         let current = self.cycles_billing_config()?;
         let current_version = self.read_index(load_cycles_billing_config_version)?;
-        if caller != current.sns_governance_id {
-            return Err("caller is not SNS governance".to_string());
+        if caller != current.billing_authority_id {
+            return Err("caller is not billing authority".to_string());
         }
         let config_changed = current.cycles_per_kinic != update.cycles_per_kinic
             || current.min_update_cycles != update.min_update_cycles;
         let next = CyclesBillingConfig {
             kinic_ledger_canister_id: current.kinic_ledger_canister_id,
-            sns_governance_id: current.sns_governance_id,
+            billing_authority_id: current.billing_authority_id,
             cycles_per_kinic: update.cycles_per_kinic,
             min_update_cycles: update.min_update_cycles,
         };
@@ -919,7 +919,7 @@ impl VfsService {
         let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
         self.read_index(|conn| {
             let _status = load_database_status(conn, database_id)?;
-            let show_principal = if caller == config.sns_governance_id {
+            let show_principal = if caller == config.billing_authority_id {
                 true
             } else {
                 let role = load_member_role(conn, database_id, caller)?
@@ -978,7 +978,7 @@ impl VfsService {
         let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
         self.read_index(|conn| {
             load_database_status(conn, database_id)?;
-            if caller != config.sns_governance_id {
+            if caller != config.billing_authority_id {
                 let role = load_member_role(conn, database_id, caller)?
                     .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
                 if role != DatabaseRole::Owner {
@@ -1092,6 +1092,10 @@ impl VfsService {
         now: i64,
     ) -> Result<(), String> {
         self.write_index(|tx| {
+            let config = load_cycles_billing_config(tx)?;
+            if caller != config.billing_authority_id {
+                return Err("caller is not cycles purchase cancel authority".to_string());
+            }
             let operation = load_pending_cycles_operation(tx, operation_id)?;
             require_pending_database_kind(&operation, database_id, "cycles_purchase")?;
             require_pending_operation_status(
@@ -1100,15 +1104,6 @@ impl VfsService {
                 "cancel cycle purchase repair",
             )?;
             let status = load_database_status(tx, database_id)?;
-            let is_payer = operation.caller == caller;
-            let is_owner = load_member_role(tx, database_id, caller)?
-                .map(|role| role == DatabaseRole::Owner)
-                .unwrap_or(false);
-            if !is_payer && !is_owner {
-                return Err(format!(
-                    "caller is not cycle purchase payer or database owner: {database_id}"
-                ));
-            }
             let active_mount_id: Option<i64> = tx
                 .query_row(
                     "SELECT active_mount_id FROM databases WHERE database_id = ?1",
@@ -2891,7 +2886,7 @@ fn create_fresh_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
 fn default_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
-        sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+        billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
         min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
     }
@@ -2899,7 +2894,7 @@ fn default_cycles_billing_config() -> CyclesBillingConfig {
 
 fn validate_cycles_billing_config(config: &CyclesBillingConfig) -> Result<(), String> {
     validate_principal_text(&config.kinic_ledger_canister_id)?;
-    validate_principal_text(&config.sns_governance_id)?;
+    validate_principal_text(&config.billing_authority_id)?;
     if config.cycles_per_kinic == 0 {
         return Err("cycles_per_kinic must be positive".to_string());
     }
@@ -2931,7 +2926,7 @@ fn insert_cycles_billing_config(
     .map_err(|error| error.to_string())?;
     conn.execute(
         "INSERT INTO cycles_billing_config (key, value) VALUES (?1, ?2)",
-        params!["sns_governance_id", config.sns_governance_id],
+        params!["billing_authority_id", config.billing_authority_id],
     )
     .map_err(|error| error.to_string())?;
     set_cycles_billing_config_value(conn, "cycles_per_kinic", config.cycles_per_kinic)?;
@@ -3329,7 +3324,7 @@ fn load_cycles_billing_config(conn: &Connection) -> Result<CyclesBillingConfig, 
             conn,
             "kinic_ledger_canister_id",
         )?,
-        sns_governance_id: load_cycles_billing_config_text(conn, "sns_governance_id")?,
+        billing_authority_id: load_cycles_billing_config_text(conn, "billing_authority_id")?,
         cycles_per_kinic: load_cycles_billing_config_u64(conn, "cycles_per_kinic")?,
         min_update_cycles: load_cycles_billing_config_u64(conn, "min_update_cycles")?,
     })
@@ -4923,7 +4918,7 @@ mod tests {
     fn test_cycles_billing_config() -> CyclesBillingConfig {
         CyclesBillingConfig {
             kinic_ledger_canister_id: "aaaaa-aa".to_string(),
-            sns_governance_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+            billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
             cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
             min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
         }
@@ -5247,9 +5242,9 @@ mod tests {
         .expect("ledger config should insert");
         conn.execute(
             "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
-            params!["sns_governance_id", "rrkah-fqaaa-aaaaa-aaaaq-cai"],
+            params!["billing_authority_id", "rrkah-fqaaa-aaaaa-aaaaq-cai"],
         )
-        .expect("governance config should insert");
+        .expect("billing authority config should insert");
         conn.execute(
             "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
             params!["credits_per_kinic", "1000"],
@@ -5338,8 +5333,8 @@ mod tests {
         drop(conn);
 
         service
-            .repair_database_cycles_purchase_cancel("db_old", 1, "2vxsx-fae", 2)
-            .expect("migrated ambiguous operation should remain cancellable");
+            .repair_database_cycles_purchase_cancel("db_old", 1, "rrkah-fqaaa-aaaaa-aaaaq-cai", 2)
+            .expect("migrated ambiguous operation should remain cancellable by authority");
 
         let conn = Connection::open(&index_path).expect("index DB should reopen after cancel");
         let pending_count: i64 = conn

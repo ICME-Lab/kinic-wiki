@@ -65,7 +65,7 @@ pub struct DatabaseSummary {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CyclesBillingConfig {
     pub kinic_ledger_canister_id: String,
-    pub sns_governance_id: String,
+    pub billing_authority_id: String,
     pub cycles_per_kinic: u64,
     pub min_update_cycles: u64,
 }

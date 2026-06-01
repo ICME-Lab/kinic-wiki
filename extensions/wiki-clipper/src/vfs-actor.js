@@ -36,7 +36,7 @@ function idlFactory({ IDL: idl }) {
   });
   const CyclesBillingConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
-    sns_governance_id: idl.Text,
+    billing_authority_id: idl.Text,
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64
   });

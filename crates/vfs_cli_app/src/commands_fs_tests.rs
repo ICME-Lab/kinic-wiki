@@ -61,7 +61,7 @@ impl VfsApi for MockClient {
     async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
         Ok(CyclesBillingConfig {
             kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
-            sns_governance_id: "aaaaa-aa".to_string(),
+            billing_authority_id: "aaaaa-aa".to_string(),
             cycles_per_kinic: 1_000,
             min_update_cycles: 1,
         })
