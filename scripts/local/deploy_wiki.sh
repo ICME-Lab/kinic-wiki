@@ -7,9 +7,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local}"
+ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local-wiki}"
 KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID:-}"
 SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID:-}"
+MODE="${MODE:-auto}"
 
 case "${ICP_ENVIRONMENT}" in
   local | local-wiki) ;;
@@ -63,4 +64,4 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 cd "${REPO_ROOT}"
-icp deploy wiki -e "${ICP_ENVIRONMENT}" --args-file "${ARGS_FILE}" "$@"
+icp deploy wiki -e "${ICP_ENVIRONMENT}" --mode "${MODE}" --args-file "${ARGS_FILE}" "$@"
