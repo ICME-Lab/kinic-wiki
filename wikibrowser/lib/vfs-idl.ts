@@ -140,8 +140,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     is_virtual: idl.Bool
   });
   const NodeMutationAck = idl.Record({ updated_at: idl.Int64, etag: idl.Text, kind: NodeKind, path: idl.Text });
-  const RecentNodeHit = idl.Record({ updated_at: idl.Int64, etag: idl.Text, kind: NodeKind, path: idl.Text });
-  const RecentNodesRequest = idl.Record({ path: idl.Opt(idl.Text), limit: idl.Nat32, database_id: idl.Text });
   const LinkEdge = idl.Record({
     updated_at: idl.Int64,
     link_kind: idl.Text,
@@ -282,7 +280,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultChildren = idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text });
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
-  const ResultRecent = idl.Variant({ Ok: idl.Vec(RecentNodeHit), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
@@ -294,7 +291,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCreditsPending = idl.Variant({ Ok: DatabaseCreditPendingOperationPage, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
-  const WriteNodeResult = idl.Record({ created: idl.Bool, node: RecentNodeHit });
+  const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
   const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
   const ResultWriteSourceForGeneration = idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text });
@@ -336,7 +333,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
-    recent_nodes: idl.Func([RecentNodesRequest], [ResultRecent], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
     preview_database_credit_purchase: idl.Func([idl.Text, idl.Nat64], [ResultCreditsPurchasePreview], ["query"]),
