@@ -224,7 +224,7 @@ function loadTsModule(relativePath, mocks, append = "") {
       esModuleInterop: true
     }
   }).outputText;
-  const module = { exports: {} };
+  const commonjsModule = { exports: {} };
   const context = {
     Buffer,
     Date,
@@ -232,8 +232,8 @@ function loadTsModule(relativePath, mocks, append = "") {
     Uint8Array,
     URLSearchParams,
     console,
-    exports: module.exports,
-    module,
+    exports: commonjsModule.exports,
+    module: commonjsModule,
     process: { env: {} },
     require: (id) => {
       if (Object.prototype.hasOwnProperty.call(mocks, id)) return mocks[id];
@@ -241,5 +241,5 @@ function loadTsModule(relativePath, mocks, append = "") {
     }
   };
   vm.runInNewContext(transpiled, context, { filename: relativePath });
-  return Object.assign(module.exports, { __context: context });
+  return Object.assign(commonjsModule.exports, { __context: context });
 }
