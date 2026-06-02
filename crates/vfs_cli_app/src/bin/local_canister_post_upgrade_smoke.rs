@@ -6,7 +6,9 @@ use std::{env, fs};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::{CanisterVfsClient, VfsApi};
-use vfs_types::{CyclesBillingConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus};
+use vfs_types::{
+    CyclesBillingConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus, kinic_base_units_per_token,
+};
 
 #[derive(Debug)]
 struct SmokeArgs {
@@ -201,14 +203,33 @@ async fn activate_smoke_database(
     database_id: &str,
     payment_amount_e8s: u64,
 ) -> Result<u64> {
+    let config = client.get_cycles_billing_config().await?;
+    let min_expected_cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
     let result = client
         .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
             database_id: database_id.to_string(),
             payment_amount_e8s,
+            min_expected_cycles,
         })
         .await
         .with_context(|| format!("failed to purchase cycles for smoke database {database_id}"))?;
     Ok(result.balance_cycles)
+}
+
+fn cycles_for_payment_amount_e8s(
+    payment_amount_e8s: u64,
+    config: &CyclesBillingConfig,
+) -> Result<u64> {
+    let cycles = u128::from(payment_amount_e8s)
+        .checked_mul(u128::from(config.cycles_per_kinic))
+        .ok_or_else(|| anyhow!("cycles purchase amount overflow"))?
+        / u128::from(kinic_base_units_per_token());
+    let cycles =
+        u64::try_from(cycles).map_err(|_| anyhow!("cycles purchase amount exceeds u64"))?;
+    if cycles == 0 {
+        return Err(anyhow!("cycles purchase amount is too small"));
+    }
+    Ok(cycles)
 }
 
 async fn assert_active_database(client: &CanisterVfsClient, state: &SmokeState) -> Result<()> {

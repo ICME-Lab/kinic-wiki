@@ -50,6 +50,12 @@ const groups = {
   canister_ci_filter: [
     [".github/workflows/ci.yml", "crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/"],
     [".github/workflows/ci.yml", "set_output rust_all"]
+  ],
+  canister_cycles_billing: [
+    ["scripts/smoke/local_canister_post_upgrade.sh", "scripts/local/deploy_wiki.sh --mode upgrade"],
+    ["docs/payment.md", "cycles-repair-complete"],
+    ["docs/payment.md", "cycles-repair-cancel"],
+    ["docs/payment.md", "残高を全徴収"]
   ]
 };
 
@@ -59,6 +65,12 @@ for (const [group, checks] of Object.entries(groups)) {
     assert.match(content, new RegExp(escapeRegExp(marker)), `${group}: missing marker ${marker} in ${relativePath}`);
   }
 }
+
+assert.doesNotMatch(
+  readFileSync(join(root, "docs/payment.md"), "utf8"),
+  /自動 repair API と cancel repair API は提供しない/,
+  "canister_cycles_billing: obsolete repair wording remains in docs/payment.md"
+);
 
 console.log(`Regression groups OK: ${Object.keys(groups).join(", ")}`);
 

@@ -315,33 +315,17 @@ proptest! {
                         .cycles_billing_config()
                         .expect("cycles config should load");
                     let computed = charge_amount(cycles_delta);
-                    if computed > before {
-                        let error = service
-                            .charge_database_update(
-                                &config,
-                                &database_id,
-                                OWNER,
-                                "pbt_charge",
-                                cycles_delta,
-                                now,
-                            )
-                            .expect_err("overdrawn charge should fail without ledger writes");
-                        assert!(
-                            error.contains("database cycles balance is insufficient for update charge")
-                        );
-                    } else {
-                        service
-                            .charge_database_update(
-                                &config,
-                                &database_id,
-                                OWNER,
-                                "pbt_charge",
-                                cycles_delta,
-                                now,
-                            )
-                            .expect("charge should record");
-                        database_balance -= computed;
-                    }
+                    service
+                        .charge_database_update(
+                            &config,
+                            &database_id,
+                            OWNER,
+                            "pbt_charge",
+                            cycles_delta,
+                            now,
+                        )
+                        .expect("charge should record");
+                    database_balance -= computed.min(before);
                 }
             }
 

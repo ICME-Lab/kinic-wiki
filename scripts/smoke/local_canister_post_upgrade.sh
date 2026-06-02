@@ -113,5 +113,5 @@ approve_cycles_allowance "${CANISTER_ID}"
 STATE_FILE="${TMP_DIR}/local_canister_post_upgrade_state.json"
 cargo run -p kinic-vfs-cli --bin local_canister_post_upgrade_smoke -- --state-output "$STATE_FILE"
 
-MODE=upgrade scripts/local/deploy_wiki.sh
+scripts/local/deploy_wiki.sh --mode upgrade
 cargo run -p kinic-vfs-cli --bin local_canister_post_upgrade_smoke -- --verify-state "$STATE_FILE"

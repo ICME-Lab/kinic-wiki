@@ -41,20 +41,21 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS,
-    KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
-    MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -472,9 +473,10 @@ fn icrc21_canister_call_consent_message(
     let cycles = match with_service(|service| {
         let config = service.cycles_billing_config()?;
         let cycles = cycles_for_payment_amount_e8s(purchase.payment_amount_e8s, &config)?;
-        service.validate_database_cycles_purchase(
+        service.validate_database_cycles_purchase_with_minimum(
             &purchase.database_id,
             purchase.payment_amount_e8s,
+            purchase.min_expected_cycles,
         )?;
         Ok(cycles)
     }) {
@@ -522,6 +524,7 @@ async fn purchase_database_cycles(
                 database_id: &request.database_id,
                 caller: &caller,
                 payment_amount_e8s: request.payment_amount_e8s,
+                min_expected_cycles: request.min_expected_cycles,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
@@ -785,6 +788,15 @@ fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause:
 #[query]
 fn get_cycles_billing_config() -> Result<CyclesBillingConfig, String> {
     with_service(|service| service.cycles_billing_config())
+}
+
+#[query]
+fn list_database_cycles_pending_purchases(
+    database_id: String,
+) -> Result<Vec<DatabaseCyclesPendingPurchase>, String> {
+    with_service(|service| {
+        service.list_database_cycles_pending_purchases(&database_id, &caller_text())
+    })
 }
 
 #[update]
@@ -1300,6 +1312,7 @@ thread_local! {
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_CYCLE_BALANCES: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -1320,6 +1333,13 @@ fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOut
 }
 
 #[cfg(test)]
+fn set_cycle_balances_for_test(balances: Vec<u128>) {
+    TEST_CYCLE_BALANCES.with(|slot| {
+        slot.replace(balances);
+    });
+}
+
+#[cfg(test)]
 fn clear_ledger_transactions_for_test() {
     TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|slot| {
         slot.borrow_mut().clear();
@@ -1328,6 +1348,9 @@ fn clear_ledger_transactions_for_test() {
         slot.borrow_mut().clear();
     });
     TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().clear();
+    });
+    TEST_CYCLE_BALANCES.with(|slot| {
         slot.borrow_mut().clear();
     });
 }
@@ -1504,7 +1527,14 @@ fn now_millis() -> i64 {
 fn cycle_balance() -> u128 {
     #[cfg(test)]
     {
-        1_000_000_000_000
+        TEST_CYCLE_BALANCES.with(|slot| {
+            let mut balances = slot.borrow_mut();
+            if balances.is_empty() {
+                1_000_000_000_000
+            } else {
+                balances.remove(0)
+            }
+        })
     }
     #[cfg(not(test))]
     {

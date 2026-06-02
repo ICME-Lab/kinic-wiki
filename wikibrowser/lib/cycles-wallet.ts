@@ -6,7 +6,7 @@ import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
-import { formatRawCycles, KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
+import { formatRawCycles, KINIC_LEDGER_FEE_E8S, kinicBaseUnitsPerToken } from "@/lib/cycles";
 
 type WalletProvider = "oisy" | "plug";
 
@@ -284,6 +284,7 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
   const config = await getCyclesBillingConfig(request.canisterId);
   const transferFeeE8s = KINIC_LEDGER_FEE_E8S;
   const paymentAmountE8s = request.paymentAmountE8s;
+  const minExpectedCycles = cyclesForPaymentAmountE8s(paymentAmountE8s, BigInt(config.cyclesPerKinic));
   const approvedAllowanceE8s = allowanceForCyclesPurchase(paymentAmountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
   const currentAllowanceE8s = await getLedgerAllowance(config.kinicLedgerCanisterId, payer, request.canisterId);
@@ -292,6 +293,7 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
     purchaseRequest: {
       database_id: request.databaseId,
       payment_amount_e8s: paymentAmountE8s,
+      min_expected_cycles: minExpectedCycles,
     },
     transferFeeE8s,
     paymentAmountE8s,
@@ -303,6 +305,12 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
 
 function allowanceForCyclesPurchase(amountE8s: bigint, transferFeeE8s: bigint): bigint {
   return amountE8s + transferFeeE8s;
+}
+
+function cyclesForPaymentAmountE8s(amountE8s: bigint, cyclesPerKinic: bigint): bigint {
+  const cycles = (amountE8s * cyclesPerKinic) / kinicBaseUnitsPerToken();
+  if (cycles <= 0n) throw new Error("KINIC amount is too small for a cycles purchase");
+  return cycles;
 }
 
 function approveExpiresAt(): bigint {
@@ -376,7 +384,8 @@ function errorMessage(cause: unknown): string {
 function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): string {
   const PurchaseRequest = IDL.Record({
     database_id: IDL.Text,
-    payment_amount_e8s: IDL.Nat64
+    payment_amount_e8s: IDL.Nat64,
+    min_expected_cycles: IDL.Nat64
   });
   return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
 }

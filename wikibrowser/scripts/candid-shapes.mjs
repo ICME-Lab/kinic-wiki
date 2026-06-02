@@ -28,11 +28,25 @@ export const expectedTypes = {
     kind: "record",
     fields: { block_index: "nat64", amount_cycles: "nat64", balance_cycles: "nat64" }
   },
+  DatabaseCyclesPendingPurchase: {
+    kind: "record",
+    fields: {
+      operation_id: "nat64",
+      database_id: "text",
+      status: "text",
+      amount_cycles: "nat64",
+      payment_amount_e8s: "nat64",
+      ledger_block_index: "opt nat64",
+      created_at_ms: "int64",
+      required_action: "text"
+    }
+  },
   DatabaseCyclesPurchaseRequest: {
     kind: "record",
     fields: {
       database_id: "text",
-      payment_amount_e8s: "nat64"
+      payment_amount_e8s: "nat64",
+      min_expected_cycles: "nat64"
     }
   },
   Icrc21ConsentMessageMetadata: {
@@ -308,7 +322,8 @@ export const expectedTypes = {
   ResultCyclesBillingConfig: { kind: "variant", cases: { Ok: "CyclesBillingConfig", Err: "text" } },
   ResultCyclesPurchase: { kind: "variant", cases: { Ok: "CyclesPurchaseResult", Err: "text" } },
   ResultCyclesEntries: { kind: "variant", cases: { Ok: "DatabaseCycleEntryPage", Err: "text" } },
-    ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
+  ResultCyclesPendingPurchases: { kind: "variant", cases: { Ok: "vec DatabaseCyclesPendingPurchase", Err: "text" } },
+  ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
@@ -394,24 +409,25 @@ export const didTypeAliases = {
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultChildren: "Result_12",
   ResultCyclesBillingConfig: "Result_9",
-  ResultCyclesPurchase: "Result_19",
+  ResultCyclesPurchase: "Result_20",
   ResultCyclesEntries: "Result_13",
+  ResultCyclesPendingPurchases: "Result_14",
   ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_15",
+  ResultDatabases: "Result_16",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_17",
-  ResultMoveNode: "Result_18",
-  ResultMembers: "Result_14",
+  ResultMkdirNode: "Result_18",
+  ResultMoveNode: "Result_19",
+  ResultMembers: "Result_15",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_23",
-  ResultNodeContext: "Result_24",
-  ResultQueryContext: "Result_20",
-  ResultSearch: "Result_25",
-  ResultSourceEvidence: "Result_26",
+  ResultNode: "Result_24",
+  ResultNodeContext: "Result_25",
+  ResultQueryContext: "Result_21",
+  ResultSearch: "Result_26",
+  ResultSourceEvidence: "Result_27",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_28"
+  ResultWriteSourceForGeneration: "Result_29"
 };
 
 export const expectedMethods = {
@@ -435,6 +451,7 @@ export const expectedMethods = {
   incoming_links: { input: ["IncomingLinksRequest"], output: "ResultLinks", mode: "query" },
   list_children: { input: ["ListChildrenRequest"], output: "ResultChildren", mode: "query" },
   list_database_cycle_entries: { input: ["text", "opt nat64", "nat32"], output: "ResultCyclesEntries", mode: "query" },
+  list_database_cycles_pending_purchases: { input: ["text"], output: "ResultCyclesPendingPurchases", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
   memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },

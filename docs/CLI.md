@@ -85,6 +85,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> da
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-cycles "$DB_ID" 1.25
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles "$DB_ID" 1.25
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-history "$DB_ID"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-pending "$DB_ID"
 # Billing authority repair commands. Use values from the payer's browser error or canister error.
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-retry "$DB_ID" <operation-id>
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles-repair-complete "$DB_ID" <operation-id> <ledger-block-index>
@@ -100,6 +101,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefi
 `database purchase-cycles <database-id> <kinic>` pulls the KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds raw cycles to the DB cycles balance. Any authenticated payer can purchase cycles for an existing DB. The allowance must include the fixed ledger transfer fee.
 `database cycles <database-id> <kinic>` opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. This command does not use the CLI identity. The browser flow is limited to the configured canonical wiki canister, approves `payment_amount_e8s + ledger_fee_e8s` with a 30 minute expiry, and purchases cycles using the current canister config. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
+`database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
 `database cycles-retry <database-id> <operation-id>` retries a completed ledger-success/local-apply-failed operation. It requires the CLI identity to be the billing authority.
 `database cycles-repair-complete <database-id> <operation-id> <ledger-block-index>` completes an ambiguous operation after billing authority block verification.
 `database cycles-repair-cancel <database-id> <operation-id>` cancels an ambiguous operation after confirming the transfer did not execute.

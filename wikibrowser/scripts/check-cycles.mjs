@@ -67,7 +67,8 @@ assert.match(wallet, /function allowanceForCyclesPurchase\(amountE8s: bigint, tr
 assert.match(wallet, /return amountE8s \+ transferFeeE8s/);
 assert.doesNotMatch(wallet, /function paymentAmountE8sForCycles/);
 assert.match(wallet, /payment_amount_e8s: paymentAmountE8s/);
-assert.doesNotMatch(wallet, /expected_cycles|expected_config_version/);
+assert.match(wallet, /min_expected_cycles: minExpectedCycles/);
+assert.doesNotMatch(wallet, /expected_config_version/);
 assert.match(wallet, /amount_cycles/);
 assert.match(wallet, /approveParams\(request\.canisterId, prepared\.approvedAllowanceE8s, prepared\.currentAllowanceE8s, prepared\.expiresAt\)/);
 assert.match(wallet, /rawApproveArgs\(request\.canisterId, prepared\.approvedAllowanceE8s, prepared\.currentAllowanceE8s, prepared\.expiresAt\)/);
@@ -157,9 +158,9 @@ const walletModule = loadTsModule(
         fromUint8Array: (value) => ({ toText: () => `bytes:${Array.from(value).join(",")}` })
       }
     },
-    "@/lib/vfs-client": { getCyclesBillingConfig: async () => ({ kinicLedgerCanisterId: "ledger" }) },
+    "@/lib/vfs-client": { getCyclesBillingConfig: async () => ({ kinicLedgerCanisterId: "ledger", cyclesPerKinic: "1000" }) },
     "@/lib/vfs-idl": { idlFactory: () => ({}) },
-    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n }
+    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n, kinicBaseUnitsPerToken: () => 100_000_000n }
   },
   "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertConfiguredCyclesCanister, purchaseAfterApprove, decodeOisyCyclesPurchaseResult } });"
 );

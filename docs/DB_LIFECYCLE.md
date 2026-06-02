@@ -60,9 +60,9 @@ DB creation uses `create_database(display_name)`. It creates a generated `databa
 
 External ledger calls are limited to DB cycles purchase:
 
-- `purchase_database_cycles(DatabaseCyclesPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints cycles into that DB cycles balance. The request includes `payment_amount_e8s`; credited cycles are computed from the current `cycles_per_kinic` at purchase time and returned as `amount_cycles`. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
+- `purchase_database_cycles(DatabaseCyclesPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints cycles into that DB cycles balance. The request includes `payment_amount_e8s` and `min_expected_cycles`; credited cycles are computed from the current `cycles_per_kinic` before the ledger call and must be at least `min_expected_cycles`. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
 
-Any authenticated caller can cycle purchase an existing DB that still has an owner, including callers with no DB role. The payer is recorded in the DB ledger entry. Reader and writer cycles history redacts payer/caller principals, while DB owner and billing authority can read full payer/caller details. Once the ledger call starts, normal completion or explicit ledger-error cancellation resolves the started operation even if membership changes during the await. Ambiguous ledger results keep the internal pending operation as `ambiguous` for billing-authority repair. If ledger transfer succeeds but local activation or cycles apply fails, the completed internal pending operation remains for billing-authority retry. Public pending query APIs are not available.
+Any authenticated caller can cycle purchase an existing DB that still has an owner, including callers with no DB role. The payer is recorded in the DB ledger entry. Reader and writer cycles history redacts payer/caller principals, while DB owner and billing authority can read full payer/caller details. Once the ledger call starts, normal completion or explicit ledger-error cancellation resolves the started operation even if membership changes during the await. Ambiguous ledger results keep the internal pending operation as `ambiguous` for billing-authority repair. If ledger transfer succeeds but local activation or cycles apply fails, the completed internal pending operation remains for billing-authority retry. Owner, billing authority, and payer can inspect pending purchase status through `list_database_cycles_pending_purchases(database_id)` or CLI `database cycles-pending <database-id>`.
 
 Successful DB update calls are charged after execution. The charge is raw cycle usage:
 
@@ -70,7 +70,7 @@ Successful DB update calls are charged after execution. The charge is raw cycle 
 cycles_delta
 ```
 
-Cycles are stored as raw integer cycles. The default purchase rate is `1 KINIC = 234_500_000_000 cycles` (`0.2345 Tcycle`), controlled by `cycles_per_kinic`. Before a metered update, the caller role is checked first, then the DB cycles balance must be at least `min_update_cycles` and the DB must not be suspended. Non-members receive access errors without learning cycles state. If the post-update charge exceeds the DB cycles balance, the update traps through the canister metered-update wrapper and no cycle ledger charge is recorded.
+Cycles are stored as raw integer cycles. The default purchase rate is `1 KINIC = 234_500_000_000 cycles` (`0.2345 Tcycle`), controlled by `cycles_per_kinic`. Before a metered update, the caller role is checked first, then the DB cycles balance must be at least `min_update_cycles` and the DB must not be suspended. Non-members receive access errors without learning cycles state. If the post-update charge exceeds the DB cycles balance, the remaining DB cycles are fully charged, the balance becomes `0`, and the DB is suspended.
 
 Storage billing settles every 24h from a canister timer, with controller-only `settle_database_storage_charges()` as recovery path. Only active DBs are charged. The 13-node subnet rate is fixed at `127_000 cycles / GiB / sec`:
 
@@ -78,13 +78,13 @@ Storage billing settles every 24h from a canister timer, with controller-only `s
 storage_cycles = logical_size_bytes * elapsed_seconds * 127_000 / 2^30
 ```
 
-Storage charges write `kind = "storage_charge"` ledger entries for actually collected cycles. Insufficient-balance unpaid cycles are not carried forward. Insufficient balance consumes the remaining balance and suspends the DB.
+Storage charges write `kind = "storage_charge"` ledger entries for actually collected cycles. Insufficient-balance unpaid cycles are not carried forward or tracked as debt in v1. The residual cost above the remaining balance is forgiven as subsidy/suspension policy, the remaining balance is consumed, and the DB is suspended. The next settle uses the updated cursor. Debt tracking is a separate follow-up.
 
 `database_cycle_ledger` is the cycles source of truth. Successful charged update calls are recorded there directly. Ledger-backed cycle purchase entries store ledger block indexes in `ledger_block_index`.
 
-Cycles history redacts payer/caller principals for reader and writer callers. DB owner and billing authority can read full cycles history. Pending cycle operations are internal transfer and retry state and have no public query API. New cycles history fields must not carry payer/caller principals unless the same redaction policy is applied.
+Cycles history redacts payer/caller principals for reader and writer callers. DB owner and billing authority can read full cycles history. Pending cycle purchase status is visible only to owner, billing authority, and the payer of that operation. New cycles history fields must not carry payer/caller principals unless the same redaction policy is applied.
 
-`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate and minimum-balance fields by calling `update_cycles_billing_config` with a Candid-encoded `CyclesBillingConfigUpdate` blob. `config_version` starts at `1` and increments only when `cycles_per_kinic` or `min_update_cycles` actually changes.
+`kinic_ledger_canister_id` and `billing_authority_id` are fixed at init. The billing authority may update only rate and minimum-balance fields by calling `update_cycles_billing_config` with a Candid-encoded `CyclesBillingConfigUpdate` blob. The internal `config_version` starts at `1` and increments only when `cycles_per_kinic` or `min_update_cycles` actually changes.
 
 `scripts/local/deploy_wiki.sh` carries local development init args. If `BILLING_AUTHORITY_ID` is unset, local deploy uses `icp identity principal`. The deploy script does not create a ledger canister by itself. Local cycle purchase smoke should use `scripts/local/setup_kinic_ledger.sh` or `scripts/smoke/local_canister_archive_restore.sh`, which creates or validates a project-local ICRC ledger and deploys the wiki with that ledger ID.
 
@@ -107,7 +107,7 @@ Normal operator flow:
 
 URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 
-Treasury sweep, DB-specific ledger subaccounts, pending operation query, and repair browser UI are not implemented. Billing authority can retry a completed pending cycle purchase with `retry_database_cycles_purchase(database_id, operation_id)`.
+Treasury sweep, DB-specific ledger subaccounts, and repair browser UI are not implemented. Billing authority can retry a completed pending cycle purchase with `retry_database_cycles_purchase(database_id, operation_id)`.
 
 DB cycle purchase credits internal cycles only after `icrc2_transfer_from` returns `Ok(block_index)` and local activation/apply both finish. Explicit ledger errors cancel the `in_flight` operation without credit. Ambiguous inter-canister call or response decoding stores `operation_status = "ambiguous"` without credit and returns an error containing the `operation_id`. Billing authority can complete it only after `get_transactions` confirms from/to/amount/fee/memo/created_at_time for the supplied block, or cancel it after confirming transfer non-execution. If ledger transfer succeeds but local DB activation or cycle application fails, the canister stores `operation_status = "completed"` with the ledger block index, does not credit cycles, and returns a local apply error containing the `operation_id` and ledger block index.
 

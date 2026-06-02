@@ -277,6 +277,12 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List pending cycles purchases for one database")]
+    CyclesPending {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "Retry a completed database cycles purchase as billing authority")]
     CyclesRetry {
         database_id: String,

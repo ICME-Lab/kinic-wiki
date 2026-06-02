@@ -7,7 +7,7 @@ use std::task::{Context, Poll, Waker};
 use candid::{Encode, Nat, Principal};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
-use vfs_runtime::VfsService;
+use vfs_runtime::{DEFAULT_LLM_WRITER_PRINCIPAL, VfsService};
 use vfs_types::{
     AppendNodeRequest, CreateDatabaseRequest, CyclesBillingConfig, CyclesBillingConfigUpdate,
     DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus,
@@ -32,16 +32,16 @@ use super::{
     finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
     icrc21_canister_call_consent_message, incoming_links, last_ledger_from_for_test,
     last_ledger_memo_for_test, ledger_transfer_fees_for_test, list_children,
-    list_database_cycle_entries, list_database_members, list_databases, list_nodes,
-    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
+    list_database_cycle_entries, list_database_cycles_pending_purchases, list_database_members,
+    list_databases, list_nodes, memory_manifest, mkdir_node, move_node, multi_edit_node,
+    outgoing_links, parse_upgrade_cycles_billing_config_arg, purchase_database_cycles,
+    query_context, query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
     rename_database, repair_database_cycles_purchase_cancel,
     repair_database_cycles_purchase_complete, retry_database_cycles_purchase,
-    revoke_database_access, search_node_paths, search_nodes, set_ledger_transaction_for_test,
-    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    settle_database_storage_charges, source_evidence, status, transfer_from_error_outcome,
-    write_database_restore_chunk, write_node, write_nodes,
+    revoke_database_access, search_node_paths, search_nodes, set_cycle_balances_for_test,
+    set_ledger_transaction_for_test, set_next_ledger_transfer_from_outcome_for_test,
+    set_test_caller_principal_for_test, settle_database_storage_charges, source_evidence, status,
+    transfer_from_error_outcome, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -189,6 +189,7 @@ fn cycles_purchase_request(
     DatabaseCyclesPurchaseRequest {
         database_id: database_id.to_string(),
         payment_amount_e8s,
+        min_expected_cycles: 1,
     }
 }
 
@@ -774,6 +775,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     let error = block_on_ready(purchase_database_cycles(DatabaseCyclesPurchaseRequest {
         database_id: database.database_id,
         payment_amount_e8s: 1,
+        min_expected_cycles: 1,
     }))
     .expect_err("overflow should reject before ledger");
 
@@ -887,6 +889,61 @@ fn purchase_database_cycles_keeps_ambiguous_transfer_from_for_repair() {
         duplicate.contains("database activation is pending")
             || duplicate.contains("cycles purchase already pending")
     );
+}
+
+#[test]
+fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let payer = Principal::from_text(DEFAULT_LLM_WRITER_PRINCIPAL).expect("payer should parse");
+    let stranger =
+        Principal::from_text("bkyz2-fmaaa-aaaaa-qaaaq-cai").expect("stranger should parse");
+    let database = {
+        let _owner = AuthenticatedCallerGuard::install_principal(owner);
+        create_database(CreateDatabaseRequest {
+            name: "Pending".to_string(),
+        })
+        .expect("database should create")
+    };
+
+    let payer_guard = AuthenticatedCallerGuard::install_principal(payer);
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "timeout".to_string(),
+    ));
+    let error = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        50_000_000,
+    )))
+    .expect_err("ambiguous transfer should keep pending operation");
+    assert!(error.contains("billing authority repair required"));
+
+    let payer_view = list_database_cycles_pending_purchases(database.database_id.clone())
+        .expect("payer should view own pending purchase");
+    assert_eq!(payer_view.len(), 1);
+    assert_eq!(payer_view[0].status, "ambiguous");
+    assert_eq!(
+        payer_view[0].required_action,
+        "billing_authority_repair_complete_or_cancel"
+    );
+
+    drop(payer_guard);
+    let owner_guard = AuthenticatedCallerGuard::install_principal(owner);
+    let owner_view = list_database_cycles_pending_purchases(database.database_id.clone())
+        .expect("owner should view pending purchase");
+    assert_eq!(owner_view, payer_view);
+
+    drop(owner_guard);
+    let authority_guard =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let authority_view = list_database_cycles_pending_purchases(database.database_id.clone())
+        .expect("billing authority should view pending purchase");
+    assert_eq!(authority_view, payer_view);
+
+    drop(authority_guard);
+    let _stranger = AuthenticatedCallerGuard::install_principal(stranger);
+    let error = list_database_cycles_pending_purchases(database.database_id)
+        .expect_err("unrelated caller should reject");
+    assert!(error.contains("cannot view pending cycle purchases"));
 }
 
 #[test]
@@ -1315,6 +1372,7 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
     let missing = block_on_ready(purchase_database_cycles(DatabaseCyclesPurchaseRequest {
         database_id: "missing".to_string(),
         payment_amount_e8s: 50_000_000,
+        min_expected_cycles: 1,
     }))
     .expect_err("unknown database should reject");
     assert!(missing.contains("database not found"));
@@ -1330,6 +1388,7 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
     let deleted = block_on_ready(purchase_database_cycles(DatabaseCyclesPurchaseRequest {
         database_id: database.database_id,
         payment_amount_e8s: 50_000_000,
+        min_expected_cycles: 1,
     }))
     .expect_err("deleted database should reject");
     assert!(deleted.contains("database not found"));
@@ -1561,6 +1620,54 @@ fn write_node_and_write_nodes_skip_zero_charge_ledger() {
     .expect("batch write should succeed");
 
     assert!(database_charge_methods("default").is_empty());
+}
+
+#[test]
+fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
+    install_test_service();
+    let before_balance = list_databases()
+        .expect("database summaries should load")
+        .into_iter()
+        .find(|database| database.database_id == "default")
+        .and_then(|database| database.cycles_balance)
+        .expect("default database should have cycles balance");
+
+    set_cycle_balances_for_test(vec![1_000_000_000_000, 0]);
+    let written = write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/overdrawn.md".to_string(),
+        kind: NodeKind::File,
+        content: "overdrawn charge still writes".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect("overdrawn post-charge should not trap");
+
+    assert_eq!(written.node.path, "/Wiki/overdrawn.md");
+    assert!(
+        read_node("default".to_string(), "/Wiki/overdrawn.md".to_string())
+            .expect("written node should read")
+            .is_some()
+    );
+    let summary = list_databases()
+        .expect("database summaries should load")
+        .into_iter()
+        .find(|database| database.database_id == "default")
+        .expect("default database summary should exist");
+    assert_eq!(summary.cycles_balance, Some(0));
+    assert_eq!(summary.cycles_suspended_at_ms, Some(1_700_000_000_000));
+
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charge = entries
+        .iter()
+        .find(|entry| entry.kind == "charge")
+        .expect("charge entry should exist");
+    assert_eq!(charge.amount_cycles, -(before_balance as i64));
+    assert_eq!(charge.balance_after_cycles, 0);
+    assert_eq!(charge.cycles_delta, Some(1_000_000_000_000));
+    assert_eq!(charge.method.as_deref(), Some("write_node"));
 }
 
 #[test]

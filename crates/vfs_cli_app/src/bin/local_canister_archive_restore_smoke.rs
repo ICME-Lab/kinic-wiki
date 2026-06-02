@@ -10,6 +10,7 @@ use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
     DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
     NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    kinic_base_units_per_token,
 };
 
 const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
@@ -283,14 +284,31 @@ async fn activate_smoke_database(
     database_id: &str,
     payment_amount_e8s: u64,
 ) -> Result<()> {
+    let config = client.get_cycles_billing_config().await?;
+    let min_expected_cycles =
+        cycles_for_payment_amount_e8s(payment_amount_e8s, config.cycles_per_kinic)?;
     client
         .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
             database_id: database_id.to_string(),
             payment_amount_e8s,
+            min_expected_cycles,
         })
         .await
         .with_context(|| format!("failed to purchase cycles for smoke database {database_id}"))?;
     Ok(())
+}
+
+fn cycles_for_payment_amount_e8s(payment_amount_e8s: u64, cycles_per_kinic: u64) -> Result<u64> {
+    let cycles = u128::from(payment_amount_e8s)
+        .checked_mul(u128::from(cycles_per_kinic))
+        .ok_or_else(|| anyhow!("cycles purchase amount overflow"))?
+        / u128::from(kinic_base_units_per_token());
+    let cycles =
+        u64::try_from(cycles).map_err(|_| anyhow!("cycles purchase amount exceeds u64"))?;
+    if cycles == 0 {
+        return Err(anyhow!("cycles purchase amount is too small"));
+    }
+    Ok(cycles)
 }
 
 async fn ensure_parent_folders(

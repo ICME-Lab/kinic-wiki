@@ -1999,6 +1999,7 @@ fn cycles_purchase_begin_returns_current_config_amount() {
                 database_id: "alpha",
                 caller: "payer",
                 payment_amount_e8s: 50_000,
+                min_expected_cycles: 1,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: "payer",
                     from_subaccount: None,
@@ -2266,7 +2267,7 @@ fn zero_cycle_charge_skips_cycle_ledger() {
 
     let after_second_charge = after_first_charge - 1_000_001;
     assert_eq!(database_cycles_balance(&root, "alpha"), after_second_charge);
-    let overdrawn = service
+    service
         .charge_database_update(
             &config,
             "alpha",
@@ -2275,13 +2276,33 @@ fn zero_cycle_charge_skips_cycle_ledger() {
             u128::try_from(after_second_charge).expect("remaining balance should fit") + 1,
             6,
         )
-        .expect_err("overdrawn update cycle charge should fail");
-    assert!(overdrawn.contains("database cycles balance is insufficient for update charge"));
-    assert_eq!(database_cycles_balance(&root, "alpha"), after_second_charge);
+        .expect("overdrawn update cycle charge should consume remaining balance");
+    assert_eq!(database_cycles_balance(&root, "alpha"), 0);
+    assert_eq!(database_cycles_suspended_at(&root, "alpha"), Some(6));
     assert_eq!(
         database_ledger_kinds(&root, "alpha"),
-        vec!["cycles_purchase", "charge", "charge"]
+        vec!["cycles_purchase", "charge", "charge", "charge"]
     );
+
+    let overdrawn_entries = service
+        .list_database_cycle_entries("alpha", "owner", None, 10)
+        .expect("cycle entries should load")
+        .entries;
+    assert_eq!(overdrawn_entries[3].kind, "charge");
+    assert_eq!(overdrawn_entries[3].amount_cycles, -after_second_charge);
+    assert_eq!(
+        overdrawn_entries[3].cycles_delta,
+        Some(after_second_charge as u64 + 1)
+    );
+
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let purchased_cycles = cycle_database(&service, "alpha", "owner", 5_000, 7, 2);
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
 
     service
         .charge_database_update(
@@ -2289,7 +2310,7 @@ fn zero_cycle_charge_skips_cycle_ledger() {
             "alpha",
             "owner",
             "write_node",
-            u128::try_from(after_second_charge).expect("remaining balance should fit"),
+            u128::from(purchased_cycles),
             7,
         )
         .expect("exact balance cycle charge should succeed");
@@ -2299,13 +2320,9 @@ fn zero_cycle_charge_skips_cycle_ledger() {
         .list_database_cycle_entries("alpha", "owner", None, 10)
         .expect("cycle entries should load")
         .entries;
-    assert_eq!(entries.len(), 4);
+    assert_eq!(entries.len(), 2);
     assert_eq!(entries[1].kind, "charge");
-    assert_eq!(entries[1].amount_cycles, -1_000_000);
-    assert_eq!(entries[2].kind, "charge");
-    assert_eq!(entries[2].amount_cycles, -1_000_001);
-    assert_eq!(entries[3].kind, "charge");
-    assert_eq!(entries[3].amount_cycles, -after_second_charge);
+    assert_eq!(entries[1].amount_cycles, -(purchased_cycles as i64));
 }
 
 #[test]
@@ -2454,6 +2471,101 @@ fn database_cycles_purchase_rejects_duplicate_pending_operation_for_caller() {
         .expect("caller can begin after pending operation resolves");
 
     assert_eq!(database_pending_operation_count(&root, "alpha"), 2);
+}
+
+#[test]
+fn database_cycles_purchase_rejects_when_cycles_below_minimum_quote() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let cycles = default_cycles_for_payment(50_000);
+
+    let error = service
+        .begin_database_cycles_purchase_with_ledger_details(
+            DatabaseCyclesPurchaseWithLedgerDetails {
+                database_id: "alpha",
+                caller: "payer",
+                payment_amount_e8s: 50_000,
+                min_expected_cycles: cycles + 1,
+                ledger: CyclesPendingLedgerDetailsInput {
+                    from_owner: "payer",
+                    from_subaccount: None,
+                    to_owner: "canister",
+                    to_subaccount: None,
+                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                    ledger_created_at_time_ns: 2_000_000,
+                },
+                now: 2,
+            },
+        )
+        .expect_err("stale quote should reject before pending operation");
+
+    assert!(error.contains("below min_expected_cycles"));
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
+}
+
+#[test]
+fn lists_pending_cycles_purchases_for_owner_authority_and_payer() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let operation_id = service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("purchase should begin");
+
+    let owner = service
+        .list_database_cycles_pending_purchases("alpha", "owner")
+        .expect("owner should view pending purchase");
+    assert_eq!(owner.len(), 1);
+    assert_eq!(owner[0].operation_id, operation_id);
+    assert_eq!(owner[0].status, "in_flight");
+    assert_eq!(owner[0].required_action, "wait_for_ledger_result");
+
+    let payer = service
+        .list_database_cycles_pending_purchases("alpha", "payer")
+        .expect("payer should view own pending purchase");
+    assert_eq!(payer, owner);
+
+    let authority = service
+        .cycles_billing_config()
+        .expect("config should load")
+        .billing_authority_id;
+    let authority_view = service
+        .list_database_cycles_pending_purchases("alpha", &authority)
+        .expect("billing authority should view pending purchase");
+    assert_eq!(authority_view, owner);
+
+    let error = service
+        .list_database_cycles_pending_purchases("alpha", "stranger")
+        .expect_err("unrelated caller should reject");
+    assert!(error.contains("cannot view pending cycle purchases"));
+}
+
+#[test]
+fn delete_database_reports_pending_cycles_purchase_action() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let operation_id = service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("purchase should begin");
+
+    let error = service
+        .delete_database(
+            DeleteDatabaseRequest {
+                database_id: "alpha".to_string(),
+            },
+            "owner",
+            3,
+        )
+        .expect_err("delete should block while pending purchase exists");
+
+    assert!(error.contains(&format!("operation_id={operation_id}")));
+    assert!(error.contains("status=in_flight"));
+    assert!(error.contains("required_action=wait_for_ledger_result"));
 }
 
 #[test]

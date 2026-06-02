@@ -675,10 +675,13 @@ async fn run_database_command(
         }
         DatabaseCommand::PurchaseCycles { database_id, kinic } => {
             let payment_amount_e8s = parse_kinic_amount_e8s(&kinic)?;
+            let config = client.get_cycles_billing_config().await?;
+            let min_expected_cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
             let result = client
                 .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
                     database_id: database_id.clone(),
                     payment_amount_e8s,
+                    min_expected_cycles,
                 })
                 .await?;
             println!(
@@ -707,6 +710,30 @@ async fn run_database_command(
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "-".to_string()),
                         entry.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::CyclesPending { database_id, json } => {
+            let pending = client
+                .list_database_cycles_pending_purchases(&database_id)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&pending)?);
+            } else {
+                for purchase in pending {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        purchase.operation_id,
+                        purchase.status,
+                        purchase.amount_cycles,
+                        purchase.payment_amount_e8s,
+                        purchase
+                            .ledger_block_index
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        purchase.required_action,
+                        purchase.created_at_ms
                     );
                 }
             }
@@ -999,6 +1026,25 @@ fn cycles_config_lines(config: &CyclesBillingConfig, ledger_fee_e8s: u64) -> Vec
         format!("min_update_cycles\t{}", config.min_update_cycles),
         format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
     ]
+}
+
+fn cycles_for_payment_amount_e8s(
+    payment_amount_e8s: u64,
+    config: &CyclesBillingConfig,
+) -> Result<u64> {
+    if payment_amount_e8s == 0 {
+        return Err(anyhow!("cycles purchase payment amount must be positive"));
+    }
+    let cycles = u128::from(payment_amount_e8s)
+        .checked_mul(u128::from(config.cycles_per_kinic))
+        .ok_or_else(|| anyhow!("cycles purchase amount overflow"))?
+        / u128::from(kinic_base_units_per_token());
+    let cycles =
+        u64::try_from(cycles).map_err(|_| anyhow!("cycles purchase amount exceeds u64"))?;
+    if cycles == 0 {
+        return Err(anyhow!("cycles purchase amount is too small"));
+    }
+    Ok(cycles)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1415,6 +1461,7 @@ mod tests {
         database_lists: Mutex<u32>,
         database_cycle_purchases: Mutex<Vec<DatabaseCyclesPurchaseRequest>>,
         database_cycles_history: Mutex<Vec<String>>,
+        database_cycles_pending: Mutex<Vec<String>>,
         database_cycles_retries: Mutex<Vec<(String, u64)>>,
         database_cycles_repair_completes: Mutex<Vec<(String, u64, u64)>>,
         database_cycles_repair_cancels: Mutex<Vec<(String, u64)>>,
@@ -1554,6 +1601,25 @@ mod tests {
                 }],
                 next_cursor: None,
             })
+        }
+        async fn list_database_cycles_pending_purchases(
+            &self,
+            database_id: &str,
+        ) -> Result<Vec<DatabaseCyclesPendingPurchase>> {
+            self.database_cycles_pending
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(vec![DatabaseCyclesPendingPurchase {
+                operation_id: 9,
+                database_id: database_id.to_string(),
+                status: "ambiguous".to_string(),
+                amount_cycles: 1_250,
+                payment_amount_e8s: 125_000_000,
+                ledger_block_index: None,
+                created_at_ms: 3,
+                required_action: "billing_authority_repair_complete_or_cancel".to_string(),
+            }])
         }
         async fn retry_database_cycles_purchase(
             &self,
@@ -2342,17 +2408,18 @@ mod tests {
             vec![DatabaseCyclesPurchaseRequest {
                 database_id: "db_alpha".to_string(),
                 payment_amount_e8s: 125_000_000,
+                min_expected_cycles: 1_250,
             }]
         );
     }
 
     #[tokio::test]
-    async fn database_cycles_purchase_does_not_require_cycles_precheck() {
+    async fn database_cycles_purchase_requires_cycles_quote() {
         let client = MockClient {
             fail_cycles_config: Mutex::new(true),
             ..MockClient::default()
         };
-        run_vfs_command(
+        let error = run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::Database {
@@ -2363,14 +2430,9 @@ mod tests {
             },
         )
         .await
-        .expect("database cycle purchase should not need cycles precheck");
-        assert_eq!(
-            *client.database_cycle_purchases.lock().unwrap(),
-            vec![DatabaseCyclesPurchaseRequest {
-                database_id: "db_alpha".to_string(),
-                payment_amount_e8s: 125_000_000,
-            }]
-        );
+        .expect_err("database cycle purchase should require quote config");
+        assert!(error.to_string().contains("cycles config unavailable"));
+        assert!(client.database_cycle_purchases.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2411,6 +2473,27 @@ mod tests {
         .expect("database cycles-history should succeed");
         assert_eq!(
             *client.database_cycles_history.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_pending_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CyclesPending {
+                    database_id: "db_alpha".to_string(),
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect("database cycles-pending should succeed");
+        assert_eq!(
+            *client.database_cycles_pending.lock().unwrap(),
             vec!["db_alpha".to_string()]
         );
     }

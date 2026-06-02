@@ -13,17 +13,17 @@ use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseCycleEntryPage, DatabaseCyclesPurchaseRequest, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
-    WriteNodesRequest,
+    DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryManifest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -94,6 +94,14 @@ pub trait VfsApi: Sync {
     ) -> Result<DatabaseCycleEntryPage> {
         Err(anyhow!(
             "list_database_cycle_entries is not implemented by this client"
+        ))
+    }
+    async fn list_database_cycles_pending_purchases(
+        &self,
+        _database_id: &str,
+    ) -> Result<Vec<DatabaseCyclesPendingPurchase>> {
+        Err(anyhow!(
+            "list_database_cycles_pending_purchases is not implemented by this client"
         ))
     }
     async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
@@ -544,6 +552,19 @@ impl VfsApi for CanisterVfsClient {
     async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
         let result: Result<CyclesBillingConfig, String> =
             self.query("get_cycles_billing_config", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn list_database_cycles_pending_purchases(
+        &self,
+        database_id: &str,
+    ) -> Result<Vec<DatabaseCyclesPendingPurchase>> {
+        let result: Result<Vec<DatabaseCyclesPendingPurchase>, String> = self
+            .query(
+                "list_database_cycles_pending_purchases",
+                &database_id.to_string(),
+            )
+            .await?;
         result.map_err(|error| anyhow!(error))
     }
 

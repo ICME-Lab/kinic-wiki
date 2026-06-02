@@ -37,7 +37,21 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     amount_cycles: idl.Nat64,
     balance_cycles: idl.Nat64
   });
-  const DatabaseCyclesPurchaseRequest = idl.Record({ database_id: idl.Text, payment_amount_e8s: idl.Nat64 });
+  const DatabaseCyclesPendingPurchase = idl.Record({
+    operation_id: idl.Nat64,
+    database_id: idl.Text,
+    status: idl.Text,
+    amount_cycles: idl.Nat64,
+    payment_amount_e8s: idl.Nat64,
+    ledger_block_index: idl.Opt(idl.Nat64),
+    created_at_ms: idl.Int64,
+    required_action: idl.Text
+  });
+  const DatabaseCyclesPurchaseRequest = idl.Record({
+    database_id: idl.Text,
+    payment_amount_e8s: idl.Nat64,
+    min_expected_cycles: idl.Nat64
+  });
   const Icrc21ConsentMessageMetadata = idl.Record({ utc_offset_minutes: idl.Opt(idl.Int16), language: idl.Text });
   const Icrc21DeviceSpec = idl.Variant({ GenericDisplay: idl.Null, FieldsDisplay: idl.Null });
   const Icrc21ConsentMessageSpec = idl.Record({
@@ -258,6 +272,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
+  const ResultCyclesPendingPurchases = idl.Variant({ Ok: idl.Vec(DatabaseCyclesPendingPurchase), Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
@@ -293,6 +308,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     icrc21_canister_call_consent_message: idl.Func([Icrc21ConsentMessageRequest], [Icrc21ConsentMessageResponse], []),
     incoming_links: idl.Func([IncomingLinksRequest], [ResultLinks], ["query"]),
     list_database_cycle_entries: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCyclesEntries], ["query"]),
+    list_database_cycles_pending_purchases: idl.Func([idl.Text], [ResultCyclesPendingPurchases], ["query"]),
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
     memory_manifest: idl.Func([], [MemoryManifest], ["query"]),

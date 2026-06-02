@@ -66,6 +66,7 @@ type RawCyclesBillingConfig = {
 export type DatabaseCyclesPurchaseRequest = {
   database_id: string;
   payment_amount_e8s: bigint;
+  min_expected_cycles: bigint;
 };
 
 type RawDatabaseSummary = {

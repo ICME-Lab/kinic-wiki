@@ -80,6 +80,7 @@ pub struct CyclesBillingConfigUpdate {
 pub struct DatabaseCyclesPurchaseRequest {
     pub database_id: String,
     pub payment_amount_e8s: u64,
+    pub min_expected_cycles: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -109,6 +110,18 @@ pub struct DatabaseCycleEntry {
 pub struct DatabaseCycleEntryPage {
     pub entries: Vec<DatabaseCycleEntry>,
     pub next_cursor: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct DatabaseCyclesPendingPurchase {
+    pub operation_id: u64,
+    pub database_id: String,
+    pub status: String,
+    pub amount_cycles: u64,
+    pub payment_amount_e8s: u64,
+    pub ledger_block_index: Option<u64>,
+    pub created_at_ms: i64,
+    pub required_action: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

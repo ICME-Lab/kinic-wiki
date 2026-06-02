@@ -20,17 +20,18 @@ use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
     CyclesPurchaseResult, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
-    DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
@@ -149,6 +150,7 @@ pub struct DatabaseCyclesPurchaseWithLedgerDetails<'a> {
     pub database_id: &'a str,
     pub caller: &'a str,
     pub payment_amount_e8s: u64,
+    pub min_expected_cycles: u64,
     pub ledger: CyclesPendingLedgerDetailsInput<'a>,
     pub now: i64,
 }
@@ -659,10 +661,20 @@ impl VfsService {
         database_id: &str,
         payment_amount_e8s: u64,
     ) -> Result<(), String> {
+        self.validate_database_cycles_purchase_with_minimum(database_id, payment_amount_e8s, 0)
+    }
+
+    pub fn validate_database_cycles_purchase_with_minimum(
+        &self,
+        database_id: &str,
+        payment_amount_e8s: u64,
+        min_expected_cycles: u64,
+    ) -> Result<(), String> {
         amount_to_i64(payment_amount_e8s)?;
         self.read_index(|conn| {
             let config = load_cycles_billing_config(conn)?;
             let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+            validate_cycles_purchase_minimum(cycles, min_expected_cycles)?;
             let cycles_i64 = cycles_to_i64(cycles)?;
             validate_database_cycles_purchase_for_conn(conn, database_id, cycles_i64)
         })
@@ -680,6 +692,7 @@ impl VfsService {
                 database_id,
                 caller,
                 payment_amount_e8s,
+                min_expected_cycles: 0,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: caller,
                     from_subaccount: None,
@@ -705,6 +718,7 @@ impl VfsService {
         self.write_index(|tx| {
             let config = load_cycles_billing_config(tx)?;
             let cycles_u64 = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
+            validate_cycles_purchase_minimum(cycles_u64, request.min_expected_cycles)?;
             let cycles = cycles_to_i64(cycles_u64)?;
             validate_database_cycles_purchase_for_conn(tx, request.database_id, cycles)?;
             ensure_no_pending_cycles_purchase_for_caller(tx, request.database_id, request.caller)?;
@@ -1182,6 +1196,33 @@ impl VfsService {
         })
     }
 
+    pub fn list_database_cycles_pending_purchases(
+        &self,
+        database_id: &str,
+        caller: &str,
+    ) -> Result<Vec<DatabaseCyclesPendingPurchase>, String> {
+        let config = self.cycles_billing_config()?;
+        self.read_index(|conn| {
+            load_database_status(conn, database_id)?;
+            let role = load_member_role(conn, database_id, caller)?;
+            let show_all =
+                caller == config.billing_authority_id || role == Some(DatabaseRole::Owner);
+            let mut purchases = load_database_cycles_pending_purchase_statuses(conn, database_id)?;
+            if !show_all {
+                purchases.retain(|purchase| purchase.caller == caller);
+                if purchases.is_empty() {
+                    return Err(format!(
+                        "principal cannot view pending cycle purchases: {database_id}"
+                    ));
+                }
+            }
+            purchases
+                .into_iter()
+                .map(DatabaseCyclesPendingPurchaseRaw::into_public)
+                .collect::<Result<Vec<_>, _>>()
+        })
+    }
+
     pub fn require_database_write_cycles_available(&self, database_id: &str) -> Result<(), String> {
         self.read_index(|conn| {
             let config = load_cycles_billing_config(conn)?;
@@ -1312,17 +1353,13 @@ impl VfsService {
 
     fn require_no_pending_cycles_operations(&self, database_id: &str) -> Result<(), String> {
         self.read_index(|conn| {
-            let count: i64 = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM database_cycle_pending_operations
-                     WHERE database_id = ?1",
-                    params![database_id],
-                    |row| crate::sqlite::row_get(row, 0),
-                )
-                .map_err(|error| error.to_string())?;
-            if count > 0 {
+            let pending = first_database_cycles_pending_purchase_status(conn, database_id)?;
+            if let Some(pending) = pending {
                 return Err(format!(
-                    "database has pending cycle operation: {database_id}"
+                    "database has pending cycle operation: {database_id}; operation_id={}; status={}; required_action={}",
+                    pending.operation_id,
+                    pending.status,
+                    pending.required_action
                 ));
             }
             Ok(())
@@ -3465,6 +3502,18 @@ pub fn cycles_for_payment_amount_e8s(
     Ok(cycles)
 }
 
+fn validate_cycles_purchase_minimum(
+    amount_cycles: u64,
+    min_expected_cycles: u64,
+) -> Result<(), String> {
+    if amount_cycles < min_expected_cycles {
+        return Err(format!(
+            "cycles purchase quote changed: amount_cycles {amount_cycles} is below min_expected_cycles {min_expected_cycles}"
+        ));
+    }
+    Ok(())
+}
+
 fn millis_to_nanos(value: i64) -> Result<u64, String> {
     let value = u64::try_from(value).map_err(|_| "timestamp must be non-negative".to_string())?;
     value
@@ -3783,6 +3832,41 @@ struct PendingCyclesOperation {
     ledger_block_index: Option<i64>,
 }
 
+struct DatabaseCyclesPendingPurchaseRaw {
+    operation_id: i64,
+    database_id: String,
+    caller: String,
+    status: String,
+    amount_cycles: i64,
+    payment_amount_e8s: i64,
+    ledger_block_index: Option<i64>,
+    created_at_ms: i64,
+}
+
+impl DatabaseCyclesPendingPurchaseRaw {
+    fn into_public(self) -> Result<DatabaseCyclesPendingPurchase, String> {
+        let amount_cycles = u64::try_from(self.amount_cycles).map_err(|error| error.to_string())?;
+        let payment_amount_e8s =
+            u64::try_from(self.payment_amount_e8s).map_err(|error| error.to_string())?;
+        let operation_id = u64::try_from(self.operation_id).map_err(|error| error.to_string())?;
+        let ledger_block_index = self
+            .ledger_block_index
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        Ok(DatabaseCyclesPendingPurchase {
+            operation_id,
+            database_id: self.database_id,
+            status: self.status.clone(),
+            amount_cycles,
+            payment_amount_e8s,
+            ledger_block_index,
+            created_at_ms: self.created_at_ms,
+            required_action: pending_cycles_required_action(&self.status).to_string(),
+        })
+    }
+}
+
 struct PendingCyclesLedgerDetails<'a> {
     from_owner: &'a str,
     from_subaccount: Option<&'a [u8]>,
@@ -3928,6 +4012,71 @@ fn ensure_no_pending_cycles_purchase_for_caller(
         return Err("cycles purchase already pending for caller".to_string());
     }
     Ok(())
+}
+
+fn load_database_cycles_pending_purchase_statuses(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<Vec<DatabaseCyclesPendingPurchaseRaw>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT operation_id, database_id, caller, operation_status, cycles,
+                    payment_amount_e8s, ledger_block_index, created_at_ms
+             FROM database_cycle_pending_operations
+             WHERE database_id = ?1 AND kind = 'cycles_purchase'
+             ORDER BY operation_id ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(
+        &mut stmt,
+        params![database_id],
+        map_database_cycles_pending_purchase_raw,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn first_database_cycles_pending_purchase_status(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<Option<DatabaseCyclesPendingPurchase>, String> {
+    conn.query_row(
+        "SELECT operation_id, database_id, caller, operation_status, cycles,
+                payment_amount_e8s, ledger_block_index, created_at_ms
+         FROM database_cycle_pending_operations
+         WHERE database_id = ?1 AND kind = 'cycles_purchase'
+         ORDER BY operation_id ASC
+         LIMIT 1",
+        params![database_id],
+        map_database_cycles_pending_purchase_raw,
+    )
+    .optional()
+    .map_err(|error| error.to_string())?
+    .map(DatabaseCyclesPendingPurchaseRaw::into_public)
+    .transpose()
+}
+
+fn map_database_cycles_pending_purchase_raw(
+    row: &crate::sqlite::Row<'_>,
+) -> crate::sqlite::Result<DatabaseCyclesPendingPurchaseRaw> {
+    Ok(DatabaseCyclesPendingPurchaseRaw {
+        operation_id: crate::sqlite::row_get(row, 0)?,
+        database_id: crate::sqlite::row_get(row, 1)?,
+        caller: crate::sqlite::row_get(row, 2)?,
+        status: crate::sqlite::row_get(row, 3)?,
+        amount_cycles: crate::sqlite::row_get(row, 4)?,
+        payment_amount_e8s: crate::sqlite::row_get(row, 5)?,
+        ledger_block_index: crate::sqlite::row_get(row, 6)?,
+        created_at_ms: crate::sqlite::row_get(row, 7)?,
+    })
+}
+
+fn pending_cycles_required_action(status: &str) -> &'static str {
+    match status {
+        CYCLES_OPERATION_STATUS_IN_FLIGHT => "wait_for_ledger_result",
+        CYCLES_OPERATION_STATUS_AMBIGUOUS => "billing_authority_repair_complete_or_cancel",
+        CYCLES_OPERATION_STATUS_COMPLETED => "billing_authority_retry",
+        _ => "billing_authority_review",
+    }
 }
 
 fn map_pending_cycles_operation(
@@ -4130,17 +4279,15 @@ fn charge_database_update_in_tx(
     charge: DatabaseCharge<'_>,
 ) -> Result<(), String> {
     let balance = database_balance_for_update(tx, charge.database_id)?;
-    if charge.computed_charge > balance {
-        return Err("database cycles balance is insufficient for update charge".to_string());
-    }
-    let next = balance - charge.computed_charge;
+    let paid_cycles = balance.max(0).min(charge.computed_charge);
+    let next = balance.max(0) - paid_cycles;
     update_database_cycles_balance(tx, charge.database_id, next, charge.config, charge.now)?;
     insert_database_ledger(
         tx,
         DatabaseLedgerInsert {
             database_id: charge.database_id,
             kind: "charge",
-            amount_cycles: -charge.computed_charge,
+            amount_cycles: -paid_cycles,
             balance_after_cycles: next,
             payment_amount_e8s: None,
             caller: charge.caller,
