@@ -2380,7 +2380,7 @@ mod tests {
         );
 
         assert!(lines.contains(&"billing_authority_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
-        assert!(lines.contains(&"ledger_fee_e8s\t10000".to_string()));
+        assert!(lines.contains(&"ledger_fee_e8s\t100000".to_string()));
     }
 
     #[tokio::test]

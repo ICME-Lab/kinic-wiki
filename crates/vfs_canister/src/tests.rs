@@ -1004,7 +1004,7 @@ fn icrc21_purchase_database_cycles_returns_consent_message() {
     assert!(message.contains(&database.database_id));
     assert!(message.contains("Cycles: `117250000`"));
     assert!(message.contains("Payment: `0.0005` KINIC"));
-    assert!(message.contains("Ledger transfer fee in allowance: `0.0001` KINIC"));
+    assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
     assert!(message.contains("Spender canister:"));
 }
 

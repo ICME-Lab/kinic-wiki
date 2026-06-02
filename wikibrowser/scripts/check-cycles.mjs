@@ -151,12 +151,12 @@ const walletModule = loadTsModule(
     },
     "@/lib/vfs-client": { getCyclesBillingConfig: async () => ({ kinicLedgerCanisterId: "ledger" }) },
     "@/lib/vfs-idl": { idlFactory: () => ({}) },
-    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 10_000n }
+    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n }
   },
   "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertConfiguredCyclesCanister, purchaseAfterApprove, decodeOisyCyclesPurchaseResult } });"
 );
 const walletTest = walletModule.__test;
-assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 10_000n), 100_010_000n);
+assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 100_000n), 100_100_000n);
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured/);
 walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);

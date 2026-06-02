@@ -1,6 +1,6 @@
 export type CycleTone = "blue" | "amber" | "red" | "gray";
 
-export const KINIC_LEDGER_FEE_E8S = 10_000n;
+export const KINIC_LEDGER_FEE_E8S = 100_000n;
 export const KINIC_DECIMALS = 8;
 export const CYCLES_PER_KINIC = 234_500_000_000n;
 

@@ -29,7 +29,7 @@
 | `cycles_per_kinic` | `234_500_000_000` (`1 KINIC = 0.2345 Tcycle`) |
 | `min_update_cycles` | `1_000_000` |
 | `config_version` | `1` |
-| KINIC ledger fee | `10_000 e8s` |
+| KINIC ledger fee | `100_000 e8s` |
 | KINIC decimals | `8` |
 
 `update_cycles_billing_config` は認証済み caller のみ呼べる。caller が `billing_authority_id` と一致しない場合は拒否する。更新 payload は Candid encoded `CyclesBillingConfigUpdate` blob で、変更できる値は `cycles_per_kinic` と `min_update_cycles` のみである。
