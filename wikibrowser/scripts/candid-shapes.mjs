@@ -26,25 +26,13 @@ export const expectedTypes = {
   },
   CyclesPurchaseResult: {
     kind: "record",
-    fields: { block_index: "nat64", balance_cycles: "nat64" }
-  },
-  DatabaseCyclesPurchasePreview: {
-    kind: "record",
-    fields: {
-      payment_amount_e8s: "nat64",
-      cycles: "nat64",
-      ledger_fee_e8s: "nat64",
-      cycles_per_kinic: "nat64",
-      config_version: "nat64"
-    }
+    fields: { block_index: "nat64", amount_cycles: "nat64", balance_cycles: "nat64" }
   },
   DatabaseCyclesPurchaseRequest: {
     kind: "record",
     fields: {
       database_id: "text",
-      payment_amount_e8s: "nat64",
-      expected_cycles: "nat64",
-      expected_config_version: "nat64"
+      payment_amount_e8s: "nat64"
     }
   },
   Icrc21ConsentMessageMetadata: {
@@ -130,32 +118,6 @@ export const expectedTypes = {
   DatabaseCycleEntryPage: {
     kind: "record",
     fields: { entries: "vec DatabaseCycleEntry", next_cursor: "opt nat64" }
-  },
-  DatabaseCyclePendingOperation: {
-    kind: "record",
-    fields: {
-      cycles: "int64",
-      payment_amount_e8s: "int64",
-      to_owner: "opt text",
-      to_subaccount: "opt blob",
-      from_owner: "opt text",
-      kind: "text",
-      operation_id: "nat64",
-      from_subaccount: "opt blob",
-      operation_status: "text",
-      created_at_ms: "int64",
-      ledger_fee_e8s: "opt int64",
-      ledger_created_at_time_ns: "opt int64",
-      database_id: "text",
-      caller: "text"
-    }
-  },
-  DatabaseCyclePendingOperationPage: {
-    kind: "record",
-    fields: {
-      entries: "vec DatabaseCyclePendingOperation",
-      next_cursor: "opt nat64"
-    }
   },
   CanonicalRole: {
     kind: "record",
@@ -345,9 +307,7 @@ export const expectedTypes = {
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
   ResultCyclesBillingConfig: { kind: "variant", cases: { Ok: "CyclesBillingConfig", Err: "text" } },
   ResultCyclesPurchase: { kind: "variant", cases: { Ok: "CyclesPurchaseResult", Err: "text" } },
-  ResultCyclesPurchasePreview: { kind: "variant", cases: { Ok: "DatabaseCyclesPurchasePreview", Err: "text" } },
   ResultCyclesEntries: { kind: "variant", cases: { Ok: "DatabaseCycleEntryPage", Err: "text" } },
-  ResultCyclesPending: { kind: "variant", cases: { Ok: "DatabaseCyclePendingOperationPage", Err: "text" } },
     ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
@@ -434,26 +394,24 @@ export const didTypeAliases = {
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultChildren: "Result_12",
   ResultCyclesBillingConfig: "Result_9",
-  ResultCyclesPurchasePreview: "Result_20",
-  ResultCyclesPurchase: "Result_21",
+  ResultCyclesPurchase: "Result_19",
   ResultCyclesEntries: "Result_13",
-  ResultCyclesPending: "Result_14",
   ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_16",
+  ResultDatabases: "Result_15",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_18",
-  ResultMoveNode: "Result_19",
-  ResultMembers: "Result_15",
+  ResultMkdirNode: "Result_17",
+  ResultMoveNode: "Result_18",
+  ResultMembers: "Result_14",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_25",
-  ResultNodeContext: "Result_26",
-  ResultQueryContext: "Result_22",
-  ResultSearch: "Result_27",
-  ResultSourceEvidence: "Result_28",
+  ResultNode: "Result_23",
+  ResultNodeContext: "Result_24",
+  ResultQueryContext: "Result_20",
+  ResultSearch: "Result_25",
+  ResultSourceEvidence: "Result_26",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_30"
+  ResultWriteSourceForGeneration: "Result_28"
 };
 
 export const expectedMethods = {
@@ -477,19 +435,16 @@ export const expectedMethods = {
   incoming_links: { input: ["IncomingLinksRequest"], output: "ResultLinks", mode: "query" },
   list_children: { input: ["ListChildrenRequest"], output: "ResultChildren", mode: "query" },
   list_database_cycle_entries: { input: ["text", "opt nat64", "nat32"], output: "ResultCyclesEntries", mode: "query" },
-  list_database_cycle_pending_operations: { input: ["text", "opt nat64", "nat32"], output: "ResultCyclesPending", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
   memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
-  preview_database_cycles_purchase: { input: ["text", "nat64"], output: "ResultCyclesPurchasePreview", mode: "query" },
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
-  repair_database_cycles_purchase_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
-  repair_database_cycles_purchase_complete: { input: ["text", "nat64", "nat64"], output: "ResultCyclesPurchase", mode: "update" },
+  retry_database_cycles_purchase: { input: ["text", "nat64"], output: "ResultCyclesPurchase", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },

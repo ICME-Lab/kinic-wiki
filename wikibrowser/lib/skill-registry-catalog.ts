@@ -33,15 +33,22 @@ export type SkillRunEvidence = {
 };
 
 export type SkillProposal = {
-  path: string;
+  proposalRoot: string;
+  candidatePath: string;
+  metricsPath: string;
+  statusPath: string;
   id: string;
   title: string;
-  status: string;
+  status: ProposalStatus;
   createdAt: string;
   sourceRuns: string[];
-  diff: string | null;
-  appliedAt: string | null;
+  candidatePreview: string;
+  baseEtag: string;
+  appliedAt: string;
+  metricsPreview: string;
 };
+
+export type ProposalStatus = "proposed" | "reviewed" | "auto_applied" | "gate_failed" | "conflict";
 
 export type SkillEvent = {
   path: string;

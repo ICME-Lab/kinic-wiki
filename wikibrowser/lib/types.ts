@@ -137,31 +137,14 @@ export type CyclesBillingConfig = {
 
 export type CyclesPurchaseResult = {
   blockIndex: string;
+  amountCycles: string;
   balanceCycles: string;
-};
-
-export type DatabaseCyclesPurchasePreview = {
-  paymentAmountE8s: string;
-  cycles: string;
-  ledgerFeeE8s: string;
-  cyclesPerKinic: string;
-  configVersion: string;
 };
 
 export type DatabaseMember = {
   databaseId: string;
   principal: string;
   role: DatabaseRole;
-  createdAtMs: string;
-};
-
-export type DatabaseCyclePendingOperation = {
-  operationId: string;
-  databaseId: string;
-  kind: string;
-  operationStatus: string;
-  cycles: string;
-  paymentAmountE8s: string;
   createdAtMs: string;
 };
 

@@ -36,6 +36,15 @@ test("invalid draft schema is rejected", () => {
   assert.throws(() => parseDraftText('{"title":"Bad"}'), /schema/);
   const draft = parseDraftResponse({ choices: [{ message: { content: draftJson } }] });
   assert.throws(() => validateDraftSources(draft, "/Sources/raw/b/b.md"), /unsupported source/);
+  assert.throws(() => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), extra: true })), /schema/);
+  assert.throws(
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, extra: true } })),
+    /schema/
+  );
+  assert.throws(
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), key_facts: [{ text: "Fact", source_path: "/Sources/raw/a/a.md", extra: true }] })),
+    /schema/
+  );
 });
 
 test("draft labels must be non-empty single-line strings", () => {
@@ -86,6 +95,30 @@ test("generateDraft calls DeepSeek chat completions", async () => {
     assert.match(JSON.stringify(requestBody.messages), /pattern/);
     assert.match(JSON.stringify(requestBody.messages), /non-empty single-line strings/);
     assert.equal(draft.slug, "project-notes");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("generateDraft reports non-JSON DeepSeek failures before parsing", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (): Promise<Response> => new Response("insufficient balance", { status: 402, statusText: "Payment Required" });
+  try {
+    await assert.rejects(
+      generateDraft(
+        {
+          path: "/Sources/raw/a/a.md",
+          kind: "source",
+          content: "raw",
+          etag: "etag-1",
+          metadataJson: "{}"
+        },
+        [],
+        config(),
+        "deepseek-key"
+      ),
+      /DeepSeek request failed: 402 Payment Required/
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

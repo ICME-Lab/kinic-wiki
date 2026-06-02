@@ -303,7 +303,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                             }),
                           true
                         ),
-                      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.path)),
+                      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.proposalRoot)),
                       previewProposal: (proposal) =>
                         void runSkillAction(
                           skill,
@@ -316,7 +316,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                         ),
                       applyProposal: (proposal) =>
                         void runSkillAction(skill, async (activeIdentity, draft) => {
-                          if (!draft.preview || draft.preview.proposalPath !== proposal.path) throw new Error("Preview this proposal before applying.");
+                          if (!draft.preview || draft.preview.proposalPath !== proposal.proposalRoot) throw new Error("Preview this proposal before applying.");
                           await applyProposalDiff(canisterId, databaseId, activeIdentity, proposal, draft.preview);
                           await recordSkillEvent(canisterId, databaseId, activeIdentity, skill.manifest.id, { action: "proposal.apply", targetPath: draft.preview.targetPath, result: "applied" });
                         })

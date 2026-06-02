@@ -13,7 +13,6 @@ import {
   deleteDatabaseAuthenticated,
   getCyclesBillingConfig,
   grantDatabaseAccessAuthenticated,
-  listDatabaseCyclePendingOperationsAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
@@ -34,7 +33,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
   const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
-  const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -63,7 +61,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setDatabases([]);
         setCyclesBillingConfig(null);
         setMembers([]);
-        setPendingOperationCount(0);
         setError(null);
         setWarning(null);
         setMemberError(null);
@@ -96,7 +93,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setDatabases(nextDatabases);
         setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
         setMembers([]);
-        setPendingOperationCount(0);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
         }
@@ -113,14 +109,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               if (!isCurrentRefresh()) return;
               setMemberError(errorMessage(cause));
             }
-          }
-          try {
-            const pendingOperations = await listDatabaseCyclePendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
-            if (!isCurrentRefresh()) return;
-            setPendingOperationCount(pendingOperations.length);
-          } catch {
-            if (!isCurrentRefresh()) return;
-            setPendingOperationCount(0);
           }
         } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
           try {
@@ -302,7 +290,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
         {database ? (
           canDeletePendingDatabase ? (
-            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} pendingOperationCount={pendingOperationCount} onDelete={deleteDatabase} />
+            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
           ) : canManage ? (
             <OwnerPanel
               cyclesBalance={database.cyclesBalance}
@@ -311,7 +299,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               databaseId={databaseId}
               databaseName={database.name}
               members={members}
-              pendingOperationCount={pendingOperationCount}
               principal={principal ?? "anonymous"}
               onDelete={deleteDatabase}
               onGrant={grantAccess}

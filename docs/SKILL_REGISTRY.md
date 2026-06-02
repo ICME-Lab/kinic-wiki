@@ -182,7 +182,7 @@ Command responsibilities:
 - `skill set-status`: move a package through `draft`, `reviewed`, `promoted`, or `deprecated`.
 - `skill import github`: import package files from a GitHub source.
 - `skill propose-improvement`: write evidence-backed proposal records.
-- `skill approve-proposal`: mark a proposal approved; it does not apply the diff.
+- `skill approve-proposal`: mark a proposal reviewed; it does not apply the diff.
 - `skill install`: write a downstream lockfile only; it does not place files into an agent runtime.
 
 Share access with database member commands:
@@ -354,11 +354,12 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill propose-improvement lega
   --runs /Sources/skill-runs/legal-review/123.md \
   --summary "Tighten missing-approval checks" \
   --diff-file ./proposal.diff
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill approve-proposal legal-review /Wiki/skills/legal-review/improvement-proposals/123.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill approve-proposal legal-review /Wiki/skills/legal-review/proposals/123
 ```
 
-`approve-proposal` marks the proposal approved. It does not apply the diff to `SKILL.md`; update the source package and run `skill upsert`.
-Approval only accepts proposal nodes under the target skill's `improvement-proposals/` directory with matching proposal frontmatter.
+`propose-improvement` writes a v1 proposal directory containing `proposal.md`, `diff.md`, `candidate/SKILL.md`, `metrics.json`, and `status.md`.
+`approve-proposal` updates `status.md` to `reviewed`. It does not apply the diff to `SKILL.md`; use `apply-proposal` for gated candidate application.
+Approval only accepts proposal roots under the target skill's `proposals/` directory with matching proposal frontmatter and status metadata.
 
 ## Example
 

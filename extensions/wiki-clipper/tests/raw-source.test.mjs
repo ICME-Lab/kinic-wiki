@@ -68,6 +68,34 @@ test("buildRawSource keeps a stable path for Claude conversations", () => {
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 
+test("buildRawSource truncates long conversation ids to a canonical source filename", () => {
+  const longId = `conversation-${"a".repeat(220)}`;
+  const raw = buildRawSource({
+    provider: "chatgpt",
+    conversationTitle: "Long ID",
+    url: `https://chatgpt.com/c/${longId}`,
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+  const fileName = raw.path.split("/").at(-1);
+
+  assert.match(raw.path, /^\/Sources\/raw\/chatgpt\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
+  assert.equal(fileName.length <= 131, true);
+  assert.equal(JSON.parse(raw.metadataJson).conversation_id, longId);
+});
+
+test("buildRawSource removes dotdot from conversation source filenames", () => {
+  const raw = buildRawSource({
+    provider: "chatgpt",
+    conversationTitle: "Dotdot",
+    url: "https://chatgpt.com/c/a..b",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.equal(raw.path, "/Sources/raw/chatgpt/a-b.md");
+});
+
 test("buildRawSource rejects empty captures", () => {
   assert.throws(
     () =>

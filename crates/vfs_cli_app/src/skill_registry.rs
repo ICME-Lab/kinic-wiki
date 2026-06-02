@@ -11,7 +11,8 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use model::{
     PRIVATE_ROOT, RUN_ROOT, SkillId, extract_frontmatter, manifest_for_source, normalize_manifest,
-    now_millis, now_rfc3339, parse_skill_source_frontmatter, print, run_base_path,
+    now_millis, now_rfc3339, parse_skill_source_frontmatter, print,
+    remove_root_frontmatter_fields_preserving_content, run_base_path,
     set_manifest_provenance_field, set_manifest_status_preserving_content,
     set_root_frontmatter_field_preserving_content, skill_base_path,
 };
@@ -26,8 +27,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub(crate) use vfs_cli::skill_kb::{find_skills, inspect_skill};
 use vfs_client::VfsApi;
 use vfs_types::{
-    DeleteNodeRequest, ListNodesRequest, MkdirNodeRequest, NodeEntryKind, NodeKind, WriteNodeItem,
-    WriteNodeRequest, WriteNodesRequest,
+    DeleteNodeRequest, ListNodesRequest, MkdirNodeRequest, Node, NodeEntryKind, NodeKind,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 const SKILL_PACKAGE_FILE_LIMIT_MAX: usize = 100;
@@ -500,10 +501,16 @@ pub(crate) async fn set_skill_status(
     let timestamp = now_rfc3339();
     match status {
         SkillStatusArg::Promoted => {
+            content = remove_root_frontmatter_fields_preserving_content(
+                &content,
+                &["deprecated_at", "deprecated_reason"],
+            )?;
             content =
                 set_root_frontmatter_field_preserving_content(&content, "promoted_at", &timestamp)?;
         }
         SkillStatusArg::Deprecated => {
+            content =
+                remove_root_frontmatter_fields_preserving_content(&content, &["promoted_at"])?;
             if let Some(reason) = reason {
                 content = set_root_frontmatter_field_preserving_content(
                     &content,
@@ -517,7 +524,12 @@ pub(crate) async fn set_skill_status(
                 &timestamp,
             )?;
         }
-        SkillStatusArg::Draft | SkillStatusArg::Reviewed => {}
+        SkillStatusArg::Draft | SkillStatusArg::Reviewed => {
+            content = remove_root_frontmatter_fields_preserving_content(
+                &content,
+                &["deprecated_at", "deprecated_reason", "promoted_at"],
+            )?;
+        }
     }
     client
         .write_node(WriteNodeRequest {
@@ -603,12 +615,20 @@ pub(crate) async fn propose_improvement(
     }
     let diff = std::fs::read_to_string(diff_file)
         .with_context(|| format!("failed to read {}", diff_file.display()))?;
-    let path_timestamp = now_millis();
+    let proposal_id = now_millis().to_string();
     let created_at = now_rfc3339();
-    let proposal_path = format!(
-        "{}/improvement-proposals/{path_timestamp}.md",
-        skill_base_path(&skill_id)
-    );
+    let base_path = skill_base_path(&skill_id);
+    let current_path = format!("{base_path}/SKILL.md");
+    let current = client
+        .read_node(database_id, &current_path)
+        .await?
+        .ok_or_else(|| anyhow!("SKILL.md not found: {current_path}"))?;
+    let proposal_root = format!("{base_path}/proposals/{proposal_id}");
+    let proposal_path = format!("{proposal_root}/proposal.md");
+    let diff_path = format!("{proposal_root}/diff.md");
+    let candidate_path = format!("{proposal_root}/candidate/SKILL.md");
+    let metrics_path = format!("{proposal_root}/metrics.json");
+    let status_path = format!("{proposal_root}/status.md");
     let source_runs = runs
         .iter()
         .map(|run| format!("  - {run}"))
@@ -619,22 +639,78 @@ pub(crate) async fn propose_improvement(
         .map(|run| format!("- [{run}]({run})"))
         .collect::<Vec<_>>()
         .join("\n");
-    let content = format!(
-        "---\nkind: kinic.skill_improvement_proposal\nschema_version: 1\nskill_id: {id}\nstatus: proposed\nsource_runs:\n{source_runs}\ncreated_at: {created_at}\ncreated_by: cli\n---\n# Skill Improvement Proposal\n\n## Summary\n\n{summary}\n\n## Evidence\n\n{evidence_links}\n\n## Proposed Diff\n\n{}\n",
+    let proposal_content = format!(
+        "---\nkind: kinic.skill_evolution_proposal\nschema_version: 1\nskill_id: {id}\nproposal_id: {proposal_id}\ncreated_at: {created_at}\ncreated_by: cli\nsource_runs:\n{source_runs}\n---\n# Skill Evolution Proposal\n\n## Summary\n\n{summary}\n\n## Evidence\n\n{evidence_links}\n\n## Diff\n\n[diff.md](diff.md)\n"
+    );
+    let diff_content = format!(
+        "# Proposal Diff\n\n{}\n",
         markdown_code_block("diff", &diff)
     );
-    ensure_parent_folders(client, database_id, &proposal_path).await?;
+    let metrics_content = serde_json::to_string_pretty(&json!({
+        "schema_version": 1,
+        "skill_id": id,
+        "proposal_id": proposal_id,
+        "base_etag": current.etag,
+        "created_at": created_at,
+        "source_runs": runs,
+        "candidate_score_gate": "manual_review_required",
+        "heading_consistency_gate": "manual_review_required",
+        "permission_gate": "manual_review_required"
+    }))?;
+    let status_content = proposal_status_content(&skill_id, &proposal_id, "proposed", None);
+    let paths = vec![
+        proposal_path.clone(),
+        diff_path.clone(),
+        candidate_path.clone(),
+        metrics_path.clone(),
+        status_path.clone(),
+    ];
+    ensure_parent_folders_for_paths(client, database_id, &paths).await?;
     client
-        .write_node(WriteNodeRequest {
+        .write_nodes(WriteNodesRequest {
             database_id: database_id.to_string(),
-            path: proposal_path.clone(),
-            kind: NodeKind::File,
-            content,
-            metadata_json: "{}".to_string(),
-            expected_etag: None,
+            nodes: vec![
+                WriteNodeItem {
+                    path: proposal_path.clone(),
+                    kind: NodeKind::File,
+                    content: proposal_content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                WriteNodeItem {
+                    path: diff_path,
+                    kind: NodeKind::File,
+                    content: diff_content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                WriteNodeItem {
+                    path: candidate_path,
+                    kind: NodeKind::File,
+                    content: current.content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                WriteNodeItem {
+                    path: metrics_path,
+                    kind: NodeKind::File,
+                    content: metrics_content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                WriteNodeItem {
+                    path: status_path,
+                    kind: NodeKind::File,
+                    content: status_content,
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+            ],
         })
         .await?;
-    Ok(json!({ "id": id, "proposal_path": proposal_path, "status": "proposed" }))
+    Ok(
+        json!({ "id": id, "proposal_id": proposal_id, "proposal_path": proposal_path, "proposal_root": proposal_root, "status": "proposed" }),
+    )
 }
 
 pub(crate) async fn approve_proposal(
@@ -643,25 +719,37 @@ pub(crate) async fn approve_proposal(
     id: &str,
     proposal_path: &str,
 ) -> Result<serde_json::Value> {
-    validate_proposal_target(id, proposal_path)?;
+    let (proposal_root, proposal_id) = validate_proposal_target(id, proposal_path)?;
+    let proposal_md_path = format!("{proposal_root}/proposal.md");
     let node = client
-        .read_node(database_id, proposal_path)
+        .read_node(database_id, &proposal_md_path)
         .await?
-        .ok_or_else(|| anyhow!("proposal not found: {proposal_path}"))?;
-    validate_proposal_frontmatter(id, &node.content)?;
-    let content =
-        set_root_frontmatter_field_preserving_content(&node.content, "status", "approved")?;
+        .ok_or_else(|| anyhow!("proposal not found: {proposal_md_path}"))?;
+    validate_proposal_frontmatter(id, &proposal_id, &node.content)?;
+    let status_path = format!("{proposal_root}/status.md");
+    let current_status = read_required_proposal_status(
+        client,
+        database_id,
+        &status_path,
+        id,
+        &proposal_id,
+        &["proposed"],
+    )
+    .await?;
+    let content = proposal_status_content(&SkillId::parse(id)?, &proposal_id, "reviewed", None);
     client
         .write_node(WriteNodeRequest {
             database_id: database_id.to_string(),
-            path: proposal_path.to_string(),
+            path: status_path.clone(),
             kind: NodeKind::File,
             content,
-            metadata_json: node.metadata_json,
-            expected_etag: Some(node.etag),
+            metadata_json: current_status.metadata_json,
+            expected_etag: Some(current_status.etag),
         })
         .await?;
-    Ok(json!({ "id": id, "proposal_path": proposal_path, "status": "approved" }))
+    Ok(
+        json!({ "id": id, "proposal_id": proposal_id, "proposal_path": proposal_md_path, "status_path": status_path, "status": "reviewed" }),
+    )
 }
 
 pub(crate) async fn install_skill_lockfile(
@@ -861,6 +949,16 @@ pub(crate) async fn apply_evolution_proposal(
         .read_node(database_id, &metrics_path)
         .await?
         .ok_or_else(|| anyhow!("metrics.json not found: {metrics_path}"))?;
+    let status_path = format!("{base_path}/proposals/{proposal_id}/status.md");
+    let status_node = read_required_proposal_status(
+        client,
+        database_id,
+        &status_path,
+        &skill_id.to_string(),
+        proposal_id,
+        &["proposed", "reviewed"],
+    )
+    .await?;
     let metrics_json: serde_json::Value = serde_json::from_str(&metrics.content)
         .with_context(|| format!("invalid metrics JSON: {metrics_path}"))?;
     let base_etag = metrics_json
@@ -869,18 +967,16 @@ pub(crate) async fn apply_evolution_proposal(
         .ok_or_else(|| anyhow!("metrics.json must contain base_etag"))?;
     let gate_failure = proposal_gate_failure(&metrics_json);
     if let Some(gate_failure) = gate_failure {
-        let status_path = format!("{base_path}/proposals/{proposal_id}/status.md");
         let content =
             proposal_status_content(&skill_id, proposal_id, "gate_failed", Some(gate_failure));
-        ensure_parent_folders(client, database_id, &status_path).await?;
         client
             .write_node(WriteNodeRequest {
                 database_id: database_id.to_string(),
                 path: status_path.clone(),
                 kind: NodeKind::File,
                 content,
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
+                metadata_json: status_node.metadata_json,
+                expected_etag: Some(status_node.etag),
             })
             .await?;
         return Ok(
@@ -888,18 +984,16 @@ pub(crate) async fn apply_evolution_proposal(
         );
     }
     if base_etag != current.etag {
-        let status_path = format!("{base_path}/proposals/{proposal_id}/status.md");
         let content =
             proposal_status_content(&skill_id, proposal_id, "conflict", Some(&current.etag));
-        ensure_parent_folders(client, database_id, &status_path).await?;
         client
             .write_node(WriteNodeRequest {
                 database_id: database_id.to_string(),
                 path: status_path.clone(),
                 kind: NodeKind::File,
                 content,
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
+                metadata_json: status_node.metadata_json,
+                expected_etag: Some(status_node.etag),
             })
             .await?;
         return Ok(
@@ -942,17 +1036,15 @@ pub(crate) async fn apply_evolution_proposal(
             sync_error = Some(error.to_string());
         }
     }
-    let status_path = format!("{base_path}/proposals/{proposal_id}/status.md");
     let content = proposal_status_content(&skill_id, proposal_id, status, sync_error.as_deref());
-    ensure_parent_folders(client, database_id, &status_path).await?;
     client
         .write_node(WriteNodeRequest {
             database_id: database_id.to_string(),
             path: status_path.clone(),
             kind: NodeKind::File,
             content,
-            metadata_json: "{}".to_string(),
-            expected_etag: None,
+            metadata_json: status_node.metadata_json,
+            expected_etag: Some(status_node.etag),
         })
         .await?;
     Ok(
@@ -1561,10 +1653,21 @@ fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
             continue;
         };
         if field.trim() == key {
-            return Some(value.trim().trim_matches('"').to_string());
+            return Some(clean_yaml_value(value));
         }
     }
     None
+}
+
+fn clean_yaml_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    }
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return trimmed[1..trimmed.len() - 1].replace("''", "'");
+    }
+    trimmed.to_string()
 }
 
 fn is_claim_expired(value: &str) -> bool {
@@ -1593,6 +1696,16 @@ mod skill_evolve_jobs_tests {
     }
 
     #[test]
+    fn frontmatter_scalar_unescapes_json_quoted_value() {
+        let content = "---\nstatus: \"queued\\\"now\"\n---\n# Job\n";
+
+        assert_eq!(
+            frontmatter_scalar(content, "status"),
+            Some("queued\"now".to_string())
+        );
+    }
+
+    #[test]
     fn truncate_error_removes_newlines_and_caps_length() {
         let value = truncate_error(&format!("a\n{}", "b".repeat(1000)));
 
@@ -1606,25 +1719,43 @@ struct ProposalFrontmatter {
     kind: String,
     schema_version: u32,
     skill_id: String,
+    proposal_id: String,
+}
+
+#[derive(Deserialize)]
+struct ProposalStatusFrontmatter {
+    kind: String,
+    schema_version: u32,
+    skill_id: String,
+    proposal_id: String,
     status: String,
+    recorded_at: String,
 }
 
-fn validate_proposal_target(id: &str, proposal_path: &str) -> Result<()> {
+fn validate_proposal_target(id: &str, proposal_path: &str) -> Result<(String, String)> {
     let skill_id = SkillId::parse(id)?;
-    let private_prefix = format!("{}/{}/improvement-proposals/", PRIVATE_ROOT, skill_id);
-    if proposal_path.starts_with(&private_prefix) {
-        return Ok(());
+    let private_prefix = format!("{}/{}/proposals/", PRIVATE_ROOT, skill_id);
+    let Some(rest) = proposal_path.strip_prefix(&private_prefix) else {
+        return Err(anyhow!("proposal path must belong to skill {id} proposals"));
+    };
+    let proposal_id = rest
+        .strip_suffix("/proposal.md")
+        .unwrap_or(rest)
+        .trim_end_matches('/');
+    if valid_id_segment(proposal_id) {
+        return Ok((
+            format!("{private_prefix}{proposal_id}"),
+            proposal_id.to_string(),
+        ));
     }
-    Err(anyhow!(
-        "proposal path must belong to skill {id} improvement-proposals"
-    ))
+    Err(anyhow!("proposal id must use a single path-safe name"))
 }
 
-fn validate_proposal_frontmatter(id: &str, content: &str) -> Result<()> {
+fn validate_proposal_frontmatter(id: &str, proposal_id: &str, content: &str) -> Result<()> {
     let frontmatter: ProposalFrontmatter = serde_yaml::from_str(extract_frontmatter(content)?)?;
-    if frontmatter.kind != "kinic.skill_improvement_proposal" {
+    if frontmatter.kind != "kinic.skill_evolution_proposal" {
         return Err(anyhow!(
-            "proposal kind must be kinic.skill_improvement_proposal"
+            "proposal kind must be kinic.skill_evolution_proposal"
         ));
     }
     if frontmatter.schema_version != 1 {
@@ -1633,10 +1764,67 @@ fn validate_proposal_frontmatter(id: &str, content: &str) -> Result<()> {
     if frontmatter.skill_id != id {
         return Err(anyhow!("proposal skill_id must match id"));
     }
-    if frontmatter.status != "proposed" {
-        return Err(anyhow!("proposal status must be proposed"));
+    if frontmatter.proposal_id != proposal_id {
+        return Err(anyhow!("proposal proposal_id must match path"));
     }
     Ok(())
+}
+
+fn validate_proposal_status_frontmatter_one_of(
+    id: &str,
+    proposal_id: &str,
+    content: &str,
+    expected_statuses: &[&str],
+) -> Result<()> {
+    let frontmatter: ProposalStatusFrontmatter =
+        serde_yaml::from_str(extract_frontmatter(content)?)?;
+    if frontmatter.kind != "kinic.skill_evolution_proposal_status" {
+        return Err(anyhow!(
+            "proposal status kind must be kinic.skill_evolution_proposal_status"
+        ));
+    }
+    if frontmatter.schema_version != 1 {
+        return Err(anyhow!("proposal status schema_version must be 1"));
+    }
+    if frontmatter.skill_id != id {
+        return Err(anyhow!("proposal status skill_id must match id"));
+    }
+    if frontmatter.proposal_id != proposal_id {
+        return Err(anyhow!("proposal status proposal_id must match path"));
+    }
+    if !expected_statuses
+        .iter()
+        .any(|expected| frontmatter.status == *expected)
+    {
+        return Err(anyhow!(
+            "proposal status must be one of {}",
+            expected_statuses.join(", ")
+        ));
+    }
+    DateTime::parse_from_rfc3339(&frontmatter.recorded_at)
+        .map(|_| ())
+        .map_err(|_| anyhow!("proposal status recorded_at must be RFC3339"))
+}
+
+async fn read_required_proposal_status(
+    client: &impl VfsApi,
+    database_id: &str,
+    status_path: &str,
+    id: &str,
+    proposal_id: &str,
+    expected_statuses: &[&str],
+) -> Result<Node> {
+    let status = client
+        .read_node(database_id, status_path)
+        .await?
+        .ok_or_else(|| anyhow!("proposal status not found: {status_path}"))?;
+    validate_proposal_status_frontmatter_one_of(
+        id,
+        proposal_id,
+        &status.content,
+        expected_statuses,
+    )?;
+    Ok(status)
 }
 
 async fn ensure_parent_folders(client: &impl VfsApi, database_id: &str, path: &str) -> Result<()> {
@@ -1769,14 +1957,34 @@ fn referenced_markdown_files(source_dir: &Path, skill: &str) -> Result<Vec<Strin
 
 fn markdown_link_targets(content: &str) -> Vec<String> {
     let mut targets = Vec::new();
-    let mut rest = content;
-    while let Some(start) = rest.find("](") {
-        rest = &rest[start + 2..];
-        let Some(end) = rest.find(')') else {
-            break;
-        };
-        targets.push(rest[..end].to_string());
-        rest = &rest[end + 1..];
+    let bytes = content.as_bytes();
+    let mut index = 0;
+    while let Some(start) = content[index..].find("](").map(|found| index + found + 2) {
+        let mut cursor = start;
+        if bytes.get(cursor) == Some(&b'<')
+            && let Some(close) = content[cursor + 1..]
+                .find('>')
+                .map(|found| cursor + 1 + found)
+            && bytes.get(close + 1) == Some(&b')')
+        {
+            targets.push(content[cursor..=close].to_string());
+            index = close + 2;
+            continue;
+        }
+        let mut depth = 0_usize;
+        while cursor < content.len() {
+            match bytes[cursor] {
+                b'(' => depth += 1,
+                b')' if depth == 0 => break,
+                b')' => depth -= 1,
+                _ => {}
+            }
+            cursor += 1;
+        }
+        if cursor < content.len() {
+            targets.push(content[start..cursor].to_string());
+        }
+        index = cursor.saturating_add(1);
     }
     targets
 }
@@ -1811,7 +2019,11 @@ pub(crate) fn markdown_target_package_key(raw_target: &str) -> Option<String> {
 }
 
 fn clean_markdown_link_target(raw_target: &str) -> Option<String> {
-    let target = raw_target.split_whitespace().next()?.trim();
+    let target = markdown_destination_without_title(raw_target.trim());
+    let target = target
+        .strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(target);
     let target = target.split(['#', '?']).next()?.trim();
     if target.is_empty()
         || target.starts_with('#')
@@ -1822,6 +2034,73 @@ fn clean_markdown_link_target(raw_target: &str) -> Option<String> {
         return None;
     }
     Some(target.to_string())
+}
+
+fn markdown_destination_without_title(target: &str) -> &str {
+    let target = target.trim();
+    if let Some(inner) = target.strip_prefix('<')
+        && let Some(close) = inner.find('>')
+    {
+        let destination = &inner[..close];
+        let suffix = inner[close + 1..].trim();
+        if suffix.is_empty() || is_markdown_title_suffix(suffix) {
+            return destination;
+        }
+    }
+    strip_quoted_markdown_title(target, b'"')
+        .or_else(|| strip_quoted_markdown_title(target, b'\''))
+        .or_else(|| strip_parenthesized_markdown_title(target))
+        .unwrap_or(target)
+}
+
+fn strip_quoted_markdown_title(target: &str, quote: u8) -> Option<&str> {
+    let bytes = target.as_bytes();
+    if bytes.last().copied() != Some(quote) {
+        return None;
+    }
+    for index in (0..bytes.len().saturating_sub(1)).rev() {
+        if bytes[index] == quote && index > 0 && bytes[index - 1].is_ascii_whitespace() {
+            let destination = target[..index - 1].trim_end();
+            if is_markdown_destination_candidate(destination) {
+                return Some(destination);
+            }
+        }
+    }
+    None
+}
+
+fn strip_parenthesized_markdown_title(target: &str) -> Option<&str> {
+    if !target.ends_with(')') {
+        return None;
+    }
+    let title_start = target.rfind(" (")?;
+    let destination = target[..title_start].trim_end();
+    if is_markdown_destination_candidate(destination) {
+        return Some(destination);
+    }
+    None
+}
+
+fn is_markdown_title_suffix(value: &str) -> bool {
+    (value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\''))
+        || (value.starts_with('(') && value.ends_with(')'))
+}
+
+fn is_markdown_destination_candidate(value: &str) -> bool {
+    let target = value
+        .strip_prefix('<')
+        .and_then(|inner| inner.strip_suffix('>'))
+        .unwrap_or(value)
+        .split(['#', '?'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    !target.is_empty()
+        && !target.starts_with('#')
+        && !target.starts_with('/')
+        && !target.contains("://")
+        && target.ends_with(".md")
 }
 
 fn path_to_package_key(path: &Path) -> Option<String> {
@@ -1871,10 +2150,11 @@ fn resolve_run_id(run_id_override: Option<&str>, evidence_run_id: Option<&str>) 
 }
 
 fn valid_id_segment(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphanumeric())
+        && value.len() <= 128
+        && !value.contains("..")
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 fn markdown_code_block(info: &str, content: &str) -> String {
@@ -1905,15 +2185,11 @@ fn is_runtime_export_file(relative_path: &str) -> bool {
     if matches!(relative_path, "manifest.md" | "provenance.md" | "evals.md") {
         return false;
     }
-    !relative_path.starts_with("proposals/")
-        && !relative_path.starts_with("versions/")
-        && !relative_path.starts_with("improvement-proposals/")
+    !relative_path.starts_with("proposals/") && !relative_path.starts_with("versions/")
 }
 
 fn is_github_export_file(relative_path: &str) -> bool {
-    !relative_path.starts_with("proposals/")
-        && !relative_path.starts_with("versions/")
-        && !relative_path.starts_with("improvement-proposals/")
+    !relative_path.starts_with("proposals/") && !relative_path.starts_with("versions/")
 }
 
 async fn github_export_files(

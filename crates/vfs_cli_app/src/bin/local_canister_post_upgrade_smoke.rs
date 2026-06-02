@@ -6,7 +6,7 @@ use std::{env, fs};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::{CanisterVfsClient, VfsApi};
-use vfs_types::{CyclesBillingConfig, DatabaseStatus};
+use vfs_types::{CyclesBillingConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus};
 
 #[derive(Debug)]
 struct SmokeArgs {
@@ -18,6 +18,9 @@ struct SmokeArgs {
 struct SmokeState {
     canister_id: String,
     database_id: String,
+    active_database_id: String,
+    active_balance_cycles: u64,
+    active_ledger_entry_count: usize,
     expected_config: CyclesBillingConfig,
 }
 
@@ -48,9 +51,11 @@ async fn main() -> Result<()> {
             ));
         }
         assert_pending_database(&client, &state.database_id).await?;
+        assert_active_database(&client, &state).await?;
         println!("local_canister_post_upgrade_smoke verify ok");
         println!("canister_id={}", state.canister_id);
         println!("database_id={}", state.database_id);
+        println!("active_database_id={}", state.active_database_id);
         return Ok(());
     }
 
@@ -59,18 +64,32 @@ async fn main() -> Result<()> {
         .await?
         .database_id;
     assert_pending_database(&client, &database_id).await?;
+    let active_database_id = client
+        .create_database("Post-upgrade active smoke")
+        .await?
+        .database_id;
+    let active_balance_cycles =
+        activate_smoke_database(&client, &active_database_id, smoke_cycle_purchase_e8s()?).await?;
+    let active_ledger_entry_count = client
+        .list_database_cycle_entries(&active_database_id, None, 10)
+        .await?
+        .entries
+        .len();
+    let state = SmokeState {
+        canister_id,
+        database_id: database_id.clone(),
+        active_database_id: active_database_id.clone(),
+        active_balance_cycles,
+        active_ledger_entry_count,
+        expected_config,
+    };
+    assert_active_database(&client, &state).await?;
     if let Some(path) = args.state_output {
-        write_state(
-            &path,
-            &SmokeState {
-                canister_id,
-                database_id: database_id.clone(),
-                expected_config,
-            },
-        )?;
+        write_state(&path, &state)?;
     }
     println!("local_canister_post_upgrade_smoke ok");
     println!("database_id={database_id}");
+    println!("active_database_id={active_database_id}");
     Ok(())
 }
 
@@ -117,8 +136,8 @@ fn expected_cycles_config() -> Result<CyclesBillingConfig> {
     Ok(CyclesBillingConfig {
         kinic_ledger_canister_id: required_env("KINIC_LEDGER_CANISTER_ID")?,
         billing_authority_id: required_env("BILLING_AUTHORITY_ID")?,
-        cycles_per_kinic: env_u64("CYCLES_PER_KINIC", 1_000)?,
-        min_update_cycles: env_u64("MIN_UPDATE_CYCLES", 1)?,
+        cycles_per_kinic: env_u64("CYCLES_PER_KINIC", 234_500_000_000)?,
+        min_update_cycles: env_u64("MIN_UPDATE_CYCLES", 1_000_000)?,
     })
 }
 
@@ -175,6 +194,67 @@ async fn assert_pending_database(client: &CanisterVfsClient, database_id: &str) 
         ));
     }
     Ok(())
+}
+
+async fn activate_smoke_database(
+    client: &CanisterVfsClient,
+    database_id: &str,
+    payment_amount_e8s: u64,
+) -> Result<u64> {
+    let result = client
+        .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
+            database_id: database_id.to_string(),
+            payment_amount_e8s,
+        })
+        .await
+        .with_context(|| format!("failed to purchase cycles for smoke database {database_id}"))?;
+    Ok(result.balance_cycles)
+}
+
+async fn assert_active_database(client: &CanisterVfsClient, state: &SmokeState) -> Result<()> {
+    let summary = client
+        .list_databases()
+        .await?
+        .into_iter()
+        .find(|database| database.database_id == state.active_database_id)
+        .ok_or_else(|| {
+            anyhow!(
+                "active smoke database missing: {}",
+                state.active_database_id
+            )
+        })?;
+    if summary.status != DatabaseStatus::Active {
+        return Err(anyhow!(
+            "active smoke database should remain active, got {:?}",
+            summary.status
+        ));
+    }
+    if summary.cycles_balance != Some(state.active_balance_cycles) {
+        return Err(anyhow!(
+            "active smoke database balance changed: expected {:?}, got {:?}",
+            Some(state.active_balance_cycles),
+            summary.cycles_balance
+        ));
+    }
+    let entries = client
+        .list_database_cycle_entries(&state.active_database_id, None, 10)
+        .await?
+        .entries;
+    if entries.len() != state.active_ledger_entry_count {
+        return Err(anyhow!(
+            "active smoke ledger entry count changed: expected {}, got {}",
+            state.active_ledger_entry_count,
+            entries.len()
+        ));
+    }
+    if !entries.iter().any(|entry| entry.kind == "cycles_purchase") {
+        return Err(anyhow!("active smoke cycles purchase ledger entry missing"));
+    }
+    Ok(())
+}
+
+fn smoke_cycle_purchase_e8s() -> Result<u64> {
+    env_u64("SMOKE_CYCLE_PURCHASE_E8S", 100_000_000)
 }
 
 fn read_state(path: &str) -> Result<SmokeState> {

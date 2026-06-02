@@ -15,10 +15,11 @@ use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, DatabaseCyclesPurchaseRequest,
     DatabaseRestoreChunkRequest, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult,
     EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    IncomingLinksRequest, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
+    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    kinic_base_units_per_token,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -674,20 +675,15 @@ async fn run_database_command(
         }
         DatabaseCommand::PurchaseCycles { database_id, kinic } => {
             let payment_amount_e8s = parse_kinic_amount_e8s(&kinic)?;
-            let preview = client
-                .preview_database_cycles_purchase(&database_id, payment_amount_e8s)
-                .await?;
             let result = client
                 .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
                     database_id: database_id.clone(),
                     payment_amount_e8s,
-                    expected_cycles: preview.cycles,
-                    expected_config_version: preview.config_version,
                 })
                 .await?;
             println!(
-                "{database_id}\t{}\t{}",
-                result.block_index, result.balance_cycles
+                "{database_id}\t{}\t{}\t{}",
+                result.block_index, result.amount_cycles, result.balance_cycles
             );
         }
         DatabaseCommand::CyclesHistory { database_id, json } => {
@@ -714,59 +710,6 @@ async fn run_database_command(
                     );
                 }
             }
-        }
-        DatabaseCommand::CyclesPending { database_id, json } => {
-            let page = client
-                .list_database_cycle_pending_operations(&database_id, None, 100)
-                .await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&page)?);
-            } else {
-                for operation in page.entries {
-                    println!(
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-                        operation.operation_id,
-                        operation.database_id,
-                        operation.kind,
-                        operation.caller,
-                        operation.cycles,
-                        operation.payment_amount_e8s,
-                        operation.from_owner.unwrap_or_else(|| "-".to_string()),
-                        operation.to_owner.unwrap_or_else(|| "-".to_string()),
-                        operation
-                            .ledger_fee_e8s
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "-".to_string()),
-                        operation
-                            .ledger_created_at_time_ns
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "-".to_string()),
-                        operation.created_at_ms
-                    );
-                }
-            }
-        }
-        DatabaseCommand::RepairCyclesPurchaseComplete {
-            database_id,
-            operation_id,
-            block_index,
-        } => {
-            let result = client
-                .repair_database_cycles_purchase_complete(&database_id, operation_id, block_index)
-                .await?;
-            println!(
-                "{database_id}\t{operation_id}\t{}\t{}",
-                result.block_index, result.balance_cycles
-            );
-        }
-        DatabaseCommand::RepairCyclesPurchaseCancel {
-            database_id,
-            operation_id,
-        } => {
-            client
-                .repair_database_cycles_purchase_cancel(&database_id, operation_id)
-                .await?;
-            println!("{database_id}\t{operation_id}");
         }
         DatabaseCommand::Cycles {
             database_id,
@@ -891,22 +834,25 @@ fn parse_kinic_amount_e8s(value: &str) -> Result<u64> {
     };
     if whole.is_empty() || !whole.chars().all(|character| character.is_ascii_digit()) {
         return Err(anyhow!(
-            "KINIC amount must be a positive decimal with up to 8 fractional digits"
+            "KINIC amount must be a positive decimal with up to {} fractional digits",
+            KINIC_DECIMALS
         ));
     }
     let fractional = fractional.unwrap_or("");
     if fractional.is_empty() && trimmed.contains('.') {
         return Err(anyhow!(
-            "KINIC amount must be a positive decimal with up to 8 fractional digits"
+            "KINIC amount must be a positive decimal with up to {} fractional digits",
+            KINIC_DECIMALS
         ));
     }
-    if fractional.len() > 8
+    if fractional.len() > usize::from(KINIC_DECIMALS)
         || !fractional
             .chars()
             .all(|character| character.is_ascii_digit())
     {
         return Err(anyhow!(
-            "KINIC amount must be a positive decimal with up to 8 fractional digits"
+            "KINIC amount must be a positive decimal with up to {} fractional digits",
+            KINIC_DECIMALS
         ));
     }
     let whole = whole
@@ -915,13 +861,13 @@ fn parse_kinic_amount_e8s(value: &str) -> Result<u64> {
     let fractional_e8s = if fractional.is_empty() {
         0
     } else {
-        let padded = format!("{fractional:0<8}");
+        let padded = format!("{fractional:0<width$}", width = usize::from(KINIC_DECIMALS));
         padded
             .parse::<u128>()
             .map_err(|_| anyhow!("KINIC amount exceeds u64 e8s limit"))?
     };
     let amount = whole
-        .checked_mul(100_000_000)
+        .checked_mul(u128::from(kinic_base_units_per_token()))
         .and_then(|amount| amount.checked_add(fractional_e8s))
         .ok_or_else(|| anyhow!("KINIC amount exceeds u64 e8s limit"))?;
     if amount == 0 {
@@ -1430,11 +1376,7 @@ mod tests {
         created: Mutex<u32>,
         database_lists: Mutex<u32>,
         database_cycle_purchases: Mutex<Vec<DatabaseCyclesPurchaseRequest>>,
-        database_cycle_purchase_previews: Mutex<Vec<(String, u64)>>,
         database_cycles_history: Mutex<Vec<String>>,
-        database_cycles_pending: Mutex<Vec<String>>,
-        database_cycle_purchase_repairs_complete: Mutex<Vec<(String, u64, u64)>>,
-        database_cycle_purchase_repairs_cancel: Mutex<Vec<(String, u64)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
@@ -1537,28 +1479,11 @@ mod tests {
             &self,
             request: DatabaseCyclesPurchaseRequest,
         ) -> Result<CyclesPurchaseResult> {
-            let cycles = request.expected_cycles;
             self.database_cycle_purchases.lock().unwrap().push(request);
             Ok(CyclesPurchaseResult {
                 block_index: 7,
-                balance_cycles: cycles,
-            })
-        }
-        async fn preview_database_cycles_purchase(
-            &self,
-            database_id: &str,
-            payment_amount_e8s: u64,
-        ) -> Result<DatabaseCyclesPurchasePreview> {
-            self.database_cycle_purchase_previews
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), payment_amount_e8s));
-            Ok(DatabaseCyclesPurchasePreview {
-                payment_amount_e8s,
-                cycles: payment_amount_e8s / 100_000,
-                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                cycles_per_kinic: 1_000,
-                config_version: 3,
+                amount_cycles: 1_250,
+                balance_cycles: 1_250,
             })
         }
         async fn list_database_cycle_entries(
@@ -1588,62 +1513,6 @@ mod tests {
                 }],
                 next_cursor: None,
             })
-        }
-        async fn list_database_cycle_pending_operations(
-            &self,
-            database_id: &str,
-            _cursor: Option<u64>,
-            _limit: u32,
-        ) -> Result<DatabaseCyclePendingOperationPage> {
-            self.database_cycles_pending
-                .lock()
-                .unwrap()
-                .push(database_id.to_string());
-            Ok(DatabaseCyclePendingOperationPage {
-                entries: vec![DatabaseCyclePendingOperation {
-                    operation_id: 9,
-                    database_id: database_id.to_string(),
-                    kind: "cycles_purchase".to_string(),
-                    caller: "caller".to_string(),
-                    operation_status: "ambiguous".to_string(),
-                    cycles: 500_000,
-                    payment_amount_e8s: 50_000_000_000,
-                    from_owner: Some("caller".to_string()),
-                    from_subaccount: None,
-                    to_owner: Some("canister".to_string()),
-                    to_subaccount: None,
-                    ledger_fee_e8s: Some(10),
-                    ledger_created_at_time_ns: Some(1_700_000_000_000_000_000),
-                    created_at_ms: 1,
-                }],
-                next_cursor: None,
-            })
-        }
-        async fn repair_database_cycles_purchase_complete(
-            &self,
-            database_id: &str,
-            operation_id: u64,
-            ledger_block_index: u64,
-        ) -> Result<CyclesPurchaseResult> {
-            self.database_cycle_purchase_repairs_complete
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), operation_id, ledger_block_index));
-            Ok(CyclesPurchaseResult {
-                block_index: ledger_block_index,
-                balance_cycles: 500_000,
-            })
-        }
-        async fn repair_database_cycles_purchase_cancel(
-            &self,
-            database_id: &str,
-            operation_id: u64,
-        ) -> Result<()> {
-            self.database_cycle_purchase_repairs_cancel
-                .lock()
-                .unwrap()
-                .push((database_id.to_string(), operation_id));
-            Ok(())
         }
         async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
             let mut configs = self.cycles_configs.lock().unwrap();
@@ -2389,13 +2258,7 @@ mod tests {
             vec![DatabaseCyclesPurchaseRequest {
                 database_id: "db_alpha".to_string(),
                 payment_amount_e8s: 125_000_000,
-                expected_cycles: 1_250,
-                expected_config_version: 3,
             }]
-        );
-        assert_eq!(
-            *client.database_cycle_purchase_previews.lock().unwrap(),
-            vec![("db_alpha".to_string(), 125_000_000)]
         );
     }
 
@@ -2422,8 +2285,6 @@ mod tests {
             vec![DatabaseCyclesPurchaseRequest {
                 database_id: "db_alpha".to_string(),
                 payment_amount_e8s: 125_000_000,
-                expected_cycles: 1_250,
-                expected_config_version: 3,
             }]
         );
     }
@@ -2468,57 +2329,6 @@ mod tests {
             *client.database_cycles_history.lock().unwrap(),
             vec!["db_alpha".to_string()]
         );
-    }
-
-    #[tokio::test]
-    async fn database_cycles_pending_calls_client() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::CyclesPending {
-                    database_id: "db_alpha".to_string(),
-                    json: true,
-                },
-            },
-        )
-        .await
-        .expect("database cycles-pending should succeed");
-        assert_eq!(
-            *client.database_cycles_pending.lock().unwrap(),
-            vec!["db_alpha".to_string()]
-        );
-    }
-
-    #[tokio::test]
-    async fn database_repair_commands_call_client() {
-        let client = MockClient::default();
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::RepairCyclesPurchaseComplete {
-                    database_id: "db_alpha".to_string(),
-                    operation_id: 9,
-                    block_index: 77,
-                },
-            },
-        )
-        .await
-        .expect("repair cycle purchase complete should succeed");
-        run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::Database {
-                command: super::DatabaseCommand::RepairCyclesPurchaseCancel {
-                    database_id: "db_alpha".to_string(),
-                    operation_id: 10,
-                },
-            },
-        )
-        .await
-        .expect("repair cycle purchase cancel should succeed");
     }
 
     #[test]

@@ -235,6 +235,8 @@ fn print_result(json: bool, path: &str) -> Result<()> {
 
 fn valid_segment(segment: &str) -> bool {
     !segment.is_empty()
+        && segment != "."
+        && segment != ".."
         && segment
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.')

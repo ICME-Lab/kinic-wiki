@@ -4,9 +4,9 @@ import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
 import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
-import { getCyclesBillingConfig, previewDatabaseCyclesPurchase, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
+import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
-import { formatRawCycles } from "@/lib/cycles";
+import { formatRawCycles, KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 
 type WalletProvider = "oisy" | "plug";
 
@@ -65,7 +65,7 @@ type PlugWallet = {
 };
 
 type PlugVfsActor = {
-  purchase_database_cycles: (request: DatabaseCyclesPurchaseRequest) => Promise<{ Ok: { block_index: bigint; balance_cycles: bigint } } | { Err: string }>;
+  purchase_database_cycles: (request: DatabaseCyclesPurchaseRequest) => Promise<{ Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } } | { Err: string }>;
 };
 
 type LedgerActor = {
@@ -194,7 +194,7 @@ export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, con
     provider: "oisy",
     approveBlockIndex: approveBlockIndex.toString(),
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    purchasedCycles: formatRawCycles(BigInt(prepared.purchaseRequest.expected_cycles)),
+    purchasedCycles: formatRawCycles(BigInt(purchase.amountCycles)),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     purchaseBlockIndex: purchase.blockIndex,
@@ -235,7 +235,7 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
     provider: "plug",
     approveBlockIndex: approve.Ok.toString(),
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    purchasedCycles: formatRawCycles(BigInt(prepared.purchaseRequest.expected_cycles)),
+    purchasedCycles: formatRawCycles(purchase.amount_cycles),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     purchaseBlockIndex: purchase.block_index.toString(),
@@ -269,9 +269,8 @@ function rawApproveArgs(canisterId: string, allowanceE8s: bigint, expectedAllowa
 async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: string): Promise<PreparedCyclesPurchase> {
   assertConfiguredCyclesCanister(request.canisterId);
   const config = await getCyclesBillingConfig(request.canisterId);
-  const preview = await previewDatabaseCyclesPurchase(request.canisterId, request.databaseId, request.paymentAmountE8s);
-  const transferFeeE8s = BigInt(preview.ledgerFeeE8s);
-  const paymentAmountE8s = BigInt(preview.paymentAmountE8s);
+  const transferFeeE8s = KINIC_LEDGER_FEE_E8S;
+  const paymentAmountE8s = request.paymentAmountE8s;
   const approvedAllowanceE8s = allowanceForCyclesPurchase(paymentAmountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
   const currentAllowanceE8s = await getLedgerAllowance(config.kinicLedgerCanisterId, payer, request.canisterId);
@@ -280,8 +279,6 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
     purchaseRequest: {
       database_id: request.databaseId,
       payment_amount_e8s: paymentAmountE8s,
-      expected_cycles: BigInt(preview.cycles),
-      expected_config_version: BigInt(preview.configVersion)
     },
     transferFeeE8s,
     paymentAmountE8s,
@@ -363,9 +360,7 @@ function errorMessage(cause: unknown): string {
 function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): string {
   const PurchaseRequest = IDL.Record({
     database_id: IDL.Text,
-    payment_amount_e8s: IDL.Nat64,
-    expected_cycles: IDL.Nat64,
-    expected_config_version: IDL.Nat64
+    payment_amount_e8s: IDL.Nat64
   });
   return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
 }
@@ -380,7 +375,7 @@ async function decodeOisyCyclesPurchaseResult({
   method: string;
   arg: string;
   result: IcrcCallCanisterResult;
-}): Promise<{ blockIndex: string; balanceCycles: string }> {
+}): Promise<{ blockIndex: string; amountCycles: string; balanceCycles: string }> {
   const contentMap = Cbor.decode<Record<string, unknown>>(base64ToUint8Array(result.contentMap));
   const responseMethod = contentMap.method_name;
   if (typeof responseMethod !== "string" || responseMethod !== method) throw new Error("wallet response method mismatch");
@@ -405,7 +400,7 @@ async function decodeOisyCyclesPurchaseResult({
   return decodePurchaseResult(reply);
 }
 
-function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; balanceCycles: string } {
+function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; amountCycles: string; balanceCycles: string } {
   const [decoded] = IDL.decode([purchaseResultType()], reply);
   if (!isObject(decoded)) throw new Error("wallet response result mismatch");
   if (hasOwn(decoded, "Err")) {
@@ -415,19 +410,21 @@ function decodePurchaseResult(reply: Uint8Array): { blockIndex: string; balanceC
   const ok = Reflect.get(decoded, "Ok");
   if (!isObject(ok)) throw new Error("wallet response result mismatch");
   const blockIndex = Reflect.get(ok, "block_index");
+  const amountCycles = Reflect.get(ok, "amount_cycles");
   const balanceCycles = Reflect.get(ok, "balance_cycles");
-  if (typeof blockIndex !== "bigint" || typeof balanceCycles !== "bigint") {
+  if (typeof blockIndex !== "bigint" || typeof amountCycles !== "bigint" || typeof balanceCycles !== "bigint") {
     throw new Error("wallet response result mismatch");
   }
   return {
     blockIndex: blockIndex.toString(),
+    amountCycles: amountCycles.toString(),
     balanceCycles: balanceCycles.toString()
   };
 }
 
 function purchaseResultType() {
   return IDL.Variant({
-    Ok: IDL.Record({ block_index: IDL.Nat64, balance_cycles: IDL.Nat64 }),
+    Ok: IDL.Record({ block_index: IDL.Nat64, amount_cycles: IDL.Nat64, balance_cycles: IDL.Nat64 }),
     Err: IDL.Text
   });
 }

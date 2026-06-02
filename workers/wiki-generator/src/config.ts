@@ -40,6 +40,8 @@ function required(value: string | undefined, name: string): string {
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  const trimmed = value.trim();
+  if (!/^[1-9][0-9]*$/.test(trimmed)) return fallback;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) ? parsed : fallback;
 }

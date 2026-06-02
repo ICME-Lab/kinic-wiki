@@ -364,6 +364,49 @@ async fn write_node_rejects_non_canonical_source_paths() {
 }
 
 #[tokio::test]
+async fn move_node_rejects_non_canonical_source_target() {
+    let client = MockClient {
+        nodes: vec![Node {
+            path: "/Sources/raw/web/abc.md".to_string(),
+            kind: NodeKind::Source,
+            content: "source".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            etag: "etag-source".to_string(),
+            metadata_json: "{}".to_string(),
+        }],
+        ..MockClient::default()
+    };
+
+    let error = run_command(
+        &client,
+        Cli {
+            connection: ConnectionArgs {
+                database_id: Some("default".to_string()),
+                local: false,
+                replica_host: None,
+                canister_id: None,
+                identity_mode: IdentityModeArg::Auto,
+                allow_non_ii_identity: false,
+            },
+            command: Command::MoveNode {
+                from_path: "/Sources/raw/web/abc.md".to_string(),
+                to_path: "/Sources/raw/web/wrong.txt".to_string(),
+                expected_etag: Some("etag-source".to_string()),
+                overwrite: false,
+                json: false,
+            },
+        },
+        &test_connection(),
+    )
+    .await
+    .expect_err("non-canonical source target should fail");
+
+    assert!(error.to_string().contains("canonical form"));
+    assert!(client.moves.lock().expect("moves should lock").is_empty());
+}
+
+#[tokio::test]
 async fn delete_node_autofills_folder_index_etag() {
     let client = MockClient {
         nodes: vec![

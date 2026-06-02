@@ -25,23 +25,21 @@ fn install_test_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
-    let preview = service
-        .preview_database_cycles_purchase("default", 1_000_000)
-        .expect("default database cycle purchase preview should load");
     service
         .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
-            service.mark_database_cycles_purchase_completed(
+            service.complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                2_345_000_000,
+                1,
             )?;
             service.apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                2_345_000_000,
                 1,
                 1_700_000_000_001,
             )

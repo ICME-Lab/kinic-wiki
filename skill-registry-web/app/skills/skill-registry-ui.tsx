@@ -193,14 +193,18 @@ export function ProposalList({
           <pre className="max-h-28 overflow-auto rounded border border-line bg-paper p-2 text-[11px] text-muted">{proposal.metricsPreview}</pre>
           <div className="flex flex-wrap gap-2">
             <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || proposal.status !== "proposed"} type="button" onClick={() => onApprove(proposal)}>Mark reviewed</button>
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || proposal.status !== "proposed"} type="button" onClick={() => onPreview(proposal)}>Preview apply</button>
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || preview?.proposalPath !== proposal.proposalRoot} type="button" onClick={() => onApply(proposal)}>Apply</button>
+            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposalCanApply(proposal)} type="button" onClick={() => onPreview(proposal)}>Preview apply</button>
+            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposalCanApply(proposal) || preview?.proposalPath !== proposal.proposalRoot} type="button" onClick={() => onApply(proposal)}>Apply</button>
           </div>
           {preview?.proposalPath === proposal.proposalRoot ? <p className="text-muted">Preview: {preview.targetPath} +{preview.additions} -{preview.removals}</p> : null}
         </div>
       ))}
     </div>
   );
+}
+
+function proposalCanApply(proposal: SkillProposal): boolean {
+  return proposal.status === "proposed" || proposal.status === "reviewed";
 }
 
 function EventList({ skill }: { skill: CatalogSkill }) {

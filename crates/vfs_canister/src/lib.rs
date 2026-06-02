@@ -34,19 +34,18 @@ use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseWithLedgerDetails, DatabaseMeta,
-    RequiredRole, VfsService,
+    RequiredRole, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclePendingOperation, DatabaseCyclePendingOperationPage,
-    DatabaseCyclesPurchasePreview, DatabaseCyclesPurchaseRequest, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
+    DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS,
+    KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryCapability,
     MemoryManifest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
@@ -54,7 +53,7 @@ use vfs_types::{
     SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -98,6 +97,7 @@ thread_local! {
 #[derive(Clone, Debug)]
 enum LedgerTransferFromOutcome {
     Completed(u64),
+    BadFee { expected_fee_e8s: u64 },
     LedgerErr(String),
     Ambiguous(String),
 }
@@ -130,48 +130,6 @@ struct TransferFromArg {
     fee: Option<Nat>,
     memo: Option<Vec<u8>>,
     created_at_time: Option<u64>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType)]
-struct GetTransactionsRequest {
-    start: Nat,
-    length: Nat,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct GetTransactionsResponse {
-    transactions: Vec<LedgerTransaction>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct LedgerTransaction {
-    kind: String,
-    transfer: Option<LedgerTransfer>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct LedgerTransfer {
-    from: IcrcAccount,
-    to: IcrcAccount,
-    amount: Nat,
-    fee: Option<Nat>,
-    memo: Option<Vec<u8>>,
-    created_at_time: Option<u64>,
-    spender: Option<IcrcAccount>,
-}
-
-#[derive(Clone, Debug)]
-struct ExpectedLedgerTransfer {
-    from: IcrcAccount,
-    to: IcrcAccount,
-    amount_e8s: u64,
-    ledger_fee_e8s: u64,
-    memo: Vec<u8>,
-    created_at_time_ns: u64,
 }
 
 #[allow(dead_code)]
@@ -446,16 +404,6 @@ fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
 }
 
 #[query]
-fn preview_database_cycles_purchase(
-    database_id: String,
-    payment_amount_e8s: u64,
-) -> Result<DatabaseCyclesPurchasePreview, String> {
-    with_service(|service| {
-        service.preview_database_cycles_purchase(&database_id, payment_amount_e8s)
-    })
-}
-
-#[query]
 fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
     vec![Icrc10SupportedStandard {
         name: "ICRC-21".to_string(),
@@ -478,15 +426,18 @@ fn icrc21_canister_call_consent_message(
             ));
         }
     };
-    let preview = match with_service(|service| {
-        service.preview_database_cycles_purchase(&purchase.database_id, purchase.payment_amount_e8s)
+    let cycles = match with_service(|service| {
+        let config = service.cycles_billing_config()?;
+        let cycles = cycles_for_payment_amount_e8s(purchase.payment_amount_e8s, &config)?;
+        service.validate_database_cycles_purchase(
+            &purchase.database_id,
+            purchase.payment_amount_e8s,
+        )?;
+        Ok(cycles)
     }) {
-        Ok(preview) => preview,
+        Ok(cycles) => cycles,
         Err(error) => return icrc21_unsupported(error),
     };
-    if let Err(error) = validate_cycles_purchase_expectations(&purchase, &preview) {
-        return icrc21_unsupported(error);
-    }
     let language = if request.user_preferences.metadata.language.trim().is_empty() {
         "en".to_string()
     } else {
@@ -500,9 +451,9 @@ fn icrc21_canister_call_consent_message(
         consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
             "# Purchase Kinic database cycles\n\nDatabase: `{database_id}`\n\nCycles: `{cycles}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
             database_id = purchase.database_id,
-            cycles = format_cycles(preview.cycles),
-            payment = format_e8s(preview.payment_amount_e8s),
-            fee = format_e8s(preview.ledger_fee_e8s),
+            cycles = format_cycles(cycles),
+            payment = format_e8s(purchase.payment_amount_e8s),
+            fee = format_e8s(KINIC_LEDGER_FEE_E8S),
             spender = canister_principal().to_text()
         )),
     })
@@ -518,22 +469,16 @@ async fn purchase_database_cycles(
     let config = with_service(|service| service.cycles_billing_config())?;
     let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
         .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let preview = with_service(|service| {
-        service.preview_database_cycles_purchase(&request.database_id, request.payment_amount_e8s)
-    })?;
-    validate_cycles_purchase_expectations(&request, &preview)?;
-    let ledger_fee_e8s = preview.ledger_fee_e8s;
-    let payment_amount_e8s = preview.payment_amount_e8s;
+    let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
+    let payment_amount_e8s = request.payment_amount_e8s;
     let ledger_created_at_time_ns = now_nanos();
     let canister_owner = canister_principal().to_text();
-    let operation_id = match with_service(|service| {
+    let purchase_start = match with_service(|service| {
         service.begin_database_cycles_purchase_with_ledger_details(
             DatabaseCyclesPurchaseWithLedgerDetails {
                 database_id: &request.database_id,
                 caller: &caller,
                 payment_amount_e8s: request.payment_amount_e8s,
-                expected_cycles: request.expected_cycles,
-                expected_config_version: request.expected_config_version,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
@@ -546,9 +491,11 @@ async fn purchase_database_cycles(
             },
         )
     }) {
-        Ok(operation_id) => operation_id,
+        Ok(purchase_start) => purchase_start,
         Err(error) => return Err(error),
     };
+    let operation_id = purchase_start.operation_id;
+    let amount_cycles = purchase_start.amount_cycles;
     match ledger_transfer_from(
         ledger,
         IcrcAccount {
@@ -567,20 +514,31 @@ async fn purchase_database_cycles(
     .await
     {
         LedgerTransferFromOutcome::Completed(block_index) => {
-            with_service(|service| {
-                service.mark_database_cycles_purchase_completed(
+            if let Err(error) = with_service(|service| {
+                service.complete_database_cycles_purchase_ledger_transfer(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.expected_cycles,
+                    amount_cycles,
+                    block_index,
                 )
-            })
-            .map_err(|error| cycles_purchase_local_apply_error(operation_id, block_index, error))?;
-            activate_pending_database_after_cycles_purchase_ledger_success(
+            }) {
+                return Err(cycles_purchase_local_apply_error(
+                    operation_id,
+                    block_index,
+                    error,
+                ));
+            }
+            if let Err(error) = activate_pending_database_after_cycles_purchase_ledger_success(
                 &request.database_id,
                 now,
-            )
-            .map_err(|error| cycles_purchase_local_apply_error(operation_id, block_index, error))?;
+            ) {
+                return Err(cycles_purchase_local_apply_error(
+                    operation_id,
+                    block_index,
+                    error,
+                ));
+            }
             #[cfg(test)]
             if TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
                 return Err(cycles_purchase_local_apply_error(
@@ -589,21 +547,43 @@ async fn purchase_database_cycles(
                     "test cycle purchase apply failure".to_string(),
                 ));
             }
-            let balance = with_service(|service| {
+            let balance = match with_service(|service| {
                 service.apply_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.expected_cycles,
+                    amount_cycles,
                     block_index,
                     now,
                 )
-            })
-            .map_err(|error| cycles_purchase_local_apply_error(operation_id, block_index, error))?;
+            }) {
+                Ok(balance) => balance,
+                Err(error) => {
+                    return Err(cycles_purchase_local_apply_error(
+                        operation_id,
+                        block_index,
+                        error,
+                    ));
+                }
+            };
             Ok(CyclesPurchaseResult {
                 block_index,
+                amount_cycles,
                 balance_cycles: balance,
             })
+        }
+        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
+            let _ = with_service(|service| {
+                service.cancel_database_cycles_purchase(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    amount_cycles,
+                )
+            });
+            Err(format!(
+                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
+            ))
         }
         LedgerTransferFromOutcome::LedgerErr(error) => {
             let _ = with_service(|service| {
@@ -611,49 +591,44 @@ async fn purchase_database_cycles(
                     operation_id,
                     &request.database_id,
                     &caller,
-                    request.expected_cycles,
+                    amount_cycles,
                 )
             });
             Err(error)
         }
         LedgerTransferFromOutcome::Ambiguous(error) => {
-            match with_service(|service| {
-                service.mark_database_cycles_purchase_ambiguous(
-                    operation_id,
-                    &request.database_id,
-                    &caller,
-                    request.expected_cycles,
-                    now,
-                )
-            }) {
-                Ok(_) => Err(format!(
-                    "cycles purchase pending operation {operation_id}; manual repair required: {error}"
-                )),
-                Err(mark_error) => Err(format!(
-                    "cycles purchase pending operation {operation_id}; ledger result ambiguous; mark ambiguous failed: {mark_error}; original ledger error: {error}"
-                )),
-            }
+            cleanup_database_cycles_purchase_after_no_credit(
+                operation_id,
+                &request.database_id,
+                &caller,
+                amount_cycles,
+            );
+            Err(format!(
+                "icrc2_transfer_from result ambiguous; cycles were not credited: {error}"
+            ))
         }
     }
 }
 
-fn validate_cycles_purchase_expectations(
-    request: &DatabaseCyclesPurchaseRequest,
-    preview: &DatabaseCyclesPurchasePreview,
-) -> Result<(), String> {
-    if request.expected_config_version != preview.config_version {
-        return Err(format!(
-            "cycles billing config changed: expected version {}, current version {}",
-            request.expected_config_version, preview.config_version
-        ));
+#[update]
+fn retry_database_cycles_purchase(
+    database_id: String,
+    operation_id: u64,
+) -> Result<CyclesPurchaseResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let config = with_service(|service| service.cycles_billing_config())?;
+    if caller != config.billing_authority_id {
+        return Err("caller is not billing authority".to_string());
     }
-    if request.expected_cycles != preview.cycles {
-        return Err(format!(
-            "cycles purchase amount changed: expected {}, current {}",
-            request.expected_cycles, preview.cycles
-        ));
+    if let Err(error) =
+        activate_pending_database_after_cycles_purchase_ledger_success(&database_id, now_millis())
+    {
+        return Err(format!("cycles purchase retry activation failed: {error}"));
     }
-    Ok(())
+    with_service(|service| {
+        service.retry_database_cycles_purchase(&database_id, operation_id, &caller, now_millis())
+    })
 }
 
 #[query]
@@ -668,17 +643,6 @@ fn list_database_cycle_entries(
 }
 
 #[query]
-fn list_database_cycle_pending_operations(
-    database_id: String,
-    cursor: Option<u64>,
-    limit: u32,
-) -> Result<DatabaseCyclePendingOperationPage, String> {
-    with_service(|service| {
-        service.list_database_cycle_pending_operations(&database_id, &caller_text(), cursor, limit)
-    })
-}
-
-#[query]
 fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResult, String> {
     require_controller_caller()?;
     with_service(|service| service.query_index_sql_json(&sql, limit))
@@ -689,49 +653,6 @@ fn settle_database_storage_charges() -> Result<(), String> {
     require_controller_caller()?;
     with_service(|service| {
         service.settle_database_storage_charges(&canister_principal().to_text(), now_millis())
-    })
-}
-
-#[update]
-async fn repair_database_cycles_purchase_complete(
-    database_id: String,
-    operation_id: u64,
-    ledger_block_index: u64,
-) -> Result<CyclesPurchaseResult, String> {
-    require_authenticated_caller()?;
-    let config = with_service(|service| service.cycles_billing_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let operation = with_service(|service| {
-        service.get_database_cycle_pending_operation_for_complete(&database_id, operation_id)
-    })?;
-    let expected = expected_cycles_purchase_transfer(&operation)?;
-    validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
-    let expected_cycles = u64::try_from(operation.cycles).map_err(|error| error.to_string())?;
-    with_service(|service| {
-        service.mark_database_cycles_purchase_completed(
-            operation_id,
-            &database_id,
-            &operation.caller,
-            expected_cycles,
-        )
-    })?;
-    let now = now_millis();
-    activate_pending_database_after_cycles_purchase_ledger_success(&database_id, now).map_err(
-        |error| cycles_purchase_local_apply_error(operation_id, ledger_block_index, error),
-    )?;
-    let balance = with_service(|service| {
-        service.repair_database_cycles_purchase_complete(
-            &database_id,
-            operation_id,
-            ledger_block_index,
-            now,
-        )
-    })
-    .map_err(|error| cycles_purchase_local_apply_error(operation_id, ledger_block_index, error))?;
-    Ok(CyclesPurchaseResult {
-        block_index: ledger_block_index,
-        balance_cycles: balance,
     })
 }
 
@@ -756,27 +677,26 @@ fn activate_pending_database_after_cycles_purchase_ledger_success(
     Ok(())
 }
 
-fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
-    format!(
-        "cycles purchase payment completed but local cycles application failed; pending operation {operation_id} can be completed with verified ledger block {block_index}: {cause}"
-    )
+fn cleanup_database_cycles_purchase_after_no_credit(
+    operation_id: u64,
+    database_id: &str,
+    caller: &str,
+    cycles: u64,
+) {
+    let _ = with_service(|service| {
+        service.cleanup_database_cycles_purchase_after_no_credit(
+            operation_id,
+            database_id,
+            caller,
+            cycles,
+        )
+    });
 }
 
-#[update]
-fn repair_database_cycles_purchase_cancel(
-    database_id: String,
-    operation_id: u64,
-) -> Result<(), String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    with_service(|service| {
-        service.repair_database_cycles_purchase_cancel(
-            &database_id,
-            operation_id,
-            &caller,
-            now_millis(),
-        )
-    })
+fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+    format!(
+        "cycles purchase payment completed at ledger block {block_index} but local cycles application failed; pending operation {operation_id} remains completed for retry: {cause}"
+    )
 }
 
 #[query]
@@ -1290,8 +1210,8 @@ fn unmount_database_file(_db_file_name: &str) {}
 #[cfg(test)]
 thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_LEDGER_TRANSFER_FROM_OUTCOME: RefCell<Option<LedgerTransferFromOutcome>> = const { RefCell::new(None) };
-    static TEST_LEDGER_TRANSACTIONS: RefCell<Vec<(u64, LedgerTransaction)>> = const { RefCell::new(Vec::new()) };
+    static TEST_LEDGER_TRANSFER_FROM_OUTCOMES: RefCell<Vec<LedgerTransferFromOutcome>> = const { RefCell::new(Vec::new()) };
+    static TEST_LEDGER_TRANSFER_FEES: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
@@ -1310,21 +1230,14 @@ fn fail_next_apply_database_cycles_purchase_apply_for_test() {
 
 #[cfg(test)]
 fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOutcome) {
-    TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|slot| {
-        slot.replace(Some(outcome));
-    });
-}
-
-#[cfg(test)]
-fn set_ledger_transaction_for_test(block_index: u64, transaction: LedgerTransaction) {
-    TEST_LEDGER_TRANSACTIONS.with(|slot| {
-        slot.borrow_mut().push((block_index, transaction));
+    TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|slot| {
+        slot.replace(vec![outcome]);
     });
 }
 
 #[cfg(test)]
 fn clear_ledger_transactions_for_test() {
-    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+    TEST_LEDGER_TRANSFER_FEES.with(|slot| {
         slot.borrow_mut().clear();
     });
 }
@@ -1361,6 +1274,11 @@ fn last_ledger_from_for_test() -> Option<IcrcAccount> {
 }
 
 #[cfg(test)]
+fn ledger_transfer_fees_for_test() -> Vec<u64> {
+    TEST_LEDGER_TRANSFER_FEES.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
 fn clear_last_ledger_memo_for_test() {
     TEST_LAST_LEDGER_MEMO.with(|slot| {
         slot.replace(None);
@@ -1390,12 +1308,13 @@ fn icrc21_unavailable(description: String) -> Icrc21ConsentMessageResponse {
 }
 
 fn format_e8s(amount_e8s: u64) -> String {
-    let whole = amount_e8s / 100_000_000;
-    let fractional = amount_e8s % 100_000_000;
+    let units_per_token = kinic_base_units_per_token();
+    let whole = amount_e8s / units_per_token;
+    let fractional = amount_e8s % units_per_token;
     if fractional == 0 {
         return whole.to_string();
     }
-    let mut fraction = format!("{fractional:08}");
+    let mut fraction = format!("{fractional:0width$}", width = usize::from(KINIC_DECIMALS));
     while fraction.ends_with('0') {
         fraction.pop();
     }
@@ -1507,132 +1426,6 @@ fn now_nanos() -> u64 {
     }
 }
 
-fn expected_cycles_purchase_transfer(
-    operation: &DatabaseCyclePendingOperation,
-) -> Result<ExpectedLedgerTransfer, String> {
-    if operation.kind != "cycles_purchase" {
-        return Err("pending cycle operation kind mismatch".to_string());
-    }
-    expected_ledger_transfer(operation, "cycles_purchase")
-}
-
-fn expected_ledger_transfer(
-    operation: &DatabaseCyclePendingOperation,
-    memo_kind: &str,
-) -> Result<ExpectedLedgerTransfer, String> {
-    let from_owner = pending_principal(operation.from_owner.as_deref(), "from_owner")?;
-    let to_owner = pending_principal(operation.to_owner.as_deref(), "to_owner")?;
-    let amount_e8s = u64::try_from(operation.payment_amount_e8s)
-        .map_err(|error| format!("invalid pending payment_amount_e8s: {error}"))?;
-    let ledger_fee_e8s = operation
-        .ledger_fee_e8s
-        .ok_or_else(|| "pending operation missing ledger_fee_e8s".to_string())
-        .and_then(|value| {
-            u64::try_from(value).map_err(|error| format!("invalid pending ledger_fee_e8s: {error}"))
-        })?;
-    let created_at_time_ns = operation
-        .ledger_created_at_time_ns
-        .ok_or_else(|| "pending operation missing ledger_created_at_time_ns".to_string())
-        .and_then(|value| {
-            u64::try_from(value)
-                .map_err(|error| format!("invalid pending ledger_created_at_time_ns: {error}"))
-        })?;
-    Ok(ExpectedLedgerTransfer {
-        from: IcrcAccount {
-            owner: from_owner,
-            subaccount: operation.from_subaccount.clone(),
-        },
-        to: IcrcAccount {
-            owner: to_owner,
-            subaccount: operation.to_subaccount.clone(),
-        },
-        amount_e8s,
-        ledger_fee_e8s,
-        memo: cycle_operation_memo(memo_kind, operation.operation_id),
-        created_at_time_ns,
-    })
-}
-
-fn pending_principal(value: Option<&str>, field: &str) -> Result<Principal, String> {
-    let value = value.ok_or_else(|| format!("pending operation missing {field}"))?;
-    Principal::from_text(value).map_err(|error| format!("invalid pending {field}: {error}"))
-}
-
-async fn validate_ledger_transfer_block(
-    ledger: Principal,
-    block_index: u64,
-    expected: ExpectedLedgerTransfer,
-) -> Result<(), String> {
-    let transaction = ledger_transaction(ledger, block_index).await?;
-    if transaction.kind != "transfer" {
-        return Err(format!(
-            "ledger transaction kind mismatch: {}",
-            transaction.kind
-        ));
-    }
-    let transfer = transaction
-        .transfer
-        .ok_or_else(|| "ledger transaction missing transfer".to_string())?;
-    if transfer.from != expected.from {
-        return Err("ledger transaction from account mismatch".to_string());
-    }
-    if transfer.to != expected.to {
-        return Err("ledger transaction to account mismatch".to_string());
-    }
-    if nat_to_u64(&transfer.amount)? != expected.amount_e8s {
-        return Err("ledger transaction amount mismatch".to_string());
-    }
-    let fee = transfer
-        .fee
-        .as_ref()
-        .ok_or_else(|| "ledger transaction missing fee".to_string())?;
-    if nat_to_u64(fee)? != expected.ledger_fee_e8s {
-        return Err("ledger transaction fee mismatch".to_string());
-    }
-    if transfer.memo.as_deref() != Some(expected.memo.as_slice()) {
-        return Err("ledger transaction memo mismatch".to_string());
-    }
-    if transfer.created_at_time != Some(expected.created_at_time_ns) {
-        return Err("ledger transaction created_at_time mismatch".to_string());
-    }
-    Ok(())
-}
-
-async fn ledger_transaction(
-    ledger: Principal,
-    block_index: u64,
-) -> Result<LedgerTransaction, String> {
-    #[cfg(test)]
-    {
-        let _ = ledger;
-        TEST_LEDGER_TRANSACTIONS.with(|slot| {
-            slot.borrow()
-                .iter()
-                .find(|(index, _)| *index == block_index)
-                .map(|(_, transaction)| transaction.clone())
-                .ok_or_else(|| format!("test ledger transaction not found: {block_index}"))
-        })
-    }
-    #[cfg(not(test))]
-    {
-        let response = Call::bounded_wait(ledger, "get_transactions")
-            .with_arg(GetTransactionsRequest {
-                start: Nat::from(block_index),
-                length: Nat::from(1_u64),
-            })
-            .await
-            .map_err(|error| format!("get_transactions call failed: {error:?}"))?;
-        let response: GetTransactionsResponse = response
-            .candid()
-            .map_err(|error| format!("get_transactions decode failed: {error}"))?;
-        response
-            .transactions
-            .into_iter()
-            .next()
-            .ok_or_else(|| format!("ledger transaction not found: {block_index}"))
-    }
-}
-
 async fn ledger_transfer_from(
     ledger: Principal,
     from: IcrcAccount,
@@ -1642,17 +1435,22 @@ async fn ledger_transfer_from(
     operation_id: u64,
     created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
-    let memo = cycle_operation_memo("cycles_purchase", operation_id);
+    let memo = cycles_purchase_memo(operation_id);
     #[cfg(test)]
     {
         record_test_ledger_from(&from);
-        let _ = (ledger, to, amount_e8s, ledger_fee_e8s, created_at_time_ns);
+        let _ = (ledger, to, amount_e8s, created_at_time_ns);
         record_test_ledger_memo(&memo);
-        TEST_LEDGER_TRANSFER_FROM_OUTCOME.with(|outcome| {
-            outcome
-                .borrow_mut()
-                .take()
-                .unwrap_or(LedgerTransferFromOutcome::Completed(1))
+        TEST_LEDGER_TRANSFER_FEES.with(|fees| {
+            fees.borrow_mut().push(ledger_fee_e8s);
+        });
+        TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|outcomes| {
+            let mut outcomes = outcomes.borrow_mut();
+            if outcomes.is_empty() {
+                LedgerTransferFromOutcome::Completed(1)
+            } else {
+                outcomes.remove(0)
+            }
         })
     }
     #[cfg(not(test))]
@@ -1698,6 +1496,10 @@ async fn ledger_transfer_from(
 
 fn transfer_from_error_outcome(error: TransferFromError) -> LedgerTransferFromOutcome {
     match error {
+        TransferFromError::BadFee { expected_fee } => match nat_to_u64(&expected_fee) {
+            Ok(expected_fee_e8s) => LedgerTransferFromOutcome::BadFee { expected_fee_e8s },
+            Err(error) => LedgerTransferFromOutcome::Ambiguous(error),
+        },
         TransferFromError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
             Ok(block_index) => LedgerTransferFromOutcome::Completed(block_index),
             Err(error) => LedgerTransferFromOutcome::Ambiguous(error),
@@ -1716,8 +1518,8 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
         .map_err(|_| "nat exceeds u64".to_string())
 }
 
-fn cycle_operation_memo(kind: &str, operation_id: u64) -> Vec<u8> {
-    format!("kinic:vfs:{kind}:{operation_id}").into_bytes()
+fn cycles_purchase_memo(operation_id: u64) -> Vec<u8> {
+    format!("kvfs:cp:{operation_id}").into_bytes()
 }
 
 fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>

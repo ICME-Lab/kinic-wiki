@@ -13,6 +13,8 @@ pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = SKILL_REGISTRY_ROOT;
 pub const RAW_SOURCES_PREFIX: &str = "/Sources/raw";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
+const MAX_SOURCE_PROVIDER_LEN: usize = 32;
+const MAX_SOURCE_ID_LEN: usize = 128;
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
     let is_source_path = path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX)
@@ -81,12 +83,9 @@ fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {
 
 fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(prefix)
+        .strip_prefix(&format!("{prefix}/"))
         .ok_or_else(|| format!("source path must stay under {prefix}: {path}"))?;
-    let segments = relative
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
+    let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
             "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
@@ -95,7 +94,12 @@ fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), Str
     let [directory_name, file_name] = segments.as_slice() else {
         unreachable!();
     };
-    if directory_name.is_empty() || *file_name != format!("{directory_name}.md") {
+    let Some(file_stem) = file_name.strip_suffix(".md") else {
+        return Err(format!(
+            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+        ));
+    };
+    if !is_safe_source_segment(directory_name) || file_stem != *directory_name {
         return Err(format!(
             "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
         ));
@@ -105,12 +109,9 @@ fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), Str
 
 fn validate_raw_source_path(path: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(RAW_SOURCES_PREFIX)
+        .strip_prefix(&format!("{RAW_SOURCES_PREFIX}/"))
         .ok_or_else(|| format!("source path must stay under {RAW_SOURCES_PREFIX}: {path}"))?;
-    let segments = relative
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
+    let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
             "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
@@ -131,6 +132,9 @@ fn validate_raw_source_path(path: &str) -> Result<(), String> {
 }
 
 fn is_safe_source_segment(value: &str) -> bool {
+    if value.len() > MAX_SOURCE_ID_LEN || value.contains("..") {
+        return false;
+    }
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -141,6 +145,9 @@ fn is_safe_source_segment(value: &str) -> bool {
 }
 
 fn is_safe_provider_segment(value: &str) -> bool {
+    if value.len() > MAX_SOURCE_PROVIDER_LEN {
+        return false;
+    }
     let mut chars = value.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -155,12 +162,9 @@ fn is_source_segment_char(value: char) -> bool {
 
 fn validate_skill_run_source_path(path: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(SKILL_RUNS_PREFIX)
+        .strip_prefix(&format!("{SKILL_RUNS_PREFIX}/"))
         .ok_or_else(|| format!("source path must stay under {SKILL_RUNS_PREFIX}: {path}"))?;
-    let segments = relative
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>();
+    let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
             "skill run source path must use canonical form {SKILL_RUNS_PREFIX}/<name>/<timestamp>.md: {path}"
@@ -169,10 +173,12 @@ fn validate_skill_run_source_path(path: &str) -> Result<(), String> {
     let [name, file_name] = segments.as_slice() else {
         unreachable!();
     };
-    if name.is_empty()
-        || !file_name.ends_with(".md")
-        || file_name.trim_end_matches(".md").is_empty()
-    {
+    let Some(file_stem) = file_name.strip_suffix(".md") else {
+        return Err(format!(
+            "skill run source path must use canonical form {SKILL_RUNS_PREFIX}/<name>/<timestamp>.md: {path}"
+        ));
+    };
+    if !is_safe_source_segment(name) || !is_safe_source_segment(file_stem) {
         return Err(format!(
             "skill run source path must use canonical form {SKILL_RUNS_PREFIX}/<name>/<timestamp>.md: {path}"
         ));
@@ -217,9 +223,36 @@ mod tests {
     }
 
     #[test]
+    fn canonical_source_path_rejects_provider_and_id_over_limits() {
+        let long_provider = "a".repeat(33);
+        let long_id = "a".repeat(129);
+
+        for path in [
+            format!("{RAW_SOURCES_PREFIX}/{long_provider}/ok.md"),
+            format!("{RAW_SOURCES_PREFIX}/chatgpt/{long_id}.md"),
+        ] {
+            let error = validate_canonical_source_path(&path)
+                .expect_err("overlong provider or id should fail");
+            assert!(error.contains("canonical form"));
+        }
+    }
+
+    #[test]
+    fn canonical_source_path_rejects_dotdot_inside_source_id() {
+        let error = validate_canonical_source_path("/Sources/raw/chatgpt/a..b.md")
+            .expect_err("dotdot inside raw source id should fail");
+        assert!(error.contains("canonical form"));
+    }
+
+    #[test]
     fn canonical_source_path_accepts_skill_runs() {
         let path = format!("{SKILL_RUNS_PREFIX}/legal-review/1700000000000.md");
         assert!(validate_canonical_source_path(&path).is_ok());
+    }
+
+    #[test]
+    fn canonical_source_path_accepts_sessions() {
+        assert!(validate_canonical_source_path("/Sources/sessions/session-1/session-1.md").is_ok());
     }
 
     #[test]
@@ -237,9 +270,24 @@ mod tests {
             "/Sources/skill-runs/legal-review",
             "/Sources/skill-runs/legal-review/",
             "/Sources/skill-runs/legal-review/run.txt",
+            "/Sources/skill-runs/../...md",
+            "/Sources/skill-runs/legal-review/run..1.md",
             "/Sources/skill-runsfoo/legal-review/run.md",
         ] {
             assert!(validate_canonical_source_path(path).is_err());
+        }
+    }
+
+    #[test]
+    fn canonical_source_path_rejects_empty_and_dotdot_segments() {
+        for path in [
+            "/Sources/raw//chatgpt/alpha.md",
+            "/Sources/raw/chatgpt//alpha.md",
+            "/Sources/sessions//session.md",
+            "/Sources/sessions/../...md",
+            "/Sources/sessions/session-1/session..1.md",
+        ] {
+            assert!(validate_canonical_source_path(path).is_err(), "{path}");
         }
     }
 

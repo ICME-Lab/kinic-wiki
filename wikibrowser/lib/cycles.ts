@@ -1,5 +1,13 @@
 export type CycleTone = "blue" | "amber" | "red" | "gray";
 
+export const KINIC_LEDGER_FEE_E8S = 10_000n;
+export const KINIC_DECIMALS = 8;
+export const CYCLES_PER_KINIC = 234_500_000_000n;
+
+export function kinicBaseUnitsPerToken(): bigint {
+  return 10n ** BigInt(KINIC_DECIMALS);
+}
+
 const MILLION = 1_000_000n;
 const BILLION = 1_000_000_000n;
 const TRILLION = 1_000_000_000_000n;

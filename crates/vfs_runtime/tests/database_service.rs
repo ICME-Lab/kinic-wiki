@@ -9,14 +9,15 @@ use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
     DatabaseCyclesPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
-    MAX_RESTORE_CHUNK_BYTES, VfsService,
+    MAX_RESTORE_CHUNK_BYTES, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
-    DeleteDatabaseRequest, DeleteNodeRequest, KINIC_LEDGER_FEE_E8S, MkdirNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
+    DeleteDatabaseRequest, DeleteNodeRequest, KINIC_LEDGER_FEE_E8S, MkdirNodeRequest,
+    MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -98,6 +99,14 @@ fn mainnet_011_index_upgrades_to_latest() {
             |row| row.get(0),
         )
         .expect("pending details columns should load");
+    let pending_ledger_block_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_pending_operations')
+             WHERE name = 'ledger_block_index'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("pending ledger block column count should load");
     let ledger_cycles_column_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('database_cycle_ledger')
@@ -121,6 +130,7 @@ fn mainnet_011_index_upgrades_to_latest() {
     assert_eq!(storage_columns, 1);
     assert_eq!(removed_storage_columns, 0);
     assert_eq!(pending_details_columns, 6);
+    assert_eq!(pending_ledger_block_columns, 1);
     assert_eq!(ledger_cycles_column_count, 0);
     assert_eq!(usage_table_count, 0);
     assert_eq!(
@@ -526,36 +536,37 @@ fn cycle_database(
     block_index: u64,
     now: i64,
 ) -> u64 {
-    let preview = service
-        .preview_database_cycles_purchase(database_id, payment_amount_e8s)
-        .expect("database cycle purchase preview should load");
     let operation_id = service
         .begin_database_cycles_purchase(database_id, caller, payment_amount_e8s, now)
         .expect("database cycle purchase should begin");
+    let cycles = cycles_for_payment(service, database_id, payment_amount_e8s);
     service
-        .mark_database_cycles_purchase_completed(operation_id, database_id, caller, preview.cycles)
-        .expect("database cycle purchase should be marked completed");
-    service
-        .apply_database_cycles_purchase(
+        .complete_database_cycles_purchase_ledger_transfer(
             operation_id,
             database_id,
             caller,
-            preview.cycles,
+            cycles,
             block_index,
-            now,
         )
+        .expect("database cycle purchase ledger transfer should complete");
+    service
+        .apply_database_cycles_purchase(operation_id, database_id, caller, cycles, block_index, now)
         .expect("database cycle purchase should cycle")
 }
 
 fn cycles_for_payment(service: &VfsService, database_id: &str, payment_amount_e8s: u64) -> u64 {
     service
-        .preview_database_cycles_purchase(database_id, payment_amount_e8s)
-        .expect("database cycle purchase preview should load")
-        .cycles
+        .validate_database_cycles_purchase(database_id, payment_amount_e8s)
+        .expect("database cycle purchase should validate");
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
+    cycles_for_payment_amount_e8s(payment_amount_e8s, &config)
+        .expect("database cycle purchase amount should compute")
 }
 
 fn default_cycles_for_payment(payment_amount_e8s: u64) -> u64 {
-    payment_amount_e8s * 10_000
+    payment_amount_e8s * 2_345
 }
 
 fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<String> {
@@ -1587,7 +1598,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     );
     service
         .validate_database_cycles_purchase(&pending.database_id, 500)
-        .expect("anonymous preview should accept pending DB cycle purchase");
+        .expect("validation should accept pending DB cycle purchase");
 
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
@@ -1607,13 +1618,14 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         .expect("pending migrations should run");
     let purchased_cycles = default_cycles_for_payment(1_000_000);
     service
-        .mark_database_cycles_purchase_completed(
+        .complete_database_cycles_purchase_ledger_transfer(
             operation_id,
             &pending.database_id,
             "payer",
             purchased_cycles,
+            42,
         )
-        .expect("cycle purchase should be marked completed");
+        .expect("cycle purchase ledger transfer should complete");
     let balance = service
         .apply_database_cycles_purchase(
             operation_id,
@@ -1633,6 +1645,104 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     assert_eq!(
         mount_history_row(&root, 11),
         (pending.database_id.clone(), "activate".to_string())
+    );
+}
+
+#[test]
+fn pending_database_creation_limits_unresolved_per_caller() {
+    let service = service();
+
+    for offset in 0..3 {
+        service
+            .reserve_pending_generated_database(
+                &format!("Pending {offset}"),
+                "owner",
+                1_700_000_000_000 + offset,
+            )
+            .expect("pending database should create within limit");
+    }
+
+    let error = service
+        .reserve_pending_generated_database("Pending 3", "owner", 1_700_000_000_010)
+        .expect_err("fourth unresolved pending database should fail");
+    assert!(error.contains("too many pending databases for caller"));
+
+    service
+        .reserve_pending_generated_database("Other caller", "other", 1_700_000_000_010)
+        .expect("pending limit should be per caller");
+}
+
+#[test]
+fn pending_database_creation_purges_expired_unstarted_reservations() {
+    let (service, root) = service_with_root();
+    let mut expired_ids = Vec::new();
+    for offset in 0..3 {
+        let pending = service
+            .reserve_pending_generated_database(&format!("Expired {offset}"), "owner", offset)
+            .expect("expired pending database should create");
+        expired_ids.push(pending.database_id);
+    }
+
+    let fresh = service
+        .reserve_pending_generated_database("Fresh", "owner", 86_400_003)
+        .expect("expired unstarted pending databases should be purged before limit check");
+
+    assert!(database_index_row_exists(&root, &fresh.database_id));
+    for database_id in expired_ids {
+        assert!(!database_index_row_exists(&root, &database_id));
+    }
+}
+
+#[test]
+fn pending_database_creation_preserves_in_flight_cycle_operations_during_cleanup() {
+    let (service, root) = service_with_root();
+    let protected = service
+        .reserve_pending_generated_database("In flight", "owner", 0)
+        .expect("pending database should create");
+    service
+        .begin_database_cycles_purchase(&protected.database_id, "payer", 500, 1)
+        .expect("cycle purchase should begin");
+    for offset in 0..2 {
+        service
+            .reserve_pending_generated_database(&format!("Expired {offset}"), "owner", offset + 2)
+            .expect("expired pending database should create");
+    }
+
+    service
+        .reserve_pending_generated_database("Fresh", "owner", 86_400_003)
+        .expect("unprotected expired pending databases should be purged");
+
+    assert!(database_index_row_exists(&root, &protected.database_id));
+    assert_eq!(
+        database_pending_operation_count(&root, &protected.database_id),
+        1
+    );
+}
+
+#[test]
+fn pending_database_creation_preserves_activation_started_reservations_during_cleanup() {
+    let (service, root) = service_with_root();
+    let activated = service
+        .reserve_pending_generated_database("Activating", "owner", 0)
+        .expect("pending database should create");
+    service
+        .activate_pending_database_for_cycles_purchase(&activated.database_id, 1)
+        .expect("pending activation should start")
+        .expect("pending activation should allocate mount");
+    for offset in 0..2 {
+        service
+            .reserve_pending_generated_database(&format!("Expired {offset}"), "owner", offset + 2)
+            .expect("expired pending database should create");
+    }
+
+    service
+        .reserve_pending_generated_database("Fresh", "owner", 86_400_003)
+        .expect("unactivated expired pending databases should be purged");
+
+    assert!(database_index_row_exists(&root, &activated.database_id));
+    assert_eq!(
+        database_index_row(&root, &activated.database_id),
+        ("pending".to_string(), Some(11), 0, None)
     );
 }
 
@@ -1668,114 +1778,36 @@ fn pending_database_cycles_purchase_cancel_does_not_allocate_mount_slot() {
 }
 
 #[test]
-fn direct_cycles_purchase_cancel_rejects_non_in_flight_operations() {
-    let (service, root) = service_with_root();
-    for database_id in ["completed-cancel", "ambiguous-cancel"] {
-        service
-            .create_database(database_id, "owner", 1)
-            .expect("database should create");
-    }
-
-    let completed = service
-        .begin_database_cycles_purchase("completed-cancel", "payer", 500, 2)
-        .expect("completed operation should begin");
-    let completed_cycles = cycles_for_payment(&service, "completed-cancel", 500);
-    service
-        .mark_database_cycles_purchase_completed(
-            completed,
-            "completed-cancel",
-            "payer",
-            completed_cycles,
-        )
-        .expect("completed operation should be marked completed");
-    let completed_error = service
-        .cancel_database_cycles_purchase(completed, "completed-cancel", "payer", completed_cycles)
-        .expect_err("completed operation should not be directly cancellable");
-    assert!(completed_error.contains("cycle purchase operation is completed"));
-    assert_eq!(
-        database_pending_operation_count(&root, "completed-cancel"),
-        1
-    );
-
-    let ambiguous = service
-        .begin_database_cycles_purchase("ambiguous-cancel", "payer", 700, 3)
-        .expect("ambiguous operation should begin");
-    let ambiguous_cycles = cycles_for_payment(&service, "ambiguous-cancel", 700);
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            ambiguous,
-            "ambiguous-cancel",
-            "payer",
-            ambiguous_cycles,
-            4,
-        )
-        .expect("ambiguous operation should be marked ambiguous");
-    let ambiguous_error = service
-        .cancel_database_cycles_purchase(ambiguous, "ambiguous-cancel", "payer", ambiguous_cycles)
-        .expect_err("ambiguous operation should not be directly cancellable");
-    assert!(ambiguous_error.contains("cycle purchase operation is ambiguous"));
-    assert_eq!(
-        database_pending_operation_count(&root, "ambiguous-cancel"),
-        1
-    );
-    service
-        .repair_database_cycles_purchase_cancel(
-            "ambiguous-cancel",
-            ambiguous,
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            5,
-        )
-        .expect("ambiguous operation should remain repair cancellable by authority");
-    assert_eq!(
-        database_pending_operation_count(&root, "ambiguous-cancel"),
-        0
-    );
-}
-
-#[test]
-fn pending_database_cycles_purchase_cancel_rejects_after_activation_started() {
+fn cleanup_database_cycles_purchase_discards_started_pending_activation() {
     let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database("Started", "owner", 1)
+        .reserve_pending_generated_database("Started cleanup", "owner", 1)
         .expect("pending database should create");
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 500, 2)
         .expect("cycle purchase should begin");
     let purchased_cycles = default_cycles_for_payment(500);
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            operation_id,
-            &pending.database_id,
-            "payer",
-            purchased_cycles,
-            3,
-        )
-        .expect("cycle purchase ambiguity should record");
     let meta = service
         .activate_pending_database_for_cycles_purchase(&pending.database_id, 4)
         .expect("pending activation should prepare")
         .expect("activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
 
-    let error = service
-        .repair_database_cycles_purchase_cancel(
-            &pending.database_id,
+    service
+        .cleanup_database_cycles_purchase_after_no_credit(
             operation_id,
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            5,
+            &pending.database_id,
+            "payer",
+            purchased_cycles,
         )
-        .expect_err("started activation should require complete repair");
+        .expect("no-credit cleanup should discard reservation");
 
-    assert!(error.contains("complete cycle purchase repair"));
     assert_eq!(
         database_pending_operation_count(&root, &pending.database_id),
-        1
+        0
     );
-    assert_eq!(mount_history_count(&root), 1);
-    assert_eq!(
-        database_index_row(&root, &pending.database_id),
-        ("pending".to_string(), Some(11), 0, None)
-    );
+    assert_eq!(mount_history_count(&root), 0);
+    assert!(!database_index_row_exists(&root, &pending.database_id));
 }
 
 #[test]
@@ -1914,7 +1946,7 @@ fn cycles_billing_config_version_changes_only_for_effective_rate_updates() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
-                cycles_per_kinic: 1_000_000_000_000,
+                cycles_per_kinic: 234_500_000_000,
                 min_update_cycles: 1_000_000,
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
@@ -1925,7 +1957,7 @@ fn cycles_billing_config_version_changes_only_for_effective_rate_updates() {
     service
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
-                cycles_per_kinic: 2_000_000_000_000,
+                cycles_per_kinic: 469_000_000_000,
                 min_update_cycles: 1_000_000,
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
@@ -1935,38 +1967,38 @@ fn cycles_billing_config_version_changes_only_for_effective_rate_updates() {
 }
 
 #[test]
-fn cycles_purchase_preview_returns_fixed_payment_inputs() {
+fn cycles_purchase_validation_accepts_current_payment_inputs() {
     let (service, _root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    let preview = service
-        .preview_database_cycles_purchase("alpha", 50_000)
-        .expect("preview should succeed");
+    service
+        .validate_database_cycles_purchase("alpha", 50_000)
+        .expect("purchase should validate");
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
 
-    assert_eq!(preview.payment_amount_e8s, 50_000);
-    assert_eq!(preview.cycles, 500_000_000);
-    assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
-    assert_eq!(preview.cycles_per_kinic, 1_000_000_000_000);
-    assert_eq!(preview.config_version, 1);
+    assert_eq!(
+        cycles_for_payment_amount_e8s(50_000, &config).expect("cycles should compute"),
+        117_250_000
+    );
 }
 
 #[test]
-fn cycles_purchase_begin_rejects_stale_expected_values_before_pending_create() {
+fn cycles_purchase_begin_returns_current_config_amount() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    let stale_amount = service
+    let start = service
         .begin_database_cycles_purchase_with_ledger_details(
             DatabaseCyclesPurchaseWithLedgerDetails {
                 database_id: "alpha",
                 caller: "payer",
                 payment_amount_e8s: 50_000,
-                expected_cycles: 500_000_001,
-                expected_config_version: 1,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: "payer",
                     from_subaccount: None,
@@ -1978,32 +2010,9 @@ fn cycles_purchase_begin_rejects_stale_expected_values_before_pending_create() {
                 now: 2,
             },
         )
-        .expect_err("stale amount should reject");
-    assert!(stale_amount.contains("cycles purchase amount changed"));
-    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
-
-    let stale_version = service
-        .begin_database_cycles_purchase_with_ledger_details(
-            DatabaseCyclesPurchaseWithLedgerDetails {
-                database_id: "alpha",
-                caller: "payer",
-                payment_amount_e8s: 50_000,
-                expected_cycles: 500_000_000,
-                expected_config_version: 2,
-                ledger: CyclesPendingLedgerDetailsInput {
-                    from_owner: "payer",
-                    from_subaccount: None,
-                    to_owner: "canister",
-                    to_subaccount: None,
-                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                    ledger_created_at_time_ns: 3_000_000,
-                },
-                now: 3,
-            },
-        )
-        .expect_err("stale version should reject");
-    assert!(stale_version.contains("cycles billing config changed"));
-    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
+        .expect("purchase should begin");
+    assert_eq!(start.amount_cycles, 117_250_000);
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 1);
 }
 
 #[test]
@@ -2022,10 +2031,16 @@ fn database_cycles_purchase_settlement_survives_owner_role_change() {
     service
         .revoke_database_access("alpha", "replacement", "owner")
         .expect("replacement should revoke original owner");
-    service
-        .mark_database_cycles_purchase_completed(operation_id, "alpha", "owner", purchased_cycles)
-        .expect("cycle purchase should be marked completed");
 
+    service
+        .complete_database_cycles_purchase_ledger_transfer(
+            operation_id,
+            "alpha",
+            "owner",
+            purchased_cycles,
+            7,
+        )
+        .expect("cycle purchase ledger transfer should complete");
     let balance = service
         .apply_database_cycles_purchase(operation_id, "alpha", "owner", purchased_cycles, 7, 3)
         .expect("started cycle purchase should settle");
@@ -2044,7 +2059,7 @@ fn database_cycles_purchase_settlement_survives_owner_role_change() {
 #[test]
 fn pending_database_cycles_purchase_blocks_delete_until_resolved() {
     let (service, root) = service_with_root();
-    for database_id in ["complete", "cancel", "ambiguous"] {
+    for database_id in ["complete", "cancel"] {
         service
             .create_database(database_id, "owner", 1)
             .expect("database should create");
@@ -2055,12 +2070,9 @@ fn pending_database_cycles_purchase_blocks_delete_until_resolved() {
     let cancel = service
         .begin_database_cycles_purchase("cancel", "owner", 500, 2)
         .expect("cycle purchase should begin");
-    let ambiguous = service
-        .begin_database_cycles_purchase("ambiguous", "owner", 500, 2)
-        .expect("cycle purchase should begin");
     let purchased_cycles = cycles_for_payment(&service, "complete", 500);
 
-    for database_id in ["complete", "cancel", "ambiguous"] {
+    for database_id in ["complete", "cancel"] {
         let error = service
             .delete_database(delete_request(database_id), "owner", 3)
             .expect_err("pending cycle purchase should block delete");
@@ -2069,23 +2081,20 @@ fn pending_database_cycles_purchase_blocks_delete_until_resolved() {
     }
 
     service
-        .mark_database_cycles_purchase_completed(complete, "complete", "owner", purchased_cycles)
-        .expect("cycle purchase should be marked completed");
+        .complete_database_cycles_purchase_ledger_transfer(
+            complete,
+            "complete",
+            "owner",
+            purchased_cycles,
+            10,
+        )
+        .expect("cycle purchase ledger transfer should complete");
     service
         .apply_database_cycles_purchase(complete, "complete", "owner", purchased_cycles, 10, 4)
         .expect("cycle purchase should complete");
     service
         .cancel_database_cycles_purchase(cancel, "cancel", "owner", purchased_cycles)
         .expect("cycle purchase should cancel");
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            ambiguous,
-            "ambiguous",
-            "owner",
-            purchased_cycles,
-            4,
-        )
-        .expect("ambiguous cycle purchase should record");
 
     for database_id in ["complete", "cancel"] {
         assert_eq!(database_pending_operation_count(&root, database_id), 0);
@@ -2093,11 +2102,6 @@ fn pending_database_cycles_purchase_blocks_delete_until_resolved() {
             .delete_database(delete_request(database_id), "owner", 5)
             .expect("resolved cycle purchase should allow delete");
     }
-    assert_eq!(database_pending_operation_count(&root, "ambiguous"), 1);
-    let error = service
-        .delete_database(delete_request("ambiguous"), "owner", 5)
-        .expect_err("ambiguous cycle purchase should keep delete blocked");
-    assert!(error.contains("pending cycle operation"));
 }
 
 #[test]
@@ -2115,128 +2119,6 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
     assert_eq!(database_member_count(&root, "funded"), 0);
     assert_eq!(database_pending_operation_count(&root, "funded"), 0);
     assert!(database_ledger_kinds(&root, "funded").is_empty());
-}
-
-#[test]
-fn pending_cycles_operations_are_visible_to_owner_and_authority_only() {
-    let (service, _root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-    service
-        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
-        .expect("writer should be granted");
-    service
-        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
-        .expect("reader should be granted");
-    service
-        .begin_database_cycles_purchase("alpha", "payer", 500, 3)
-        .expect("cycle purchase should begin");
-
-    let owner_page = service
-        .list_database_cycle_pending_operations("alpha", "owner", None, 10)
-        .expect("owner should list pending operations");
-    assert_eq!(owner_page.entries.len(), 1);
-    assert_eq!(owner_page.entries[0].kind, "cycles_purchase");
-    assert_eq!(owner_page.entries[0].caller, "payer");
-
-    let billing_authority_page = service
-        .list_database_cycle_pending_operations("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
-        .expect("billing authority should list pending operations");
-    assert_eq!(billing_authority_page.entries.len(), 1);
-
-    for caller in ["writer", "reader", "2vxsx-fae"] {
-        let error = service
-            .list_database_cycle_pending_operations("alpha", caller, None, 10)
-            .expect_err("non-owner should not list pending operations");
-        assert!(
-            error.contains("principal lacks required database role")
-                || error.contains("principal has no access")
-        );
-    }
-}
-
-#[test]
-fn repair_cycles_purchase_cancel_allows_configured_authority_only() {
-    let (service, root) = service_with_root();
-    for database_id in ["payer-reject", "owner-reject", "authority-cancel"] {
-        service
-            .create_database(database_id, "owner", 1)
-            .expect("database should create");
-        service
-            .grant_database_access(database_id, "owner", "writer", DatabaseRole::Writer, 2)
-            .expect("writer should be granted");
-        service
-            .grant_database_access(database_id, "owner", "reader", DatabaseRole::Reader, 3)
-            .expect("reader should be granted");
-    }
-
-    let payer_reject = service
-        .begin_database_cycles_purchase("payer-reject", "payer", 500, 4)
-        .expect("payer reject operation should begin");
-    let payer_reject_cycles = cycles_for_payment(&service, "payer-reject", 500);
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            payer_reject,
-            "payer-reject",
-            "payer",
-            payer_reject_cycles,
-            5,
-        )
-        .expect("payer reject should mark ambiguous");
-    let error = service
-        .repair_database_cycles_purchase_cancel("payer-reject", payer_reject, "payer", 6)
-        .expect_err("payer should not cancel own ambiguous purchase");
-    assert!(error.contains("not cycles purchase cancel authority"));
-    assert_eq!(database_pending_operation_count(&root, "payer-reject"), 1);
-
-    let owner_reject = service
-        .begin_database_cycles_purchase("owner-reject", "payer", 700, 7)
-        .expect("owner reject operation should begin");
-    let owner_reject_cycles = cycles_for_payment(&service, "owner-reject", 700);
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            owner_reject,
-            "owner-reject",
-            "payer",
-            owner_reject_cycles,
-            8,
-        )
-        .expect("owner reject should mark ambiguous");
-    let error = service
-        .repair_database_cycles_purchase_cancel("owner-reject", owner_reject, "owner", 9)
-        .expect_err("owner should not cancel ambiguous purchase");
-    assert!(error.contains("not cycles purchase cancel authority"));
-    assert_eq!(database_pending_operation_count(&root, "owner-reject"), 1);
-
-    let authority_cancel = service
-        .begin_database_cycles_purchase("authority-cancel", "payer", 900, 10)
-        .expect("authority cancel operation should begin");
-    let authority_cancel_cycles = cycles_for_payment(&service, "authority-cancel", 900);
-    service
-        .mark_database_cycles_purchase_ambiguous(
-            authority_cancel,
-            "authority-cancel",
-            "payer",
-            authority_cancel_cycles,
-            11,
-        )
-        .expect("authority cancel should mark ambiguous");
-    service
-        .repair_database_cycles_purchase_cancel(
-            "authority-cancel",
-            authority_cancel,
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            12,
-        )
-        .expect("authority should cancel pending purchase");
-    assert_eq!(
-        database_ledger_kinds(&root, "authority-cancel"),
-        vec![
-            "cycles_purchase_ambiguous",
-            "cycles_purchase_repair_cancelled"
-        ]
-    );
 }
 
 #[test]
@@ -2289,77 +2171,6 @@ fn cycles_history_redacts_principals_for_non_owner_readers() {
 }
 
 #[test]
-fn verified_complete_allows_authenticated_caller_and_authority_cancel() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("complete", "owner", 1)
-        .expect("database should create");
-    service
-        .create_database("cancel", "owner", 1)
-        .expect("database should create");
-    let complete = service
-        .begin_database_cycles_purchase("complete", "payer", 500, 2)
-        .expect("cycle purchase should begin");
-    let cancel = service
-        .begin_database_cycles_purchase("cancel", "payer", 700, 2)
-        .expect("cycle purchase should begin");
-    let complete_cycles = cycles_for_payment(&service, "complete", 500);
-    let cancel_cycles = cycles_for_payment(&service, "cancel", 700);
-    service
-        .mark_database_cycles_purchase_ambiguous(complete, "complete", "payer", complete_cycles, 3)
-        .expect("cycle purchase ambiguity should record");
-    service
-        .mark_database_cycles_purchase_ambiguous(cancel, "cancel", "payer", cancel_cycles, 3)
-        .expect("cycle purchase ambiguity should record");
-
-    let balance = service
-        .repair_database_cycles_purchase_complete("complete", complete, 77, 4)
-        .expect("authenticated caller should complete verified cycle purchase");
-    assert_eq!(balance, complete_cycles);
-    service
-        .repair_database_cycles_purchase_cancel("cancel", cancel, "rrkah-fqaaa-aaaaa-aaaaq-cai", 4)
-        .expect("authority should cancel ambiguous cycle purchase after verification");
-
-    assert_eq!(
-        database_cycles_balance(&root, "complete"),
-        complete_cycles as i64
-    );
-    assert_eq!(database_cycles_balance(&root, "cancel"), 0);
-    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
-    assert_eq!(database_pending_operation_count(&root, "cancel"), 0);
-    assert_eq!(
-        database_ledger_kinds(&root, "complete"),
-        vec![
-            "cycles_purchase_ambiguous",
-            "cycles_purchase_repair_complete"
-        ]
-    );
-    assert_eq!(
-        database_ledger_kinds(&root, "cancel"),
-        vec![
-            "cycles_purchase_ambiguous",
-            "cycles_purchase_repair_cancelled"
-        ]
-    );
-    let entries = service
-        .list_database_cycle_entries("complete", "owner", None, 10)
-        .expect("cycles entries should load")
-        .entries;
-    assert_eq!(entries[0].caller, "payer");
-    assert_eq!(entries[1].caller, "payer");
-    assert_eq!(entries[1].ledger_block_index, Some(77));
-
-    let cancel_entries = service
-        .list_database_cycle_entries("cancel", "owner", None, 10)
-        .expect("cancel entries should load")
-        .entries;
-    assert_eq!(cancel_entries[1].caller, "rrkah-fqaaa-aaaaa-aaaaq-cai");
-    assert_eq!(cancel_entries[1].payment_amount_e8s, Some(700));
-    assert_eq!(cancel_entries[1].balance_after_cycles, 0);
-    assert_eq!(cancel_entries[1].ledger_block_index, None);
-}
-
-#[test]
 fn database_rename_requires_owner() {
     let (service, root) = service_with_root();
     service
@@ -2391,7 +2202,7 @@ fn zero_cycle_charge_skips_cycle_ledger() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    cycle_database(&service, "alpha", "owner", 500, 7, 2);
+    let purchased_cycles = cycle_database(&service, "alpha", "owner", 5_000, 7, 2);
     let config = service
         .cycles_billing_config()
         .expect("cycles config should load");
@@ -2400,7 +2211,10 @@ fn zero_cycle_charge_skips_cycle_ledger() {
         .charge_database_update(&config, "alpha", "owner", "write_node", 0, 3)
         .expect("zero-cycle update should skip charge");
 
-    assert_eq!(database_cycles_balance(&root, "alpha"), 5_000_000);
+    assert_eq!(
+        database_cycles_balance(&root, "alpha"),
+        purchased_cycles as i64
+    );
     assert_eq!(
         database_ledger_kinds(&root, "alpha"),
         vec!["cycles_purchase"]
@@ -2410,21 +2224,54 @@ fn zero_cycle_charge_skips_cycle_ledger() {
         .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000, 4)
         .expect("charged update should record cycle ledger");
 
-    assert_eq!(database_cycles_balance(&root, "alpha"), 4_000_000);
+    let after_first_charge = purchased_cycles as i64 - 1_000_000;
+    assert_eq!(database_cycles_balance(&root, "alpha"), after_first_charge);
     service
         .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_001, 5)
         .expect("raw update cycle charge should record cycle ledger");
 
-    assert_eq!(database_cycles_balance(&root, "alpha"), 2_999_999);
+    let after_second_charge = after_first_charge - 1_000_001;
+    assert_eq!(database_cycles_balance(&root, "alpha"), after_second_charge);
+    let overdrawn = service
+        .charge_database_update(
+            &config,
+            "alpha",
+            "owner",
+            "write_node",
+            u128::try_from(after_second_charge).expect("remaining balance should fit") + 1,
+            6,
+        )
+        .expect_err("overdrawn update cycle charge should fail");
+    assert!(overdrawn.contains("database cycles balance is insufficient for update charge"));
+    assert_eq!(database_cycles_balance(&root, "alpha"), after_second_charge);
+    assert_eq!(
+        database_ledger_kinds(&root, "alpha"),
+        vec!["cycles_purchase", "charge", "charge"]
+    );
+
+    service
+        .charge_database_update(
+            &config,
+            "alpha",
+            "owner",
+            "write_node",
+            u128::try_from(after_second_charge).expect("remaining balance should fit"),
+            7,
+        )
+        .expect("exact balance cycle charge should succeed");
+
+    assert_eq!(database_cycles_balance(&root, "alpha"), 0);
     let entries = service
         .list_database_cycle_entries("alpha", "owner", None, 10)
         .expect("cycle entries should load")
         .entries;
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 4);
     assert_eq!(entries[1].kind, "charge");
     assert_eq!(entries[1].amount_cycles, -1_000_000);
     assert_eq!(entries[2].kind, "charge");
     assert_eq!(entries[2].amount_cycles, -1_000_001);
+    assert_eq!(entries[3].kind, "charge");
+    assert_eq!(entries[3].amount_cycles, -after_second_charge);
 }
 
 #[test]
@@ -2488,6 +2335,44 @@ fn lists_database_summaries_for_caller_memberships_only() {
 }
 
 #[test]
+fn grant_database_access_enforces_member_limit_for_new_members_only() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    for index in 0..30 {
+        service
+            .grant_database_access(
+                "alpha",
+                "owner",
+                &format!("member-{index}"),
+                DatabaseRole::Reader,
+                2 + index,
+            )
+            .expect("member grant should fit limit");
+    }
+    assert_eq!(database_member_count(&root, "alpha"), 32);
+
+    service
+        .grant_database_access("alpha", "owner", "member-0", DatabaseRole::Writer, 40)
+        .expect("existing member role update should ignore member cap");
+
+    let error = service
+        .grant_database_access("alpha", "owner", "member-30", DatabaseRole::Reader, 41)
+        .expect_err("new member beyond cap should fail");
+    assert!(error.contains("too many database members"));
+
+    service
+        .revoke_database_access("alpha", "owner", "member-1")
+        .expect("member revoke should succeed");
+    service
+        .grant_database_access("alpha", "owner", "member-30", DatabaseRole::Reader, 42)
+        .expect("new member should fit after revoke");
+    assert_eq!(database_member_count(&root, "alpha"), 32);
+}
+
+#[test]
 fn discards_failed_database_reservation_for_retry() {
     let (service, root) = service_with_root();
     service
@@ -2505,6 +2390,36 @@ fn discards_failed_database_reservation_for_retry() {
         .expect("same database_id should create after discard");
     assert_eq!(meta.database_id, "retryable");
     assert_eq!(database_member_count(&root, "retryable"), 2);
+}
+
+#[test]
+fn database_cycles_purchase_rejects_duplicate_pending_operation_for_caller() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    let first = service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("first purchase should begin");
+    let duplicate = service
+        .begin_database_cycles_purchase("alpha", "payer", 600, 3)
+        .expect_err("same caller should not create duplicate pending purchase");
+    assert!(duplicate.contains("cycles purchase already pending for caller"));
+
+    service
+        .begin_database_cycles_purchase("alpha", "other-payer", 600, 4)
+        .expect("different caller can begin separate purchase");
+
+    let cycles = default_cycles_for_payment(500);
+    service
+        .cancel_database_cycles_purchase(first, "alpha", "payer", cycles)
+        .expect("first purchase should cancel");
+    service
+        .begin_database_cycles_purchase("alpha", "payer", 700, 5)
+        .expect("caller can begin after pending operation resolves");
+
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 2);
 }
 
 #[test]
@@ -3941,4 +3856,58 @@ fn append_node_validates_effective_kind_paths() {
         )
         .expect("kind=None should create wiki file");
     assert_eq!(wiki.node.kind, NodeKind::File);
+}
+
+#[test]
+fn move_node_validates_source_target_path() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/abc.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/wrong.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/chatgpt/def.md", 2);
+    let source = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Sources/raw/web/abc.md".to_string(),
+                kind: NodeKind::Source,
+                content: "source".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("source should write");
+
+    let error = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Sources/raw/web/abc.md".to_string(),
+                to_path: "/Sources/raw/web/wrong.txt".to_string(),
+                expected_etag: Some(source.node.etag.clone()),
+                overwrite: false,
+            },
+            4,
+        )
+        .expect_err("non-canonical source target should fail");
+    assert!(error.contains("canonical form"));
+
+    service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Sources/raw/web/abc.md".to_string(),
+                to_path: "/Sources/raw/chatgpt/def.md".to_string(),
+                expected_etag: Some(source.node.etag),
+                overwrite: false,
+            },
+            5,
+        )
+        .expect("canonical source target should pass");
 }

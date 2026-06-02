@@ -1,12 +1,14 @@
 import type { Identity } from "@icp-sdk/core/agent";
-import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
 import type { CatalogSkill, SkillProposal } from "@/lib/skill-registry-catalog";
+import { assertProposalStatus } from "@/lib/skill-registry-operations";
 import type { WikiNode } from "@/lib/types";
 import { readNode, writeNodeAuthenticated } from "@/lib/vfs-client";
+import { ensureParentFoldersAuthenticated } from "@/lib/vfs-folders";
 
 export type ProposalDiffPreview = {
   proposalPath: string;
   targetPath: string;
+  baseEtag: string;
   nextContent: string;
   currentEtag: string;
   metadataJson: string;
@@ -14,36 +16,73 @@ export type ProposalDiffPreview = {
   removals: number;
 };
 
-export async function previewApplyProposalDiff(
-  canisterId: string,
-  databaseId: string,
-  identity: Identity,
-  skill: CatalogSkill,
-  proposal: SkillProposal
-): Promise<ProposalDiffPreview> {
-  if (!proposal.diff) throw new Error("Proposal diff is missing.");
-  const patch = parseSingleFilePatch(proposal.diff);
-  const targetPath = `${skill.basePath}/${patch.path}`;
-  if (!targetPath.startsWith(`${skill.basePath}/`) || !targetPath.endsWith(".md")) throw new Error("Diff target must be a package markdown file.");
-  const node = await requireNode(canisterId, databaseId, targetPath, identity);
+export async function previewApplyProposalDiff(canisterId: string, databaseId: string, identity: Identity, skill: CatalogSkill, proposal: SkillProposal): Promise<ProposalDiffPreview> {
+  const [current, candidate, metrics] = await Promise.all([
+    requireNode(canisterId, databaseId, `${skill.basePath}/SKILL.md`, identity),
+    requireNode(canisterId, databaseId, proposal.candidatePath, identity),
+    requireNode(canisterId, databaseId, proposal.metricsPath, identity)
+  ]);
+  assertProposalGates(metrics.content);
+  assertSafeProposalId(proposal.id);
+  if (!proposal.baseEtag) throw new Error("Proposal metrics base_etag is required.");
+  if (proposal.baseEtag !== current.etag) {
+    throw new Error("Current SKILL.md etag no longer matches proposal base_etag.");
+  }
+  const counts = lineDelta(current.content, candidate.content);
   return {
-    proposalPath: proposal.path,
-    targetPath,
-    nextContent: applyPatch(node.content, patch.hunk),
-    currentEtag: node.etag,
-    metadataJson: node.metadataJson,
-    additions: patch.additions,
-    removals: patch.removals
+    proposalPath: proposal.proposalRoot,
+    targetPath: `${skill.basePath}/SKILL.md`,
+    baseEtag: proposal.baseEtag,
+    nextContent: candidate.content,
+    currentEtag: current.etag,
+    metadataJson: current.metadataJson,
+    additions: counts.additions,
+    removals: counts.removals
   };
 }
 
-export async function applyProposalDiff(
-  canisterId: string,
-  databaseId: string,
-  identity: Identity,
-  proposal: SkillProposal,
-  preview: ProposalDiffPreview
-): Promise<void> {
+export async function applyProposalDiff(canisterId: string, databaseId: string, identity: Identity, proposal: SkillProposal, preview: ProposalDiffPreview): Promise<void> {
+  assertSafeProposalId(proposal.id);
+  if (proposal.proposalRoot !== preview.proposalPath) throw new Error("Proposal changed since preview.");
+  if (!proposal.baseEtag) throw new Error("Proposal metrics base_etag is required.");
+  if (proposal.baseEtag !== preview.baseEtag) throw new Error("Proposal base_etag changed since preview.");
+  if (!preview.targetPath.endsWith("/SKILL.md")) throw new Error("Proposal target must be SKILL.md.");
+  const basePath = preview.targetPath.replace(/\/SKILL\.md$/, "");
+  const current = await requireNode(canisterId, databaseId, preview.targetPath, identity);
+  if (current.etag !== preview.currentEtag) throw new Error("Current SKILL.md changed since preview.");
+  if (current.etag !== proposal.baseEtag) throw new Error("Current SKILL.md etag no longer matches proposal base_etag.");
+  const skillId = preview.targetPath.split("/").at(-2);
+  if (!skillId) throw new Error("Skill id is missing.");
+  const statusPath = `${proposal.proposalRoot}/status.md`;
+  const [manifest, metrics, status] = await Promise.all([
+    readNode(canisterId, databaseId, `${basePath}/manifest.md`, identity),
+    requireNode(canisterId, databaseId, proposal.metricsPath, identity),
+    requireNode(canisterId, databaseId, statusPath, identity)
+  ]);
+  assertProposalGates(metrics.content);
+  assertProposalStatus(status.content, skillId, proposal.id, ["proposed", "reviewed"]);
+  const versionId = `${Date.now()}-${(await sha256Hex(current.content)).slice(0, 12)}`;
+  const versionBase = `${basePath}/versions/${versionId}`;
+  const versionSkillPath = `${versionBase}/SKILL.md`;
+  await ensureParentFoldersAuthenticated(canisterId, databaseId, identity, versionSkillPath);
+  await writeNodeAuthenticated(canisterId, identity, {
+    databaseId,
+    path: versionSkillPath,
+    kind: "file",
+    content: current.content,
+    metadataJson: "{}",
+    expectedEtag: null
+  });
+  if (manifest) {
+    await writeNodeAuthenticated(canisterId, identity, {
+      databaseId,
+      path: `${versionBase}/manifest.md`,
+      kind: "file",
+      content: manifest.content,
+      metadataJson: "{}",
+      expectedEtag: null
+    });
+  }
   await writeNodeAuthenticated(canisterId, identity, {
     databaseId,
     path: preview.targetPath,
@@ -52,86 +91,15 @@ export async function applyProposalDiff(
     metadataJson: preview.metadataJson,
     expectedEtag: preview.currentEtag
   });
-  const proposalNode = await requireNode(canisterId, databaseId, proposal.path, identity);
+  await ensureParentFoldersAuthenticated(canisterId, databaseId, identity, statusPath);
   await writeNodeAuthenticated(canisterId, identity, {
     databaseId,
-    path: proposal.path,
+    path: statusPath,
     kind: "file",
-    content: replaceRootFrontmatter(proposalNode.content, {
-      status: "applied",
-      applied_at: new Date().toISOString(),
-      applied_by: "browser"
-    }),
-    metadataJson: proposalNode.metadataJson,
-    expectedEtag: proposalNode.etag
+    content: ["---", "kind: kinic.skill_evolution_proposal_status", "schema_version: 1", `skill_id: ${JSON.stringify(skillId)}`, `proposal_id: ${JSON.stringify(proposal.id)}`, "status: auto_applied", `recorded_at: ${new Date().toISOString()}`, "---", "# Proposal Status"].join("\n"),
+    metadataJson: status.metadataJson,
+    expectedEtag: status.etag
   });
-}
-
-type Patch = {
-  path: string;
-  hunk: Hunk;
-  additions: number;
-  removals: number;
-};
-
-type Hunk = {
-  oldStart: number;
-  lines: string[];
-};
-
-function parseSingleFilePatch(diff: string): Patch {
-  const lines = diff.split("\n");
-  if (lines.some((line) => line.startsWith("Binary files ") || line.startsWith("rename ") || line.startsWith("deleted file mode"))) {
-    throw new Error("Only text modifications are supported.");
-  }
-  const target = lines.find((line) => line.startsWith("+++ "));
-  if (!target) throw new Error("Unified diff target is missing.");
-  const path = cleanDiffPath(target.slice(4).trim());
-  let hunk: Hunk | null = null;
-  let additions = 0;
-  let removals = 0;
-  for (const line of lines) {
-    if (line.startsWith("@@")) {
-      if (hunk) throw new Error("Only one hunk proposal diffs are supported.");
-      hunk = { oldStart: parseOldStart(line), lines: [] };
-      continue;
-    }
-    if (!hunk) continue;
-    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
-    if (line.startsWith("-") && !line.startsWith("---")) removals += 1;
-    hunk.lines.push(line);
-  }
-  if (!hunk) throw new Error("Unified diff hunk is missing.");
-  if (!hasContext(hunk.lines)) throw new Error("Proposal diff requires context lines.");
-  return { path, hunk, additions, removals };
-}
-
-function applyPatch(content: string, hunk: Hunk): string {
-  const lines = content.split("\n");
-  const oldLines = hunk.lines.filter((line) => line.startsWith(" ") || (line.startsWith("-") && !line.startsWith("---"))).map((line) => line.slice(1));
-  const newLines = hunk.lines.filter((line) => line.startsWith(" ") || (line.startsWith("+") && !line.startsWith("+++"))).map((line) => line.slice(1));
-  const index = hunk.oldStart - 1;
-  if (index < 0 || oldLines.length === 0) throw new Error("Proposal diff hunk position is invalid.");
-  if (!oldLines.every((line, offset) => lines[index + offset] === line)) {
-    throw new Error("Current file content does not match proposal diff context.");
-  }
-  return [...lines.slice(0, index), ...newLines, ...lines.slice(index + oldLines.length)].join("\n");
-}
-
-function parseOldStart(header: string): number {
-  const match = header.match(/^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/);
-  if (!match) throw new Error("Unified diff hunk header is unsupported.");
-  return Number.parseInt(match[1], 10);
-}
-
-function hasContext(lines: string[]): boolean {
-  return lines.some((line) => line.startsWith(" "));
-}
-
-function cleanDiffPath(value: string): string {
-  const path = value.replace(/^"|"$/g, "").replace(/^[ab]\//, "");
-  if (!path.endsWith(".md") || path.startsWith("/") || path.includes("..") || path.includes("://")) throw new Error("Diff target path is unsupported.");
-  return path;
 }
 
 async function requireNode(canisterId: string, databaseId: string, path: string, identity: Identity): Promise<WikiNode> {
@@ -140,19 +108,54 @@ async function requireNode(canisterId: string, databaseId: string, path: string,
   return node;
 }
 
-function replaceRootFrontmatter(content: string, updates: Record<string, string>): string {
-  if (!splitMarkdownFrontmatter(content)) throw new Error("Markdown frontmatter is missing.");
-  const rest = content.slice(4);
-  const end = rest.indexOf("\n---");
-  const lines = rest.slice(0, end).split("\n");
-  const pending = new Set(Object.keys(updates));
-  const replaced = lines.map((line) => {
-    const match = line.match(/^([^:\s][^:]*):(.*)$/);
-    if (!match || !(match[1].trim() in updates)) return line;
-    const key = match[1].trim();
-    pending.delete(key);
-    return `${key}: ${JSON.stringify(updates[key])}`;
-  });
-  for (const key of pending) replaced.push(`${key}: ${JSON.stringify(updates[key])}`);
-  return `---\n${replaced.join("\n")}${rest.slice(end)}`;
+function lineDelta(before: string, after: string): { additions: number; removals: number } {
+  const beforeLines = new Set(before.split("\n"));
+  const afterLines = new Set(after.split("\n"));
+  return {
+    additions: [...afterLines].filter((line) => !beforeLines.has(line)).length,
+    removals: [...beforeLines].filter((line) => !afterLines.has(line)).length
+  };
+}
+
+function assertProposalGates(metricsContent: string): void {
+  const metrics = parseJsonObject(metricsContent);
+  for (const gate of ["candidate_score_gate", "heading_consistency_gate", "permission_gate"]) {
+    if (gateStatus(metrics, gate) !== "pass") {
+      throw new Error(`Proposal gate failed: ${gate}`);
+    }
+  }
+}
+
+function gateStatus(metrics: Record<string, unknown>, gate: string): string | null {
+  const topLevel = metrics[gate];
+  if (typeof topLevel === "string") return topLevel;
+  const gates = metrics.gates;
+  if (!gates || typeof gates !== "object" || Array.isArray(gates)) return null;
+  const value = (gates as Record<string, unknown>)[gate];
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const status = (value as Record<string, unknown>).status;
+    return typeof status === "string" ? status : null;
+  }
+  return null;
+}
+
+function parseJsonObject(content: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(content);
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function assertSafeProposalId(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) || value.includes("..")) {
+    throw new Error("Proposal id must be a single safe path segment.");
+  }
+}
+
+async function sha256Hex(content: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

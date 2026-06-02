@@ -407,7 +407,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Mark a skill improvement proposal as approved")]
+    #[command(about = "Mark a skill improvement proposal as reviewed")]
     ApproveProposal {
         id: String,
         proposal_path: String,
@@ -423,7 +423,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Apply an approved skill proposal when the base etag still matches")]
+    #[command(about = "Apply a reviewed skill proposal when the base etag still matches")]
     ApplyProposal {
         id: String,
         proposal_id: String,
@@ -651,9 +651,6 @@ impl Command {
                 DatabaseCommand::Create { .. }
                     | DatabaseCommand::PurchaseCycles { .. }
                     | DatabaseCommand::CyclesHistory { .. }
-                    | DatabaseCommand::CyclesPending { .. }
-                    | DatabaseCommand::RepairCyclesPurchaseComplete { .. }
-                    | DatabaseCommand::RepairCyclesPurchaseCancel { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
@@ -1136,65 +1133,6 @@ mod tests {
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
 
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "cycles-pending",
-            "db_alpha",
-            "--json",
-        ]);
-        let Command::Database {
-            command: DatabaseCommand::CyclesPending { database_id, json },
-        } = cli.command
-        else {
-            panic!("expected database cycles-pending command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert!(json);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "repair-cycles-purchase-complete",
-            "db_alpha",
-            "9",
-            "77",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::RepairCyclesPurchaseComplete {
-                    database_id,
-                    operation_id,
-                    block_index,
-                },
-        } = cli.command
-        else {
-            panic!("expected repair-cycle purchase-complete command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 9);
-        assert_eq!(block_index, 77);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "repair-cycles-purchase-cancel",
-            "db_alpha",
-            "9",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::RepairCyclesPurchaseCancel {
-                    database_id,
-                    operation_id,
-                },
-        } = cli.command
-        else {
-            panic!("expected repair-cycle purchase-cancel command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 9);
-
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
         let Command::Database {
             command: DatabaseCommand::Rename { database_id, name },
@@ -1339,19 +1277,6 @@ mod tests {
         let database_cycles_history =
             Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
         assert!(database_cycles_history.command.requires_identity());
-
-        let database_cycles_pending =
-            Cli::parse_from(["kinic-vfs-cli", "database", "cycles-pending", "db_alpha"]);
-        assert!(database_cycles_pending.command.requires_identity());
-
-        let database_repair = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "repair-cycles-purchase-cancel",
-            "db_alpha",
-            "9",
-        ]);
-        assert!(database_repair.command.requires_identity());
 
         let database_cycles =
             Cli::parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"]);

@@ -9,7 +9,7 @@ export const URL_INGEST_STATUS_KEY = "kinic-url-ingest-status-v1";
 export function buildUrlIngestRequest({ url, requestedBy, now = new Date(), uuid = crypto.randomUUID() }) {
   const normalizedUrl = normalizedHttpUrl(url);
   const requestedAt = now.toISOString();
-  const requestId = `${now.getTime()}-${uuid}`;
+  const requestId = safeIngestRequestId(now, uuid);
   const requestPath = `/Sources/ingest-requests/${requestId}.md`;
   return {
     requestPath,
@@ -38,6 +38,22 @@ export function buildUrlIngestRequest({ url, requestedBy, now = new Date(), uuid
       expectedEtag: []
     }
   };
+}
+
+export function safeIngestRequestId(now, uuid) {
+  const suffix = String(uuid || "").trim();
+  if (!isSafeRequestSegment(suffix) || suffix.length > 96) {
+    throw new Error("URL ingest request id is invalid.");
+  }
+  const requestId = `${now.getTime()}-${suffix}`;
+  if (!isSafeRequestSegment(requestId) || requestId.length > 128) {
+    throw new Error("URL ingest request id is invalid.");
+  }
+  return requestId;
+}
+
+function isSafeRequestSegment(value) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && value !== "." && value !== ".." && !value.includes("..");
 }
 
 export function normalizedHttpUrl(value) {

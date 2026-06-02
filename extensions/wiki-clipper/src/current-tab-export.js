@@ -141,6 +141,9 @@ async function ensureAuthenticatedForExport(send) {
     throw new Error("extension auth status is unavailable");
   }
   const response = await send({ type: "auth-status" });
+  if (response?.ok === false) {
+    throw new Error(responseError(response, "extension auth status failed"));
+  }
   if (!response?.result?.isAuthenticated) {
     throw new Error(EXPORT_LOGIN_REQUIRED_MESSAGE);
   }
@@ -258,6 +261,20 @@ async function saveCaptureResult(result, config, send) {
   }
   try {
     const response = await send({ type: "save-source", capture: result.capture, config });
+    if (response?.ok === false) {
+      return {
+        ok: false,
+        title: result.capture.conversationTitle || result.target.title,
+        provider: result.capture.provider,
+        captureMethod: result.capture.captureMethod,
+        path: response.result?.path,
+        created: response.result?.created,
+        sourceSaved: Boolean(response.result?.path),
+        generationQueued: false,
+        generationError: null,
+        error: responseError(response, "save-source failed")
+      };
+    }
     const saved = response.result || {};
     const generationQueued = saved.generationQueued === true;
     return {
@@ -280,6 +297,10 @@ async function saveCaptureResult(result, config, send) {
       error: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+function responseError(response, fallback) {
+  return response?.error || response?.result?.error || fallback;
 }
 
 export function advanceState(state, event) {

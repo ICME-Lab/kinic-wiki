@@ -104,13 +104,14 @@ export function hrefForMarkdownLink(canisterId: string, databaseId: string, curr
     return null;
   }
   const target = splitMarkdownHref(trimmed);
-  if (trimmed.startsWith("/Wiki") || trimmed.startsWith("/Sources")) {
-    return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, target.path, undefined, undefined, undefined, undefined, readMode), target, readMode);
+  const targetPath = decodeMarkdownHrefPath(target.path);
+  if (isInternalWikiPath(targetPath)) {
+    return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, targetPath, undefined, undefined, undefined, undefined, readMode), target, readMode);
   }
-  if (trimmed.startsWith("/")) {
+  if (targetPath.startsWith("/")) {
     return null;
   }
-  return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, resolveRelativeWikiPath(currentPath, target.path), undefined, undefined, undefined, undefined, readMode), target, readMode);
+  return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, resolveRelativeWikiPath(currentPath, targetPath), undefined, undefined, undefined, undefined, readMode), target, readMode);
 }
 
 export function parentPath(path: string): string | null {
@@ -145,6 +146,10 @@ function isExternalHref(href: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
 }
 
+function isInternalWikiPath(path: string): boolean {
+  return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
+}
+
 function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget, readMode?: string | null): string {
   const params = new URLSearchParams(target.query);
   if (readMode === "anonymous") {
@@ -152,6 +157,14 @@ function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget, read
   }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `${baseHref.split("?")[0]}${queryString}${target.hash}`;
+}
+
+function decodeMarkdownHrefPath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
 }
 
 function splitMarkdownHref(href: string): MarkdownHrefTarget {

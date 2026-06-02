@@ -3,13 +3,11 @@
 import type { ReactNode } from "react";
 import { ChevronDown, Github, ShieldCheck, Upload } from "lucide-react";
 import type { DatabaseRole } from "@/lib/types";
-import type { SkillCatalog } from "@/lib/skill-registry-package";
 
 export type PackageDraft = {
   source: string;
   reference: string;
   id: string;
-  catalog: SkillCatalog;
   skill: string;
   manifest: string;
   provenance: string;
@@ -77,7 +75,7 @@ export function PackageManager({
                 onChange={(event) => handlers.setDraft({ source: event.target.value })}
               />
             </Field>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               <Field label="Ref" name="github-reference">
                 <input
                   autoComplete="off"
@@ -101,9 +99,6 @@ export function PackageManager({
                   value={draft.id}
                   onChange={(event) => handlers.setDraft({ id: event.target.value })}
                 />
-              </Field>
-              <Field label="Catalog" name="github-catalog">
-                <CatalogSelect id="github-catalog" value={draft.catalog} onChange={(catalog) => handlers.setDraft({ catalog })} />
               </Field>
             </div>
             <p className="text-xs leading-5 text-muted">Public GitHub repositories only. Browser API cannot prune deleted files.</p>
@@ -137,7 +132,7 @@ export function PackageManager({
                 onChange={(event) => handlers.setDraft({ manifest: event.target.value })}
               />
             </Field>
-            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
               <Field label="Extra File" name="paste-extra-name">
                 <input
                   autoComplete="off"
@@ -161,9 +156,6 @@ export function PackageManager({
                   value={draft.id}
                   onChange={(event) => handlers.setDraft({ id: event.target.value })}
                 />
-              </Field>
-              <Field label="Catalog" name="paste-catalog">
-                <CatalogSelect id="paste-catalog" value={draft.catalog} onChange={(catalog) => handlers.setDraft({ catalog })} />
               </Field>
             </div>
             <Field label="Extra Markdown" name="paste-extra-content">
@@ -209,14 +201,5 @@ function Field({ label, name, optional = false, children }: { label: string; nam
       </span>
       {children}
     </label>
-  );
-}
-
-function CatalogSelect({ id, value, onChange }: { id: string; value: SkillCatalog; onChange: (value: SkillCatalog) => void }) {
-  return (
-    <select id={id} className={inputClass} name={id} value={value} onChange={(event) => onChange(event.target.value === "public" ? "public" : "private")}>
-      <option value="private">private</option>
-      <option value="public">public</option>
-    </select>
   );
 }

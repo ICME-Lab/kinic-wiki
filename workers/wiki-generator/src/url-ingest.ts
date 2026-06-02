@@ -5,6 +5,7 @@ import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";
 import { fetchUrlSource, type FetchedUrlSource } from "./url-fetch.js";
+import { validateCanonicalSourcePath } from "./source-path.js";
 import type { RuntimeEnv } from "./env.js";
 import type { UrlIngestRequest, UrlIngestTriggerInput, WikiNode, WorkerConfig, WriteNodeAck } from "./types.js";
 import { createVfsClient, ensureParentFolders, type VfsClient } from "./vfs.js";
@@ -110,7 +111,7 @@ export async function processUrlIngestRequest(
     current = await claimIngestRequest(vfs, databaseId, request);
     if (!current) return;
     if (!sessionNonce) {
-      await bestEffortWriteRequestState(vfs, databaseId, current, { status: "failed", error: "sessionNonce is required" });
+      await bestEffortWriteRequestState(vfs, databaseId, current, { status: "failed", targetPath: null, error: "sessionNonce is required" });
       return;
     }
     let sourceAck: WriteNodeAck | null = null;
@@ -118,7 +119,7 @@ export async function processUrlIngestRequest(
       try {
         await vfs.checkUrlIngestTriggerSession(databaseId, current.path, sessionNonce);
       } catch (error) {
-        await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", error: errorMessage(error) });
+        await bestEffortWriteLatestRequestState(vfs, databaseId, current.path, { status: "failed", targetPath: null, error: errorMessage(error) });
         return;
       }
       const fetched = await fetchUrlSource(current.url, config.maxFetchedBytes);
@@ -150,7 +151,7 @@ export async function processUrlIngestRequest(
       await reprocessLatestIfRecoverable(env, vfs, config, databaseId, request.path, sessionNonce);
       return;
     }
-    await writeLatestRequestState(vfs, databaseId, (current ?? request).path, { status: "failed", error: errorMessage(error) });
+    await writeLatestRequestState(vfs, databaseId, (current ?? request).path, { status: "failed", targetPath: null, error: errorMessage(error) });
   }
 }
 
@@ -167,7 +168,7 @@ export async function markIngestRequestFailed(vfs: VfsClient, databaseId: string
   if (!node) return;
   const request = parseUrlIngestRequest(node);
   if (!request) return;
-  await writeRequestState(vfs, databaseId, request, { status: "failed", error });
+  await writeRequestState(vfs, databaseId, request, { status: "failed", targetPath: null, error });
 }
 
 async function writeFetchedSource(
@@ -435,13 +436,16 @@ function validateIngestRequestPath(path: string): void {
 }
 
 function isIngestRequestPath(path: string): boolean {
-  return path.startsWith(`${INGEST_REQUEST_PREFIX}/`) && path.endsWith(".md");
+  if (!path.startsWith(`${INGEST_REQUEST_PREFIX}/`)) return false;
+  const name = path.slice(INGEST_REQUEST_PREFIX.length + 1);
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function validateSourcePath(sourcePrefix: string, path: string): void {
   if (!path.startsWith(`${sourcePrefix}/`)) {
     throw new Error(`source_path is outside source prefix: ${path}`);
   }
+  validateCanonicalSourcePath(path, sourcePrefix);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

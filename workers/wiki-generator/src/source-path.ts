@@ -23,5 +23,7 @@ function isSafeProviderSegment(value: string | undefined): boolean {
 }
 
 function isSafeMarkdownFile(value: string | undefined): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(value ?? "");
+  const fileName = value ?? "";
+  const stem = fileName.endsWith(".md") ? fileName.slice(0, -".md".length) : fileName;
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(fileName) && !stem.includes("..");
 }

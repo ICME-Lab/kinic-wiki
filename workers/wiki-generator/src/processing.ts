@@ -109,11 +109,17 @@ async function processSourceQueueMessage(env: RuntimeEnv, message: SourceQueueMe
     return;
   }
   const vfs = context?.vfs ?? (await createVfsClient(config, env.KINIC_WIKI_WORKER_IDENTITY_PEM));
-  const source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
-  if (source.etag !== message.sourceEtag) {
+  await markProcessing(env.DB, message);
+  let source: WikiNode;
+  try {
+    source = await readRequiredSource(vfs, message.databaseId, message.sourcePath);
+    if (source.etag !== message.sourceEtag) {
+      throw new Error(`source etag mismatch: ${message.sourcePath}`);
+    }
+  } catch (error) {
+    await markQueueFailed(env, vfs, message, errorMessage(error));
     return;
   }
-  await markProcessing(env.DB, message);
   let deepSeekAttempted = false;
   try {
     const generated = await generateFromSource(
@@ -232,11 +238,12 @@ export function parseManualRunInput(value: unknown): ManualRunInput | string {
 export function parseQueueMessage(value: unknown): QueueMessage | null {
   if (!isObject(value)) return null;
   if (value.kind === "source") {
-    if (typeof value.databaseId !== "string") return null;
-    if (typeof value.sourcePath !== "string") return null;
-    if (typeof value.sourceEtag !== "string") return null;
-    if ("requestPath" in value && value.requestPath !== undefined && typeof value.requestPath !== "string") return null;
-    if ("sessionNonce" in value && value.sessionNonce !== undefined && typeof value.sessionNonce !== "string") return null;
+    if (!nonEmptyString(value.databaseId)) return null;
+    if (!nonEmptyString(value.sourcePath)) return null;
+    if (!nonEmptyString(value.sourceEtag)) return null;
+    if ("requestPath" in value && value.requestPath !== undefined && !nonEmptyString(value.requestPath)) return null;
+    if (typeof value.requestPath === "string" && !isIngestRequestPath(value.requestPath)) return null;
+    if ("sessionNonce" in value && value.sessionNonce !== undefined && !nonEmptyString(value.sessionNonce)) return null;
     return {
       kind: "source",
       databaseId: value.databaseId,
@@ -247,10 +254,11 @@ export function parseQueueMessage(value: unknown): QueueMessage | null {
     };
   }
   if (value.kind === "url_ingest") {
-    if (typeof value.canisterId !== "string") return null;
-    if (typeof value.databaseId !== "string") return null;
-    if (typeof value.requestPath !== "string") return null;
-    if (typeof value.sessionNonce !== "string" || value.sessionNonce.length === 0) return null;
+    if (!nonEmptyString(value.canisterId)) return null;
+    if (!nonEmptyString(value.databaseId)) return null;
+    if (!nonEmptyString(value.requestPath)) return null;
+    if (!isIngestRequestPath(value.requestPath)) return null;
+    if (!nonEmptyString(value.sessionNonce)) return null;
     return {
       kind: "url_ingest",
       canisterId: value.canisterId,
@@ -266,10 +274,11 @@ export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope 
   const message = parseQueueMessage(value);
   if (message) return { kind: "valid", message };
   if (isObject(value) && value.kind === "url_ingest") {
-    if (typeof value.canisterId !== "string") return { kind: "invalid", reason: "url_ingest canisterId is missing" };
-    if (typeof value.databaseId !== "string") return { kind: "invalid", reason: "url_ingest databaseId is missing" };
-    if (typeof value.requestPath !== "string") return { kind: "invalid", reason: "url_ingest requestPath is missing" };
-    if (typeof value.sessionNonce !== "string" || value.sessionNonce.length === 0) {
+    if (!nonEmptyString(value.canisterId)) return { kind: "invalid", reason: "url_ingest canisterId is missing" };
+    if (!nonEmptyString(value.databaseId)) return { kind: "invalid", reason: "url_ingest databaseId is missing" };
+    if (!nonEmptyString(value.requestPath)) return { kind: "invalid", reason: "url_ingest requestPath is missing" };
+    if (!isIngestRequestPath(value.requestPath)) return { kind: "invalid", reason: "url_ingest requestPath is non-canonical" };
+    if (!("sessionNonce" in value)) {
       return {
         kind: "legacy_url_ingest_missing_nonce",
         canisterId: value.canisterId,
@@ -277,6 +286,7 @@ export function parseQueueMessageEnvelope(value: unknown): QueueMessageEnvelope 
         requestPath: value.requestPath
       };
     }
+    if (!nonEmptyString(value.sessionNonce)) return { kind: "invalid", reason: "url_ingest sessionNonce is missing" };
   }
   return { kind: "invalid", reason: "queue message shape is invalid" };
 }
@@ -291,7 +301,7 @@ async function failLegacyUrlIngestMessage(
     console.warn("legacy url_ingest queue message targets a different canister");
     return;
   }
-  if (!message.requestPath.startsWith("/Sources/ingest-requests/") || !message.requestPath.endsWith(".md")) {
+  if (!isIngestRequestPath(message.requestPath)) {
     console.warn("legacy url_ingest queue message has a non-canonical request path");
     return;
   }
@@ -383,11 +393,25 @@ function metadataValue(content: string, key: string): string | null {
     const trimmed = line.trim();
     const prefix = `- ${key}:`;
     if (trimmed.startsWith(prefix)) {
-      const value = trimmed.slice(prefix.length).trim().replace(/^"|"$/g, "");
+      const value = cleanYamlScalar(trimmed.slice(prefix.length).trim());
       return value || null;
     }
   }
   return null;
+}
+
+function cleanYamlScalar(value: string): string {
+  if (value.startsWith("\"") && value.endsWith("\"")) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed === "string") return parsed;
+      throw new Error("Invalid quoted YAML scalar.");
+    } catch {
+      throw new Error("Invalid quoted YAML scalar.");
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1).replace(/''/g, "'");
+  return value;
 }
 
 function headingTitle(content: string): string | null {
@@ -408,6 +432,16 @@ function errorMessage(error: unknown): string {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isIngestRequestPath(path: string): boolean {
+  if (!path.startsWith("/Sources/ingest-requests/")) return false;
+  const name = path.slice("/Sources/ingest-requests/".length);
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 type GeneratedPage = {

@@ -30,7 +30,6 @@ const typeOrder = [
   "DatabaseSummary",
   "CyclesBillingConfig",
   "CyclesPurchaseResult",
-  "DatabaseCyclesPurchasePreview",
   "DatabaseCyclesPurchaseRequest",
   "Icrc21ConsentMessageMetadata",
   "Icrc21DeviceSpec",
@@ -50,8 +49,6 @@ const typeOrder = [
   "DatabaseMember",
   "DatabaseCycleEntry",
   "DatabaseCycleEntryPage",
-  "DatabaseCyclePendingOperation",
-  "DatabaseCyclePendingOperationPage",
   "NodeKind",
   "NodeEntryKind",
   "Node",
@@ -101,9 +98,7 @@ const typeOrder = [
   "ResultCreateDatabase",
   "ResultCyclesBillingConfig",
   "ResultCyclesPurchase",
-  "ResultCyclesPurchasePreview",
   "ResultCyclesEntries",
-  "ResultCyclesPending",
   "ResultDatabases",
   "ResultMembers",
   "WriteNodeResult",
@@ -139,7 +134,6 @@ const methodOrder = [
   "icrc21_canister_call_consent_message",
   "incoming_links",
   "list_database_cycle_entries",
-  "list_database_cycle_pending_operations",
   "list_databases",
   "list_database_members",
   "memory_manifest",
@@ -150,9 +144,7 @@ const methodOrder = [
   "read_node_context",
   "list_children",
   "outgoing_links",
-  "preview_database_cycles_purchase",
-  "repair_database_cycles_purchase_cancel",
-  "repair_database_cycles_purchase_complete",
+  "retry_database_cycles_purchase",
   "revoke_database_access",
   "rename_database",
   "search_node_paths",
@@ -363,23 +355,21 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_11") return "ResultLinks";
   if (normalized === "Result_12") return "ResultChildren";
   if (normalized === "Result_13") return "ResultCyclesEntries";
-  if (normalized === "Result_14") return "ResultCyclesPending";
-  if (normalized === "Result_15") return "ResultMembers";
-  if (normalized === "Result_16") return "ResultDatabases";
+  if (normalized === "Result_14") return "ResultMembers";
+  if (normalized === "Result_15") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_5") return "ResultDeleteNode";
-  if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCyclesPurchasePreview";
-  if (normalized === "Result_21") return "ResultCyclesPurchase";
-  if (normalized === "Result_22") return "ResultQueryContext";
-  if (normalized === "Result_25") return "ResultNode";
-  if (normalized === "Result_26") return "ResultNodeContext";
-  if (normalized === "Result_27") return "ResultSearch";
-  if (normalized === "Result_28") return "ResultSourceEvidence";
+  if (normalized === "Result_17") return "ResultMkdirNode";
+  if (normalized === "Result_18") return "ResultMoveNode";
+  if (normalized === "Result_19") return "ResultCyclesPurchase";
+  if (normalized === "Result_20") return "ResultQueryContext";
+  if (normalized === "Result_23") return "ResultNode";
+  if (normalized === "Result_24") return "ResultNodeContext";
+  if (normalized === "Result_25") return "ResultSearch";
+  if (normalized === "Result_26") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_28") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

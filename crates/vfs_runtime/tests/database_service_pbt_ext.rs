@@ -9,7 +9,7 @@ use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{DEFAULT_MIN_UPDATE_CYCLES, VfsService};
+use vfs_runtime::{DEFAULT_MIN_UPDATE_CYCLES, VfsService, cycles_for_payment_amount_e8s};
 use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
@@ -90,24 +90,26 @@ fn purchase_database_cycles(
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let preview = service.preview_database_cycles_purchase(database_id, payment_amount_e8s)?;
     let operation_id =
         service.begin_database_cycles_purchase(database_id, caller, payment_amount_e8s, now)?;
-    service.mark_database_cycles_purchase_completed(
+    let config = service.cycles_billing_config()?;
+    let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+    service.complete_database_cycles_purchase_ledger_transfer(
         operation_id,
         database_id,
         caller,
-        preview.cycles,
+        cycles,
+        block_index,
     )?;
     service.apply_database_cycles_purchase(
         operation_id,
         database_id,
         caller,
-        preview.cycles,
+        cycles,
         block_index,
         now,
     )?;
-    Ok(preview.cycles)
+    Ok(cycles)
 }
 
 fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
@@ -312,25 +314,33 @@ proptest! {
                     let config = service
                         .cycles_billing_config()
                         .expect("cycles config should load");
-                    service
-                        .charge_database_update(
-                            &config,
-                            &database_id,
-                            OWNER,
-                            "pbt_charge",
-                            cycles_delta,
-                            now,
-                        )
-                        .expect("charge should record");
                     let computed = charge_amount(cycles_delta);
-                    database_balance = database_balance.saturating_sub(computed);
-                    let entries = service
-                        .list_database_cycle_entries(&database_id, OWNER, None, 100)
-                        .expect("database cycles entries should load")
-                        .entries;
                     if computed > before {
-                        assert_eq!(entries[entries.len() - 2].kind, "charge");
-                        assert_eq!(entries[entries.len() - 1].kind, "suspend");
+                        let error = service
+                            .charge_database_update(
+                                &config,
+                                &database_id,
+                                OWNER,
+                                "pbt_charge",
+                                cycles_delta,
+                                now,
+                            )
+                            .expect_err("overdrawn charge should fail without ledger writes");
+                        assert!(
+                            error.contains("database cycles balance is insufficient for update charge")
+                        );
+                    } else {
+                        service
+                            .charge_database_update(
+                                &config,
+                                &database_id,
+                                OWNER,
+                                "pbt_charge",
+                                cycles_delta,
+                                now,
+                            )
+                            .expect("charge should record");
+                        database_balance -= computed;
                     }
                 }
             }

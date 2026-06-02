@@ -77,25 +77,15 @@ pub struct CyclesBillingConfigUpdate {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCyclesPurchasePreview {
-    pub payment_amount_e8s: u64,
-    pub cycles: u64,
-    pub ledger_fee_e8s: u64,
-    pub cycles_per_kinic: u64,
-    pub config_version: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseCyclesPurchaseRequest {
     pub database_id: String,
     pub payment_amount_e8s: u64,
-    pub expected_cycles: u64,
-    pub expected_config_version: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CyclesPurchaseResult {
     pub block_index: u64,
+    pub amount_cycles: u64,
     pub balance_cycles: u64,
 }
 
@@ -118,30 +108,6 @@ pub struct DatabaseCycleEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseCycleEntryPage {
     pub entries: Vec<DatabaseCycleEntry>,
-    pub next_cursor: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCyclePendingOperation {
-    pub operation_id: u64,
-    pub database_id: String,
-    pub kind: String,
-    pub caller: String,
-    pub operation_status: String,
-    pub cycles: i64,
-    pub payment_amount_e8s: i64,
-    pub from_owner: Option<String>,
-    pub from_subaccount: Option<Vec<u8>>,
-    pub to_owner: Option<String>,
-    pub to_subaccount: Option<Vec<u8>>,
-    pub ledger_fee_e8s: Option<i64>,
-    pub ledger_created_at_time_ns: Option<i64>,
-    pub created_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DatabaseCyclePendingOperationPage {
-    pub entries: Vec<DatabaseCyclePendingOperation>,
     pub next_cursor: Option<u64>,
 }
 

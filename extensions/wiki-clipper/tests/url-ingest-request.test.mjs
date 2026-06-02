@@ -3,7 +3,7 @@
 // Why: Extension-created requests must match the worker/browser contract.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildUrlIngestRequest, normalizedHttpUrl } from "../src/url-ingest-request.js";
+import { buildUrlIngestRequest, normalizedHttpUrl, safeIngestRequestId } from "../src/url-ingest-request.js";
 
 test("buildUrlIngestRequest creates a file request with frontmatter", () => {
   const request = buildUrlIngestRequest({
@@ -30,4 +30,13 @@ test("buildUrlIngestRequest creates a file request with frontmatter", () => {
 test("normalizedHttpUrl accepts only http and https", () => {
   assert.equal(normalizedHttpUrl("http://example.com/#x"), "http://example.com/");
   assert.throws(() => normalizedHttpUrl("chrome://extensions"), /http or https/);
+});
+
+test("safeIngestRequestId rejects non-canonical path segments", () => {
+  const now = new Date("2026-05-13T00:00:00.000Z");
+  assert.equal(safeIngestRequestId(now, "uuid-1"), "1778630400000-uuid-1");
+  assert.throws(() => safeIngestRequestId(now, "../x"), /request id/);
+  assert.throws(() => safeIngestRequestId(now, "x/y"), /request id/);
+  assert.throws(() => safeIngestRequestId(now, ""), /request id/);
+  assert.throws(() => safeIngestRequestId(now, "x".repeat(97)), /request id/);
 });

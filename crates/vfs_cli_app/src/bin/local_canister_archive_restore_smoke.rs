@@ -283,16 +283,10 @@ async fn activate_smoke_database(
     database_id: &str,
     payment_amount_e8s: u64,
 ) -> Result<()> {
-    let preview = client
-        .preview_database_cycles_purchase(database_id, payment_amount_e8s)
-        .await
-        .with_context(|| format!("failed to preview cycles for smoke database {database_id}"))?;
     client
         .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
             database_id: database_id.to_string(),
             payment_amount_e8s,
-            expected_cycles: preview.cycles,
-            expected_config_version: preview.config_version,
         })
         .await
         .with_context(|| format!("failed to purchase cycles for smoke database {database_id}"))?;

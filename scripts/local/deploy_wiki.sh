@@ -50,8 +50,8 @@ cat >"${ARGS_FILE}" <<EOF
 (record {
   kinic_ledger_canister_id = "${KINIC_LEDGER_CANISTER_ID}";
   billing_authority_id = "${BILLING_AUTHORITY_ID}";
-  cycles_per_kinic = 1_000 : nat64;
-  min_update_cycles = 1 : nat64;
+  cycles_per_kinic = 234_500_000_000 : nat64;
+  min_update_cycles = 1_000_000 : nat64;
 })
 EOF
 

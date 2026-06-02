@@ -34,6 +34,8 @@ export function parseSkillManifest(content: string): SkillManifest | null {
   const version = scalar(values, "version");
   const entry = scalar(values, "entry");
   if (!id || !version || !entry) return null;
+  if (!isSafeSkillId(id)) return null;
+  if (entry !== "SKILL.md") return null;
   return {
     kind: "kinic.skill",
     schemaVersion: "1",
@@ -51,6 +53,10 @@ export function parseSkillManifest(content: string): SkillManifest | null {
     permissions: nested(values, "permissions"),
     provenance: nested(values, "provenance")
   };
+}
+
+function isSafeSkillId(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && !value.includes("..");
 }
 
 export function isSkillRegistryPath(path: string): boolean {
@@ -99,8 +105,8 @@ export function skillAccessHint(mode: string | null, roles: string[], authentica
 function extractFrontmatter(content: string): string | null {
   if (!content.startsWith("---\n")) return null;
   const rest = content.slice(4);
-  const end = rest.indexOf("\n---");
-  return end >= 0 ? rest.slice(0, end) : null;
+  const match = rest.match(/\n---(?:\n|$)/);
+  return match?.index === undefined ? null : rest.slice(0, match.index);
 }
 
 function formatBoolean(value: boolean): string {
@@ -150,5 +156,14 @@ function nested(values: Record<string, string[]>, parent: string): Record<string
 
 function cleanValue(value: string): string {
   const trimmed = value.trim();
-  return trimmed.startsWith("\"") && trimmed.endsWith("\"") ? trimmed.slice(1, -1) : trimmed;
+  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      return typeof parsed === "string" ? parsed : "";
+    } catch {
+      return "";
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+  return trimmed;
 }

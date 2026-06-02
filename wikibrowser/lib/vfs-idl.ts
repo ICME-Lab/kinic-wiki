@@ -32,20 +32,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     kinic_ledger_canister_id: idl.Text,
     billing_authority_id: idl.Text
   });
-  const CyclesPurchaseResult = idl.Record({ block_index: idl.Nat64, balance_cycles: idl.Nat64 });
-  const DatabaseCyclesPurchasePreview = idl.Record({
-    payment_amount_e8s: idl.Nat64,
-    cycles: idl.Nat64,
-    ledger_fee_e8s: idl.Nat64,
-    cycles_per_kinic: idl.Nat64,
-    config_version: idl.Nat64
+  const CyclesPurchaseResult = idl.Record({
+    block_index: idl.Nat64,
+    amount_cycles: idl.Nat64,
+    balance_cycles: idl.Nat64
   });
-  const DatabaseCyclesPurchaseRequest = idl.Record({
-    database_id: idl.Text,
-    payment_amount_e8s: idl.Nat64,
-    expected_cycles: idl.Nat64,
-    expected_config_version: idl.Nat64
-  });
+  const DatabaseCyclesPurchaseRequest = idl.Record({ database_id: idl.Text, payment_amount_e8s: idl.Nat64 });
   const Icrc21ConsentMessageMetadata = idl.Record({ utc_offset_minutes: idl.Opt(idl.Int16), language: idl.Text });
   const Icrc21DeviceSpec = idl.Variant({ GenericDisplay: idl.Null, FieldsDisplay: idl.Null });
   const Icrc21ConsentMessageSpec = idl.Record({
@@ -97,26 +89,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     entry_id: idl.Nat64
   });
   const DatabaseCycleEntryPage = idl.Record({ entries: idl.Vec(DatabaseCycleEntry), next_cursor: idl.Opt(idl.Nat64) });
-  const DatabaseCyclePendingOperation = idl.Record({
-    cycles: idl.Int64,
-    payment_amount_e8s: idl.Int64,
-    to_owner: idl.Opt(idl.Text),
-    to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
-    from_owner: idl.Opt(idl.Text),
-    kind: idl.Text,
-    operation_id: idl.Nat64,
-    from_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
-    operation_status: idl.Text,
-    created_at_ms: idl.Int64,
-    ledger_fee_e8s: idl.Opt(idl.Int64),
-    ledger_created_at_time_ns: idl.Opt(idl.Int64),
-    database_id: idl.Text,
-    caller: idl.Text
-  });
-  const DatabaseCyclePendingOperationPage = idl.Record({
-    entries: idl.Vec(DatabaseCyclePendingOperation),
-    next_cursor: idl.Opt(idl.Nat64)
-  });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const NodeEntryKind = idl.Variant({ File: idl.Null, Source: idl.Null, Directory: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
@@ -285,9 +257,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
-  const ResultCyclesPurchasePreview = idl.Variant({ Ok: DatabaseCyclesPurchasePreview, Err: idl.Text });
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
-  const ResultCyclesPending = idl.Variant({ Ok: DatabaseCyclePendingOperationPage, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
@@ -323,7 +293,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     icrc21_canister_call_consent_message: idl.Func([Icrc21ConsentMessageRequest], [Icrc21ConsentMessageResponse], []),
     incoming_links: idl.Func([IncomingLinksRequest], [ResultLinks], ["query"]),
     list_database_cycle_entries: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCyclesEntries], ["query"]),
-    list_database_cycle_pending_operations: idl.Func([idl.Text, idl.Opt(idl.Nat64), idl.Nat32], [ResultCyclesPending], ["query"]),
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
     memory_manifest: idl.Func([], [MemoryManifest], ["query"]),
@@ -334,9 +303,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
-    preview_database_cycles_purchase: idl.Func([idl.Text, idl.Nat64], [ResultCyclesPurchasePreview], ["query"]),
-    repair_database_cycles_purchase_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
-    repair_database_cycles_purchase_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultCyclesPurchase], []),
+    retry_database_cycles_purchase: idl.Func([idl.Text, idl.Nat64], [ResultCyclesPurchase], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),

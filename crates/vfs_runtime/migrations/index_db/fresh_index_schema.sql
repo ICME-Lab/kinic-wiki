@@ -146,6 +146,7 @@ CREATE TABLE database_cycle_pending_operations (
   ledger_fee_e8s INTEGER,
   ledger_created_at_time_ns INTEGER,
   operation_status TEXT NOT NULL,
+  ledger_block_index INTEGER,
   created_at_ms INTEGER NOT NULL,
   FOREIGN KEY (database_id) REFERENCES databases(database_id)
 );

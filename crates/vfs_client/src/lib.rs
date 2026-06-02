@@ -13,14 +13,13 @@ use k256::{SecretKey, pkcs8::DecodePrivateKey};
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
-    DatabaseCycleEntryPage, DatabaseCyclePendingOperationPage, DatabaseCyclesPurchasePreview,
-    DatabaseCyclesPurchaseRequest, DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    DatabaseCycleEntryPage, DatabaseCyclesPurchaseRequest, DatabaseMember,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
@@ -54,13 +53,13 @@ pub trait VfsApi: Sync {
             "purchase_database_cycles is not implemented by this client"
         ))
     }
-    async fn preview_database_cycles_purchase(
+    async fn retry_database_cycles_purchase(
         &self,
         _database_id: &str,
-        _amount_cycles: u64,
-    ) -> Result<DatabaseCyclesPurchasePreview> {
+        _operation_id: u64,
+    ) -> Result<CyclesPurchaseResult> {
         Err(anyhow!(
-            "preview_database_cycles_purchase is not implemented by this client"
+            "retry_database_cycles_purchase is not implemented by this client"
         ))
     }
     async fn check_database_write_cycles(&self, _database_id: &str) -> Result<()> {
@@ -76,35 +75,6 @@ pub trait VfsApi: Sync {
     ) -> Result<DatabaseCycleEntryPage> {
         Err(anyhow!(
             "list_database_cycle_entries is not implemented by this client"
-        ))
-    }
-    async fn list_database_cycle_pending_operations(
-        &self,
-        _database_id: &str,
-        _cursor: Option<u64>,
-        _limit: u32,
-    ) -> Result<DatabaseCyclePendingOperationPage> {
-        Err(anyhow!(
-            "list_database_cycle_pending_operations is not implemented by this client"
-        ))
-    }
-    async fn repair_database_cycles_purchase_complete(
-        &self,
-        _database_id: &str,
-        _operation_id: u64,
-        _ledger_block_index: u64,
-    ) -> Result<CyclesPurchaseResult> {
-        Err(anyhow!(
-            "repair_database_cycles_purchase_complete is not implemented by this client"
-        ))
-    }
-    async fn repair_database_cycles_purchase_cancel(
-        &self,
-        _database_id: &str,
-        _operation_id: u64,
-    ) -> Result<()> {
-        Err(anyhow!(
-            "repair_database_cycles_purchase_cancel is not implemented by this client"
         ))
     }
     async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
@@ -481,16 +451,16 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn preview_database_cycles_purchase(
+    async fn retry_database_cycles_purchase(
         &self,
         database_id: &str,
-        amount_cycles: u64,
-    ) -> Result<DatabaseCyclesPurchasePreview> {
-        let result: Result<DatabaseCyclesPurchasePreview, String> = self
-            .query2(
-                "preview_database_cycles_purchase",
+        operation_id: u64,
+    ) -> Result<CyclesPurchaseResult> {
+        let result: Result<CyclesPurchaseResult, String> = self
+            .update2(
+                "retry_database_cycles_purchase",
                 &database_id.to_string(),
-                &amount_cycles,
+                &operation_id,
             )
             .await?;
         result.map_err(|error| anyhow!(error))
@@ -515,55 +485,6 @@ impl VfsApi for CanisterVfsClient {
                 &database_id.to_string(),
                 &cursor,
                 &limit,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn list_database_cycle_pending_operations(
-        &self,
-        database_id: &str,
-        cursor: Option<u64>,
-        limit: u32,
-    ) -> Result<DatabaseCyclePendingOperationPage> {
-        let result: Result<DatabaseCyclePendingOperationPage, String> = self
-            .query3(
-                "list_database_cycle_pending_operations",
-                &database_id.to_string(),
-                &cursor,
-                &limit,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn repair_database_cycles_purchase_complete(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-        ledger_block_index: u64,
-    ) -> Result<CyclesPurchaseResult> {
-        let result: Result<CyclesPurchaseResult, String> = self
-            .update3(
-                "repair_database_cycles_purchase_complete",
-                &database_id.to_string(),
-                &operation_id,
-                &ledger_block_index,
-            )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn repair_database_cycles_purchase_cancel(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-    ) -> Result<()> {
-        let result: Result<(), String> = self
-            .update2(
-                "repair_database_cycles_purchase_cancel",
-                &database_id.to_string(),
-                &operation_id,
             )
             .await?;
         result.map_err(|error| anyhow!(error))

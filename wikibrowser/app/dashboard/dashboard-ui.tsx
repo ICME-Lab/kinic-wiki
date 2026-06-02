@@ -85,7 +85,6 @@ export function PendingDatabasePanel(props: {
   busyAction: BusyAction | null;
   databaseId: string;
   databaseName: string;
-  pendingOperationCount: number;
   onDelete: () => Promise<string | null>;
 }) {
   return (
@@ -94,7 +93,7 @@ export function PendingDatabasePanel(props: {
         <h2 className="text-lg font-semibold text-ink">Reserved database</h2>
         <p className="text-sm leading-6 text-muted">This database is reserved until the first cycle purchase completes. VFS, skills, and member management are available after activation.</p>
       </div>
-      <DatabaseDangerZone cyclesBalance="0" busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} pendingOperationCount={props.pendingOperationCount} onDelete={props.onDelete} />
+      <DatabaseDangerZone cyclesBalance="0" busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
     </section>
   );
 }
@@ -106,7 +105,6 @@ export function OwnerPanel(props: {
   databaseId: string;
   databaseName: string;
   members: DatabaseMember[];
-  pendingOperationCount: number;
   principal: string;
   onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
@@ -267,7 +265,6 @@ export function OwnerPanel(props: {
         busyAction={props.busyAction}
         databaseId={props.databaseId}
         databaseName={props.databaseName}
-        pendingOperationCount={props.pendingOperationCount}
         onDelete={props.onDelete}
       />
     </section>

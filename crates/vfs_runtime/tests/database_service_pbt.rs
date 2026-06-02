@@ -7,7 +7,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::VfsService;
+use vfs_runtime::{VfsService, cycles_for_payment_amount_e8s};
 use vfs_types::DatabaseStatus;
 
 const OWNER: &str = "owner";
@@ -94,24 +94,26 @@ fn purchase_database_cycles(
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let preview = service.preview_database_cycles_purchase(database_id, payment_amount_e8s)?;
     let operation_id =
         service.begin_database_cycles_purchase(database_id, caller, payment_amount_e8s, now)?;
-    service.mark_database_cycles_purchase_completed(
+    let config = service.cycles_billing_config()?;
+    let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+    service.complete_database_cycles_purchase_ledger_transfer(
         operation_id,
         database_id,
         caller,
-        preview.cycles,
+        cycles,
+        block_index,
     )?;
     service.apply_database_cycles_purchase(
         operation_id,
         database_id,
         caller,
-        preview.cycles,
+        cycles,
         block_index,
         now,
     )?;
-    Ok(preview.cycles)
+    Ok(cycles)
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {

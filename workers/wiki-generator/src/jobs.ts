@@ -55,43 +55,51 @@ export async function enqueueSourceJob(env: RuntimeEnv, message: SourceQueueMess
 export async function markProcessing(db: D1Database, message: SourceQueueMessage): Promise<void> {
   await db
     .prepare(
-      `UPDATE source_jobs
-       SET status = 'processing',
-           attempts = attempts + 1,
-           last_error = NULL,
-           updated_at = ?1
-       WHERE database_id = ?2 AND source_path = ?3`
+      `INSERT INTO source_jobs
+       (database_id, source_path, source_etag, status, target_path, attempts, last_error, updated_at)
+       VALUES (?1, ?2, ?3, 'processing', NULL, 1, NULL, ?4)
+       ON CONFLICT(database_id, source_path)
+       DO UPDATE SET source_etag = excluded.source_etag,
+                     status = 'processing',
+                     attempts = source_jobs.attempts + 1,
+                     last_error = NULL,
+                     updated_at = excluded.updated_at`
     )
-    .bind(new Date().toISOString(), message.databaseId, message.sourcePath)
+    .bind(message.databaseId, message.sourcePath, message.sourceEtag, new Date().toISOString())
     .run();
 }
 
 export async function markCompleted(db: D1Database, message: SourceQueueMessage, targetPath: string): Promise<void> {
   await db
     .prepare(
-      `UPDATE source_jobs
-       SET status = 'completed',
-           source_etag = ?1,
-           target_path = ?2,
-           last_error = NULL,
-           updated_at = ?3
-       WHERE database_id = ?4 AND source_path = ?5`
+      `INSERT INTO source_jobs
+       (database_id, source_path, source_etag, status, target_path, attempts, last_error, updated_at)
+       VALUES (?1, ?2, ?3, 'completed', ?4, 0, NULL, ?5)
+       ON CONFLICT(database_id, source_path)
+       DO UPDATE SET source_etag = excluded.source_etag,
+                     status = 'completed',
+                     target_path = excluded.target_path,
+                     last_error = NULL,
+                     updated_at = excluded.updated_at`
     )
-    .bind(message.sourceEtag, targetPath, new Date().toISOString(), message.databaseId, message.sourcePath)
+    .bind(message.databaseId, message.sourcePath, message.sourceEtag, targetPath, new Date().toISOString())
     .run();
 }
 
 export async function markFailed(db: D1Database, message: SourceQueueMessage, error: string): Promise<void> {
   await db
     .prepare(
-      `UPDATE source_jobs
-       SET status = 'failed',
-           source_etag = ?1,
-           last_error = ?2,
-           updated_at = ?3
-       WHERE database_id = ?4 AND source_path = ?5`
+      `INSERT INTO source_jobs
+       (database_id, source_path, source_etag, status, target_path, attempts, last_error, updated_at)
+       VALUES (?1, ?2, ?3, 'failed', NULL, 0, ?4, ?5)
+       ON CONFLICT(database_id, source_path)
+       DO UPDATE SET source_etag = excluded.source_etag,
+                     status = 'failed',
+                     target_path = NULL,
+                     last_error = excluded.last_error,
+                     updated_at = excluded.updated_at`
     )
-    .bind(message.sourceEtag, error.slice(0, 4000), new Date().toISOString(), message.databaseId, message.sourcePath)
+    .bind(message.databaseId, message.sourcePath, message.sourceEtag, error.slice(0, 4000), new Date().toISOString())
     .run();
 }
 
@@ -104,6 +112,8 @@ async function upsertQueuedJob(db: D1Database, message: SourceQueueMessage): Pro
        ON CONFLICT(database_id, source_path)
        DO UPDATE SET source_etag = excluded.source_etag,
                      status = 'queued',
+                     target_path = NULL,
+                     attempts = 0,
                      last_error = NULL,
                      updated_at = excluded.updated_at`
     )

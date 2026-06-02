@@ -19,13 +19,12 @@ use sha2::{Digest, Sha256};
 use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage, DatabaseCyclePendingOperation,
-    DatabaseCyclePendingOperationPage, DatabaseCyclesPurchasePreview, DatabaseInfo, DatabaseMember,
-    DatabaseRole, DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest,
-    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    CyclesPurchaseResult, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
+    DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
@@ -33,7 +32,7 @@ use vfs_types::{
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
     Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
 
@@ -67,12 +66,9 @@ const INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS: &str =
     "database_index:021_cycles_pending_operation_status";
 const INDEX_SCHEMA_VERSION_CYCLES: &str = "database_index:022_cycles";
 const INDEX_SCHEMA_VERSION_STORAGE_BILLING: &str = "database_index:023_storage_billing";
-const INDEX_SCHEMA_VERSION_DIRECT_CYCLES: &str = "database_index:024_direct_cycles";
-const LEGACY_INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION: &str =
-    "database_index:020_credits_config_version";
-const LEGACY_INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS: &str =
-    "database_index:021_credit_pending_operation_status";
-const LEGACY_INDEX_SCHEMA_VERSION_CREDIT_UNITS: &str = "database_index:022_credit_units";
+const INDEX_SCHEMA_VERSION_DIRECT_CYCLES: &str = concat!("database_index:024_", "direct_cycles");
+const INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX: &str =
+    "database_index:025_cycles_pending_ledger_block_index";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -83,21 +79,15 @@ pub const MAX_DATABASE_SIZE_BYTES: u64 = i64::MAX as u64;
 const URL_INGEST_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const OPS_ANSWER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
+const MAX_PENDING_DATABASES_PER_CALLER: i64 = 3;
+const PENDING_DATABASE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+const MAX_DATABASE_MEMBERS_PER_DATABASE: i64 = 32;
 const SHA256_DIGEST_BYTES: usize = 32;
 const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
 const FRESH_INDEX_SCHEMA_SQL: &str = include_str!("../migrations/index_db/fresh_index_schema.sql");
 const INDEX_011_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/011_to_latest.sql");
-const INDEX_021_PENDING_OPERATION_STATUS_SQL: &str =
-    include_str!("../migrations/index_db/021_pending_operation_status.sql");
-const INDEX_022_CREDIT_UNITS_SQL: &str =
-    include_str!("../migrations/index_db/022_credit_units.sql");
-const INDEX_023_STORAGE_BILLING_SQL: &str =
-    include_str!("../migrations/index_db/023_storage_billing.sql");
-const INDEX_024_DIRECT_CYCLES_SQL: &str =
-    include_str!("../migrations/index_db/024_direct_cycles.sql");
-pub const KINIC_E8S_PER_TOKEN: u64 = 100_000_000;
-pub const DEFAULT_CYCLES_PER_KINIC: u64 = 1_000_000_000_000;
+pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
@@ -110,7 +100,6 @@ pub const DEFAULT_LLM_WRITER_PRINCIPAL: &str =
     "ckurn-x74ln-nemlm-42vfv-gej7r-4cc3e-v22e5-otcod-jndlh-pbst4-3qe";
 const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
 const CYCLES_OPERATION_STATUS_IN_FLIGHT: &str = "in_flight";
-const CYCLES_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
 const CYCLES_OPERATION_STATUS_COMPLETED: &str = "completed";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,10 +148,14 @@ pub struct DatabaseCyclesPurchaseWithLedgerDetails<'a> {
     pub database_id: &'a str,
     pub caller: &'a str,
     pub payment_amount_e8s: u64,
-    pub expected_cycles: u64,
-    pub expected_config_version: u64,
     pub ledger: CyclesPendingLedgerDetailsInput<'a>,
     pub now: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DatabaseCyclesPurchaseStart {
+    pub operation_id: u64,
+    pub amount_cycles: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -301,28 +294,6 @@ impl VfsService {
         self.read_index(load_cycles_billing_config)
     }
 
-    pub fn preview_database_cycles_purchase(
-        &self,
-        database_id: &str,
-        payment_amount_e8s: u64,
-    ) -> Result<DatabaseCyclesPurchasePreview, String> {
-        amount_to_i64(payment_amount_e8s)?;
-        self.read_index(|conn| {
-            let config = load_cycles_billing_config(conn)?;
-            let config_version = load_cycles_billing_config_version(conn)?;
-            let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
-            let cycles_i64 = cycles_to_i64(cycles)?;
-            validate_database_cycles_purchase_for_conn(conn, database_id, cycles_i64)?;
-            Ok(DatabaseCyclesPurchasePreview {
-                payment_amount_e8s,
-                cycles,
-                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                cycles_per_kinic: config.cycles_per_kinic,
-                config_version,
-            })
-        })
-    }
-
     pub fn update_cycles_billing_config(
         &self,
         update: CyclesBillingConfigUpdate,
@@ -405,6 +376,11 @@ impl VfsService {
     ) -> Result<DatabaseMeta, String> {
         let name = normalize_database_name(name)?;
         self.write_index(|tx| {
+            purge_expired_unstarted_pending_databases(tx, caller, now)?;
+            let pending_count = pending_database_count_for_caller(tx, caller)?;
+            if pending_count >= MAX_PENDING_DATABASES_PER_CALLER {
+                return Err("too many pending databases for caller".to_string());
+            }
             let mut selected_database_id = None;
             for attempt in 0_u32..100 {
                 let database_id =
@@ -662,8 +638,13 @@ impl VfsService {
         database_id: &str,
         payment_amount_e8s: u64,
     ) -> Result<(), String> {
-        self.preview_database_cycles_purchase(database_id, payment_amount_e8s)
-            .map(|_| ())
+        amount_to_i64(payment_amount_e8s)?;
+        self.read_index(|conn| {
+            let config = load_cycles_billing_config(conn)?;
+            let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+            let cycles_i64 = cycles_to_i64(cycles)?;
+            validate_database_cycles_purchase_for_conn(conn, database_id, cycles_i64)
+        })
     }
 
     pub fn begin_database_cycles_purchase(
@@ -673,14 +654,11 @@ impl VfsService {
         payment_amount_e8s: u64,
         now: i64,
     ) -> Result<u64, String> {
-        let preview = self.preview_database_cycles_purchase(database_id, payment_amount_e8s)?;
         self.begin_database_cycles_purchase_with_ledger_details(
             DatabaseCyclesPurchaseWithLedgerDetails {
                 database_id,
                 caller,
                 payment_amount_e8s,
-                expected_cycles: preview.cycles,
-                expected_config_version: preview.config_version,
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: caller,
                     from_subaccount: None,
@@ -692,35 +670,24 @@ impl VfsService {
                 now,
             },
         )
+        .map(|start| start.operation_id)
     }
 
     pub fn begin_database_cycles_purchase_with_ledger_details(
         &self,
         request: DatabaseCyclesPurchaseWithLedgerDetails<'_>,
-    ) -> Result<u64, String> {
+    ) -> Result<DatabaseCyclesPurchaseStart, String> {
         let payment_amount_e8s = amount_to_i64(request.payment_amount_e8s)?;
         let ledger_fee = amount_to_i64(request.ledger.ledger_fee_e8s)?;
         let ledger_created_at_time = i64::try_from(request.ledger.ledger_created_at_time_ns)
             .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
         self.write_index(|tx| {
             let config = load_cycles_billing_config(tx)?;
-            let config_version = load_cycles_billing_config_version(tx)?;
             let cycles_u64 = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
             let cycles = cycles_to_i64(cycles_u64)?;
-            if request.expected_config_version != config_version {
-                return Err(format!(
-                    "cycles billing config changed: expected version {}, current version {}",
-                    request.expected_config_version, config_version
-                ));
-            }
-            if request.expected_cycles != cycles_u64 {
-                return Err(format!(
-                    "cycles purchase amount changed: expected {}, current {}",
-                    request.expected_cycles, cycles_u64
-                ));
-            }
             validate_database_cycles_purchase_for_conn(tx, request.database_id, cycles)?;
-            insert_pending_cycles_operation(
+            ensure_no_pending_cycles_purchase_for_caller(tx, request.database_id, request.caller)?;
+            let operation_id = insert_pending_cycles_operation(
                 tx,
                 PendingCyclesOperationInsert {
                     database_id: request.database_id,
@@ -739,16 +706,21 @@ impl VfsService {
                     operation_status: CYCLES_OPERATION_STATUS_IN_FLIGHT,
                     now: request.now,
                 },
-            )
+            )?;
+            Ok(DatabaseCyclesPurchaseStart {
+                operation_id,
+                amount_cycles: cycles_u64,
+            })
         })
     }
+
     pub fn apply_database_cycles_purchase(
         &self,
         operation_id: u64,
         database_id: &str,
         caller: &str,
         cycles: u64,
-        ledger_block_index: u64,
+        _ledger_block_index: u64,
         now: i64,
     ) -> Result<u64, String> {
         let cycles_i64 = cycles_to_i64(cycles)?;
@@ -767,8 +739,11 @@ impl VfsService {
             require_pending_operation_status(
                 &operation,
                 &[CYCLES_OPERATION_STATUS_COMPLETED],
-                "apply completed cycle purchase",
+                "apply cycle purchase",
             )?;
+            let ledger_block_index = operation
+                .ledger_block_index
+                .ok_or_else(|| "completed cycle purchase missing ledger block index".to_string())?;
             load_database_status(tx, database_id)?;
             complete_pending_database_activation(tx, database_id, now)?;
             let db_balance = database_balance_for_update(tx, database_id)?;
@@ -786,7 +761,9 @@ impl VfsService {
                     method: Some("purchase_database_cycles"),
                     cycles_delta: None,
                     config: None,
-                    ledger_block_index: Some(ledger_block_index),
+                    ledger_block_index: Some(
+                        u64::try_from(ledger_block_index).map_err(|error| error.to_string())?,
+                    ),
                     now,
                 },
             )?;
@@ -795,15 +772,17 @@ impl VfsService {
         })
     }
 
-    pub fn mark_database_cycles_purchase_ambiguous(
+    pub fn complete_database_cycles_purchase_ledger_transfer(
         &self,
         operation_id: u64,
         database_id: &str,
         caller: &str,
         cycles: u64,
-        now: i64,
-    ) -> Result<u64, String> {
+        ledger_block_index: u64,
+    ) -> Result<(), String> {
         let cycles_i64 = cycles_to_i64(cycles)?;
+        let ledger_block_index = i64::try_from(ledger_block_index)
+            .map_err(|_| "ledger block index exceeds i64".to_string())?;
         self.write_index(|tx| {
             let operation = load_required_pending_cycles_operation(
                 tx,
@@ -818,36 +797,69 @@ impl VfsService {
             require_pending_operation_status(
                 &operation,
                 &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
-                "mark cycle purchase ambiguous",
+                "complete cycle purchase ledger transfer",
             )?;
-            load_database_status(tx, database_id)?;
-            let balance = database_balance_for_update(tx, database_id)?;
-            insert_database_ledger(
-                tx,
-                DatabaseLedgerInsert {
-                    database_id,
-                    kind: "cycles_purchase_ambiguous",
-                    amount_cycles: cycles_i64,
-                    balance_after_cycles: balance,
-                    payment_amount_e8s: Some(operation.payment_amount_e8s),
-                    caller,
-                    method: Some("purchase_database_cycles"),
-                    cycles_delta: None,
-                    config: None,
-                    ledger_block_index: None,
-                    now,
-                },
-            )?;
-            update_pending_cycles_operation_status(
-                tx,
-                operation_id,
-                CYCLES_OPERATION_STATUS_AMBIGUOUS,
-            )?;
-            Ok(balance as u64)
+            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+            tx.execute(
+                "UPDATE database_cycle_pending_operations
+                 SET operation_status = ?2,
+                     ledger_block_index = ?3
+                 WHERE operation_id = ?1",
+                params![
+                    operation_id,
+                    CYCLES_OPERATION_STATUS_COMPLETED,
+                    ledger_block_index
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
         })
     }
 
-    pub fn mark_database_cycles_purchase_completed(
+    pub fn retry_database_cycles_purchase(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+        now: i64,
+    ) -> Result<CyclesPurchaseResult, String> {
+        let config = self.cycles_billing_config()?;
+        if caller != config.billing_authority_id {
+            return Err("caller is not billing authority".to_string());
+        }
+        let operation = self.write_index(|conn| {
+            let operation = load_pending_cycles_operation(conn, operation_id)?;
+            if operation.database_id != database_id || operation.kind != "cycles_purchase" {
+                return Err("pending cycle operation mismatch".to_string());
+            }
+            require_pending_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_COMPLETED],
+                "retry cycle purchase",
+            )?;
+            Ok(operation)
+        })?;
+        let cycles = u64::try_from(operation.cycles).map_err(|error| error.to_string())?;
+        let block_index = operation
+            .ledger_block_index
+            .ok_or_else(|| "completed cycle purchase missing ledger block index".to_string())
+            .and_then(|value| u64::try_from(value).map_err(|error| error.to_string()))?;
+        let balance = self.apply_database_cycles_purchase(
+            operation_id,
+            database_id,
+            &operation.caller,
+            cycles,
+            block_index,
+            now,
+        )?;
+        Ok(CyclesPurchaseResult {
+            block_index,
+            amount_cycles: cycles,
+            balance_cycles: balance,
+        })
+    }
+
+    pub fn cleanup_database_cycles_purchase_after_no_credit(
         &self,
         operation_id: u64,
         database_id: &str,
@@ -855,7 +867,7 @@ impl VfsService {
         cycles: u64,
     ) -> Result<(), String> {
         let cycles_i64 = cycles_to_i64(cycles)?;
-        self.write_index(|tx| {
+        let status = self.write_index(|tx| {
             let operation = load_required_pending_cycles_operation(
                 tx,
                 PendingCyclesOperationMatch {
@@ -868,22 +880,16 @@ impl VfsService {
             )?;
             require_pending_operation_status(
                 &operation,
-                &[
-                    CYCLES_OPERATION_STATUS_IN_FLIGHT,
-                    CYCLES_OPERATION_STATUS_AMBIGUOUS,
-                    CYCLES_OPERATION_STATUS_COMPLETED,
-                ],
-                "mark cycle purchase completed",
+                &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
+                "cleanup cycle purchase",
             )?;
-            if operation.operation_status != CYCLES_OPERATION_STATUS_COMPLETED {
-                update_pending_cycles_operation_status(
-                    tx,
-                    operation_id,
-                    CYCLES_OPERATION_STATUS_COMPLETED,
-                )?;
-            }
-            Ok(())
-        })
+            load_database_status(tx, database_id)
+        })?;
+        if status == DatabaseStatus::Pending {
+            self.discard_database_reservation(database_id)
+        } else {
+            self.cancel_database_cycles_purchase(operation_id, database_id, caller, cycles)
+        }
     }
 
     pub fn cancel_database_cycles_purchase(
@@ -970,179 +976,6 @@ impl VfsService {
                 entries,
                 next_cursor,
             })
-        })
-    }
-
-    pub fn list_database_cycle_pending_operations(
-        &self,
-        database_id: &str,
-        caller: &str,
-        cursor: Option<u64>,
-        limit: u32,
-    ) -> Result<DatabaseCyclePendingOperationPage, String> {
-        let config = self.cycles_billing_config()?;
-        let limit = page_limit(limit);
-        let after = i64::try_from(cursor.unwrap_or(0)).map_err(|error| error.to_string())?;
-        self.read_index(|conn| {
-            load_database_status(conn, database_id)?;
-            if caller != config.billing_authority_id {
-                let role = load_member_role(conn, database_id, caller)?
-                    .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
-                if role != DatabaseRole::Owner {
-                    return Err(format!(
-                        "principal lacks required database role: {database_id}"
-                    ));
-                }
-            }
-            let mut stmt = conn
-                .prepare(
-                    "SELECT operation_id, database_id, kind, caller, cycles, payment_amount_e8s,
-                            from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
-                            ledger_created_at_time_ns, operation_status, created_at_ms
-                     FROM database_cycle_pending_operations
-                     WHERE database_id = ?1 AND operation_id > ?2
-                     ORDER BY operation_id ASC
-                     LIMIT ?3",
-                )
-                .map_err(|error| error.to_string())?;
-            let mut entries = crate::sqlite::query_map(
-                &mut stmt,
-                params![database_id, after, i64::from(limit) + 1],
-                map_database_cycles_pending_operation,
-            )
-            .map_err(|error| error.to_string())?;
-            let next_cursor = if entries.len() > limit as usize {
-                entries.pop();
-                entries.last().map(|entry| entry.operation_id)
-            } else {
-                None
-            };
-            Ok(DatabaseCyclePendingOperationPage {
-                entries,
-                next_cursor,
-            })
-        })
-    }
-
-    pub fn get_database_cycle_pending_operation_for_complete(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-    ) -> Result<DatabaseCyclePendingOperation, String> {
-        self.write_index(|tx| {
-            let operation = load_pending_cycles_operation(tx, operation_id)?;
-            if operation.database_id != database_id {
-                return Err("pending cycle operation mismatch".to_string());
-            }
-            require_pending_operation_status(
-                &operation,
-                &[
-                    CYCLES_OPERATION_STATUS_AMBIGUOUS,
-                    CYCLES_OPERATION_STATUS_COMPLETED,
-                ],
-                "complete cycle purchase repair",
-            )?;
-            Ok(pending_cycles_operation_to_public(operation))
-        })
-    }
-
-    pub fn repair_database_cycles_purchase_complete(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-        ledger_block_index: u64,
-        now: i64,
-    ) -> Result<u64, String> {
-        let config = self.cycles_billing_config()?;
-        self.write_index(|tx| {
-            let operation = load_pending_cycles_operation(tx, operation_id)?;
-            require_pending_database_kind(&operation, database_id, "cycles_purchase")?;
-            require_pending_operation_status(
-                &operation,
-                &[
-                    CYCLES_OPERATION_STATUS_AMBIGUOUS,
-                    CYCLES_OPERATION_STATUS_COMPLETED,
-                ],
-                "complete cycle purchase repair",
-            )?;
-            load_database_status(tx, database_id)?;
-            complete_pending_database_activation(tx, database_id, now)?;
-            let balance = database_balance_for_update(tx, database_id)?;
-            let next = checked_balance_add(balance, operation.cycles)?;
-            update_database_cycles_balance(tx, database_id, next, &config, now)?;
-            insert_database_ledger(
-                tx,
-                DatabaseLedgerInsert {
-                    database_id,
-                    kind: "cycles_purchase_repair_complete",
-                    amount_cycles: operation.cycles,
-                    balance_after_cycles: next,
-                    payment_amount_e8s: Some(operation.payment_amount_e8s),
-                    caller: &operation.caller,
-                    method: Some("repair_database_cycles_purchase_complete"),
-                    cycles_delta: None,
-                    config: None,
-                    ledger_block_index: Some(ledger_block_index),
-                    now,
-                },
-            )?;
-            delete_pending_cycles_operation(tx, operation_id)?;
-            Ok(next as u64)
-        })
-    }
-
-    pub fn repair_database_cycles_purchase_cancel(
-        &self,
-        database_id: &str,
-        operation_id: u64,
-        caller: &str,
-        now: i64,
-    ) -> Result<(), String> {
-        self.write_index(|tx| {
-            let config = load_cycles_billing_config(tx)?;
-            if caller != config.billing_authority_id {
-                return Err("caller is not cycles purchase cancel authority".to_string());
-            }
-            let operation = load_pending_cycles_operation(tx, operation_id)?;
-            require_pending_database_kind(&operation, database_id, "cycles_purchase")?;
-            require_pending_operation_status(
-                &operation,
-                &[CYCLES_OPERATION_STATUS_AMBIGUOUS],
-                "cancel cycle purchase repair",
-            )?;
-            let status = load_database_status(tx, database_id)?;
-            let active_mount_id: Option<i64> = tx
-                .query_row(
-                    "SELECT active_mount_id FROM databases WHERE database_id = ?1",
-                    params![database_id],
-                    |row| crate::sqlite::row_get(row, 0),
-                )
-                .map_err(|error| error.to_string())?;
-            if status == DatabaseStatus::Pending && active_mount_id.is_some() {
-                return Err(
-                    "pending database activation already started; complete cycle purchase repair"
-                        .to_string(),
-                );
-            }
-            let balance = database_balance_for_update(tx, database_id)?;
-            insert_database_ledger(
-                tx,
-                DatabaseLedgerInsert {
-                    database_id,
-                    kind: "cycles_purchase_repair_cancelled",
-                    amount_cycles: operation.cycles,
-                    balance_after_cycles: balance,
-                    payment_amount_e8s: Some(operation.payment_amount_e8s),
-                    caller,
-                    method: Some("repair_database_cycles_purchase_cancel"),
-                    cycles_delta: None,
-                    config: None,
-                    ledger_block_index: None,
-                    now,
-                },
-            )?;
-            delete_pending_cycles_operation(tx, operation_id)?;
-            Ok(())
         })
     }
 
@@ -1634,6 +1467,12 @@ impl VfsService {
             return Err("owner cannot downgrade own access".to_string());
         }
         self.write_index(|conn| {
+            if !database_member_exists(conn, database_id, principal)? {
+                let member_count = database_member_count_for_conn(conn, database_id)?;
+                if member_count >= MAX_DATABASE_MEMBERS_PER_DATABASE {
+                    return Err("too many database members".to_string());
+                }
+            }
             conn.execute(
                 "INSERT INTO database_members (database_id, principal, role, created_at_ms)
              VALUES (?1, ?2, ?3, ?4)
@@ -2659,6 +2498,11 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
             ));
         }
     }
+    if let Some(table) = legacy_credit_index_table_name(conn)? {
+        return Err(format!(
+            "unsupported index schema: {table} exists without supported schema_migrations; recreate the index database"
+        ));
+    }
     validate_cycles_billing_config(config)?;
     let tx = conn.transaction().map_err(|error| error.to_string())?;
     create_schema_migrations(&tx)?;
@@ -2703,6 +2547,11 @@ fn run_index_migrations_in_tx(
             ));
         }
     }
+    if let Some(table) = legacy_credit_index_table_name_tx(conn)? {
+        return Err(format!(
+            "unsupported index schema: {table} exists without schema_migrations"
+        ));
+    }
     validate_cycles_billing_config(config)?;
     create_schema_migrations(conn)?;
     create_fresh_index_schema(conn)?;
@@ -2730,10 +2579,6 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
-    NeedsPendingOperationStatus,
-    NeedsCycleUnits,
-    NeedsStorageBilling,
-    NeedsDirectCycles,
     Mainnet011,
 }
 
@@ -2743,22 +2588,6 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
-        IndexSchemaState::NeedsPendingOperationStatus => {
-            apply_pending_operation_status_index_migration(conn)?;
-            ensure_existing_index_schema_is_latest(conn, config)
-        }
-        IndexSchemaState::NeedsCycleUnits => {
-            apply_cycles_index_migration(conn)?;
-            ensure_existing_index_schema_is_latest(conn, config)
-        }
-        IndexSchemaState::NeedsStorageBilling => {
-            apply_storage_billing_index_migration(conn)?;
-            ensure_existing_index_schema_is_latest(conn, config)
-        }
-        IndexSchemaState::NeedsDirectCycles => {
-            apply_direct_cycles_index_migration(conn)?;
-            validate_index_schema(conn)
-        }
         IndexSchemaState::Mainnet011 => {
             let config = config
                 .ok_or_else(|| "cycles config required for first cycles upgrade".to_string())?;
@@ -2773,31 +2602,30 @@ fn ensure_existing_index_schema_is_latest(
 fn classify_existing_index_schema_state(
     conn: &Transaction<'_>,
 ) -> Result<IndexSchemaState, String> {
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DIRECT_CYCLES)? {
-        return Ok(IndexSchemaState::Latest);
+    let legacy_billing_marker: Option<String> = conn
+        .query_row(
+            "SELECT version
+             FROM schema_migrations
+             WHERE version LIKE '%credit%'
+             ORDER BY version
+             LIMIT 1",
+            params![],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if let Some(version) = legacy_billing_marker {
+        return Err(format!(
+            "unsupported partial billing index schema: migration {version} is already applied"
+        ));
     }
-    let has_cycles_billing_config_version =
-        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_BILLING_CONFIG_VERSION)?
-            || migration_applied_tx(conn, LEGACY_INDEX_SCHEMA_VERSION_CREDITS_CONFIG_VERSION)?;
-    if has_cycles_billing_config_version {
-        let has_pending_status =
-            migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS)?
-                || migration_applied_tx(
-                    conn,
-                    LEGACY_INDEX_SCHEMA_VERSION_CREDIT_PENDING_OPERATION_STATUS,
-                )?;
-        if !has_pending_status {
-            return Ok(IndexSchemaState::NeedsPendingOperationStatus);
-        }
-        let has_credit_units = migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES)?
-            || migration_applied_tx(conn, LEGACY_INDEX_SCHEMA_VERSION_CREDIT_UNITS)?;
-        if !has_credit_units {
-            return Ok(IndexSchemaState::NeedsCycleUnits);
-        }
-        if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING)? {
-            return Ok(IndexSchemaState::NeedsStorageBilling);
-        }
-        return Ok(IndexSchemaState::NeedsDirectCycles);
+    if let Some(table) = legacy_credit_index_table_name_tx(conn)? {
+        return Err(format!(
+            "unsupported partial billing index schema: table {table} already exists"
+        ));
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX)? {
+        return Ok(IndexSchemaState::Latest);
     }
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         return Err(format!(
@@ -2833,30 +2661,6 @@ fn apply_mainnet_011_to_latest_index_migration(
         insert_schema_migration_now(conn, version)?;
     }
     Ok(())
-}
-
-fn apply_pending_operation_status_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(INDEX_021_PENDING_OPERATION_STATUS_SQL)
-        .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS)
-}
-
-fn apply_cycles_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(INDEX_022_CREDIT_UNITS_SQL)
-        .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CYCLES)
-}
-
-fn apply_storage_billing_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(INDEX_023_STORAGE_BILLING_SQL)
-        .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING)
-}
-
-fn apply_direct_cycles_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(INDEX_024_DIRECT_CYCLES_SQL)
-        .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DIRECT_CYCLES)
 }
 
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
@@ -2995,6 +2799,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES,
     INDEX_SCHEMA_VERSION_STORAGE_BILLING,
     INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
+    INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3006,10 +2811,6 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "ops_answer_sessions",
     "source_run_sessions",
     "database_restore_sessions",
-    "database_credit_accounts",
-    "database_credit_ledger",
-    "database_credit_pending_operations",
-    "credits_config",
     "database_cycle_accounts",
     "database_cycle_ledger",
     "database_cycle_pending_operations",
@@ -3030,13 +2831,10 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES,
     INDEX_SCHEMA_VERSION_STORAGE_BILLING,
     INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
+    INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
-    "database_credit_accounts",
-    "database_credit_ledger",
-    "database_credit_pending_operations",
-    "credits_config",
     "database_cycle_accounts",
     "database_cycle_ledger",
     "database_cycle_pending_operations",
@@ -3245,6 +3043,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "ledger_fee_e8s",
                 "ledger_created_at_time_ns",
                 "operation_status",
+                "ledger_block_index",
                 "created_at_ms",
             ][..],
         ),
@@ -3308,6 +3107,39 @@ fn migration_applied_tx(conn: &Transaction<'_>, version: &str) -> Result<bool, S
     )
     .optional()
     .map(|row| row.is_some())
+    .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn legacy_credit_index_table_name(conn: &Connection) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT name
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND (name LIKE 'database_' || 'credit_%'
+                OR name = 'credits_' || 'config')
+         ORDER BY name
+         LIMIT 1",
+        params![],
+        |row| crate::sqlite::row_get::<String>(row, 0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn legacy_credit_index_table_name_tx(conn: &Transaction<'_>) -> Result<Option<String>, String> {
+    conn.query_row(
+        "SELECT name
+         FROM sqlite_master
+         WHERE type = 'table'
+           AND (name LIKE 'database_' || 'credit_%'
+                OR name = 'credits_' || 'config')
+         ORDER BY name
+         LIMIT 1",
+        params![],
+        |row| crate::sqlite::row_get::<String>(row, 0),
+    )
+    .optional()
     .map_err(|error| error.to_string())
 }
 
@@ -3421,7 +3253,7 @@ pub fn cycles_for_payment_amount_e8s(
     let cycles = u128::from(payment_amount_e8s)
         .checked_mul(u128::from(config.cycles_per_kinic))
         .ok_or_else(|| "cycles purchase amount overflow".to_string())?
-        / u128::from(KINIC_E8S_PER_TOKEN);
+        / u128::from(kinic_base_units_per_token());
     let cycles =
         u64::try_from(cycles).map_err(|_| "cycles purchase amount exceeds u64".to_string())?;
     if cycles == 0 {
@@ -3536,6 +3368,57 @@ fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<()
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn purge_expired_unstarted_pending_databases(
+    conn: &Transaction<'_>,
+    caller: &str,
+    now: i64,
+) -> Result<(), String> {
+    let expires_before = now.saturating_sub(PENDING_DATABASE_TTL_MS);
+    let expired_database_ids = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT d.database_id
+                 FROM databases d
+                 JOIN database_members m ON m.database_id = d.database_id
+                 WHERE d.status = 'pending'
+                   AND d.active_mount_id IS NULL
+                   AND d.created_at_ms <= ?2
+                   AND m.principal = ?1
+                   AND m.role = 'owner'
+                   AND NOT EXISTS (
+                     SELECT 1
+                     FROM database_cycle_pending_operations p
+                     WHERE p.database_id = d.database_id
+                   )
+                 ORDER BY d.created_at_ms ASC",
+            )
+            .map_err(|error| error.to_string())?;
+        crate::sqlite::query_map(&mut stmt, params![caller, expires_before], |row| {
+            crate::sqlite::row_get::<String>(row, 0)
+        })
+        .map_err(|error| error.to_string())?
+    };
+    for database_id in expired_database_ids {
+        delete_database_index_rows(conn, &database_id)?;
+    }
+    Ok(())
+}
+
+fn pending_database_count_for_caller(conn: &Connection, caller: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*)
+         FROM databases d
+         JOIN database_members m ON m.database_id = d.database_id
+         WHERE d.status = 'pending'
+           AND d.active_mount_id IS NULL
+           AND m.principal = ?1
+           AND m.role = 'owner'",
+        params![caller],
+        |row| crate::sqlite::row_get(row, 0),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn complete_pending_database_activation(
@@ -3682,20 +3565,13 @@ fn update_database_storage_account(
 }
 
 struct PendingCyclesOperation {
-    operation_id: u64,
     database_id: String,
     kind: String,
     caller: String,
     cycles: i64,
     payment_amount_e8s: i64,
-    from_owner: Option<String>,
-    from_subaccount: Option<Vec<u8>>,
-    to_owner: Option<String>,
-    to_subaccount: Option<Vec<u8>>,
-    ledger_fee_e8s: Option<i64>,
-    ledger_created_at_time_ns: Option<i64>,
     operation_status: String,
-    created_at_ms: i64,
+    ledger_block_index: Option<i64>,
 }
 
 struct PendingCyclesLedgerDetails<'a> {
@@ -3765,9 +3641,8 @@ fn load_pending_cycles_operation(
 ) -> Result<PendingCyclesOperation, String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT operation_id, database_id, kind, caller, cycles, payment_amount_e8s,
-                from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
-                ledger_created_at_time_ns, operation_status, created_at_ms
+        "SELECT database_id, kind, caller, cycles, payment_amount_e8s, operation_status,
+                ledger_block_index
          FROM database_cycle_pending_operations
          WHERE operation_id = ?1",
         params![operation_id],
@@ -3793,17 +3668,6 @@ fn require_pending_operation_status(
         "cannot {action}; cycle purchase operation is {}",
         operation.operation_status
     ))
-}
-
-fn require_pending_database_kind(
-    operation: &PendingCyclesOperation,
-    database_id: &str,
-    kind: &str,
-) -> Result<(), String> {
-    if operation.database_id != database_id || operation.kind != kind {
-        return Err("pending cycle operation mismatch".to_string());
-    }
-    Ok(())
 }
 
 fn load_required_pending_cycles_operation(
@@ -3834,70 +3698,40 @@ fn delete_pending_cycles_operation(
     Ok(())
 }
 
-fn update_pending_cycles_operation_status(
-    conn: &Transaction<'_>,
-    operation_id: u64,
-    status: &str,
+fn ensure_no_pending_cycles_purchase_for_caller(
+    conn: &Connection,
+    database_id: &str,
+    caller: &str,
 ) -> Result<(), String> {
-    let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-    conn.execute(
-        "UPDATE database_cycle_pending_operations
-         SET operation_status = ?2
-         WHERE operation_id = ?1",
-        params![operation_id, status],
-    )
-    .map_err(|error| error.to_string())?;
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM database_cycle_pending_operations
+             WHERE database_id = ?1
+               AND caller = ?2
+               AND kind = 'cycles_purchase'",
+            params![database_id, caller],
+            |row| crate::sqlite::row_get(row, 0),
+        )
+        .map_err(|error| error.to_string())?;
+    if count > 0 {
+        return Err("cycles purchase already pending for caller".to_string());
+    }
     Ok(())
 }
 
 fn map_pending_cycles_operation(
     row: &crate::sqlite::Row<'_>,
 ) -> crate::sqlite::Result<PendingCyclesOperation> {
-    let operation_id: i64 = crate::sqlite::row_get(row, 0)?;
     Ok(PendingCyclesOperation {
-        operation_id: operation_id.max(0) as u64,
-        database_id: crate::sqlite::row_get(row, 1)?,
-        kind: crate::sqlite::row_get(row, 2)?,
-        caller: crate::sqlite::row_get(row, 3)?,
-        cycles: crate::sqlite::row_get(row, 4)?,
-        payment_amount_e8s: crate::sqlite::row_get(row, 5)?,
-        from_owner: crate::sqlite::row_get(row, 6)?,
-        from_subaccount: crate::sqlite::row_get(row, 7)?,
-        to_owner: crate::sqlite::row_get(row, 8)?,
-        to_subaccount: crate::sqlite::row_get(row, 9)?,
-        ledger_fee_e8s: crate::sqlite::row_get(row, 10)?,
-        ledger_created_at_time_ns: crate::sqlite::row_get(row, 11)?,
-        operation_status: crate::sqlite::row_get(row, 12)?,
-        created_at_ms: crate::sqlite::row_get(row, 13)?,
+        database_id: crate::sqlite::row_get(row, 0)?,
+        kind: crate::sqlite::row_get(row, 1)?,
+        caller: crate::sqlite::row_get(row, 2)?,
+        cycles: crate::sqlite::row_get(row, 3)?,
+        payment_amount_e8s: crate::sqlite::row_get(row, 4)?,
+        operation_status: crate::sqlite::row_get(row, 5)?,
+        ledger_block_index: crate::sqlite::row_get(row, 6)?,
     })
-}
-
-fn map_database_cycles_pending_operation(
-    row: &crate::sqlite::Row<'_>,
-) -> crate::sqlite::Result<DatabaseCyclePendingOperation> {
-    let operation = map_pending_cycles_operation(row)?;
-    Ok(pending_cycles_operation_to_public(operation))
-}
-
-fn pending_cycles_operation_to_public(
-    operation: PendingCyclesOperation,
-) -> DatabaseCyclePendingOperation {
-    DatabaseCyclePendingOperation {
-        operation_id: operation.operation_id,
-        database_id: operation.database_id,
-        kind: operation.kind,
-        caller: operation.caller,
-        operation_status: operation.operation_status,
-        cycles: operation.cycles,
-        payment_amount_e8s: operation.payment_amount_e8s,
-        from_owner: operation.from_owner,
-        from_subaccount: operation.from_subaccount,
-        to_owner: operation.to_owner,
-        to_subaccount: operation.to_subaccount,
-        ledger_fee_e8s: operation.ledger_fee_e8s,
-        ledger_created_at_time_ns: operation.ledger_created_at_time_ns,
-        created_at_ms: operation.created_at_ms,
-    }
 }
 
 struct DatabaseLedgerInsert<'a> {
@@ -4080,15 +3914,17 @@ fn charge_database_update_in_tx(
     charge: DatabaseCharge<'_>,
 ) -> Result<(), String> {
     let balance = database_balance_for_update(tx, charge.database_id)?;
-    let amount = balance.min(charge.computed_charge);
-    let next = balance - amount;
+    if charge.computed_charge > balance {
+        return Err("database cycles balance is insufficient for update charge".to_string());
+    }
+    let next = balance - charge.computed_charge;
     update_database_cycles_balance(tx, charge.database_id, next, charge.config, charge.now)?;
     insert_database_ledger(
         tx,
         DatabaseLedgerInsert {
             database_id: charge.database_id,
             kind: "charge",
-            amount_cycles: -amount,
+            amount_cycles: -charge.computed_charge,
             balance_after_cycles: next,
             payment_amount_e8s: None,
             caller: charge.caller,
@@ -4099,24 +3935,6 @@ fn charge_database_update_in_tx(
             now: charge.now,
         },
     )?;
-    if charge.computed_charge > balance {
-        insert_database_ledger(
-            tx,
-            DatabaseLedgerInsert {
-                database_id: charge.database_id,
-                kind: "suspend",
-                amount_cycles: 0,
-                balance_after_cycles: next,
-                payment_amount_e8s: None,
-                caller: charge.caller,
-                method: Some(charge.method),
-                cycles_delta: Some(charge.cycles_delta),
-                config: Some(charge.config),
-                ledger_block_index: None,
-                now: charge.now,
-            },
-        )?;
-    }
     Ok(())
 }
 
@@ -4288,9 +4106,9 @@ fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<Str
     let rest = content
         .strip_prefix("---\n")
         .ok_or_else(|| "url ingest request frontmatter is required".to_string())?;
-    let (frontmatter, _body) = rest
-        .split_once("\n---")
+    let end = frontmatter_end(rest)
         .ok_or_else(|| "url ingest request frontmatter is not closed".to_string())?;
+    let frontmatter = &rest[..end];
     let mut fields = BTreeMap::new();
     for line in frontmatter.lines() {
         let trimmed = line.trim();
@@ -4300,22 +4118,105 @@ fn parse_frontmatter_fields(content: &str) -> Result<BTreeMap<String, Option<Str
         let Some((key, value)) = trimmed.split_once(':') else {
             return Err("url ingest request frontmatter is invalid".to_string());
         };
-        fields.insert(key.trim().to_string(), frontmatter_scalar(value.trim()));
+        fields.insert(key.trim().to_string(), frontmatter_scalar(value.trim())?);
     }
     Ok(fields)
 }
 
-fn frontmatter_scalar(value: &str) -> Option<String> {
+fn frontmatter_scalar(value: &str) -> Result<Option<String>, String> {
     if value == "null" || value == "~" {
-        return None;
+        return Ok(None);
     }
     if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
-        return Some(value[1..value.len() - 1].to_string());
+        return parse_json_string_literal(value).map(Some);
     }
     if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
-        return Some(value[1..value.len() - 1].to_string());
+        return Ok(Some(value[1..value.len() - 1].replace("''", "'")));
     }
-    Some(value.to_string())
+    Ok(Some(value.to_string()))
+}
+
+fn frontmatter_end(rest: &str) -> Option<usize> {
+    rest.find("\n---\n").or_else(|| {
+        rest.ends_with("\n---")
+            .then_some(rest.len() - "\n---".len())
+    })
+}
+
+fn parse_json_string_literal(value: &str) -> Result<String, String> {
+    let body = value
+        .strip_prefix('"')
+        .and_then(|inner| inner.strip_suffix('"'))
+        .ok_or_else(|| "url ingest request frontmatter quoted scalar is invalid".to_string())?;
+    let mut chars = body.chars();
+    let mut decoded = String::new();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            let escaped = chars.next().ok_or_else(invalid_quoted_scalar)?;
+            decode_json_escape(escaped, &mut chars, &mut decoded)?;
+            continue;
+        }
+        if ch.is_control() {
+            return Err(invalid_quoted_scalar());
+        }
+        decoded.push(ch);
+    }
+    Ok(decoded)
+}
+
+fn decode_json_escape(
+    escaped: char,
+    chars: &mut std::str::Chars<'_>,
+    decoded: &mut String,
+) -> Result<(), String> {
+    match escaped {
+        '"' => decoded.push('"'),
+        '\\' => decoded.push('\\'),
+        '/' => decoded.push('/'),
+        'b' => decoded.push('\u{0008}'),
+        'f' => decoded.push('\u{000c}'),
+        'n' => decoded.push('\n'),
+        'r' => decoded.push('\r'),
+        't' => decoded.push('\t'),
+        'u' => {
+            let code = parse_json_hex4(chars)?;
+            if (0xD800..=0xDBFF).contains(&code) {
+                let slash = chars.next().ok_or_else(invalid_quoted_scalar)?;
+                let marker = chars.next().ok_or_else(invalid_quoted_scalar)?;
+                if slash != '\\' || marker != 'u' {
+                    return Err(invalid_quoted_scalar());
+                }
+                let low = parse_json_hex4(chars)?;
+                if !(0xDC00..=0xDFFF).contains(&low) {
+                    return Err(invalid_quoted_scalar());
+                }
+                let scalar = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                decoded.push(char::from_u32(scalar).ok_or_else(invalid_quoted_scalar)?);
+            } else if (0xDC00..=0xDFFF).contains(&code) {
+                return Err(invalid_quoted_scalar());
+            } else {
+                decoded.push(char::from_u32(code).ok_or_else(invalid_quoted_scalar)?);
+            }
+        }
+        _ => return Err(invalid_quoted_scalar()),
+    }
+    Ok(())
+}
+
+fn parse_json_hex4(chars: &mut std::str::Chars<'_>) -> Result<u32, String> {
+    let mut code = 0u32;
+    for _ in 0..4 {
+        code *= 16;
+        code += chars
+            .next()
+            .and_then(|ch| ch.to_digit(16))
+            .ok_or_else(invalid_quoted_scalar)?;
+    }
+    Ok(code)
+}
+
+fn invalid_quoted_scalar() -> String {
+    "url ingest request frontmatter quoted scalar is invalid".to_string()
 }
 
 fn expect_frontmatter(
@@ -4867,6 +4768,30 @@ fn load_member_role(
     .map_err(|error| error.to_string())
 }
 
+fn database_member_exists(
+    conn: &Connection,
+    database_id: &str,
+    principal: &str,
+) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM database_members WHERE database_id = ?1 AND principal = ?2",
+        params![database_id, principal],
+        |row| crate::sqlite::row_get::<i64>(row, 0),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+    .map(|value| value.is_some())
+}
+
+fn database_member_count_for_conn(conn: &Connection, database_id: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM database_members WHERE database_id = ?1",
+        params![database_id],
+        |row| crate::sqlite::row_get(row, 0),
+    )
+    .map_err(|error| error.to_string())
+}
+
 fn role_from_db(role: &str) -> crate::sqlite::Result<DatabaseRole> {
     match role {
         "owner" => Ok(DatabaseRole::Owner),
@@ -4930,6 +4855,50 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn url_ingest_frontmatter_requires_whole_line_terminator() {
+        let fields = parse_frontmatter_fields(
+            "---\nkind: \"kinic.url_ingest_request\"\nstatus: queued\nnote: ---not-a-terminator\nrequested_by: alice\n---\n# Body\n",
+        )
+        .expect("frontmatter should parse at the real terminator");
+
+        assert_eq!(
+            fields.get("kind").and_then(|value| value.as_deref()),
+            Some("kinic.url_ingest_request")
+        );
+        assert_eq!(
+            fields
+                .get("requested_by")
+                .and_then(|value| value.as_deref()),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn url_ingest_frontmatter_unescapes_json_quoted_scalars() {
+        let fields = parse_frontmatter_fields(
+            "---\nkind: kinic.url_ingest_request\nrequested_by: \"principal-\\\"1\\\"-\\uD83D\\uDE00\"\n---\n# Body\n",
+        )
+        .expect("frontmatter should parse quoted scalars");
+
+        assert_eq!(
+            fields
+                .get("requested_by")
+                .and_then(|value| value.as_deref()),
+            Some("principal-\"1\"-😀")
+        );
+    }
+
+    #[test]
+    fn url_ingest_frontmatter_rejects_invalid_json_quoted_scalars() {
+        let error = parse_frontmatter_fields(
+            "---\nkind: kinic.url_ingest_request\nrequested_by: \"principal-\\q\"\n---\n# Body\n",
+        )
+        .expect_err("invalid JSON escape must not be accepted as a raw quoted value");
+
+        assert!(error.contains("quoted scalar"));
+    }
 
     fn test_cycles_billing_config() -> CyclesBillingConfig {
         CyclesBillingConfig {
@@ -5130,236 +5099,111 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_migration_converts_existing_credit_operations_to_cycles() {
+    fn partial_billing_schema_is_rejected_for_upgrade() {
         let dir = tempdir().expect("tempdir should create");
         let index_path = dir.path().join("index.sqlite3");
-        let conn = Connection::open(&index_path).expect("index DB should open");
-        conn.execute_batch(
-            "CREATE TABLE schema_migrations (
-               version TEXT PRIMARY KEY,
-               applied_at INTEGER NOT NULL
-             );
-             INSERT INTO schema_migrations (version, applied_at) VALUES
-               ('database_index:000_initial', 0),
-               ('database_index:001_lifecycle', 0),
-               ('database_index:002_restore_size', 0),
-               ('database_index:003_restore_chunks', 0),
-               ('database_index:005_mount_history', 0),
-               ('database_index:006_url_ingest_trigger_sessions', 0),
-               ('database_index:007_ops_answer_sessions', 0),
-               ('database_index:008_restore_sessions', 0),
-               ('database_index:009_restore_chunk_bytes', 0),
-               ('database_index:010_database_name_breaking', 0),
-               ('database_index:011_source_run_sessions', 0),
-               ('database_index:012_credits_initial', 0),
-               ('database_index:013_credits_pending', 0),
-               ('database_index:014_credits_ledger_block_index', 0),
-               ('database_index:015_credits_pending_ledger_details', 0),
-               ('database_index:016_active_status', 0),
-               ('database_index:017_hard_delete_databases', 0),
-               ('database_index:018_credit_ledger_only', 0),
-               ('database_index:019_fixed_cycles_per_credit', 0),
-               ('database_index:020_credits_config_version', 0);
-             CREATE TABLE databases (
-               database_id TEXT PRIMARY KEY,
-               name TEXT NOT NULL,
-               db_file_name TEXT NOT NULL,
-               mount_id INTEGER NOT NULL,
-               active_mount_id INTEGER,
-               status TEXT NOT NULL DEFAULT 'active',
-               schema_version TEXT NOT NULL,
-               logical_size_bytes INTEGER NOT NULL DEFAULT 0,
-               snapshot_hash BLOB,
-               archived_at_ms INTEGER,
-               deleted_at_ms INTEGER,
-               restore_size_bytes INTEGER,
-               created_at_ms INTEGER NOT NULL,
-               updated_at_ms INTEGER NOT NULL
-             );
-             CREATE UNIQUE INDEX databases_active_mount_id_idx
-               ON databases(active_mount_id)
-               WHERE active_mount_id IS NOT NULL;
-             CREATE TABLE database_members (
-               database_id TEXT NOT NULL,
-               principal TEXT NOT NULL,
-               role TEXT NOT NULL,
-               created_at_ms INTEGER NOT NULL,
-               PRIMARY KEY (database_id, principal)
-             );
-             CREATE TABLE database_restore_chunks (
-               database_id TEXT NOT NULL,
-               offset_bytes INTEGER NOT NULL,
-               end_bytes INTEGER NOT NULL,
-               bytes BLOB,
-               PRIMARY KEY (database_id, offset_bytes, end_bytes)
-             );
-             CREATE INDEX database_restore_chunks_database_id_idx
-               ON database_restore_chunks(database_id, offset_bytes);
-             CREATE TABLE database_restore_sessions (
-               database_id TEXT PRIMARY KEY,
-               status TEXT NOT NULL,
-               active_mount_id INTEGER,
-               snapshot_hash BLOB,
-               archived_at_ms INTEGER,
-               deleted_at_ms INTEGER,
-               restore_size_bytes INTEGER,
-               created_at_ms INTEGER NOT NULL
-             );
-             CREATE TABLE database_credit_accounts (
-               database_id TEXT PRIMARY KEY,
-               balance_credits INTEGER NOT NULL,
-               suspended_at_ms INTEGER,
-               created_at_ms INTEGER NOT NULL,
-               updated_at_ms INTEGER NOT NULL
-             );
-             CREATE TABLE database_credit_ledger (
-               entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-               database_id TEXT NOT NULL,
-               kind TEXT NOT NULL,
-               amount_credits INTEGER NOT NULL,
-               balance_after_credits INTEGER NOT NULL,
-               payment_amount_e8s INTEGER,
-               caller TEXT NOT NULL,
-               method TEXT,
-               cycles_delta INTEGER,
-               credits_per_kinic INTEGER,
-               ledger_block_index INTEGER,
-               created_at_ms INTEGER NOT NULL
-             );
-             CREATE INDEX database_credit_ledger_database_idx
-               ON database_credit_ledger(database_id, entry_id);
-             CREATE TABLE database_credit_pending_operations (
-               operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-               database_id TEXT NOT NULL,
-               kind TEXT NOT NULL,
-               caller TEXT NOT NULL,
-               credits INTEGER NOT NULL,
-               payment_amount_e8s INTEGER NOT NULL,
-               from_owner TEXT,
-               from_subaccount BLOB,
-               to_owner TEXT,
-               to_subaccount BLOB,
-               ledger_fee_e8s INTEGER,
-               ledger_created_at_time_ns INTEGER,
-               created_at_ms INTEGER NOT NULL
-             );
-             CREATE INDEX database_credit_pending_operations_database_idx
-               ON database_credit_pending_operations(database_id);
-             CREATE TABLE credits_config (
-               key TEXT PRIMARY KEY,
-               value TEXT NOT NULL
-             );",
-        )
-        .expect("legacy credit schema should create");
-        conn.execute(
-            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
-            params!["kinic_ledger_canister_id", "aaaaa-aa"],
-        )
-        .expect("ledger config should insert");
-        conn.execute(
-            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
-            params!["billing_authority_id", "rrkah-fqaaa-aaaaa-aaaaq-cai"],
-        )
-        .expect("billing authority config should insert");
-        conn.execute(
-            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
-            params!["credits_per_kinic", "1000"],
-        )
-        .expect("rate config should insert");
-        conn.execute(
-            "INSERT INTO credits_config (key, value) VALUES (?1, ?2)",
-            params!["min_update_credits", "1"],
-        )
-        .expect("minimum config should insert");
-        conn.execute(
-            "INSERT INTO credits_config (key, value) VALUES ('config_version', '1')",
-            params![],
-        )
-        .expect("version config should insert");
-        conn.execute(
-            "INSERT INTO databases
-             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
-              logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES ('db_old', 'Old', '', 0, NULL, 'pending', ?1, 0, 1, 1)",
-            params![DATABASE_SCHEMA_VERSION],
-        )
-        .expect("database should insert");
-        conn.execute(
-            "INSERT INTO database_members (database_id, principal, role, created_at_ms)
-             VALUES ('db_old', '2vxsx-fae', 'owner', 1)",
-            params![],
-        )
-        .expect("database member should insert");
-        conn.execute(
-            "INSERT INTO database_credit_accounts
-             (database_id, balance_credits, suspended_at_ms, created_at_ms, updated_at_ms)
-             VALUES ('db_old', 5, 1, 1, 1)",
-            params![],
-        )
-        .expect("account should insert");
-        conn.execute(
-            "INSERT INTO database_credit_ledger
-             (database_id, kind, amount_credits, balance_after_credits, payment_amount_e8s,
-              caller, method, cycles_delta, credits_per_kinic, ledger_block_index, created_at_ms)
-             VALUES ('db_old', 'credit_purchase', 7, 9, 700000, '2vxsx-fae',
-                     'purchase_database_credits', NULL, 1000, 3, 1)",
-            params![],
-        )
-        .expect("ledger entry should insert");
-        conn.execute(
-            "INSERT INTO database_credit_pending_operations
-             (database_id, kind, caller, credits, payment_amount_e8s, from_owner, from_subaccount,
-              to_owner, to_subaccount, ledger_fee_e8s, ledger_created_at_time_ns, created_at_ms)
-             VALUES ('db_old', 'credit_purchase', '2vxsx-fae', 10, 1000, '2vxsx-fae', NULL,
-                     'aaaaa-aa', NULL, 10000, 1700000000000000000, 1)",
-            params![],
-        )
-        .expect("legacy pending operation should insert");
-        drop(conn);
-        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
-
-        service
-            .run_index_migrations_for_upgrade(None)
-            .expect("legacy credit migrations should apply");
-
+        write_pre_cycles_schema(&index_path);
         let conn = Connection::open(&index_path).expect("index DB should reopen");
-        let (balance, amount, rate, status): (i64, i64, i64, String) = conn
-            .query_row(
-                "SELECT a.balance_cycles, l.amount_cycles, l.cycles_per_kinic, p.operation_status
-                 FROM database_cycle_accounts a
-                 JOIN database_cycle_ledger l ON l.database_id = a.database_id
-                 JOIN database_cycle_pending_operations p ON p.database_id = a.database_id
-                 WHERE a.database_id = 'db_old'",
-                params![],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-            )
-            .expect("migrated cycle values should load");
-        let marker: String = conn
-            .query_row(
-                "SELECT version FROM schema_migrations WHERE version = ?1",
-                params![INDEX_SCHEMA_VERSION_DIRECT_CYCLES],
-                |row| row.get(0),
-            )
-            .expect("direct cycles marker should exist");
-        assert_eq!(balance, 5_000_000_000);
-        assert_eq!(amount, 7_000_000_000);
-        assert_eq!(rate, 1_000_000_000_000);
-        assert_eq!(status, CYCLES_OPERATION_STATUS_AMBIGUOUS);
-        assert_eq!(marker, INDEX_SCHEMA_VERSION_DIRECT_CYCLES);
+        let legacy_marker = format!("database_index:020_{}config_version", "credits_");
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at)
+             VALUES (?1, 0)",
+            params![legacy_marker],
+        )
+        .expect("legacy billing marker should insert");
         drop(conn);
+        let service = VfsService::new(index_path, dir.path().join("databases"));
 
+        let error = service
+            .run_index_migrations_for_upgrade(Some(test_cycles_billing_config()))
+            .expect_err("partial billing schema should be unsupported");
+
+        assert!(error.contains("unsupported partial billing index schema"));
+        assert!(error.contains("database_index:020_"));
+    }
+
+    #[test]
+    fn apply_database_cycles_purchase_rejects_in_flight_operation() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
         service
-            .repair_database_cycles_purchase_cancel("db_old", 1, "rrkah-fqaaa-aaaaa-aaaaq-cai", 2)
-            .expect("migrated ambiguous operation should remain cancellable by authority");
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("default", "2vxsx-fae", 1)
+            .expect("database should create");
+        let operation_id = service
+            .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 2)
+            .expect("cycle purchase should begin");
+        let cycles = cycles_for_payment_amount_e8s(
+            1_000_000,
+            &service.cycles_billing_config().expect("config should load"),
+        )
+        .expect("cycles should compute");
 
-        let conn = Connection::open(&index_path).expect("index DB should reopen after cancel");
+        let error = service
+            .apply_database_cycles_purchase(operation_id, "default", "2vxsx-fae", cycles, 1, 2)
+            .expect_err("in-flight operation must not apply before ledger completion");
+
+        assert!(error.contains("cycle purchase operation is in_flight"));
+    }
+
+    #[test]
+    fn retry_database_cycles_purchase_requires_authority_and_applies_completed_operation() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("default", "2vxsx-fae", 1)
+            .expect("database should create");
+        let operation_id = service
+            .begin_database_cycles_purchase("default", "payer", 1_000_000, 2)
+            .expect("cycle purchase should begin");
+        let cycles = cycles_for_payment_amount_e8s(
+            1_000_000,
+            &service.cycles_billing_config().expect("config should load"),
+        )
+        .expect("cycles should compute");
+        service
+            .complete_database_cycles_purchase_ledger_transfer(
+                operation_id,
+                "default",
+                "payer",
+                cycles,
+                7,
+            )
+            .expect("ledger transfer should complete");
+
+        let forbidden = service
+            .retry_database_cycles_purchase("default", operation_id, "payer", 3)
+            .expect_err("non-authority retry should reject");
+        let retried = service
+            .retry_database_cycles_purchase(
+                "default",
+                operation_id,
+                "rrkah-fqaaa-aaaaa-aaaaq-cai",
+                4,
+            )
+            .expect("billing authority retry should apply");
+        let conn = Connection::open(index_path).expect("index DB should reopen");
         let pending_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM database_cycle_pending_operations WHERE database_id = 'db_old'",
+                "SELECT COUNT(*) FROM database_cycle_pending_operations",
                 params![],
                 |row| row.get(0),
             )
             .expect("pending count should load");
+
+        assert!(forbidden.contains("caller is not billing authority"));
+        assert_eq!(retried.block_index, 7);
+        assert_eq!(retried.amount_cycles, cycles);
+        assert_eq!(retried.balance_cycles, cycles);
         assert_eq!(pending_count, 0);
     }
 
@@ -5379,23 +5223,26 @@ mod tests {
         let operation_id = service
             .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
             .expect("cycle purchase should begin");
-        let preview = service
-            .preview_database_cycles_purchase("default", 1_000_000)
-            .expect("cycle purchase preview should load");
+        let cycles = cycles_for_payment_amount_e8s(
+            1_000_000,
+            &service.cycles_billing_config().expect("config should load"),
+        )
+        .expect("cycles should compute");
         service
-            .mark_database_cycles_purchase_completed(
+            .complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                cycles,
+                1,
             )
-            .expect("cycle purchase should be marked completed");
+            .expect("ledger transfer should complete");
         service
             .apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                cycles,
                 1,
                 1_700_000_000_001,
             )
@@ -5412,7 +5259,7 @@ mod tests {
         assert_eq!(result.row_count, 1);
         assert_eq!(
             result.rows,
-            vec![r#"{"cycles_purchase_cycles":10000000000}"#.to_string()]
+            vec![format!(r#"{{"cycles_purchase_cycles":{cycles}}}"#)]
         );
     }
 

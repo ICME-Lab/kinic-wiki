@@ -11,10 +11,11 @@ export type MarkdownFrontmatter = {
 export function splitMarkdownFrontmatter(content: string): MarkdownFrontmatter | null {
   if (!content.startsWith("---\n")) return null;
   const rest = content.slice(4);
-  const end = rest.indexOf("\n---");
+  const match = rest.match(/\n---(?:\n|$)/);
+  const end = match?.index ?? -1;
   if (end < 0) return null;
   const frontmatter = rest.slice(0, end);
-  const bodyStart = end + "\n---".length;
+  const bodyStart = end + match![0].length;
   const body = rest.slice(bodyStart).replace(/^\n+/, "");
   return {
     fields: flattenFrontmatter(frontmatter),
@@ -50,11 +51,14 @@ function flattenFrontmatter(frontmatter: string): FrontmatterField[] {
 
 function cleanValue(value: string): string {
   const trimmed = value.trim();
-  if (
-    (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-    (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
-    return trimmed.slice(1, -1);
+  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      return typeof parsed === "string" ? parsed : "";
+    } catch {
+      return "";
+    }
   }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
   return trimmed;
 }

@@ -22,23 +22,21 @@ use vfs_types::{
 
 use super::{
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
-    Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransaction,
-    LedgerTransfer, LedgerTransferFromOutcome, SERVICE, TransferFromError, append_node,
-    begin_database_archive, begin_database_restore, cancel_database_archive,
-    check_database_write_cycles, clear_last_ledger_memo_for_test,
+    Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
+    SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
+    cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, glob_nodes, grant_database_access, graph_links, graph_neighborhood,
     icrc21_canister_call_consent_message, incoming_links, last_ledger_from_for_test,
-    last_ledger_memo_for_test, list_children, list_database_cycle_entries,
-    list_database_cycle_pending_operations, list_database_members, list_databases, list_nodes,
+    last_ledger_memo_for_test, ledger_transfer_fees_for_test, list_children,
+    list_database_cycle_entries, list_database_members, list_databases, list_nodes,
     memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, preview_database_cycles_purchase,
-    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
-    read_node, read_node_context, rename_database, repair_database_cycles_purchase_cancel,
-    repair_database_cycles_purchase_complete, revoke_database_access, search_node_paths,
-    search_nodes, set_ledger_transaction_for_test, set_next_ledger_transfer_from_outcome_for_test,
+    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
+    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
+    rename_database, retry_database_cycles_purchase, revoke_database_access, search_node_paths,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
     set_test_caller_principal_for_test, settle_database_storage_charges, source_evidence, status,
     transfer_from_error_outcome, write_database_restore_chunk, write_node, write_nodes,
 };
@@ -54,23 +52,22 @@ fn install_test_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
-    let preview = service
-        .preview_database_cycles_purchase("default", 1_000_000)
-        .expect("default database cycle purchase preview should load");
     service
         .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
-            service.mark_database_cycles_purchase_completed(
+            let cycles = cycles_for_test_payment(&service, 1_000_000);
+            service.complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                cycles,
+                1,
             )?;
             service.apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                cycles,
                 1,
                 1_700_000_000_001,
             )
@@ -99,6 +96,68 @@ fn database_status_and_mount(database_id: &str) -> (DatabaseStatus, Option<u16>)
     })
 }
 
+fn database_exists(database_id: &str) -> bool {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .list_database_infos()
+            .expect("database infos should load")
+            .into_iter()
+            .any(|info| info.database_id == database_id)
+    })
+}
+
+fn pending_cycle_purchase_state(database_id: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_object('status', operation_status, 'block', ledger_block_index) FROM database_cycle_pending_operations WHERE database_id = '{}' AND kind = 'cycles_purchase' LIMIT 1",
+                    database_id
+                ),
+                1,
+            )
+            .expect("pending operation should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("pending operation should exist")
+    })
+}
+
+fn pending_cycle_purchase_count_json(database_id: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_array(COUNT(*)) FROM database_cycle_pending_operations WHERE database_id = '{}' AND kind = 'cycles_purchase'",
+                    database_id
+                ),
+                1,
+            )
+            .expect("pending operation count should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("pending operation count should exist")
+    })
+}
+
+fn cycles_for_test_payment(service: &VfsService, payment_amount_e8s: u64) -> u64 {
+    super::cycles_for_payment_amount_e8s(
+        payment_amount_e8s,
+        &service
+            .cycles_billing_config()
+            .expect("cycles config should load"),
+    )
+    .expect("cycles amount should compute")
+}
+
 fn install_empty_test_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
@@ -124,13 +183,9 @@ fn cycles_purchase_request(
     database_id: &str,
     payment_amount_e8s: u64,
 ) -> DatabaseCyclesPurchaseRequest {
-    let preview = preview_database_cycles_purchase(database_id.to_string(), payment_amount_e8s)
-        .expect("cycle purchase preview should load");
     DatabaseCyclesPurchaseRequest {
         database_id: database_id.to_string(),
         payment_amount_e8s,
-        expected_cycles: preview.cycles,
-        expected_config_version: preview.config_version,
     }
 }
 
@@ -148,66 +203,12 @@ fn consent_request(method: &str, arg: Vec<u8>) -> Icrc21ConsentMessageRequest {
     }
 }
 
-fn ledger_transfer_transaction(
-    from: IcrcAccount,
-    to: IcrcAccount,
-    amount_e8s: u64,
-    ledger_fee_e8s: u64,
-    memo: Vec<u8>,
-    created_at_time: u64,
-) -> LedgerTransaction {
-    LedgerTransaction {
-        kind: "transfer".to_string(),
-        transfer: Some(LedgerTransfer {
-            from,
-            to,
-            amount: Nat::from(amount_e8s),
-            fee: Some(Nat::from(ledger_fee_e8s)),
-            memo: Some(memo),
-            created_at_time: Some(created_at_time),
-            spender: None,
-        }),
-    }
-}
-
-fn pending_cycles_purchase_transaction(
-    operation: &vfs_types::DatabaseCyclePendingOperation,
-) -> LedgerTransaction {
-    ledger_transfer_transaction(
-        IcrcAccount {
-            owner: Principal::from_text(operation.from_owner.as_ref().expect("from owner"))
-                .expect("from owner should parse"),
-            subaccount: operation.from_subaccount.clone(),
-        },
-        IcrcAccount {
-            owner: Principal::from_text(operation.to_owner.as_ref().expect("to owner"))
-                .expect("to owner should parse"),
-            subaccount: operation.to_subaccount.clone(),
-        },
-        operation
-            .payment_amount_e8s
-            .try_into()
-            .expect("amount should fit"),
-        operation
-            .ledger_fee_e8s
-            .expect("ledger fee")
-            .try_into()
-            .expect("fee should fit"),
-        format!("kinic:vfs:cycles_purchase:{}", operation.operation_id).into_bytes(),
-        operation
-            .ledger_created_at_time_ns
-            .expect("ledger created_at")
-            .try_into()
-            .expect("created_at should fit"),
-    )
-}
-
 fn explicit_cycles_billing_config() -> CyclesBillingConfig {
     CyclesBillingConfig {
         kinic_ledger_canister_id: "aaaaa-aa".to_string(),
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         cycles_per_kinic: 1_000,
-        min_update_cycles: 1,
+        min_update_cycles: 1_000_000,
     }
 }
 
@@ -241,7 +242,7 @@ fn controller_can_query_index_sql_json() {
     assert_eq!(result.row_count, 1);
     assert_eq!(
         result.rows,
-        vec![r#"{"cycles_purchase_cycles":10000000000}"#.to_string()]
+        vec![r#"{"cycles_purchase_cycles":2345000000}"#.to_string()]
     );
 }
 
@@ -320,9 +321,6 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
     SERVICE.with(|slot| {
         let service = slot.borrow();
         let service = service.as_ref().expect("service should be installed");
-        let preview = service
-            .preview_database_cycles_purchase(database_id, payment_amount_e8s)
-            .expect("database cycle purchase preview should load");
         let operation_id = service
             .begin_database_cycles_purchase(
                 database_id,
@@ -331,14 +329,6 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
                 1_700_000_000_000,
             )
             .expect("database cycle purchase should begin");
-        service
-            .mark_database_cycles_purchase_completed(
-                operation_id,
-                database_id,
-                &principal,
-                preview.cycles,
-            )
-            .expect("database cycle purchase should be marked completed");
         if service
             .activate_pending_database_for_cycles_purchase(database_id, 1_700_000_000_000)
             .expect("pending database activation should prepare")
@@ -348,12 +338,28 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
                 .run_pending_database_migrations(database_id)
                 .expect("pending database migrations should run");
         }
+        let cycles = super::cycles_for_payment_amount_e8s(
+            payment_amount_e8s,
+            &service
+                .cycles_billing_config()
+                .expect("cycles config should load"),
+        )
+        .expect("cycles amount should compute");
+        service
+            .complete_database_cycles_purchase_ledger_transfer(
+                operation_id,
+                database_id,
+                &principal,
+                cycles,
+                ledger_block_index,
+            )
+            .expect("ledger transfer should be marked complete");
         service
             .apply_database_cycles_purchase(
                 operation_id,
                 database_id,
                 &principal,
-                preview.cycles,
+                cycles,
                 ledger_block_index,
                 1_700_000_000_000,
             )
@@ -431,6 +437,20 @@ fn transfer_from_duplicate_outcome_is_completed() {
 }
 
 #[test]
+fn transfer_from_bad_fee_outcome_is_typed() {
+    let outcome = transfer_from_error_outcome(TransferFromError::BadFee {
+        expected_fee: Nat::from(99_u64),
+    });
+
+    match outcome {
+        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
+            assert_eq!(expected_fee_e8s, 99);
+        }
+        other => panic!("bad fee should be typed, got {other:?}"),
+    }
+}
+
+#[test]
 fn purchase_database_cycles_cycles_completed_transfer_from() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
@@ -447,7 +467,8 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
     .expect("completed transfer-from should cycle database");
 
     assert_eq!(result.block_index, 42);
-    assert_eq!(result.balance_cycles, 5_000_000);
+    assert_eq!(result.amount_cycles, 1_172_500);
+    assert_eq!(result.balance_cycles, 1_172_500);
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -461,40 +482,86 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
 }
 
 #[test]
-fn preview_database_cycles_purchase_rejects_invalid_target_before_approve() {
+fn purchase_database_cycles_rejects_bad_fee_without_credit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Preview".to_string(),
+        name: "Bad fee".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::BadFee {
+        expected_fee_e8s: KINIC_LEDGER_FEE_E8S + 1,
+    });
+
+    let error = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("BadFee should reject and leave no credit");
+
+    assert!(error.contains("BadFee expected fee"));
+    assert!(error.contains("re-approve with the current ledger fee"));
+    assert_eq!(ledger_transfer_fees_for_test(), vec![KINIC_LEDGER_FEE_E8S]);
+    assert!(
+        list_database_cycle_entries(database.database_id.clone(), None, 10)
+            .expect("ledger should load")
+            .entries
+            .is_empty()
+    );
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+}
+
+#[test]
+fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Purchase validation".to_string(),
     })
     .expect("database should create");
 
-    let preview = preview_database_cycles_purchase(database.database_id.clone(), 50_000)
-        .expect("preview should accept");
-    assert_eq!(preview.payment_amount_e8s, 50_000);
-    assert_eq!(preview.cycles, 500_000_000);
-    assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
-    assert_eq!(preview.cycles_per_kinic, 1_000_000_000_000);
-    assert_eq!(preview.config_version, 1);
-    let zero = preview_database_cycles_purchase(database.database_id.clone(), 0)
-        .expect_err("zero amount should reject");
+    clear_last_ledger_memo_for_test();
+    let zero = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        0,
+    )))
+    .expect_err("zero amount should reject");
     assert!(zero.contains("cycles purchase payment amount must be positive"));
-    let overflow = preview_database_cycles_purchase(database.database_id.clone(), i64::MAX as u64)
-        .expect_err("payment amount overflow should reject before approve");
+
+    let overflow = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        i64::MAX as u64,
+    )))
+    .expect_err("payment amount overflow should reject before approve");
     assert!(overflow.contains("cycles purchase amount exceeds u64"));
-    let missing = preview_database_cycles_purchase("missing".to_string(), 500)
-        .expect_err("missing database should reject");
+
+    let missing = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        "missing", 500,
+    )))
+    .expect_err("missing database should reject");
     assert!(missing.contains("database not found"));
+    assert_eq!(last_ledger_memo_for_test(), None);
 }
 
 #[test]
 fn purchase_database_cycles_rejects_archive_restore_statuses() {
     install_test_service();
+    let _owner = AuthenticatedCallerGuard::install_principal(Principal::anonymous());
 
     let archive = begin_database_archive("default".to_string()).expect("archive should begin");
-    let archiving = preview_database_cycles_purchase("default".to_string(), 500)
-        .expect_err("archiving database should reject purchase preview");
+    clear_last_ledger_memo_for_test();
+    let archiving = {
+        let _caller = AuthenticatedCallerGuard::install();
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            "default", 500,
+        )))
+        .expect_err("archiving database should reject purchase")
+    };
     assert!(archiving.contains("database is archiving"));
+    assert_eq!(last_ledger_memo_for_test(), None);
 
     let bytes = read_database_archive_chunk(
         "default".to_string(),
@@ -509,14 +576,24 @@ fn purchase_database_cycles_rejects_archive_restore_statuses() {
     let snapshot_hash = sha256_bytes(&bytes);
     finalize_database_archive("default".to_string(), snapshot_hash.clone())
         .expect("archive should finalize");
-    let archived = preview_database_cycles_purchase("default".to_string(), 500)
-        .expect_err("archived database should reject purchase preview");
+    let archived = {
+        let _caller = AuthenticatedCallerGuard::install();
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            "default", 500,
+        )))
+        .expect_err("archived database should reject purchase")
+    };
     assert!(archived.contains("database is archived"));
 
     begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
         .expect("restore should begin");
-    let restoring = preview_database_cycles_purchase("default".to_string(), 500)
-        .expect_err("restoring database should reject purchase preview");
+    let restoring = {
+        let _caller = AuthenticatedCallerGuard::install();
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            "default", 500,
+        )))
+        .expect_err("restoring database should reject purchase")
+    };
     assert!(restoring.contains("database is restoring"));
 }
 
@@ -529,14 +606,18 @@ fn begin_database_archive_rejects_pending_cycle_purchase() {
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 41);
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-        "icrc2_transfer_from decode failed".to_string(),
-    ));
-    let _ = block_on_ready(purchase_database_cycles(cycles_purchase_request(
-        &database.database_id,
-        500,
-    )))
-    .expect_err("ambiguous purchase should leave pending operation");
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .begin_database_cycles_purchase(
+                &database.database_id,
+                &Principal::management_canister().to_text(),
+                500,
+                1_700_000_000_001,
+            )
+            .expect("cycle purchase should begin")
+    });
 
     let error = begin_database_archive(database.database_id)
         .expect_err("archive should reject pending cycle operation");
@@ -572,8 +653,6 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     let error = block_on_ready(purchase_database_cycles(DatabaseCyclesPurchaseRequest {
         database_id: database.database_id,
         payment_amount_e8s: 1,
-        expected_cycles: 1,
-        expected_config_version: 1,
     }))
     .expect_err("overflow should reject before ledger");
 
@@ -582,21 +661,20 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
 }
 
 #[test]
-fn purchase_database_cycles_rejects_stale_preview_before_ledger_call() {
+fn purchase_database_cycles_uses_current_config_amount() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
-        name: "Stale preview".to_string(),
+        name: "Current config".to_string(),
     })
     .expect("database should create");
-    let request = cycles_purchase_request(&database.database_id, 500);
     SERVICE.with(|slot| {
         slot.borrow()
             .as_ref()
             .expect("service should be installed")
             .update_cycles_billing_config(
                 CyclesBillingConfigUpdate {
-                    cycles_per_kinic: 1_000_000_000_000,
+                    cycles_per_kinic: 234_500_000_000,
                     min_update_cycles: 2,
                 },
                 &test_billing_authority_principal().to_text(),
@@ -606,11 +684,18 @@ fn purchase_database_cycles_rejects_stale_preview_before_ledger_call() {
     clear_last_ledger_memo_for_test();
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
 
-    let error = block_on_ready(purchase_database_cycles(request))
-        .expect_err("stale preview should reject before ledger");
+    let result = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect("purchase should use current config");
 
-    assert!(error.contains("cycles billing config changed"));
-    assert_eq!(last_ledger_memo_for_test(), None);
+    assert_eq!(result.amount_cycles, 1_172_500);
+    assert_eq!(result.balance_cycles, 1_172_500);
+    let entries = list_database_cycle_entries(database.database_id, None, 10)
+        .expect("cycles history should load")
+        .entries;
+    assert_eq!(entries[0].amount_cycles, 1_172_500);
 }
 
 #[test]
@@ -640,14 +725,10 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
         .expect("database ledger should load")
         .entries;
     assert!(entries.is_empty());
-    let pending = list_database_cycle_pending_operations(database.database_id, None, 10)
-        .expect("pending operations should load")
-        .entries;
-    assert!(pending.is_empty());
 }
 
 #[test]
-fn purchase_database_cycles_records_ambiguous_transfer_from() {
+fn purchase_database_cycles_cleans_up_ambiguous_transfer_from_without_credit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
@@ -662,26 +743,20 @@ fn purchase_database_cycles_records_ambiguous_transfer_from() {
         &database.database_id,
         500,
     )))
-    .expect_err("ambiguous transfer-from should return pending error");
+    .expect_err("ambiguous transfer-from should return no-credit error");
 
-    assert!(error.contains("cycles purchase pending operation"));
-    assert!(error.contains("manual repair required"));
-    let entries = list_database_cycle_entries(database.database_id.clone(), None, 10)
-        .expect("database ledger should load")
-        .entries;
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].kind, "cycles_purchase_ambiguous");
-    assert_eq!(entries[0].amount_cycles, 5_000_000);
-    assert_eq!(entries[0].balance_after_cycles, 0);
-    assert_eq!(entries[0].ledger_block_index, None);
-    assert_eq!(
-        database_status_and_mount(&database.database_id),
-        (DatabaseStatus::Pending, None)
+    assert!(error.contains("result ambiguous"));
+    assert!(error.contains("cycles were not credited"));
+    assert!(!database_exists(&database.database_id));
+    assert!(
+        list_database_cycle_entries(database.database_id.clone(), None, 10)
+            .expect_err("discarded reservation should not expose cycle entries")
+            .contains("database not found")
     );
 }
 
 #[test]
-fn purchase_database_cycles_mount_failure_keeps_pending_operation_for_repair() {
+fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
@@ -695,46 +770,29 @@ fn purchase_database_cycles_mount_failure_keeps_pending_operation_for_repair() {
         &database.database_id,
         500,
     )))
-    .expect_err("mount failure after ledger success should keep repair path");
+    .expect_err("mount failure after ledger success should not credit");
 
     assert!(error.contains("test mount failure"));
-    assert!(error.contains("cycles purchase payment completed"));
-    assert!(error.contains("verified ledger block"));
-    assert!(error.contains("block 42"));
+    assert!(error.contains("remains completed for retry"));
     assert_eq!(
-        database_status_and_mount(&database.database_id),
-        (DatabaseStatus::Pending, Some(11))
+        pending_cycle_purchase_state(&database.database_id),
+        r#"{"status":"completed","block":42}"#
     );
-    let pending = list_database_cycle_pending_operations(database.database_id.clone(), None, 10)
-        .expect("pending should load")
-        .entries;
-    assert_eq!(pending.len(), 1);
-    assert!(error.contains(&format!("pending operation {}", pending[0].operation_id)));
-    assert_eq!(pending[0].ledger_fee_e8s, Some(KINIC_LEDGER_FEE_E8S as i64));
-    assert!(
-        list_database_cycle_entries(database.database_id.clone(), None, 10)
-            .expect("ledger should load")
-            .entries
-            .is_empty()
-    );
-
-    set_ledger_transaction_for_test(42, pending_cycles_purchase_transaction(&pending[0]));
-    let result = block_on_ready(repair_database_cycles_purchase_complete(
-        database.database_id.clone(),
-        pending[0].operation_id,
-        42,
-    ))
-    .expect("verified complete should retry mount and cycle");
-
-    assert_eq!(result.balance_cycles, 5_000_000);
+    assert!(database_exists(&database.database_id));
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Active
+        DatabaseStatus::Pending
+    );
+    assert!(
+        list_database_cycle_entries(database.database_id.clone(), None, 10)
+            .expect("database ledger should load")
+            .entries
+            .is_empty()
     );
 }
 
 #[test]
-fn repair_complete_succeeds_after_activation_started_and_cycle_apply_failed() {
+fn purchase_database_cycles_apply_failure_keeps_completed_pending_and_allows_authority_retry() {
     install_empty_test_service();
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
@@ -748,299 +806,49 @@ fn repair_complete_succeeds_after_activation_started_and_cycle_apply_failed() {
         &database.database_id,
         600,
     )))
-    .expect_err("cycle apply failure after activation should keep repair path");
+    .expect_err("cycle apply failure after activation should not credit");
 
     assert!(error.contains("test cycle purchase apply failure"));
+    assert!(error.contains("remains completed for retry"));
     assert_eq!(
-        database_status_and_mount(&database.database_id),
-        (DatabaseStatus::Pending, Some(11))
+        pending_cycle_purchase_state(&database.database_id),
+        r#"{"status":"completed","block":44}"#
     );
-    let pending = list_database_cycle_pending_operations(database.database_id.clone(), None, 10)
-        .expect("pending should load")
-        .entries;
-    assert_eq!(pending.len(), 1);
+    assert!(database_exists(&database.database_id));
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Pending
+    );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
-            .expect("ledger should load")
+            .expect("database ledger should load")
             .entries
             .is_empty()
     );
-    let _authority =
-        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
-    let cancel_error = repair_database_cycles_purchase_cancel(
-        database.database_id.clone(),
-        pending[0].operation_id,
-    )
-    .expect_err("completed payment should not be cancellable");
-    assert!(cancel_error.contains("cycle purchase operation is completed"));
+    let retry = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        600,
+    )))
+    .expect_err("completed pending operation should block duplicate purchase");
+    assert!(retry.contains("database activation is pending"));
 
-    set_ledger_transaction_for_test(44, pending_cycles_purchase_transaction(&pending[0]));
-    let result = block_on_ready(repair_database_cycles_purchase_complete(
-        database.database_id.clone(),
-        pending[0].operation_id,
-        44,
-    ))
-    .expect("repair complete should finish activation and cycle");
-
-    assert_eq!(result.balance_cycles, 6_000_000);
-    assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Active
-    );
-}
-
-#[test]
-fn repair_cancel_rejects_in_flight_cycles_purchase() {
-    install_empty_test_service();
-    let _owner = AuthenticatedCallerGuard::install();
-    let database = create_database(CreateDatabaseRequest {
-        name: "In flight cancel".to_string(),
-    })
-    .expect("database should create");
-    let caller = Principal::management_canister().to_text();
-    let operation_id = SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .begin_database_cycles_purchase(&database.database_id, &caller, 500, 1_700_000_000_000)
-            .expect("cycle purchase should begin")
-    });
+    let stranger = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
+        .expect("stranger principal should parse");
+    let _stranger = AuthenticatedCallerGuard::install_principal(stranger);
+    let forbidden = retry_database_cycles_purchase(database.database_id.clone(), 1)
+        .expect_err("non-authority retry should fail");
+    assert!(forbidden.contains("caller is not billing authority"));
+    drop(_stranger);
 
     let _authority =
         AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
-    let error = repair_database_cycles_purchase_cancel(database.database_id, operation_id)
-        .expect_err("in-flight purchase cancel should reject");
-
-    assert!(error.contains("cycle purchase operation is in_flight"));
-}
-
-#[test]
-fn repair_complete_rejects_in_flight_cycles_purchase() {
-    install_empty_test_service();
-    let _owner = AuthenticatedCallerGuard::install();
-    let database = create_database(CreateDatabaseRequest {
-        name: "In flight complete".to_string(),
-    })
-    .expect("database should create");
-    let caller = Principal::management_canister().to_text();
-    let operation_id = SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .begin_database_cycles_purchase(&database.database_id, &caller, 500, 1_700_000_000_000)
-            .expect("cycle purchase should begin")
-    });
-
-    let error = block_on_ready(repair_database_cycles_purchase_complete(
-        database.database_id,
-        operation_id,
-        42,
-    ))
-    .expect_err("in-flight purchase complete should reject");
-
-    assert!(error.contains("cycle purchase operation is in_flight"));
-}
-
-#[test]
-fn authenticated_caller_can_complete_verified_ambiguous_cycles_purchase() {
-    install_empty_test_service();
-    let database_id;
-    let operation_id;
-    let payer;
-    {
-        let _owner = AuthenticatedCallerGuard::install();
-        let database = create_database(CreateDatabaseRequest {
-            name: "Repair cycle purchase".to_string(),
-        })
-        .expect("database should create");
-        database_id = database.database_id;
-        payer = Principal::management_canister().to_text();
-        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-            "icrc2_transfer_from decode failed".to_string(),
-        ));
-        let error = block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            &database_id,
-            500,
-        )))
-        .expect_err("ambiguous transfer-from should return pending error");
-        assert!(error.contains("cycles purchase pending"));
-
-        let pending = list_database_cycle_pending_operations(database_id.clone(), None, 10)
-            .expect("owner should list pending operations")
-            .entries;
-        assert_eq!(pending.len(), 1);
-        operation_id = pending[0].operation_id;
-        set_ledger_transaction_for_test(77, pending_cycles_purchase_transaction(&pending[0]));
-    }
-
-    let repair_caller = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
-        .expect("non-billing authority principal should parse");
-    {
-        let _authenticated = AuthenticatedCallerGuard::install_principal(repair_caller);
-        let result = block_on_ready(repair_database_cycles_purchase_complete(
-            database_id.clone(),
-            operation_id,
-            77,
-        ))
-        .expect("authenticated caller should complete verified cycle purchase");
-        assert_eq!(result.block_index, 77);
-        assert_eq!(result.balance_cycles, 5_000_000);
-        assert_eq!(
-            database_status_and_mount(&database_id).0,
-            DatabaseStatus::Active
-        );
-    }
-
-    let _owner = AuthenticatedCallerGuard::install();
-    let pending = list_database_cycle_pending_operations(database_id.clone(), None, 10)
-        .expect("owner should list pending operations")
-        .entries;
-    assert!(pending.is_empty());
-    let entries = list_database_cycle_entries(database_id.clone(), None, 10)
-        .expect("database ledger should load")
-        .entries;
-    assert_eq!(entries[0].kind, "cycles_purchase_ambiguous");
-    assert_eq!(entries[1].kind, "cycles_purchase_repair_complete");
-    assert_eq!(entries[1].caller, payer);
-    assert_ne!(entries[1].caller, repair_caller.to_text());
-    assert_eq!(entries[1].ledger_block_index, Some(77));
-
-    let error = block_on_ready(repair_database_cycles_purchase_complete(
-        database_id.clone(),
-        operation_id,
-        77,
-    ))
-    .expect_err("second complete should reject missing pending operation");
-    assert!(error.contains("pending cycle operation not found"));
-    let entries = list_database_cycle_entries(database_id.clone(), None, 10)
-        .expect("database ledger should load")
-        .entries;
-    assert_eq!(entries.len(), 2);
-}
-
-#[test]
-fn repair_cycles_purchase_complete_rejects_mismatched_ledger_block() {
-    install_empty_test_service();
-    let operation_id;
-    let database_id;
-    {
-        let _owner = AuthenticatedCallerGuard::install();
-        let database = create_database(CreateDatabaseRequest {
-            name: "Repair mismatch".to_string(),
-        })
-        .expect("database should create");
-        database_id = database.database_id;
-        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-            "icrc2_transfer_from decode failed".to_string(),
-        ));
-        let _ = block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            &database_id,
-            500,
-        )))
-        .expect_err("ambiguous cycle purchase should stay pending");
-        operation_id = list_database_cycle_pending_operations(database_id.clone(), None, 10)
-            .expect("pending should load")
-            .entries[0]
-            .operation_id;
-    }
-
-    let _owner = AuthenticatedCallerGuard::install();
-    let pending = list_database_cycle_pending_operations(database_id.clone(), None, 10)
-        .expect("pending should load")
-        .entries;
-    let mut transaction = pending_cycles_purchase_transaction(&pending[0]);
-    transaction.transfer.as_mut().expect("transfer").amount = Nat::from(499_u64);
-    set_ledger_transaction_for_test(78, transaction);
-
-    let error = block_on_ready(repair_database_cycles_purchase_complete(
-        database_id.clone(),
-        operation_id,
-        78,
-    ))
-    .expect_err("mismatched block should reject");
-    assert!(error.contains("amount mismatch"));
-    let pending = list_database_cycle_pending_operations(database_id, None, 10)
-        .expect("pending should remain")
-        .entries;
-    assert_eq!(pending.len(), 1);
-}
-
-#[test]
-fn repair_cycles_purchase_cancel_removes_ambiguous_operation() {
-    install_empty_test_service();
-    let operation_id;
-    let database_id;
-    let payer =
-        Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").expect("payer principal should parse");
-    {
-        let _owner = AuthenticatedCallerGuard::install();
-        let database = create_database(CreateDatabaseRequest {
-            name: "Cancel cycle purchase".to_string(),
-        })
-        .expect("database should create");
-        database_id = database.database_id;
-    }
-    {
-        let _payer = AuthenticatedCallerGuard::install_principal(payer);
-        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-            "icrc2_transfer_from call failed".to_string(),
-        ));
-        let _ = block_on_ready(purchase_database_cycles(cycles_purchase_request(
-            &database_id,
-            500,
-        )))
-        .expect_err("ambiguous cycle purchase should stay pending");
-    }
-    {
-        let _owner = AuthenticatedCallerGuard::install();
-        operation_id = list_database_cycle_pending_operations(database_id.clone(), None, 10)
-            .expect("pending should load")
-            .entries[0]
-            .operation_id;
-
-        let error = repair_database_cycles_purchase_cancel(database_id.clone(), operation_id)
-            .expect_err("owner cancel should reject");
-        assert!(error.contains("not cycles purchase cancel authority"));
-    }
-    {
-        let _payer = AuthenticatedCallerGuard::install_principal(payer);
-        let error = repair_database_cycles_purchase_cancel(database_id.clone(), operation_id)
-            .expect_err("payer cancel should reject");
-        assert!(error.contains("not cycles purchase cancel authority"));
-    }
-
-    let _authority =
-        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
-    repair_database_cycles_purchase_cancel(database_id.clone(), operation_id)
-        .expect("authority should cancel ambiguous cycle purchase after verification");
+    let retried = retry_database_cycles_purchase(database.database_id.clone(), 1)
+        .expect("billing authority retry should complete purchase");
+    assert_eq!(retried.block_index, 44);
     assert_eq!(
-        database_status_and_mount(&database_id),
-        (DatabaseStatus::Pending, None)
+        pending_cycle_purchase_count_json(&database.database_id),
+        "[0]"
     );
-    let pending = list_database_cycle_pending_operations(database_id.clone(), None, 10)
-        .expect("pending should load")
-        .entries;
-    assert!(pending.is_empty());
-    let entries = list_database_cycle_entries(database_id.clone(), None, 10)
-        .expect("ledger should load")
-        .entries;
-    assert_eq!(
-        entries
-            .iter()
-            .map(|entry| entry.kind.as_str())
-            .collect::<Vec<_>>(),
-        vec![
-            "cycles_purchase_ambiguous",
-            "cycles_purchase_repair_cancelled"
-        ]
-    );
-    let error = block_on_ready(repair_database_cycles_purchase_complete(
-        database_id.clone(),
-        operation_id,
-        90,
-    ))
-    .expect_err("cancelled operation should not complete");
-    assert!(error.contains("pending cycle operation not found"));
 }
 
 #[test]
@@ -1067,7 +875,8 @@ fn purchase_database_cycles_allows_non_owner_payer() {
     .expect("non-owner payer should fund DB");
 
     assert_eq!(result.block_index, 43);
-    assert_eq!(result.balance_cycles, 7_000_000);
+    assert_eq!(result.amount_cycles, 1_641_500);
+    assert_eq!(result.balance_cycles, 1_641_500);
     assert_eq!(
         last_ledger_from_for_test().expect("ledger from should be recorded"),
         IcrcAccount {
@@ -1100,22 +909,17 @@ fn icrc21_purchase_database_cycles_returns_consent_message() {
         }
     };
     assert!(message.contains(&database.database_id));
-    assert!(message.contains("Cycles: `500000000`"));
+    assert!(message.contains("Cycles: `117250000`"));
     assert!(message.contains("Payment: `0.0005` KINIC"));
     assert!(message.contains("Ledger transfer fee in allowance: `0.0001` KINIC"));
     assert!(message.contains("Spender canister:"));
 }
 
 #[test]
-fn icrc21_purchase_database_cycles_rejects_stale_expected_amount() {
+fn icrc21_purchase_database_cycles_rejects_missing_database() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
-    let database = create_database(CreateDatabaseRequest {
-        name: "Consent mismatch".to_string(),
-    })
-    .expect("database should create");
-    let mut request = cycles_purchase_request(&database.database_id, 500);
-    request.expected_cycles += 1;
+    let request = cycles_purchase_request("missing", 500);
     let arg = Encode!(&request).expect("arg should encode");
 
     let response =
@@ -1123,9 +927,9 @@ fn icrc21_purchase_database_cycles_rejects_stale_expected_amount() {
 
     match response {
         Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
-            assert!(info.description.contains("cycles purchase amount changed"));
+            assert!(info.description.contains("database not found"));
         }
-        other => panic!("stale consent should reject: {other:?}"),
+        other => panic!("missing database consent should reject: {other:?}"),
     }
 }
 
@@ -1173,7 +977,12 @@ fn purchase_database_cycles_sends_operation_memo_to_ledger() {
 
     let memo = String::from_utf8(last_ledger_memo_for_test().expect("memo should be recorded"))
         .expect("memo should be utf8");
-    assert!(memo.starts_with("kinic:vfs:cycles_purchase:"));
+    let operation_id = memo
+        .strip_prefix("kvfs:cp:")
+        .expect("memo should use compact cycles purchase prefix")
+        .parse::<u64>()
+        .expect("memo should end with decimal operation id");
+    assert!(operation_id > 0);
 }
 
 #[test]
@@ -1184,8 +993,6 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
     let missing = block_on_ready(purchase_database_cycles(DatabaseCyclesPurchaseRequest {
         database_id: "missing".to_string(),
         payment_amount_e8s: 50_000_000,
-        expected_cycles: 500_000_000_000,
-        expected_config_version: 1,
     }))
     .expect_err("unknown database should reject");
     assert!(missing.contains("database not found"));
@@ -1201,8 +1008,6 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
     let deleted = block_on_ready(purchase_database_cycles(DatabaseCyclesPurchaseRequest {
         database_id: database.database_id,
         payment_amount_e8s: 50_000_000,
-        expected_cycles: 500_000_000_000,
-        expected_config_version: 1,
     }))
     .expect_err("deleted database should reject");
     assert!(deleted.contains("database not found"));
@@ -1241,41 +1046,6 @@ fn install_suspended_default_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
-    let preview = service
-        .preview_database_cycles_purchase("default", 1)
-        .expect("default database cycle purchase preview should load");
-    service
-        .begin_database_cycles_purchase("default", "2vxsx-fae", 1, 1_700_000_000_001)
-        .and_then(|operation_id| {
-            service.mark_database_cycles_purchase_completed(
-                operation_id,
-                "default",
-                "2vxsx-fae",
-                preview.cycles,
-            )?;
-            service.apply_database_cycles_purchase(
-                operation_id,
-                "default",
-                "2vxsx-fae",
-                preview.cycles,
-                1,
-                1_700_000_000_001,
-            )
-        })
-        .expect("default database should become suspended");
-    let config = service
-        .cycles_billing_config()
-        .expect("cycles config should load");
-    service
-        .charge_database_update(
-            &config,
-            "default",
-            "2vxsx-fae",
-            "test_suspend",
-            1_000_000_000,
-            1_700_000_000_002,
-        )
-        .expect("default database should be charged to suspension");
     SERVICE.with(|slot| *slot.borrow_mut() = Some(service));
 }
 
@@ -1289,23 +1059,22 @@ fn install_low_balance_default_service() {
     service
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
-    let preview = service
-        .preview_database_cycles_purchase("default", 1_000_000)
-        .expect("default database cycle purchase preview should load");
     service
         .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
-            service.mark_database_cycles_purchase_completed(
+            let cycles = cycles_for_test_payment(&service, 1_000_000);
+            service.complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                cycles,
+                1,
             )?;
             service.apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                preview.cycles,
+                cycles,
                 1,
                 1_700_000_000_001,
             )
@@ -1476,6 +1245,15 @@ fn write_node_and_write_nodes_skip_zero_charge_ledger() {
 fn write_nodes_rejects_low_database_cycles_balance() {
     install_unfunded_default_service();
 
+    let single = write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/no-balance-single.md".to_string(),
+        kind: NodeKind::File,
+        content: "no balance single".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: None,
+    })
+    .expect_err("low balance database should reject single write");
     let error = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
         nodes: vec![WriteNodeItem {
@@ -1488,7 +1266,21 @@ fn write_nodes_rejects_low_database_cycles_balance() {
     })
     .expect_err("low balance database should reject batch write");
 
+    assert!(single.contains("database cycles are suspended"));
     assert!(error.contains("database cycles are suspended"));
+    assert!(
+        read_node(
+            "default".to_string(),
+            "/Wiki/no-balance-single.md".to_string()
+        )
+        .expect("single path read should succeed")
+        .is_none()
+    );
+    assert!(
+        read_node("default".to_string(), "/Wiki/no-balance.md".to_string())
+            .expect("batch path read should succeed")
+            .is_none()
+    );
 }
 
 #[test]
@@ -1628,26 +1420,18 @@ fn write_nodes_rejects_reader_role() {
     service
         .create_database("public", "owner", 1)
         .expect("database should create");
-    let preview = service
-        .preview_database_cycles_purchase("public", 1_000_000)
-        .expect("database cycle purchase preview should load");
     service
         .begin_database_cycles_purchase("public", "owner", 1_000_000, 2)
         .and_then(|operation_id| {
-            service.mark_database_cycles_purchase_completed(
+            let cycles = cycles_for_test_payment(&service, 1_000_000);
+            service.complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "public",
                 "owner",
-                preview.cycles,
-            )?;
-            service.apply_database_cycles_purchase(
-                operation_id,
-                "public",
-                "owner",
-                preview.cycles,
+                cycles,
                 1,
-                2,
-            )
+            )?;
+            service.apply_database_cycles_purchase(operation_id, "public", "owner", cycles, 1, 2)
         })
         .expect("database should have write cycles available");
     service
@@ -1733,6 +1517,33 @@ fn create_database_returns_result() {
 }
 
 #[test]
+fn create_database_rejects_pending_database_limit() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+
+    for offset in 0..3 {
+        create_database(CreateDatabaseRequest {
+            name: format!("Pending {offset}"),
+        })
+        .expect("pending database should create within limit");
+    }
+
+    let error = create_database(CreateDatabaseRequest {
+        name: "Pending 3".to_string(),
+    })
+    .expect_err("fourth pending database should reject");
+    assert!(error.contains("too many pending databases for caller"));
+
+    let summaries = list_databases().expect("database summaries should load");
+    assert_eq!(summaries.len(), 3);
+    assert!(
+        summaries
+            .iter()
+            .all(|summary| summary.status == DatabaseStatus::Pending)
+    );
+}
+
+#[test]
 fn canister_rename_database_requires_owner() {
     install_test_service();
 
@@ -1758,6 +1569,35 @@ fn grant_database_access_rejects_invalid_principal() {
     .expect_err("invalid principal should fail");
 
     assert!(error.contains("invalid principal"));
+}
+
+#[test]
+fn grant_database_access_rejects_member_limit() {
+    install_test_service();
+
+    for index in 0..30 {
+        grant_database_access(
+            "default".to_string(),
+            Principal::self_authenticating([index as u8]).to_text(),
+            DatabaseRole::Reader,
+        )
+        .expect("member grant should fit limit");
+    }
+
+    let error = grant_database_access(
+        "default".to_string(),
+        Principal::self_authenticating([30]).to_text(),
+        DatabaseRole::Reader,
+    )
+    .expect_err("member cap should reject new member");
+    assert!(error.contains("too many database members"));
+
+    grant_database_access(
+        "default".to_string(),
+        Principal::self_authenticating([0]).to_text(),
+        DatabaseRole::Writer,
+    )
+    .expect("existing member role update should remain allowed");
 }
 
 #[test]
@@ -2675,23 +2515,22 @@ fn cancel_database_archive_entrypoint_rejects_non_owner() {
     service
         .create_database("default", "owner", 1_700_000_000_000)
         .expect("default database should create");
-    let preview = service
-        .preview_database_cycles_purchase("default", 1_000_000)
-        .expect("default database cycle purchase preview should load");
     service
         .begin_database_cycles_purchase("default", "owner", 1_000_000, 1_700_000_000_001)
         .and_then(|operation_id| {
-            service.mark_database_cycles_purchase_completed(
+            let cycles = cycles_for_test_payment(&service, 1_000_000);
+            service.complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "default",
                 "owner",
-                preview.cycles,
+                cycles,
+                1,
             )?;
             service.apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "owner",
-                preview.cycles,
+                cycles,
                 1,
                 1_700_000_000_001,
             )

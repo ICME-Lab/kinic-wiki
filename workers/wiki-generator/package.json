@@ -8,7 +8,8 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev --test-scheduled",
     "test": "tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "audit:moderate": "pnpm audit --audit-level moderate"
   },
   "dependencies": {
     "@icp-sdk/core": "^5.4.0"
@@ -17,6 +18,11 @@
     "@types/node": "24.10.1",
     "typescript": "5.9.3",
     "wrangler": "^4.90.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "ws": "8.20.1"
+    }
   },
   "packageManager": "pnpm@11.0.8"
 }

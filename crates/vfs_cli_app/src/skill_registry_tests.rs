@@ -661,6 +661,17 @@ async fn skill_record_run_evidence_export_correction_and_apply_proposal() {
         })
         .await
         .expect("metrics");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/status.md".to_string(),
+            kind: NodeKind::File,
+            content: proposal_status_content("legal-review", "p1", "reviewed"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("status");
     let applied = apply_evolution_proposal(&client, "team-db", "legal-review", "p1", None, None)
         .await
         .expect("apply");
@@ -915,8 +926,9 @@ async fn proposal_generation_handles_backticks_in_diff_or_evidence() {
     )
     .await
     .expect("proposal");
+    let diff_path = format!("{}/diff.md", proposal["proposal_root"].as_str().unwrap());
     let proposal_content = client
-        .read_node("team-db", proposal["proposal_path"].as_str().unwrap())
+        .read_node("team-db", &diff_path)
         .await
         .unwrap()
         .unwrap()
@@ -1051,6 +1063,17 @@ async fn skill_apply_proposal_rejects_failed_gates() {
                 "permission_gate": "fail"
             })
             .to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .unwrap();
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/status.md".to_string(),
+            kind: NodeKind::File,
+            content: proposal_status_content("legal-review", "p1", "reviewed"),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
@@ -1611,6 +1634,24 @@ async fn skill_upsert_uses_write_nodes_for_package_files() {
 }
 
 #[tokio::test]
+async fn skill_upsert_rejects_noncanonical_skill_ids_before_writing() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    write(temp.path(), "SKILL.md", "# Legal Review\n\nReview.");
+
+    let overlong = "a".repeat(129);
+    for invalid_id in ["legal..review", "_legal-review", overlong.as_str()] {
+        let error = upsert_skill(&client, "default", temp.path(), invalid_id, false)
+            .await
+            .expect_err("invalid skill id should fail before writes");
+        assert!(error.to_string().contains("single path-safe name"));
+    }
+
+    assert_eq!(client.write_batches.load(Ordering::SeqCst), 0);
+    assert_eq!(client.writes.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn skill_upsert_rejects_package_over_batch_limit_before_writing() {
     let client = SkillMockClient::default();
     let temp = tempfile::tempdir().expect("tempdir");
@@ -1929,6 +1970,66 @@ async fn skill_set_status_records_promoted_at_as_rfc3339() {
     assert_rfc3339_field(&manifest, "promoted_at");
 }
 
+#[tokio::test]
+async fn skill_set_status_removes_stale_status_metadata() {
+    let client = SkillMockClient::default();
+    let temp = tempfile::tempdir().expect("tempdir");
+    write(temp.path(), "SKILL.md", "# Legal Review\n\nredlines");
+    write(temp.path(), "manifest.md", &manifest("reviewed"));
+    upsert_skill(&client, "default", temp.path(), "legal-review", false)
+        .await
+        .expect("upsert");
+
+    set_skill_status(
+        &client,
+        "default",
+        "legal-review",
+        SkillStatusArg::Promoted,
+        None,
+    )
+    .await
+    .expect("set promoted");
+    set_skill_status(
+        &client,
+        "default",
+        "legal-review",
+        SkillStatusArg::Deprecated,
+        Some("retired"),
+    )
+    .await
+    .expect("set deprecated");
+
+    let deprecated = client
+        .read_node("default", "/Wiki/skills/legal-review/manifest.md")
+        .await
+        .expect("read manifest")
+        .expect("manifest exists")
+        .content;
+    assert!(!deprecated.contains("promoted_at:"));
+    assert_rfc3339_field(&deprecated, "deprecated_at");
+    assert!(deprecated.contains("deprecated_reason: retired"));
+
+    set_skill_status(
+        &client,
+        "default",
+        "legal-review",
+        SkillStatusArg::Reviewed,
+        None,
+    )
+    .await
+    .expect("set reviewed");
+
+    let reviewed = client
+        .read_node("default", "/Wiki/skills/legal-review/manifest.md")
+        .await
+        .expect("read manifest")
+        .expect("manifest exists")
+        .content;
+    assert!(!reviewed.contains("promoted_at:"));
+    assert!(!reviewed.contains("deprecated_at:"));
+    assert!(!reviewed.contains("deprecated_reason:"));
+}
+
 #[test]
 fn skill_markdown_targets_normalize_package_local_paths() {
     assert_eq!(
@@ -1937,6 +2038,30 @@ fn skill_markdown_targets_normalize_package_local_paths() {
     );
     assert_eq!(
         markdown_target_package_key("./docs/usage.md#setup").as_deref(),
+        Some("docs/usage.md")
+    );
+    assert_eq!(
+        markdown_target_package_key("docs/Project Plan.md").as_deref(),
+        Some("docs/Project Plan.md")
+    );
+    assert_eq!(
+        markdown_target_package_key("<docs/Project Plan.md>").as_deref(),
+        Some("docs/Project Plan.md")
+    );
+    assert_eq!(
+        markdown_target_package_key("docs/Project (Alpha).md").as_deref(),
+        Some("docs/Project (Alpha).md")
+    );
+    assert_eq!(
+        markdown_target_package_key("docs/usage.md \"Usage\"").as_deref(),
+        Some("docs/usage.md")
+    );
+    assert_eq!(
+        markdown_target_package_key("<docs/Project Plan.md> 'Project plan'").as_deref(),
+        Some("docs/Project Plan.md")
+    );
+    assert_eq!(
+        markdown_target_package_key("docs/usage.md (Usage)").as_deref(),
         Some("docs/usage.md")
     );
     assert_eq!(markdown_target_package_key("../outside.md"), None);
@@ -1949,7 +2074,7 @@ fn skill_markdown_targets_normalize_package_local_paths() {
 }
 
 #[tokio::test]
-async fn skill_improvement_proposal_is_recorded_and_approved_without_editing_skill() {
+async fn skill_evolution_proposal_is_recorded_and_reviewed_without_editing_skill() {
     let client = SkillMockClient::default();
     let temp = tempfile::tempdir().expect("tempdir");
     write(temp.path(), "SKILL.md", "# Legal Review\n\nredlines");
@@ -1976,15 +2101,15 @@ async fn skill_improvement_proposal_is_recorded_and_approved_without_editing_ski
             "/Wiki",
             "/Wiki/skills",
             "/Wiki/skills/legal-review",
-            "/Wiki/skills/legal-review/improvement-proposals",
+            "/Wiki/skills/legal-review/proposals",
         ],
     );
     let proposal_path = proposal["proposal_path"].as_str().unwrap();
-    let proposal_name = proposal_path
-        .strip_prefix("/Wiki/skills/legal-review/improvement-proposals/")
+    let proposal_root = proposal["proposal_root"].as_str().unwrap();
+    let proposal_name = proposal_root
+        .strip_prefix("/Wiki/skills/legal-review/proposals/")
         .expect("proposal path prefix")
-        .strip_suffix(".md")
-        .expect("proposal extension");
+        .trim_end_matches('/');
     assert!(proposal_name.chars().all(|ch| ch.is_ascii_digit()));
     let skill_before = client
         .read_node("default", "/Wiki/skills/legal-review/SKILL.md")
@@ -2002,14 +2127,21 @@ async fn skill_improvement_proposal_is_recorded_and_approved_without_editing_ski
         .unwrap()
         .unwrap()
         .content;
+    let status_content = client
+        .read_node("default", &format!("{proposal_root}/status.md"))
+        .await
+        .unwrap()
+        .unwrap()
+        .content;
     assert_rfc3339_field(&proposal_content, "created_at");
+    assert_rfc3339_field(&status_content, "recorded_at");
     let skill_after = client
         .read_node("default", "/Wiki/skills/legal-review/SKILL.md")
         .await
         .unwrap()
         .unwrap()
         .content;
-    assert!(proposal_content.contains("status: approved"));
+    assert!(status_content.contains("status: reviewed"));
     assert_eq!(skill_before, skill_after);
 }
 
@@ -2019,9 +2151,9 @@ async fn skill_approve_proposal_rejects_wrong_path_and_frontmatter() {
     client
         .write_node(WriteNodeRequest {
             database_id: "default".to_string(),
-            path: "/Wiki/skills/other/improvement-proposals/1.md".to_string(),
+            path: "/Wiki/skills/other/proposals/1/proposal.md".to_string(),
             kind: NodeKind::File,
-            content: proposal_content("legal-review", "proposed"),
+            content: proposal_content("legal-review", "1"),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
@@ -2032,7 +2164,7 @@ async fn skill_approve_proposal_rejects_wrong_path_and_frontmatter() {
             &client,
             "default",
             "legal-review",
-            "/Wiki/skills/other/improvement-proposals/1.md"
+            "/Wiki/skills/other/proposals/1"
         )
         .await
         .is_err()
@@ -2041,9 +2173,9 @@ async fn skill_approve_proposal_rejects_wrong_path_and_frontmatter() {
     client
         .write_node(WriteNodeRequest {
             database_id: "default".to_string(),
-            path: "/Wiki/skills/legal-review/improvement-proposals/1.md".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/1/proposal.md".to_string(),
             kind: NodeKind::File,
-            content: proposal_content("other", "proposed"),
+            content: proposal_content("other", "1"),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
@@ -2054,7 +2186,7 @@ async fn skill_approve_proposal_rejects_wrong_path_and_frontmatter() {
             &client,
             "default",
             "legal-review",
-            "/Wiki/skills/legal-review/improvement-proposals/1.md"
+            "/Wiki/skills/legal-review/proposals/1"
         )
         .await
         .is_err()
@@ -2063,31 +2195,63 @@ async fn skill_approve_proposal_rejects_wrong_path_and_frontmatter() {
     client
         .write_node(WriteNodeRequest {
             database_id: "default".to_string(),
-            path: "/Wiki/skills/legal-review/improvement-proposals/2.md".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/2/proposal.md".to_string(),
             kind: NodeKind::File,
-            content: proposal_content("legal-review", "approved"),
+            content: proposal_content("legal-review", "2"),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
         .await
-        .expect("seed approved");
+        .expect("seed proposal");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "default".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/2/status.md".to_string(),
+            kind: NodeKind::File,
+            content: proposal_status_content("legal-review", "2", "reviewed"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("seed reviewed");
     assert!(
         approve_proposal(
             &client,
             "default",
             "legal-review",
-            "/Wiki/skills/legal-review/improvement-proposals/2.md"
+            "/Wiki/skills/legal-review/proposals/2"
         )
         .await
         .is_err()
     );
+
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "default".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/3/proposal.md".to_string(),
+            kind: NodeKind::File,
+            content: proposal_content("legal-review", "3"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("seed proposal without status");
+    let error = approve_proposal(
+        &client,
+        "default",
+        "legal-review",
+        "/Wiki/skills/legal-review/proposals/3",
+    )
+    .await
+    .expect_err("status is required");
+    assert!(error.to_string().contains("proposal status not found"));
 
     client
         .write_node(WriteNodeRequest {
             database_id: "default".to_string(),
             path: "/Wiki/skills/legal-review/SKILL.md".to_string(),
             kind: NodeKind::File,
-            content: proposal_content("legal-review", "proposed"),
+            content: proposal_content("legal-review", "3"),
             metadata_json: "{}".to_string(),
             expected_etag: None,
         })
@@ -2180,6 +2344,17 @@ async fn write_apply_proposal_fixture(
         })
         .await
         .expect("write metrics");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: "/Wiki/skills/legal-review/proposals/p1/status.md".to_string(),
+            kind: NodeKind::File,
+            content: proposal_status_content("legal-review", "p1", "reviewed"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("write status");
 }
 
 fn assert_rfc3339_field(content: &str, key: &str) {
@@ -2221,9 +2396,15 @@ async fn write_skill_file(client: &SkillMockClient, database_id: &str, path: &st
         .expect("write skill file");
 }
 
-fn proposal_content(skill_id: &str, status: &str) -> String {
+fn proposal_content(skill_id: &str, proposal_id: &str) -> String {
     format!(
-        "---\nkind: kinic.skill_improvement_proposal\nschema_version: 1\nskill_id: {skill_id}\nstatus: {status}\ncreated_at: 2026-05-08T00:00:00Z\n---\n# Proposal\n"
+        "---\nkind: kinic.skill_evolution_proposal\nschema_version: 1\nskill_id: {skill_id}\nproposal_id: {proposal_id}\ncreated_at: 2026-05-08T00:00:00Z\n---\n# Proposal\n"
+    )
+}
+
+fn proposal_status_content(skill_id: &str, proposal_id: &str, status: &str) -> String {
+    format!(
+        "---\nkind: kinic.skill_evolution_proposal_status\nschema_version: 1\nskill_id: {skill_id}\nproposal_id: {proposal_id}\nstatus: {status}\nrecorded_at: 2026-05-08T00:00:00Z\n---\n# Proposal Status\n"
     )
 }
 
@@ -2448,6 +2629,17 @@ async fn write_pbt_proposal(
         })
         .await
         .expect("metrics should write");
+    client
+        .write_node(WriteNodeRequest {
+            database_id: "team-db".to_string(),
+            path: format!("{base_path}/status.md"),
+            kind: NodeKind::File,
+            content: proposal_status_content(id, proposal_id, "reviewed"),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .await
+        .expect("status should write");
 }
 
 async fn assert_single_run_plus_corrections(client: &SkillMockClient, id: &str, run_id: &str) {

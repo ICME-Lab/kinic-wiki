@@ -277,23 +277,6 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List pending cycle operations for one database")]
-    CyclesPending {
-        database_id: String,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Verified complete: complete a pending cycle purchase with a ledger block")]
-    RepairCyclesPurchaseComplete {
-        database_id: String,
-        operation_id: u64,
-        block_index: u64,
-    },
-    #[command(about = "Billing authority repair: cancel a pending cycle purchase")]
-    RepairCyclesPurchaseCancel {
-        database_id: String,
-        operation_id: u64,
-    },
     #[command(about = "Open the browser cycles purchase page for one database")]
     Cycles {
         database_id: String,
