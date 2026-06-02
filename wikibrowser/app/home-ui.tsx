@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, PackageSearch, Settings, Share2, Wallet } from "lucide-react";
+import { BookOpen, Settings, Share2, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
-import { databaseCyclesView, databaseCyclesHref, formatCycles as formatCycleBalance, type DatabaseCycleView } from "@/lib/cycles-state";
+import { formatCycles as formatCycleBalance } from "@/lib/cycles";
+import { databaseCyclesView, databaseCyclesHref, type DatabaseCycleView } from "@/lib/cycles-state";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
@@ -77,7 +78,7 @@ export function DatabaseBody({
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection cyclesConfig={cyclesConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
       <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
@@ -120,7 +121,7 @@ function DatabaseSection({
   title
 }: {
   cyclesConfig: CyclesBillingConfig | null;
-  description: string;
+  description?: string;
   emptyMessage: string;
   mode: "member" | "public";
   publicError?: string | null;
@@ -132,7 +133,7 @@ function DatabaseSection({
     return (
       <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
         {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
-        {showTitle ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
+        {showTitle && description ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
         {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
         <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
       </section>
@@ -143,7 +144,7 @@ function DatabaseSection({
       {showTitle ? (
         <div className="border-b border-line px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">{title}</h3>
-          <p className="mt-1 text-xs leading-5 text-muted">{description}</p>
+          {description ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
           {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
         </div>
       ) : null}
@@ -165,7 +166,6 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Cycles</th>
               <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
-              {mode === "member" ? <th className="px-4 py-3 font-medium">Registry</th> : null}
               {mode === "member" ? <th className="px-4 py-3 font-medium">Top up</th> : null}
               <th className="px-4 py-3 font-medium">Manage</th>
             </tr>
@@ -205,11 +205,6 @@ function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: Cycl
       <td className="px-4 py-3">{active && database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
       {mode === "member" ? (
         <td className="px-4 py-3">
-          {active ? <DatabaseActionLink href={`/skills/${encodeURIComponent(database.databaseId)}`} icon={<PackageSearch aria-hidden size={14} />} label="Registry" /> : <span className="text-muted">-</span>}
-        </td>
-      ) : null}
-      {mode === "member" ? (
-        <td className="px-4 py-3">
           <DatabaseActionLink href={databaseCyclesHref(database)} icon={<Wallet aria-hidden size={14} />} label="Top up" />
         </td>
       ) : null}
@@ -240,7 +235,6 @@ function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: Cy
         {active ? (
           <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" />
         ) : null}
-        {mode === "member" && active ? <DatabaseActionLink href={`/skills/${encodeURIComponent(database.databaseId)}`} icon={<PackageSearch aria-hidden size={14} />} label="Registry" /> : null}
         {mode === "member" ? (
           <DatabaseActionLink href={databaseCyclesHref(database)} icon={<Wallet aria-hidden size={14} />} label="Top up" />
         ) : null}
