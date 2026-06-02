@@ -53,8 +53,9 @@ const groups = {
   ],
   canister_cycles_billing: [
     ["scripts/smoke/local_canister_post_upgrade.sh", "scripts/local/deploy_wiki.sh --mode upgrade"],
-    ["docs/payment.md", "cycles-repair-complete"],
-    ["docs/payment.md", "cycles-repair-cancel"],
+    ["docs/payment.md", "billing_authority_review"],
+    ["docs/payment.md", "v1 では repair / cancel API は提供しない"],
+    ["docs/payment.md", "v1 では retry API は提供しない"],
     ["docs/payment.md", "残高を全徴収"]
   ]
 };
