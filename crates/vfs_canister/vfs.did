@@ -491,6 +491,10 @@ service : (CyclesBillingConfig) -> {
   read_node : (text, text) -> (Result_23) query;
   read_node_context : (NodeContextRequest) -> (Result_24) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
+  repair_database_cycles_purchase_cancel : (text, nat64) -> (Result_1);
+  repair_database_cycles_purchase_complete : (text, nat64, nat64) -> (
+      Result_19,
+    );
   retry_database_cycles_purchase : (text, nat64) -> (Result_19);
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_25) query;

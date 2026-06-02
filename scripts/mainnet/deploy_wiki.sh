@@ -10,10 +10,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ANONYMOUS_PRINCIPAL="2vxsx-fae"
 BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID:-}"
 
-current_identity_principal() {
-  icp identity principal
-}
-
 require_principal_env() {
   local name="$1"
   local value="${!name:-}"
@@ -32,11 +28,6 @@ require_principal_env() {
 }
 
 require_principal_env KINIC_LEDGER_CANISTER_ID
-
-if [[ -z "${BILLING_AUTHORITY_ID}" ]]; then
-  BILLING_AUTHORITY_ID="$(current_identity_principal)"
-fi
-
 require_principal_env BILLING_AUTHORITY_ID
 
 ARGS_FILE="$(mktemp "${TMPDIR:-/tmp}/wiki-cycles-init.XXXXXX.did")"

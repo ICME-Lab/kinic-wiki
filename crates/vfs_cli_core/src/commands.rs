@@ -711,6 +711,44 @@ async fn run_database_command(
                 }
             }
         }
+        DatabaseCommand::CyclesRetry {
+            database_id,
+            operation_id,
+        } => {
+            let result = client
+                .retry_database_cycles_purchase(&database_id, operation_id)
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}\t{}",
+                result.block_index, result.amount_cycles, result.balance_cycles
+            );
+        }
+        DatabaseCommand::CyclesRepairComplete {
+            database_id,
+            operation_id,
+            ledger_block_index,
+        } => {
+            let result = client
+                .repair_database_cycles_purchase_complete(
+                    &database_id,
+                    operation_id,
+                    ledger_block_index,
+                )
+                .await?;
+            println!(
+                "{database_id}\t{operation_id}\t{}\t{}\t{}",
+                result.block_index, result.amount_cycles, result.balance_cycles
+            );
+        }
+        DatabaseCommand::CyclesRepairCancel {
+            database_id,
+            operation_id,
+        } => {
+            client
+                .repair_database_cycles_purchase_cancel(&database_id, operation_id)
+                .await?;
+            println!("{database_id}\t{operation_id}\tcancelled");
+        }
         DatabaseCommand::Cycles {
             database_id,
             kinic,
@@ -1377,6 +1415,9 @@ mod tests {
         database_lists: Mutex<u32>,
         database_cycle_purchases: Mutex<Vec<DatabaseCyclesPurchaseRequest>>,
         database_cycles_history: Mutex<Vec<String>>,
+        database_cycles_retries: Mutex<Vec<(String, u64)>>,
+        database_cycles_repair_completes: Mutex<Vec<(String, u64, u64)>>,
+        database_cycles_repair_cancels: Mutex<Vec<(String, u64)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
@@ -1513,6 +1554,49 @@ mod tests {
                 }],
                 next_cursor: None,
             })
+        }
+        async fn retry_database_cycles_purchase(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+        ) -> Result<CyclesPurchaseResult> {
+            self.database_cycles_retries
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id));
+            Ok(CyclesPurchaseResult {
+                block_index: 7,
+                amount_cycles: 1_250,
+                balance_cycles: 1_250,
+            })
+        }
+        async fn repair_database_cycles_purchase_complete(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+            ledger_block_index: u64,
+        ) -> Result<CyclesPurchaseResult> {
+            self.database_cycles_repair_completes.lock().unwrap().push((
+                database_id.to_string(),
+                operation_id,
+                ledger_block_index,
+            ));
+            Ok(CyclesPurchaseResult {
+                block_index: ledger_block_index,
+                amount_cycles: 1_250,
+                balance_cycles: 1_250,
+            })
+        }
+        async fn repair_database_cycles_purchase_cancel(
+            &self,
+            database_id: &str,
+            operation_id: u64,
+        ) -> Result<()> {
+            self.database_cycles_repair_cancels
+                .lock()
+                .unwrap()
+                .push((database_id.to_string(), operation_id));
+            Ok(())
         }
         async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
             let mut configs = self.cycles_configs.lock().unwrap();
@@ -2328,6 +2412,70 @@ mod tests {
         assert_eq!(
             *client.database_cycles_history.lock().unwrap(),
             vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_retry_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CyclesRetry {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 42,
+                },
+            },
+        )
+        .await
+        .expect("database cycles-retry should succeed");
+        assert_eq!(
+            *client.database_cycles_retries.lock().unwrap(),
+            vec![("db_alpha".to_string(), 42)]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_repair_complete_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CyclesRepairComplete {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 42,
+                    ledger_block_index: 88,
+                },
+            },
+        )
+        .await
+        .expect("database cycles-repair-complete should succeed");
+        assert_eq!(
+            *client.database_cycles_repair_completes.lock().unwrap(),
+            vec![("db_alpha".to_string(), 42, 88)]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_repair_cancel_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CyclesRepairCancel {
+                    database_id: "db_alpha".to_string(),
+                    operation_id: 42,
+                },
+            },
+        )
+        .await
+        .expect("database cycles-repair-cancel should succeed");
+        assert_eq!(
+            *client.database_cycles_repair_cancels.lock().unwrap(),
+            vec![("db_alpha".to_string(), 42)]
         );
     }
 

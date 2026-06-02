@@ -101,6 +101,7 @@ pub const DEFAULT_LLM_WRITER_PRINCIPAL: &str =
 const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
 const CYCLES_OPERATION_STATUS_IN_FLIGHT: &str = "in_flight";
 const CYCLES_OPERATION_STATUS_COMPLETED: &str = "completed";
+const CYCLES_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseMeta {
@@ -156,6 +157,26 @@ pub struct DatabaseCyclesPurchaseWithLedgerDetails<'a> {
 pub struct DatabaseCyclesPurchaseStart {
     pub operation_id: u64,
     pub amount_cycles: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DatabaseCyclesPurchaseRepairTarget {
+    pub caller: String,
+    pub cycles: u64,
+    pub payment_amount_e8s: u64,
+    pub from_owner: String,
+    pub from_subaccount: Option<Vec<u8>>,
+    pub to_owner: String,
+    pub to_subaccount: Option<Vec<u8>>,
+    pub ledger_fee_e8s: u64,
+    pub ledger_created_at_time_ns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DatabaseCyclesPurchaseRetryTarget {
+    pub caller: String,
+    pub cycles: u64,
+    pub ledger_block_index: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -816,18 +837,156 @@ impl VfsService {
         })
     }
 
-    pub fn retry_database_cycles_purchase(
+    pub fn mark_database_cycles_purchase_ambiguous(
+        &self,
+        operation_id: u64,
+        database_id: &str,
+        caller: &str,
+        cycles: u64,
+    ) -> Result<(), String> {
+        let cycles_i64 = cycles_to_i64(cycles)?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_cycles_operation(
+                tx,
+                PendingCyclesOperationMatch {
+                    operation_id,
+                    database_id,
+                    kind: "cycles_purchase",
+                    caller,
+                    cycles: cycles_i64,
+                },
+            )?;
+            require_pending_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
+                "mark cycle purchase ambiguous",
+            )?;
+            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+            tx.execute(
+                "UPDATE database_cycle_pending_operations
+                 SET operation_status = ?2
+                 WHERE operation_id = ?1",
+                params![operation_id, CYCLES_OPERATION_STATUS_AMBIGUOUS],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+    }
+
+    pub fn database_cycles_purchase_repair_target(
         &self,
         database_id: &str,
         operation_id: u64,
         caller: &str,
+    ) -> Result<DatabaseCyclesPurchaseRepairTarget, String> {
+        let config = self.cycles_billing_config()?;
+        if caller != config.billing_authority_id {
+            return Err("caller is not billing authority".to_string());
+        }
+        self.read_index(|conn| {
+            let operation = load_pending_cycles_operation(conn, operation_id)?;
+            if operation.database_id != database_id || operation.kind != "cycles_purchase" {
+                return Err("pending cycle operation mismatch".to_string());
+            }
+            require_pending_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_AMBIGUOUS],
+                "repair cycle purchase",
+            )?;
+            Ok(DatabaseCyclesPurchaseRepairTarget {
+                caller: operation.caller,
+                cycles: u64::try_from(operation.cycles).map_err(|error| error.to_string())?,
+                payment_amount_e8s: u64::try_from(operation.payment_amount_e8s)
+                    .map_err(|error| error.to_string())?,
+                from_owner: operation.from_owner.ok_or_else(|| {
+                    "pending cycle operation missing ledger from owner".to_string()
+                })?,
+                from_subaccount: operation.from_subaccount,
+                to_owner: operation
+                    .to_owner
+                    .ok_or_else(|| "pending cycle operation missing ledger to owner".to_string())?,
+                to_subaccount: operation.to_subaccount,
+                ledger_fee_e8s: operation
+                    .ledger_fee_e8s
+                    .ok_or_else(|| "pending cycle operation missing ledger fee".to_string())
+                    .and_then(|fee| u64::try_from(fee).map_err(|error| error.to_string()))?,
+                ledger_created_at_time_ns: operation
+                    .ledger_created_at_time_ns
+                    .ok_or_else(|| {
+                        "pending cycle operation missing ledger created_at_time".to_string()
+                    })
+                    .and_then(|time| u64::try_from(time).map_err(|error| error.to_string()))?,
+            })
+        })
+    }
+
+    pub fn repair_database_cycles_purchase_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+        ledger_block_index: u64,
         now: i64,
     ) -> Result<CyclesPurchaseResult, String> {
         let config = self.cycles_billing_config()?;
         if caller != config.billing_authority_id {
             return Err("caller is not billing authority".to_string());
         }
-        let operation = self.write_index(|conn| {
+        let ledger_block_index_i64 = i64::try_from(ledger_block_index)
+            .map_err(|_| "ledger block index exceeds i64".to_string())?;
+        let operation = self.write_index(|tx| {
+            let operation = load_pending_cycles_operation(tx, operation_id)?;
+            if operation.database_id != database_id || operation.kind != "cycles_purchase" {
+                return Err("pending cycle operation mismatch".to_string());
+            }
+            require_pending_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_AMBIGUOUS],
+                "repair complete cycle purchase",
+            )?;
+            let operation_id_i64 =
+                i64::try_from(operation_id).map_err(|error| error.to_string())?;
+            tx.execute(
+                "UPDATE database_cycle_pending_operations
+                 SET operation_status = ?2,
+                     ledger_block_index = ?3
+                 WHERE operation_id = ?1",
+                params![
+                    operation_id_i64,
+                    CYCLES_OPERATION_STATUS_COMPLETED,
+                    ledger_block_index_i64
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(operation)
+        })?;
+        let cycles = u64::try_from(operation.cycles).map_err(|error| error.to_string())?;
+        let balance = self.apply_database_cycles_purchase(
+            operation_id,
+            database_id,
+            &operation.caller,
+            cycles,
+            ledger_block_index,
+            now,
+        )?;
+        Ok(CyclesPurchaseResult {
+            block_index: ledger_block_index,
+            amount_cycles: cycles,
+            balance_cycles: balance,
+        })
+    }
+
+    pub fn database_cycles_purchase_retry_target(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+    ) -> Result<DatabaseCyclesPurchaseRetryTarget, String> {
+        let config = self.cycles_billing_config()?;
+        if caller != config.billing_authority_id {
+            return Err("caller is not billing authority".to_string());
+        }
+        self.read_index(|conn| {
             let operation = load_pending_cycles_operation(conn, operation_id)?;
             if operation.database_id != database_id || operation.kind != "cycles_purchase" {
                 return Err("pending cycle operation mismatch".to_string());
@@ -837,24 +996,39 @@ impl VfsService {
                 &[CYCLES_OPERATION_STATUS_COMPLETED],
                 "retry cycle purchase",
             )?;
-            Ok(operation)
-        })?;
-        let cycles = u64::try_from(operation.cycles).map_err(|error| error.to_string())?;
-        let block_index = operation
-            .ledger_block_index
-            .ok_or_else(|| "completed cycle purchase missing ledger block index".to_string())
-            .and_then(|value| u64::try_from(value).map_err(|error| error.to_string()))?;
+            Ok(DatabaseCyclesPurchaseRetryTarget {
+                caller: operation.caller,
+                cycles: u64::try_from(operation.cycles).map_err(|error| error.to_string())?,
+                ledger_block_index: operation
+                    .ledger_block_index
+                    .ok_or_else(|| {
+                        "completed cycle purchase missing ledger block index".to_string()
+                    })
+                    .and_then(|value| u64::try_from(value).map_err(|error| error.to_string()))?,
+            })
+        })
+    }
+
+    pub fn retry_database_cycles_purchase(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+        now: i64,
+    ) -> Result<CyclesPurchaseResult, String> {
+        let retry =
+            self.database_cycles_purchase_retry_target(database_id, operation_id, caller)?;
         let balance = self.apply_database_cycles_purchase(
             operation_id,
             database_id,
-            &operation.caller,
-            cycles,
-            block_index,
+            &retry.caller,
+            retry.cycles,
+            retry.ledger_block_index,
             now,
         )?;
         Ok(CyclesPurchaseResult {
-            block_index,
-            amount_cycles: cycles,
+            block_index: retry.ledger_block_index,
+            amount_cycles: retry.cycles,
             balance_cycles: balance,
         })
     }
@@ -918,6 +1092,35 @@ impl VfsService {
             )?;
             delete_pending_cycles_operation(tx, operation_id)
         })
+    }
+
+    pub fn repair_database_cycles_purchase_cancel(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        caller: &str,
+    ) -> Result<(), String> {
+        let config = self.cycles_billing_config()?;
+        if caller != config.billing_authority_id {
+            return Err("caller is not billing authority".to_string());
+        }
+        let status = self.write_index(|tx| {
+            let operation = load_pending_cycles_operation(tx, operation_id)?;
+            if operation.database_id != database_id || operation.kind != "cycles_purchase" {
+                return Err("pending cycle operation mismatch".to_string());
+            }
+            require_pending_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_AMBIGUOUS],
+                "repair cancel cycle purchase",
+            )?;
+            load_database_status(tx, database_id)
+        })?;
+        if status == DatabaseStatus::Pending {
+            self.discard_database_reservation(database_id)
+        } else {
+            self.write_index(|tx| delete_pending_cycles_operation(tx, operation_id))
+        }
     }
 
     pub fn list_database_cycle_entries(
@@ -3570,6 +3773,12 @@ struct PendingCyclesOperation {
     caller: String,
     cycles: i64,
     payment_amount_e8s: i64,
+    from_owner: Option<String>,
+    from_subaccount: Option<Vec<u8>>,
+    to_owner: Option<String>,
+    to_subaccount: Option<Vec<u8>>,
+    ledger_fee_e8s: Option<i64>,
+    ledger_created_at_time_ns: Option<i64>,
     operation_status: String,
     ledger_block_index: Option<i64>,
 }
@@ -3636,13 +3845,14 @@ fn insert_pending_cycles_operation(
 }
 
 fn load_pending_cycles_operation(
-    conn: &Transaction<'_>,
+    conn: &Connection,
     operation_id: u64,
 ) -> Result<PendingCyclesOperation, String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT database_id, kind, caller, cycles, payment_amount_e8s, operation_status,
-                ledger_block_index
+        "SELECT database_id, kind, caller, cycles, payment_amount_e8s,
+                from_owner, from_subaccount, to_owner, to_subaccount,
+                ledger_fee_e8s, ledger_created_at_time_ns, operation_status, ledger_block_index
          FROM database_cycle_pending_operations
          WHERE operation_id = ?1",
         params![operation_id],
@@ -3729,8 +3939,14 @@ fn map_pending_cycles_operation(
         caller: crate::sqlite::row_get(row, 2)?,
         cycles: crate::sqlite::row_get(row, 3)?,
         payment_amount_e8s: crate::sqlite::row_get(row, 4)?,
-        operation_status: crate::sqlite::row_get(row, 5)?,
-        ledger_block_index: crate::sqlite::row_get(row, 6)?,
+        from_owner: crate::sqlite::row_get(row, 5)?,
+        from_subaccount: crate::sqlite::row_get(row, 6)?,
+        to_owner: crate::sqlite::row_get(row, 7)?,
+        to_subaccount: crate::sqlite::row_get(row, 8)?,
+        ledger_fee_e8s: crate::sqlite::row_get(row, 9)?,
+        ledger_created_at_time_ns: crate::sqlite::row_get(row, 10)?,
+        operation_status: crate::sqlite::row_get(row, 11)?,
+        ledger_block_index: crate::sqlite::row_get(row, 12)?,
     })
 }
 
@@ -5180,6 +5396,13 @@ mod tests {
             )
             .expect("ledger transfer should complete");
 
+        let target = service
+            .database_cycles_purchase_retry_target(
+                "default",
+                operation_id,
+                "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            )
+            .expect("billing authority should load retry target");
         let forbidden = service
             .retry_database_cycles_purchase("default", operation_id, "payer", 3)
             .expect_err("non-authority retry should reject");
@@ -5200,10 +5423,171 @@ mod tests {
             )
             .expect("pending count should load");
 
+        assert_eq!(target.caller, "payer");
+        assert_eq!(target.cycles, cycles);
+        assert_eq!(target.ledger_block_index, 7);
         assert!(forbidden.contains("caller is not billing authority"));
         assert_eq!(retried.block_index, 7);
         assert_eq!(retried.amount_cycles, cycles);
         assert_eq!(retried.balance_cycles, cycles);
+        assert_eq!(pending_count, 0);
+    }
+
+    #[test]
+    fn ambiguous_database_cycles_purchase_blocks_duplicate_until_repair() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("default", "payer", 1)
+            .expect("database should create");
+        let operation_id = service
+            .begin_database_cycles_purchase("default", "payer", 1_000_000, 2)
+            .expect("cycle purchase should begin");
+        let cycles = cycles_for_payment_amount_e8s(
+            1_000_000,
+            &service.cycles_billing_config().expect("config should load"),
+        )
+        .expect("cycles should compute");
+
+        service
+            .mark_database_cycles_purchase_ambiguous(operation_id, "default", "payer", cycles)
+            .expect("operation should become ambiguous");
+        let duplicate = service
+            .begin_database_cycles_purchase("default", "payer", 1_000_000, 3)
+            .expect_err("ambiguous operation should block duplicate");
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        let status: String = conn
+            .query_row(
+                "SELECT operation_status FROM database_cycle_pending_operations WHERE operation_id = ?1",
+                params![i64::try_from(operation_id).expect("operation id should fit")],
+                |row| row.get(0),
+            )
+            .expect("pending status should load");
+
+        assert_eq!(status, "ambiguous");
+        assert!(
+            duplicate.contains("database activation is pending")
+                || duplicate.contains("cycles purchase already pending")
+        );
+    }
+
+    #[test]
+    fn repair_database_cycles_purchase_complete_applies_ambiguous_operation() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("default", "payer", 1)
+            .expect("database should create");
+        let operation_id = service
+            .begin_database_cycles_purchase("default", "payer", 1_000_000, 2)
+            .expect("cycle purchase should begin");
+        let cycles = cycles_for_payment_amount_e8s(
+            1_000_000,
+            &service.cycles_billing_config().expect("config should load"),
+        )
+        .expect("cycles should compute");
+        service
+            .mark_database_cycles_purchase_ambiguous(operation_id, "default", "payer", cycles)
+            .expect("operation should become ambiguous");
+
+        let target = service
+            .database_cycles_purchase_repair_target(
+                "default",
+                operation_id,
+                "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            )
+            .expect("authority should load repair target");
+        let repaired = service
+            .repair_database_cycles_purchase_complete(
+                "default",
+                operation_id,
+                "rrkah-fqaaa-aaaaa-aaaaq-cai",
+                7,
+                3,
+            )
+            .expect("authority should complete repair");
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        let pending_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM database_cycle_pending_operations",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("pending count should load");
+
+        assert_eq!(target.caller, "payer");
+        assert_eq!(target.cycles, cycles);
+        assert_eq!(target.payment_amount_e8s, 1_000_000);
+        assert_eq!(target.from_owner, "payer");
+        assert_eq!(target.to_owner, "canister");
+        assert_eq!(repaired.block_index, 7);
+        assert_eq!(repaired.amount_cycles, cycles);
+        assert_eq!(repaired.balance_cycles, cycles);
+        assert_eq!(pending_count, 0);
+    }
+
+    #[test]
+    fn repair_database_cycles_purchase_cancel_only_accepts_ambiguous_operations() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("default", "payer", 1)
+            .expect("database should create");
+        let operation_id = service
+            .begin_database_cycles_purchase("default", "payer", 1_000_000, 2)
+            .expect("cycle purchase should begin");
+        let cycles = cycles_for_payment_amount_e8s(
+            1_000_000,
+            &service.cycles_billing_config().expect("config should load"),
+        )
+        .expect("cycles should compute");
+        let forbidden = service
+            .repair_database_cycles_purchase_cancel(
+                "default",
+                operation_id,
+                "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            )
+            .expect_err("in-flight cancel should reject");
+        service
+            .mark_database_cycles_purchase_ambiguous(operation_id, "default", "payer", cycles)
+            .expect("operation should become ambiguous");
+        service
+            .repair_database_cycles_purchase_cancel(
+                "default",
+                operation_id,
+                "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            )
+            .expect("authority should cancel ambiguous operation");
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        let database_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM databases WHERE database_id = 'default'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("database count should load");
+        let pending_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM database_cycle_pending_operations WHERE database_id = 'default'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("pending count should load");
+
+        assert!(forbidden.contains("cycle purchase operation is in_flight"));
+        assert_eq!(database_count, 1);
         assert_eq!(pending_count, 0);
     }
 

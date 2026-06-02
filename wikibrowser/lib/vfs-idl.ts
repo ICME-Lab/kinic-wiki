@@ -303,6 +303,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
+    repair_database_cycles_purchase_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
+    repair_database_cycles_purchase_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultCyclesPurchase], []),
     retry_database_cycles_purchase: idl.Func([idl.Text, idl.Nat64], [ResultCyclesPurchase], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),

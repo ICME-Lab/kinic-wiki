@@ -277,6 +277,22 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Retry a completed database cycles purchase as billing authority")]
+    CyclesRetry {
+        database_id: String,
+        operation_id: u64,
+    },
+    #[command(about = "Complete an ambiguous database cycles purchase as billing authority")]
+    CyclesRepairComplete {
+        database_id: String,
+        operation_id: u64,
+        ledger_block_index: u64,
+    },
+    #[command(about = "Cancel an ambiguous database cycles purchase as billing authority")]
+    CyclesRepairCancel {
+        database_id: String,
+        operation_id: u64,
+    },
     #[command(about = "Open the browser cycles purchase page for one database")]
     Cycles {
         database_id: String,

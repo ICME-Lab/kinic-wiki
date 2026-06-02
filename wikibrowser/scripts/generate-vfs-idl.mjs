@@ -144,6 +144,8 @@ const methodOrder = [
   "read_node_context",
   "list_children",
   "outgoing_links",
+  "repair_database_cycles_purchase_cancel",
+  "repair_database_cycles_purchase_complete",
   "retry_database_cycles_purchase",
   "revoke_database_access",
   "rename_database",

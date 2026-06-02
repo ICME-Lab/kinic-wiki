@@ -27,6 +27,19 @@ type CyclesPurchaseResult = {
   balanceCycles: string | null;
 };
 
+export class CyclesPurchaseAfterApproveError extends Error {
+  approveBlockIndex: string;
+  causeMessage: string;
+
+  constructor(input: { approveBlockIndex: string; causeMessage: string; expiresAt: bigint }) {
+    const expiry = new Date(Number(input.expiresAt / 1_000_000n)).toISOString();
+    super(`cycles purchase failed after approve; approval remains until ${expiry}: ${input.causeMessage}`);
+    this.name = "CyclesPurchaseAfterApproveError";
+    this.approveBlockIndex = input.approveBlockIndex;
+    this.causeMessage = input.causeMessage;
+  }
+}
+
 type PreparedCyclesPurchase = {
   kinicLedgerCanisterId: string;
   purchaseRequest: DatabaseCyclesPurchaseRequest;
@@ -188,7 +201,7 @@ export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, con
   });
   const purchase = await purchaseAfterApprove(
     () => oisyCallCyclesPurchase(connection.wallet, connection.owner, request.canisterId, prepared.purchaseRequest),
-    prepared.expiresAt
+    { approveBlockIndex: approveBlockIndex.toString(), expiresAt: prepared.expiresAt }
   );
   return {
     provider: "oisy",
@@ -230,7 +243,7 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
     const result = await vfsActor.purchase_database_cycles(prepared.purchaseRequest);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
-  }, prepared.expiresAt);
+  }, { approveBlockIndex: approve.Ok.toString(), expiresAt: prepared.expiresAt });
   return {
     provider: "plug",
     approveBlockIndex: approve.Ok.toString(),
@@ -344,12 +357,15 @@ async function oisyCallCyclesPurchase(
   });
 }
 
-async function purchaseAfterApprove<T>(run: () => Promise<T>, expiresAt: bigint): Promise<T> {
+async function purchaseAfterApprove<T>(run: () => Promise<T>, context: { approveBlockIndex: string; expiresAt: bigint }): Promise<T> {
   try {
     return await run();
   } catch (cause) {
-    const expiry = new Date(Number(expiresAt / 1_000_000n)).toISOString();
-    throw new Error(`cycles purchase failed after approve; approval remains until ${expiry}: ${errorMessage(cause)}`);
+    throw new CyclesPurchaseAfterApproveError({
+      approveBlockIndex: context.approveBlockIndex,
+      causeMessage: errorMessage(cause),
+      expiresAt: context.expiresAt
+    });
   }
 }
 

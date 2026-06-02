@@ -33,8 +33,9 @@ use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 #[cfg(target_arch = "wasm32")]
 use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
-    CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseWithLedgerDetails, DatabaseMeta,
-    RequiredRole, VfsService, cycles_for_payment_amount_e8s,
+    CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseRepairTarget,
+    DatabaseCyclesPurchaseWithLedgerDetails, DatabaseMeta, RequiredRole, VfsService,
+    cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
@@ -130,6 +131,48 @@ struct TransferFromArg {
     fee: Option<Nat>,
     memo: Option<Vec<u8>>,
     created_at_time: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct GetTransactionsRequest {
+    start: Nat,
+    length: Nat,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct GetTransactionsResponse {
+    transactions: Vec<LedgerTransaction>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LedgerTransaction {
+    kind: String,
+    transfer: Option<LedgerTransfer>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct LedgerTransfer {
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount: Nat,
+    fee: Option<Nat>,
+    memo: Option<Vec<u8>>,
+    created_at_time: Option<u64>,
+    spender: Option<IcrcAccount>,
+}
+
+#[derive(Clone, Debug)]
+struct ExpectedLedgerTransfer {
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    ledger_fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time_ns: u64,
 }
 
 #[allow(dead_code)]
@@ -597,14 +640,20 @@ async fn purchase_database_cycles(
             Err(error)
         }
         LedgerTransferFromOutcome::Ambiguous(error) => {
-            cleanup_database_cycles_purchase_after_no_credit(
-                operation_id,
-                &request.database_id,
-                &caller,
-                amount_cycles,
-            );
+            if let Err(mark_error) = with_service(|service| {
+                service.mark_database_cycles_purchase_ambiguous(
+                    operation_id,
+                    &request.database_id,
+                    &caller,
+                    amount_cycles,
+                )
+            }) {
+                return Err(format!(
+                    "icrc2_transfer_from result ambiguous for operation_id {operation_id}; failed to mark operation ambiguous; manual billing authority investigation required: {mark_error}; original ledger ambiguity: {error}"
+                ));
+            }
             Err(format!(
-                "icrc2_transfer_from result ambiguous; cycles were not credited: {error}"
+                "icrc2_transfer_from result ambiguous for operation_id {operation_id}; billing authority repair required: {error}"
             ))
         }
     }
@@ -621,6 +670,9 @@ fn retry_database_cycles_purchase(
     if caller != config.billing_authority_id {
         return Err("caller is not billing authority".to_string());
     }
+    with_service(|service| {
+        service.database_cycles_purchase_retry_target(&database_id, operation_id, &caller)
+    })?;
     if let Err(error) =
         activate_pending_database_after_cycles_purchase_ledger_success(&database_id, now_millis())
     {
@@ -628,6 +680,53 @@ fn retry_database_cycles_purchase(
     }
     with_service(|service| {
         service.retry_database_cycles_purchase(&database_id, operation_id, &caller, now_millis())
+    })
+}
+
+#[update]
+async fn repair_database_cycles_purchase_complete(
+    database_id: String,
+    operation_id: u64,
+    ledger_block_index: u64,
+) -> Result<CyclesPurchaseResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let config = with_service(|service| service.cycles_billing_config())?;
+    if caller != config.billing_authority_id {
+        return Err("caller is not billing authority".to_string());
+    }
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let repair_target = with_service(|service| {
+        service.database_cycles_purchase_repair_target(&database_id, operation_id, &caller)
+    })?;
+    let expected = expected_cycles_purchase_transfer(operation_id, &repair_target)?;
+    validate_ledger_transfer_block(ledger, ledger_block_index, expected).await?;
+    with_service(|service| {
+        service.database_cycles_purchase_repair_target(&database_id, operation_id, &caller)
+    })?;
+    activate_pending_database_after_cycles_purchase_ledger_success(&database_id, now_millis())
+        .map_err(|error| format!("cycles purchase repair activation failed: {error}"))?;
+    with_service(|service| {
+        service.repair_database_cycles_purchase_complete(
+            &database_id,
+            operation_id,
+            &caller,
+            ledger_block_index,
+            now_millis(),
+        )
+    })
+}
+
+#[update]
+fn repair_database_cycles_purchase_cancel(
+    database_id: String,
+    operation_id: u64,
+) -> Result<(), String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    with_service(|service| {
+        service.repair_database_cycles_purchase_cancel(&database_id, operation_id, &caller)
     })
 }
 
@@ -675,22 +774,6 @@ fn activate_pending_database_after_cycles_purchase_ledger_success(
         }
     }
     Ok(())
-}
-
-fn cleanup_database_cycles_purchase_after_no_credit(
-    operation_id: u64,
-    database_id: &str,
-    caller: &str,
-    cycles: u64,
-) {
-    let _ = with_service(|service| {
-        service.cleanup_database_cycles_purchase_after_no_credit(
-            operation_id,
-            database_id,
-            caller,
-            cycles,
-        )
-    });
 }
 
 fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
@@ -1212,6 +1295,7 @@ thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_LEDGER_TRANSFER_FROM_OUTCOMES: RefCell<Vec<LedgerTransferFromOutcome>> = const { RefCell::new(Vec::new()) };
     static TEST_LEDGER_TRANSFER_FEES: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    static TEST_LEDGER_TRANSACTIONS: RefCell<Vec<(u64, LedgerTransaction)>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
@@ -1237,8 +1321,21 @@ fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOut
 
 #[cfg(test)]
 fn clear_ledger_transactions_for_test() {
+    TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|slot| {
+        slot.borrow_mut().clear();
+    });
     TEST_LEDGER_TRANSFER_FEES.with(|slot| {
         slot.borrow_mut().clear();
+    });
+    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().clear();
+    });
+}
+
+#[cfg(test)]
+fn set_ledger_transaction_for_test(block_index: u64, transaction: LedgerTransaction) {
+    TEST_LEDGER_TRANSACTIONS.with(|slot| {
+        slot.borrow_mut().push((block_index, transaction));
     });
 }
 
@@ -1491,6 +1588,106 @@ async fn ledger_transfer_from(
             },
             Err(error) => transfer_from_error_outcome(error),
         }
+    }
+}
+
+fn expected_cycles_purchase_transfer(
+    operation_id: u64,
+    repair_target: &DatabaseCyclesPurchaseRepairTarget,
+) -> Result<ExpectedLedgerTransfer, String> {
+    Ok(ExpectedLedgerTransfer {
+        from: IcrcAccount {
+            owner: pending_principal(&repair_target.from_owner, "from owner")?,
+            subaccount: repair_target.from_subaccount.clone(),
+        },
+        to: IcrcAccount {
+            owner: pending_principal(&repair_target.to_owner, "to owner")?,
+            subaccount: repair_target.to_subaccount.clone(),
+        },
+        amount_e8s: repair_target.payment_amount_e8s,
+        ledger_fee_e8s: repair_target.ledger_fee_e8s,
+        memo: cycles_purchase_memo(operation_id),
+        created_at_time_ns: repair_target.ledger_created_at_time_ns,
+    })
+}
+
+fn pending_principal(value: &str, label: &str) -> Result<Principal, String> {
+    Principal::from_text(value).map_err(|error| format!("invalid pending ledger {label}: {error}"))
+}
+
+async fn validate_ledger_transfer_block(
+    ledger: Principal,
+    ledger_block_index: u64,
+    expected: ExpectedLedgerTransfer,
+) -> Result<(), String> {
+    let transaction = ledger_transaction(ledger, ledger_block_index).await?;
+    if transaction.kind != "transfer" {
+        return Err(format!(
+            "ledger block {ledger_block_index} is not a transfer transaction"
+        ));
+    }
+    let transfer = transaction
+        .transfer
+        .ok_or_else(|| format!("ledger block {ledger_block_index} missing transfer payload"))?;
+    if transfer.from != expected.from {
+        return Err("ledger transfer from account mismatch".to_string());
+    }
+    if transfer.to != expected.to {
+        return Err("ledger transfer to account mismatch".to_string());
+    }
+    if nat_to_u64(&transfer.amount)? != expected.amount_e8s {
+        return Err("ledger transfer amount mismatch".to_string());
+    }
+    let fee = transfer
+        .fee
+        .as_ref()
+        .ok_or_else(|| "ledger transfer fee missing".to_string())
+        .and_then(nat_to_u64)?;
+    if fee != expected.ledger_fee_e8s {
+        return Err("ledger transfer fee mismatch".to_string());
+    }
+    if transfer.memo.as_deref() != Some(expected.memo.as_slice()) {
+        return Err("ledger transfer memo mismatch".to_string());
+    }
+    if transfer.created_at_time != Some(expected.created_at_time_ns) {
+        return Err("ledger transfer created_at_time mismatch".to_string());
+    }
+    Ok(())
+}
+
+async fn ledger_transaction(
+    ledger: Principal,
+    ledger_block_index: u64,
+) -> Result<LedgerTransaction, String> {
+    #[cfg(test)]
+    {
+        let _ = ledger;
+        TEST_LEDGER_TRANSACTIONS.with(|slot| {
+            slot.borrow()
+                .iter()
+                .find_map(|(block_index, transaction)| {
+                    (*block_index == ledger_block_index).then(|| transaction.clone())
+                })
+                .ok_or_else(|| format!("ledger block {ledger_block_index} not found"))
+        })
+    }
+    #[cfg(not(test))]
+    {
+        let response = Call::bounded_wait(ledger, "get_transactions")
+            .with_arg(GetTransactionsRequest {
+                start: Nat::from(ledger_block_index),
+                length: Nat::from(1_u64),
+            })
+            .await
+            .map_err(|error| format!("ledger get_transactions failed: {error:?}"))?;
+        let response: GetTransactionsResponse = response
+            .candid()
+            .map_err(|error| format!("ledger get_transactions decode failed: {error}"))?;
+        response
+            .transactions
+            .into_iter()
+            .next()
+            .ok_or_else(|| format!("ledger block {ledger_block_index} not found"))
     }
 }
 

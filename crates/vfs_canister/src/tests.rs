@@ -22,9 +22,10 @@ use vfs_types::{
 
 use super::{
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
-    Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
-    SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
-    cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
+    Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransaction,
+    LedgerTransfer, LedgerTransferFromOutcome, SERVICE, TransferFromError, append_node,
+    begin_database_archive, begin_database_restore, cancel_database_archive,
+    check_database_write_cycles, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
@@ -35,10 +36,12 @@ use super::{
     memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
     parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
     query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, retry_database_cycles_purchase, revoke_database_access, search_node_paths,
-    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
-    set_test_caller_principal_for_test, settle_database_storage_charges, source_evidence, status,
-    transfer_from_error_outcome, write_database_restore_chunk, write_node, write_nodes,
+    rename_database, repair_database_cycles_purchase_cancel,
+    repair_database_cycles_purchase_complete, retry_database_cycles_purchase,
+    revoke_database_access, search_node_paths, search_nodes, set_ledger_transaction_for_test,
+    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
+    settle_database_storage_charges, source_evidence, status, transfer_from_error_outcome,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -186,6 +189,31 @@ fn cycles_purchase_request(
     DatabaseCyclesPurchaseRequest {
         database_id: database_id.to_string(),
         payment_amount_e8s,
+    }
+}
+
+fn cycles_purchase_ledger_transaction(
+    payer: Principal,
+    payment_amount_e8s: u64,
+    operation_id: u64,
+) -> LedgerTransaction {
+    LedgerTransaction {
+        kind: "transfer".to_string(),
+        transfer: Some(LedgerTransfer {
+            from: IcrcAccount {
+                owner: payer,
+                subaccount: None,
+            },
+            to: IcrcAccount {
+                owner: Principal::anonymous(),
+                subaccount: None,
+            },
+            amount: Nat::from(payment_amount_e8s),
+            fee: Some(Nat::from(KINIC_LEDGER_FEE_E8S)),
+            memo: Some(format!("kvfs:cp:{operation_id}").into_bytes()),
+            created_at_time: Some(1_700_000_000_000_000_000),
+            spender: None,
+        }),
     }
 }
 
@@ -477,7 +505,7 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
         .expect("database ledger should load")
         .entries;
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].kind, "cycles_purchase");
+    assert_eq!(entries[0].kind.as_str(), "cycles_purchase");
     assert_eq!(entries[0].ledger_block_index, Some(42));
 }
 
@@ -821,7 +849,7 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
 }
 
 #[test]
-fn purchase_database_cycles_cleans_up_ambiguous_transfer_from_without_credit() {
+fn purchase_database_cycles_keeps_ambiguous_transfer_from_for_repair() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
@@ -836,16 +864,154 @@ fn purchase_database_cycles_cleans_up_ambiguous_transfer_from_without_credit() {
         &database.database_id,
         500,
     )))
-    .expect_err("ambiguous transfer-from should return no-credit error");
+    .expect_err("ambiguous transfer-from should require repair");
 
     assert!(error.contains("result ambiguous"));
-    assert!(error.contains("cycles were not credited"));
-    assert!(!database_exists(&database.database_id));
-    assert!(
-        list_database_cycle_entries(database.database_id.clone(), None, 10)
-            .expect_err("discarded reservation should not expose cycle entries")
-            .contains("database not found")
+    assert!(error.contains("operation_id 1"));
+    assert!(error.contains("billing authority repair required"));
+    assert_eq!(
+        pending_cycle_purchase_state(&database.database_id),
+        r#"{"status":"ambiguous","block":null}"#
     );
+    assert!(database_exists(&database.database_id));
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    let duplicate = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ambiguous pending operation should block duplicate purchase");
+    assert!(
+        duplicate.contains("database activation is pending")
+            || duplicate.contains("cycles purchase already pending")
+    );
+}
+
+#[test]
+fn repair_database_cycles_purchase_complete_requires_authority_and_verified_block() {
+    install_empty_test_service();
+    let payer = Principal::management_canister();
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let database = create_database(CreateDatabaseRequest {
+        name: "Ambiguous complete".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "icrc2_transfer_from call failed".to_string(),
+    ));
+    let error = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ambiguous transfer should require repair");
+    assert!(error.contains("operation_id 1"));
+    drop(_payer);
+
+    let stranger = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
+        .expect("stranger principal should parse");
+    let _stranger = AuthenticatedCallerGuard::install_principal(stranger);
+    let forbidden = block_on_ready(repair_database_cycles_purchase_complete(
+        database.database_id.clone(),
+        1,
+        88,
+    ))
+    .expect_err("non-authority repair should fail");
+    assert!(forbidden.contains("caller is not billing authority"));
+    drop(_stranger);
+
+    set_ledger_transaction_for_test(88, cycles_purchase_ledger_transaction(payer, 500, 1));
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let repaired = block_on_ready(repair_database_cycles_purchase_complete(
+        database.database_id.clone(),
+        1,
+        88,
+    ))
+    .expect("authority repair should complete purchase");
+
+    assert_eq!(repaired.block_index, 88);
+    assert_eq!(repaired.amount_cycles, 1_172_500);
+    assert_eq!(repaired.balance_cycles, 1_172_500);
+    assert_eq!(
+        pending_cycle_purchase_count_json(&database.database_id),
+        "[0]"
+    );
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+}
+
+#[test]
+fn repair_database_cycles_purchase_complete_rejects_mismatched_block() {
+    install_empty_test_service();
+    let payer = Principal::management_canister();
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let database = create_database(CreateDatabaseRequest {
+        name: "Ambiguous mismatch".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "icrc2_transfer_from decode failed".to_string(),
+    ));
+    block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ambiguous transfer should require repair");
+    drop(_payer);
+
+    set_ledger_transaction_for_test(89, cycles_purchase_ledger_transaction(payer, 501, 1));
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let error = block_on_ready(repair_database_cycles_purchase_complete(
+        database.database_id.clone(),
+        1,
+        89,
+    ))
+    .expect_err("amount mismatch should reject repair");
+
+    assert!(error.contains("ledger transfer amount mismatch"));
+    assert_eq!(
+        pending_cycle_purchase_state(&database.database_id),
+        r#"{"status":"ambiguous","block":null}"#
+    );
+}
+
+#[test]
+fn repair_database_cycles_purchase_cancel_requires_authority_and_discards_pending_database() {
+    install_empty_test_service();
+    let _payer = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Ambiguous cancel".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "icrc2_transfer_from call failed".to_string(),
+    ));
+    block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("ambiguous transfer should require repair");
+    drop(_payer);
+
+    let stranger = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai")
+        .expect("stranger principal should parse");
+    let _stranger = AuthenticatedCallerGuard::install_principal(stranger);
+    let forbidden = repair_database_cycles_purchase_cancel(database.database_id.clone(), 1)
+        .expect_err("non-authority repair cancel should fail");
+    assert!(forbidden.contains("caller is not billing authority"));
+    drop(_stranger);
+
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    repair_database_cycles_purchase_cancel(database.database_id.clone(), 1)
+        .expect("authority should cancel ambiguous operation");
+
+    assert!(!database_exists(&database.database_id));
 }
 
 #[test]
@@ -881,6 +1047,20 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
             .expect("database ledger should load")
             .entries
             .is_empty()
+    );
+
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let retried = retry_database_cycles_purchase(database.database_id.clone(), 1)
+        .expect("billing authority retry should activate after mount retry");
+    assert_eq!(retried.block_index, 42);
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+    assert_eq!(
+        pending_cycle_purchase_count_json(&database.database_id),
+        "[0]"
     );
 }
 
@@ -938,9 +1118,58 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_and_allows_aut
     let retried = retry_database_cycles_purchase(database.database_id.clone(), 1)
         .expect("billing authority retry should complete purchase");
     assert_eq!(retried.block_index, 44);
+    assert_eq!(retried.balance_cycles, retried.amount_cycles);
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+    let entries = list_database_cycle_entries(database.database_id.clone(), None, 10)
+        .expect("database ledger should load")
+        .entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "cycles_purchase");
+    assert_eq!(entries[0].balance_after_cycles, retried.balance_cycles);
     assert_eq!(
         pending_cycle_purchase_count_json(&database.database_id),
         "[0]"
+    );
+}
+
+#[test]
+fn retry_database_cycles_purchase_validates_operation_before_activation() {
+    install_empty_test_service();
+    let _owner = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Retry preflight".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(45));
+    fail_next_apply_database_cycles_purchase_apply_for_test();
+
+    block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        600,
+    )))
+    .expect_err("cycle apply failure should leave a completed operation");
+
+    assert_eq!(
+        pending_cycle_purchase_state(&database.database_id),
+        r#"{"status":"completed","block":45}"#
+    );
+    fail_next_mount_database_file_for_test();
+
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let wrong_operation = retry_database_cycles_purchase(database.database_id.clone(), 999)
+        .expect_err("wrong operation id should fail before activation");
+    assert!(wrong_operation.contains("pending cycle operation not found"));
+
+    let activation = retry_database_cycles_purchase(database.database_id.clone(), 1)
+        .expect_err("mount failure flag should remain for the valid retry");
+    assert!(activation.contains("test mount failure"));
+    assert_eq!(
+        pending_cycle_purchase_state(&database.database_id),
+        r#"{"status":"completed","block":45}"#
     );
 }
 

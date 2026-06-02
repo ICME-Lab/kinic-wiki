@@ -83,12 +83,20 @@ assert.match(wallet, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCan
 assert.match(wallet, /spender: \{ owner: Principal\.fromText\(canisterId\), subaccount: \[\] \}/);
 assert.match(wallet, /DEFAULT_OISY_SIGNER_URL/);
 assert.match(wallet, /cycles purchase failed after approve; approval remains until/);
+assert.match(wallet, /class CyclesPurchaseAfterApproveError extends Error/);
 assert.match(client, /purchased cycles/);
 assert.match(client, /purchasedCycles/);
 assert.match(client, /approved allowance/);
 assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
 assert.match(client, /Any authenticated wallet can purchase non-refundable cycles/);
+assert.match(client, /CyclesPurchaseAfterApproveError/);
+assert.match(client, /extractCyclesRepairTarget/);
+assert.match(client, /saveCyclesRepairRecord/);
+assert.match(client, /window\.localStorage\.setItem\(cyclesRepairRecordKey/);
+assert.match(client, /Billing authority repair required/);
+assert.match(client, /Operation ID/);
+assert.match(client, /Ledger block/);
 assert.doesNotMatch(client, /withdraw KINIC|database balance/);
 assert.doesNotMatch(client, /cycles canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.match(url, /KINIC_DECIMALS/);
@@ -163,9 +171,47 @@ assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS 
 await assert.rejects(
   () => walletTest.purchaseAfterApprove(async () => {
     throw new Error("purchase rejected");
-  }, 1_700_000_000_000_000_000n),
+  }, { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n }),
   /cycles purchase failed after approve; approval remains until .*purchase rejected/
 );
+await walletTest.purchaseAfterApprove(async () => "ok", { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n });
+
+const clientModule = loadTsModule(
+  "../app/cycles/cycles-client.tsx",
+  {
+    "next/link": { __esModule: true, default: () => null },
+    "lucide-react": {
+      CheckCircle2: () => null,
+      CircleAlert: () => null,
+      Info: () => null,
+      PlugZap: () => null,
+      Wallet: () => null
+    },
+    "react": {
+      useEffect: () => undefined,
+      useMemo: (run) => run(),
+      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => undefined]
+    },
+    "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
+    "@/lib/cycles-url": {
+      parseKinicAmountE8sInput: () => 100n,
+      parseCyclesTarget: () => ({ databaseId: "db_alpha" })
+    },
+    "@/lib/cycles-wallet": {
+      CyclesPurchaseAfterApproveError: walletModule.CyclesPurchaseAfterApproveError,
+      connectOisyWallet: async () => ({}),
+      connectPlugWallet: async () => ({}),
+      purchaseCyclesWithOisy: async () => ({}),
+      purchaseCyclesWithPlug: async () => ({})
+    },
+    "@/lib/kinic-amount": { formatTokenAmountFromE8s: (value) => String(value) }
+  },
+  "Object.assign(exports, { __test: { extractCyclesRepairTarget } });"
+);
+const repairTarget = clientModule.__test.extractCyclesRepairTarget("cycles purchase payment completed at ledger block 44 but local cycles application failed; pending operation 7 remains completed for retry: apply failed");
+assert.equal(repairTarget.ledgerBlockIndex, "44");
+assert.equal(repairTarget.operationId, "7");
+assert.equal(clientModule.__test.extractCyclesRepairTarget("icrc2_transfer_from result ambiguous for operation_id 7"), null);
 cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(
   () => walletTest.decodeOisyCyclesPurchaseResult({
@@ -221,6 +267,7 @@ function loadTsModule(relativePath, mocks, append = "") {
     compilerOptions: {
       module: ts.ModuleKind.CommonJS,
       target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
       esModuleInterop: true
     }
   }).outputText;

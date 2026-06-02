@@ -62,6 +62,25 @@ pub trait VfsApi: Sync {
             "retry_database_cycles_purchase is not implemented by this client"
         ))
     }
+    async fn repair_database_cycles_purchase_complete(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+        _ledger_block_index: u64,
+    ) -> Result<CyclesPurchaseResult> {
+        Err(anyhow!(
+            "repair_database_cycles_purchase_complete is not implemented by this client"
+        ))
+    }
+    async fn repair_database_cycles_purchase_cancel(
+        &self,
+        _database_id: &str,
+        _operation_id: u64,
+    ) -> Result<()> {
+        Err(anyhow!(
+            "repair_database_cycles_purchase_cancel is not implemented by this client"
+        ))
+    }
     async fn check_database_write_cycles(&self, _database_id: &str) -> Result<()> {
         Err(anyhow!(
             "check_database_write_cycles is not implemented by this client"
@@ -459,6 +478,38 @@ impl VfsApi for CanisterVfsClient {
         let result: Result<CyclesPurchaseResult, String> = self
             .update2(
                 "retry_database_cycles_purchase",
+                &database_id.to_string(),
+                &operation_id,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_cycles_purchase_complete(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+        ledger_block_index: u64,
+    ) -> Result<CyclesPurchaseResult> {
+        let result: Result<CyclesPurchaseResult, String> = self
+            .update3(
+                "repair_database_cycles_purchase_complete",
+                &database_id.to_string(),
+                &operation_id,
+                &ledger_block_index,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn repair_database_cycles_purchase_cancel(
+        &self,
+        database_id: &str,
+        operation_id: u64,
+    ) -> Result<()> {
+        let result: Result<(), String> = self
+            .update2(
+                "repair_database_cycles_purchase_cancel",
                 &database_id.to_string(),
                 &operation_id,
             )

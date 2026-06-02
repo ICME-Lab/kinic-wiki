@@ -7,11 +7,21 @@ import Link from "next/link";
 import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
-import { connectOisyWallet, connectPlugWallet, purchaseCyclesWithOisy, purchaseCyclesWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/cycles-wallet";
+import { CyclesPurchaseAfterApproveError, connectOisyWallet, connectPlugWallet, purchaseCyclesWithOisy, purchaseCyclesWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/cycles-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 
 type CyclesStatus = "idle" | "connecting" | "running" | "success" | "error";
 type CyclesProvider = "oisy" | "plug";
+type CyclesRepairRecord = {
+  databaseId: string;
+  provider: CyclesProvider;
+  approveBlockIndex: string;
+  operationId: string;
+  ledgerBlockIndex: string;
+  paymentAmountE8s: string;
+  errorMessage: string;
+  createdAt: string;
+};
 
 type CyclesClientProps = {
   canisterId: string;
@@ -23,6 +33,7 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [provider, setProvider] = useState<CyclesProvider | null>(null);
+  const [repairRecord, setRepairRecord] = useState<CyclesRepairRecord | null>(null);
   const [amount, setAmount] = useState(() => (initialKinic?.trim() ? initialKinic : "1"));
   const [oisyWallet, setOisyWallet] = useState<ConnectedOisyWallet | null>(null);
   const [plugWallet, setPlugWallet] = useState<ConnectedPlugWallet | null>(null);
@@ -63,6 +74,7 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
     setStatus("connecting");
     setProvider(nextProvider);
     setMessage(null);
+    setRepairRecord(null);
     try {
       if (nextProvider === "oisy") {
         const nextWallet = await connectOisyWallet();
@@ -90,6 +102,7 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
     setStatus("running");
     setProvider(selectedProvider);
     setMessage(null);
+    setRepairRecord(null);
     try {
       const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
       const result =
@@ -106,7 +119,18 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
       if (selectedProvider === "oisy") setOisyWallet(null);
       setStatus("success");
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
+      const nextMessage = cause instanceof Error ? cause.message : String(cause);
+      const nextRepairRecord = buildCyclesRepairRecord({
+        cause,
+        databaseId: parsedTarget.databaseId,
+        paymentAmountE8s: parsedAmount.toString(),
+        provider: selectedProvider
+      });
+      if (nextRepairRecord) {
+        saveCyclesRepairRecord(nextRepairRecord);
+        setRepairRecord(nextRepairRecord);
+      }
+      setMessage(nextMessage);
       setStatus("error");
     }
   }
@@ -174,8 +198,69 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
         {error ? <Notice tone="error" text={error} /> : null}
         {status === "success" && message ? <Notice tone="success" text={message} /> : null}
         {status === "error" && message ? <Notice tone="error" text={message} /> : null}
+        {status === "error" && repairRecord ? <RepairRecordPanel record={repairRecord} /> : null}
       </section>
     </main>
+  );
+}
+
+export function extractCyclesRepairTarget(errorMessage: string): { operationId: string; ledgerBlockIndex: string } | null {
+  const match = errorMessage.match(/ledger block ([0-9]+)[\s\S]*pending operation ([0-9]+) remains completed for retry/);
+  if (!match?.[1] || !match[2]) return null;
+  return { ledgerBlockIndex: match[1], operationId: match[2] };
+}
+
+function buildCyclesRepairRecord({
+  cause,
+  databaseId,
+  paymentAmountE8s,
+  provider
+}: {
+  cause: unknown;
+  databaseId: string;
+  paymentAmountE8s: string;
+  provider: CyclesProvider;
+}): CyclesRepairRecord | null {
+  if (!(cause instanceof CyclesPurchaseAfterApproveError)) return null;
+  const target = extractCyclesRepairTarget(cause.causeMessage);
+  if (!target) return null;
+  return {
+    databaseId,
+    provider,
+    approveBlockIndex: cause.approveBlockIndex,
+    operationId: target.operationId,
+    ledgerBlockIndex: target.ledgerBlockIndex,
+    paymentAmountE8s,
+    errorMessage: cause.message,
+    createdAt: new Date().toISOString()
+  };
+}
+
+function saveCyclesRepairRecord(record: CyclesRepairRecord): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(cyclesRepairRecordKey(record.databaseId, record.operationId), JSON.stringify(record));
+}
+
+function cyclesRepairRecordKey(databaseId: string, operationId: string): string {
+  return `kinic.cycles.repair.${databaseId}.${operationId}`;
+}
+
+function RepairRecordPanel({ record }: { record: CyclesRepairRecord }) {
+  return (
+    <section className="grid gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+      <div>
+        <h2 className="font-semibold">Billing authority repair required</h2>
+        <p className="mt-1 leading-6">Share these values with the billing authority for cycles retry.</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Field label="Database" value={record.databaseId} />
+        <Field label="Provider" value={record.provider} />
+        <Field label="Approve block" value={record.approveBlockIndex} />
+        <Field label="Operation ID" value={record.operationId} />
+        <Field label="Ledger block" value={record.ledgerBlockIndex} />
+        <Field label="Payment e8s" value={record.paymentAmountE8s} />
+      </div>
+    </section>
   );
 }
 

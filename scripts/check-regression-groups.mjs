@@ -46,6 +46,10 @@ const groups = {
     ["extensions/wiki-clipper/tests/raw-source.test.mjs", "removes dotdot from conversation source filenames"],
     ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "safeIngestRequestId"],
     ["wikibrowser/lib/url-ingest.ts", "safeIngestRequestId(Date.now(), crypto.randomUUID())"]
+  ],
+  canister_ci_filter: [
+    [".github/workflows/ci.yml", "crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/"],
+    [".github/workflows/ci.yml", "set_output rust_all"]
   ]
 };
 
