@@ -132,7 +132,7 @@ approved_allowance_e8s = payment_amount_e8s + ledger_fee_e8s
 
 approve の transaction fee は wallet 残高から別途支払われる。approve は現在 allowance を `expected_allowance` として渡し、30 分後に expire する。approve 後に purchase が失敗した場合、UI は approval が expire まで残る旨を error に含める。
 
-UI は `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` と request canister ID が一致しない場合に拒否する。Plug は VFS canister と KINIC ledger canister を whitelist して接続する。OISY は ICRC wallet の call-canister 結果 certificate を検証し、method、canister、arg、reply を照合する。
+UI は `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` と request canister ID が一致しない場合に拒否する。Plug は VFS canister と KINIC ledger canister を whitelist して接続する。OISY は接続確認後に signer popup を閉じ、購入時に再度 signer を開いて同じ owner であることを確認する。OISY は ICRC wallet の call-canister 結果 certificate を検証し、method、canister、arg、reply を照合する。
 
 ## ICRC-21 consent
 
@@ -154,11 +154,11 @@ metered update は実行前に `prepare_metered_update` で認可と残高確認
 
 `check_database_write_cycles(database_id)` は anonymous caller を明示的に拒否し、writer 以上の role と cycles 利用可能状態を確認する。
 
-canister の metered update wrapper は、更新前後の canister cycle balance 差分を `cycles_delta` として計算する。更新関数が `Ok` を返した場合だけ、`charge_database_update` を実行する。
+canister の metered update wrapper は、更新前後の `performance_counter(InstructionCounter)` 差分に 13-node application subnet の update 実行 base fee `5_000_000 cycles` を加えた値を `cycles_delta` として計算する。`canister_cycle_balance` は同一 message 内の実行課金確定前の残高を返すため、update 本体の課金計測には使わない。更新関数が `Ok` を返した場合だけ、`charge_database_update` を実行する。
 
 更新課金額は `cycles_delta` そのものである。`cycles_delta` が `i64` に収まらない場合は `cycle charge exceeds i64 limit` になる。`cycles_delta == 0` の場合、残高更新も ledger 記録も行わない。
 
-`charge_database_update` は現在残高より請求額が大きい場合、残高を全徴収して `balance_after_cycles = 0` にし、DB を suspended にする。ledger の `amount_cycles` は実際に徴収した cycles、`cycles_delta` は実測請求額を記録する。
+`charge_database_update` は現在残高より請求額が大きい場合、残高を全徴収して `balance_after_cycles = 0` にし、DB を suspended にする。ledger の `amount_cycles` は実際に徴収した cycles、`cycles_delta` は update 実行 base fee と instruction 差分から計算した請求額を記録する。
 
 課金成功時は残高から実徴収額を引く。更新後残高が `min_update_cycles` 未満なら `suspended_at_ms` を課金時刻に設定し、それ以上なら `NULL` にする。ledger には以下を記録する。
 

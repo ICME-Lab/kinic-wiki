@@ -15,6 +15,8 @@ use std::time::Duration;
 use candid::utils::decode_args;
 use candid::{CandidType, Decode, Deserialize, Nat, Principal, export_service};
 #[cfg(not(test))]
+use ic_cdk::api::PerformanceCounterType;
+#[cfg(not(test))]
 use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
 #[cfg(target_arch = "wasm32")]
@@ -66,6 +68,7 @@ const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wik
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
+const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
 #[cfg(target_arch = "wasm32")]
 const INDEX_DB_MEMORY_ID: u16 = 10;
 
@@ -1195,7 +1198,7 @@ thread_local! {
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_CYCLE_BALANCES: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
+    static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -1216,9 +1219,9 @@ fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOut
 }
 
 #[cfg(test)]
-fn set_cycle_balances_for_test(balances: Vec<u128>) {
-    TEST_CYCLE_BALANCES.with(|slot| {
-        slot.replace(balances);
+fn set_update_charge_units_for_test(units: Vec<u128>) {
+    TEST_UPDATE_CHARGE_UNITS.with(|slot| {
+        slot.replace(units);
     });
 }
 
@@ -1230,7 +1233,7 @@ fn clear_ledger_transactions_for_test() {
     TEST_LEDGER_TRANSFER_FEES.with(|slot| {
         slot.borrow_mut().clear();
     });
-    TEST_CYCLE_BALANCES.with(|slot| {
+    TEST_UPDATE_CHARGE_UNITS.with(|slot| {
         slot.borrow_mut().clear();
     });
 }
@@ -1397,22 +1400,24 @@ fn now_millis() -> i64 {
     }
 }
 
-fn cycle_balance() -> u128 {
+fn update_charge_units() -> u128 {
     #[cfg(test)]
     {
-        TEST_CYCLE_BALANCES.with(|slot| {
-            let mut balances = slot.borrow_mut();
-            if balances.is_empty() {
-                1_000_000_000_000
-            } else {
-                balances.remove(0)
-            }
+        TEST_UPDATE_CHARGE_UNITS.with(|slot| {
+            let mut units = slot.borrow_mut();
+            if units.is_empty() { 0 } else { units.remove(0) }
         })
     }
     #[cfg(not(test))]
     {
-        ic_cdk::api::canister_cycle_balance()
+        u128::from(ic_cdk::api::performance_counter(
+            PerformanceCounterType::InstructionCounter,
+        ))
     }
+}
+
+fn update_charge_cycles(before: u128, after: u128) -> u128 {
+    UPDATE_EXECUTION_BASE_CYCLES + after.saturating_sub(before)
 }
 
 fn now_nanos() -> u64 {
@@ -1592,7 +1597,7 @@ where
 {
     let caller = caller_text();
     let now = now_millis();
-    let before_cycles = cycle_balance();
+    let before_charge_units = update_charge_units();
     SERVICE.with(|slot| {
         let borrowed = slot.borrow();
         let service = borrowed
@@ -1600,8 +1605,8 @@ where
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
         let cycles_billing_config = authorize(service, &caller)?;
         let result = f(service, &caller, now);
-        let after_cycles = cycle_balance();
-        let cycles_delta = before_cycles.saturating_sub(after_cycles);
+        let after_charge_units = update_charge_units();
+        let cycles_delta = update_charge_cycles(before_charge_units, after_charge_units);
         if result.is_ok()
             && let Some(database_id) = database_id.as_deref()
             && let Err(error) = service.charge_database_update(

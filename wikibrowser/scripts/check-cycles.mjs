@@ -30,6 +30,7 @@ assert.match(client, /Connect OISY/);
 assert.match(client, /Connect Plug/);
 assert.match(client, /Purchase cycles with OISY/);
 assert.match(client, /Purchase cycles with Plug/);
+assert.match(client, /router\.replace\("\/"\)/);
 assert.match(client, /const purchaseDisabled = !selectedProvider \|\| Boolean\(error\) \|\| Boolean\(amountError\) \|\| busy/);
 assert.match(client, /function WalletConnect/);
 assert.match(client, /onClick=\{\(\) => void purchase\(\)\}/);
@@ -46,8 +47,11 @@ assert.match(wallet, /class CyclesPurchaseIcrcWallet extends IcrcWallet/);
 assert.match(wallet, /async callCyclesPurchase\(params: IcrcCallCanisterRequestParams\)/);
 assert.match(wallet, /export async function purchaseCyclesWithOisy\(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet\)/);
 assert.match(wallet, /export async function purchaseCyclesWithPlug\(request: CyclesPurchaseRequest, connection: ConnectedPlugWallet\)/);
-assert.match(connectOisy, /CyclesPurchaseIcrcWallet\.connect/);
+assert.match(connectOisy, /openOisyWallet\(\)/);
 assert.match(connectOisy, /wallet\.accounts\(\)/);
+assert.match(wallet, /async function safeDisconnectOisyWallet\(wallet: CyclesPurchaseIcrcWallet\): Promise<void>/);
+assert.match(wallet, /Cleanup failures must not hide connect, approve, or purchase errors\./);
+assert.match(connectOisy, /safeDisconnectOisyWallet\(wallet\)/);
 assert.doesNotMatch(connectOisy, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
 assert.match(connectPlug, /plug\.requestConnect\(\{\s*host:/);
 assert.doesNotMatch(connectPlug, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
@@ -80,7 +84,11 @@ assert.match(wallet, /expected_allowance: \[expectedAllowanceE8s\]/);
 assert.match(wallet, /expires_at: \[expiresAt\]/);
 assert.match(wallet, /APPROVE_EXPIRES_IN_MS = 30 \* 60 \* 1000/);
 assert.match(wallet, /assertConfiguredCyclesCanister\(request\.canisterId\)/);
-assert.match(wallet, /oisyCallCyclesPurchase\(connection\.wallet, connection\.owner, request\.canisterId, prepared\.purchaseRequest\)/);
+assert.match(purchaseOisy, /openOisyWallet\(\)/);
+assert.match(purchaseOisy, /account\.owner !== connection\.owner/);
+assert.match(purchaseOisy, /safeDisconnectOisyWallet\(wallet\)/);
+assert.match(purchaseOisy, /purchaseAfterApprove/);
+assert.match(wallet, /oisyCallCyclesPurchase\(wallet, connection\.owner, request\.canisterId, prepared\.purchaseRequest\)/);
 assert.match(wallet, /sender: owner/);
 assert.match(wallet, /wallet response sender mismatch/);
 assert.match(wallet, /contentMap|Certificate|requestIdOf/);
@@ -193,6 +201,7 @@ const clientModule = loadTsModule(
   "../app/cycles/cycles-client.tsx",
   {
     "next/link": { __esModule: true, default: () => null },
+    "next/navigation": { useRouter: () => ({ replace: () => undefined }) },
     "lucide-react": {
       CheckCircle2: () => null,
       CircleAlert: () => null,

@@ -36,10 +36,10 @@ use super::{
     multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
     purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
     read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
-    search_nodes, set_cycle_balances_for_test, set_next_ledger_transfer_from_outcome_for_test,
-    set_test_caller_principal_for_test, settle_database_storage_charges, source_evidence, status,
-    transfer_from_error_outcome, update_cycles_billing_config, write_database_restore_chunk,
-    write_node, write_nodes,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_test_caller_principal_for_test, set_update_charge_units_for_test,
+    settle_database_storage_charges, source_evidence, status, transfer_from_error_outcome,
+    update_cycles_billing_config, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -1334,8 +1334,9 @@ fn canister_list_databases_hides_deleted_databases() {
 }
 
 #[test]
-fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
+fn write_nodes_records_instruction_charge_and_writes_nodes() {
     install_test_service();
+    set_update_charge_units_for_test(vec![10_000, 10_321]);
 
     let results = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
@@ -1359,7 +1360,16 @@ fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
     .expect("batch write should succeed");
 
     assert_eq!(results.len(), 2);
-    assert!(database_charge_methods("default").is_empty());
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charge = entries
+        .iter()
+        .find(|entry| entry.kind == "charge")
+        .expect("charge entry should exist");
+    assert_eq!(charge.amount_cycles, -5_000_321);
+    assert_eq!(charge.cycles_delta, Some(5_000_321));
+    assert_eq!(charge.method.as_deref(), Some("write_nodes"));
     assert!(
         read_node("default".to_string(), "/Wiki/batch-a.md".to_string())
             .expect("read should succeed")
@@ -1368,8 +1378,9 @@ fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
 }
 
 #[test]
-fn write_node_and_write_nodes_skip_zero_charge_ledger() {
+fn write_node_and_write_nodes_record_instruction_charges() {
     install_test_service();
+    set_update_charge_units_for_test(vec![7, 11, 13, 19]);
 
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
@@ -1392,7 +1403,18 @@ fn write_node_and_write_nodes_skip_zero_charge_ledger() {
     })
     .expect("batch write should succeed");
 
-    assert!(database_charge_methods("default").is_empty());
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charges = entries
+        .iter()
+        .filter(|entry| entry.kind == "charge")
+        .collect::<Vec<_>>();
+    assert_eq!(charges.len(), 2);
+    assert_eq!(charges[0].method.as_deref(), Some("write_node"));
+    assert_eq!(charges[0].cycles_delta, Some(5_000_004));
+    assert_eq!(charges[1].method.as_deref(), Some("write_nodes"));
+    assert_eq!(charges[1].cycles_delta, Some(5_000_006));
 }
 
 #[test]
@@ -1405,7 +1427,7 @@ fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
         .and_then(|database| database.cycles_balance)
         .expect("default database should have cycles balance");
 
-    set_cycle_balances_for_test(vec![1_000_000_000_000, 0]);
+    set_update_charge_units_for_test(vec![0, 1_000_000_000_000]);
     let written = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Wiki/overdrawn.md".to_string(),
@@ -1439,7 +1461,7 @@ fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
         .expect("charge entry should exist");
     assert_eq!(charge.amount_cycles, -(before_balance as i64));
     assert_eq!(charge.balance_after_cycles, 0);
-    assert_eq!(charge.cycles_delta, Some(1_000_000_000_000));
+    assert_eq!(charge.cycles_delta, Some(1_000_005_000_000));
     assert_eq!(charge.method.as_deref(), Some("write_node"));
 }
 

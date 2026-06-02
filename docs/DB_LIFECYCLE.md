@@ -70,7 +70,7 @@ Successful DB update calls are charged after execution. The charge is raw cycle 
 cycles_delta
 ```
 
-Cycles are stored as raw integer cycles. The default purchase rate is `1 KINIC = 234_500_000_000 cycles` (`0.2345 Tcycle`), controlled by `cycles_per_kinic`. Before a metered update, the caller role is checked first, then the DB cycles balance must be at least `min_update_cycles` and the DB must not be suspended. Non-members receive access errors without learning cycles state. If the post-update charge exceeds the DB cycles balance, the remaining DB cycles are fully charged, the balance becomes `0`, and the DB is suspended.
+Cycles are stored as raw integer cycles. The default purchase rate is `1 KINIC = 234_500_000_000 cycles` (`0.2345 Tcycle`), controlled by `cycles_per_kinic`. Before a metered update, the caller role is checked first, then the DB cycles balance must be at least `min_update_cycles` and the DB must not be suspended. Non-members receive access errors without learning cycles state. Metered update charge uses the current message instruction counter delta plus the 13-node update execution base fee, not same-message canister balance deltas. If the post-update charge exceeds the DB cycles balance, the remaining DB cycles are fully charged, the balance becomes `0`, and the DB is suspended.
 
 Storage billing settles every 24h from a canister timer, with controller-only `settle_database_storage_charges()` as recovery path. Only active DBs are charged. The 13-node subnet rate is fixed at `127_000 cycles / GiB / sec`:
 

@@ -314,7 +314,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         ) : !databaseId ? (
           <section className="rounded-lg border border-line bg-paper p-8 shadow-sm">
             <h2 className="text-lg font-semibold text-ink">Select a database to manage</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">Open the Database dashboard, then choose Access on a database row.</p>
+            <p className="mt-2 text-sm leading-6 text-muted">Open the Database dashboard, then choose Manage on a database row.</p>
             <Link className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href="/">
               Open Database dashboard
             </Link>
