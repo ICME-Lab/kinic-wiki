@@ -166,6 +166,7 @@ assert.match(homeUi, /<th className="px-4 py-3 font-medium">ID<\/th>/);
 assert.match(homeUi, /<th className="px-4 py-3 font-medium">Status<\/th>/);
 assert.match(homeUi, /<th className="px-4 py-3 font-medium">Size<\/th>/);
 assert.match(homeUi, /<th className="px-4 py-3 font-medium">Cycles<\/th>/);
+assert.doesNotMatch(homeUi, /<th className="px-4 py-3 font-medium">Open<\/th>/);
 assert.doesNotMatch(homeUi, /<th className="px-4 py-3 font-medium">Registry<\/th>/);
 assert.match(homeUi, /<th className="px-4 py-3 font-medium">Top up<\/th>/);
 assert.match(homeUi, /<th className="px-4 py-3 font-medium">Manage<\/th>/);
@@ -186,6 +187,8 @@ assert.match(homeUi, /function databaseCyclesBalanceSummary\(database: DatabaseR
 assert.match(homeUi, /formatCycleBalance\(balance\)/);
 assert.doesNotMatch(homeUi, /formatCycleBalance\(balance\) \+ " cycles"/);
 assert.doesNotMatch(homeUi, /databaseCyclesView\(database, cyclesConfig\)\.summary/);
+assert.match(homeUi, /<Link className="font-semibold text-accent no-underline hover:underline" href=\{openDatabaseHref\(database\)\}>/);
+assert.doesNotMatch(homeUi, /<DatabaseActionLink href=\{openDatabaseHref\(database\)\} icon=\{<BookOpen aria-hidden size=\{14\} \/>} label="Open" \/>/);
 assert.match(homeUi, /\/dashboard\/\$\{encodeURIComponent\(database\.databaseId\)\}/);
 assert.doesNotMatch(homeUi, /active && mode === "member" && database\.publicReadable/);
 assert.match(homeUi, /active && database\.publicReadable \? <ShareDatabaseLink database=\{database\} \/>/);

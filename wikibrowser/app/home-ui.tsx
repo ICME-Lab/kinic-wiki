@@ -164,7 +164,6 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Size</th>
               <th className="px-4 py-3 font-medium">Cycles</th>
-              <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
               {mode === "member" ? <th className="px-4 py-3 font-medium">Top up</th> : null}
               <th className="px-4 py-3 font-medium">Manage</th>
@@ -188,7 +187,13 @@ function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: Cycl
     <tr className="border-t border-line">
       <td className="px-4 py-3">
         <div className="flex min-w-[180px] flex-wrap items-center gap-2">
-          <span className="font-semibold text-ink">{database.name}</span>
+          {active ? (
+            <Link className="font-semibold text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+              {database.name}
+            </Link>
+          ) : (
+            <span className="font-semibold text-ink">{database.name}</span>
+          )}
           {database.publicReadable ? <PublicBadge /> : null}
         </div>
       </td>
@@ -197,11 +202,6 @@ function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: Cycl
       <td className="px-4 py-3 text-ink">{databaseStatusSummary(database, cycles)}</td>
       <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
       <td className="px-4 py-3 text-ink">{databaseCyclesBalanceSummary(database)}</td>
-      <td className="px-4 py-3">
-        <div className="flex flex-wrap gap-2">
-          {active ? <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : <span className="text-muted">-</span>}
-        </div>
-      </td>
       <td className="px-4 py-3">{active && database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
       {mode === "member" ? (
         <td className="px-4 py-3">
@@ -221,7 +221,15 @@ function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: Cy
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <h4 className="min-w-0 break-words font-semibold text-ink">{database.name}</h4>
+        <h4 className="min-w-0 break-words font-semibold">
+          {active ? (
+            <Link className="text-accent no-underline hover:underline" href={openDatabaseHref(database)}>
+              {database.name}
+            </Link>
+          ) : (
+            <span className="text-ink">{database.name}</span>
+          )}
+        </h4>
         {database.publicReadable ? <PublicBadge /> : null}
       </div>
       <dl className="mt-4 grid grid-cols-2 gap-3">
@@ -232,9 +240,6 @@ function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: Cy
         <DatabaseCardMeta label="Cycles" value={databaseCyclesBalanceSummary(database)} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
-        {active ? (
-          <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" />
-        ) : null}
         {mode === "member" ? (
           <DatabaseActionLink href={databaseCyclesHref(database)} icon={<Wallet aria-hidden size={14} />} label="Top up" />
         ) : null}
@@ -263,7 +268,7 @@ function PublicBadge() {
 
 function DatabaseActionLink({ ariaLabel, external = false, href, icon, label }: { ariaLabel?: string; external?: boolean; href: string; icon: ReactNode; label: string }) {
   const className =
-    "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
+    "inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-medium text-accent no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white";
   if (external) {
     return (
       <a aria-label={ariaLabel} className={className} href={href} rel="noreferrer" target="_blank">
