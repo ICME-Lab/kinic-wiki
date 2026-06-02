@@ -482,6 +482,99 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
 }
 
 #[test]
+fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Anonymous purchase".to_string(),
+    })
+    .expect("database should create");
+    drop(_caller);
+    clear_last_ledger_memo_for_test();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+
+    let error = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect_err("anonymous caller should reject before ledger transfer");
+
+    assert!(error.contains("anonymous caller not allowed"));
+    assert_eq!(last_ledger_memo_for_test(), None);
+    assert_eq!(
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+}
+
+#[test]
+fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Duplicate ledger".to_string(),
+    })
+    .expect("database should create");
+    set_next_ledger_transfer_from_outcome_for_test(transfer_from_error_outcome(
+        TransferFromError::Duplicate {
+            duplicate_of: Nat::from(77_u64),
+        },
+    ));
+
+    let result = block_on_ready(purchase_database_cycles(cycles_purchase_request(
+        &database.database_id,
+        500,
+    )))
+    .expect("duplicate transfer-from should cycle database");
+
+    assert_eq!(result.block_index, 77);
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+    let entries = list_database_cycle_entries(database.database_id, None, 10)
+        .expect("database ledger should load")
+        .entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "cycles_purchase");
+    assert_eq!(entries[0].ledger_block_index, Some(77));
+}
+
+#[test]
+fn list_database_cycle_entries_paginates_with_clamped_limits() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    let database = create_database(CreateDatabaseRequest {
+        name: "Cycle history pages".to_string(),
+    })
+    .expect("database should create");
+    for index in 0..105 {
+        fund_database(&database.database_id, 500, index + 1);
+    }
+
+    let minimum_page = list_database_cycle_entries(database.database_id.clone(), None, 0)
+        .expect("minimum page should load");
+    assert_eq!(minimum_page.entries.len(), 1);
+    assert_eq!(minimum_page.entries[0].entry_id, 1);
+    assert_eq!(minimum_page.next_cursor, Some(1));
+
+    let first_page = list_database_cycle_entries(database.database_id.clone(), None, 200)
+        .expect("first clamped page should load");
+    assert_eq!(first_page.entries.len(), 100);
+    assert_eq!(first_page.entries[0].entry_id, 1);
+    assert_eq!(first_page.entries[99].entry_id, 100);
+    assert_eq!(first_page.next_cursor, Some(100));
+
+    let second_page =
+        list_database_cycle_entries(database.database_id, first_page.next_cursor, 200)
+            .expect("second clamped page should load");
+    assert_eq!(second_page.entries.len(), 5);
+    assert_eq!(second_page.entries[0].entry_id, 101);
+    assert_eq!(second_page.entries[4].entry_id, 105);
+    assert_eq!(second_page.next_cursor, None);
+}
+
+#[test]
 fn purchase_database_cycles_rejects_bad_fee_without_credit() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();

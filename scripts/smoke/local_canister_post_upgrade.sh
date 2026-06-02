@@ -30,13 +30,13 @@ validate_unsigned_integer() {
   fi
 }
 
+current_identity_name() {
+  icp identity list | awk '$1 == "*" { print $2; found = 1 } END { if (!found) exit 1 }'
+}
+
 resolve_canister_id() {
   if [[ -n "${VFS_CANISTER_ID:-}" ]]; then
     printf '%s\n' "${VFS_CANISTER_ID}"
-    return 0
-  fi
-  if [[ -n "${CANISTER_ID:-}" ]]; then
-    printf '%s\n' "${CANISTER_ID}"
     return 0
   fi
   if [[ -f "${IDS_FILE}" ]]; then
@@ -49,6 +49,10 @@ resolve_canister_id() {
       }
       process.stdout.write(ids.wiki);
     ' "${IDS_FILE}"
+    return 0
+  fi
+  if [[ -n "${CANISTER_ID:-}" ]]; then
+    printf '%s\n' "${CANISTER_ID}"
     return 0
   fi
   return 1
@@ -80,7 +84,12 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 if [[ -z "${VFS_IDENTITY_PEM_PATH:-}" ]]; then
   VFS_IDENTITY_PEM_PATH="${TMP_DIR}/identity.pem"
-  icp identity export > "$VFS_IDENTITY_PEM_PATH"
+  IDENTITY_NAME="$(current_identity_name)"
+  if [[ -z "${IDENTITY_NAME}" ]]; then
+    echo "current icp identity name could not be resolved" >&2
+    exit 1
+  fi
+  (umask 077 && icp identity export "${IDENTITY_NAME}" > "$VFS_IDENTITY_PEM_PATH")
   export VFS_IDENTITY_PEM_PATH
 fi
 

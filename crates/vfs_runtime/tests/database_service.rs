@@ -2171,6 +2171,40 @@ fn cycles_history_redacts_principals_for_non_owner_readers() {
 }
 
 #[test]
+fn cycles_history_paginates_with_clamped_limits() {
+    let (service, _root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    for index in 0..105 {
+        cycle_database(&service, "alpha", "owner", 500, index + 1, index as i64 + 2);
+    }
+
+    let minimum_page = service
+        .list_database_cycle_entries("alpha", "owner", None, 0)
+        .expect("minimum page should load");
+    assert_eq!(minimum_page.entries.len(), 1);
+    assert_eq!(minimum_page.entries[0].entry_id, 1);
+    assert_eq!(minimum_page.next_cursor, Some(1));
+
+    let first_page = service
+        .list_database_cycle_entries("alpha", "owner", None, 200)
+        .expect("first clamped page should load");
+    assert_eq!(first_page.entries.len(), 100);
+    assert_eq!(first_page.entries[0].entry_id, 1);
+    assert_eq!(first_page.entries[99].entry_id, 100);
+    assert_eq!(first_page.next_cursor, Some(100));
+
+    let second_page = service
+        .list_database_cycle_entries("alpha", "owner", first_page.next_cursor, 200)
+        .expect("second clamped page should load");
+    assert_eq!(second_page.entries.len(), 5);
+    assert_eq!(second_page.entries[0].entry_id, 101);
+    assert_eq!(second_page.entries[4].entry_id, 105);
+    assert_eq!(second_page.next_cursor, None);
+}
+
+#[test]
 fn database_rename_requires_owner() {
     let (service, root) = service_with_root();
     service

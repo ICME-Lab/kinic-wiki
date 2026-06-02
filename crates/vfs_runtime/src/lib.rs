@@ -5595,6 +5595,82 @@ mod tests {
     }
 
     #[test]
+    fn storage_billing_exact_charge_consumes_balance_and_suspends() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("alpha", "owner", 0)
+            .expect("database should create");
+        set_test_database_balance(&service, "alpha", 10);
+        let config = service.cycles_billing_config().expect("config should load");
+
+        service
+            .write_index(|tx| {
+                settle_database_storage_charge_in_tx(
+                    tx,
+                    StorageChargeInput {
+                        database_id: "alpha",
+                        caller: "canister",
+                        size_bytes: 1,
+                        now: STORAGE_BILLING_INTERVAL_MS,
+                        config: &config,
+                    },
+                )
+            })
+            .expect("storage charge should settle");
+
+        let (balance, suspended_at, kinds, amount) = storage_test_account_and_ledger(&service);
+        assert_eq!(balance, 0);
+        assert_eq!(suspended_at, Some(STORAGE_BILLING_INTERVAL_MS));
+        assert_eq!(kinds, vec!["storage_charge", "suspend"]);
+        assert_eq!(amount, -10);
+    }
+
+    #[test]
+    fn storage_billing_keeps_existing_suspension_timestamp() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        service
+            .create_database("alpha", "owner", 0)
+            .expect("database should create");
+        set_test_database_account(&service, "alpha", 10, Some(123));
+        let config = service.cycles_billing_config().expect("config should load");
+
+        service
+            .write_index(|tx| {
+                settle_database_storage_charge_in_tx(
+                    tx,
+                    StorageChargeInput {
+                        database_id: "alpha",
+                        caller: "canister",
+                        size_bytes: 1,
+                        now: STORAGE_BILLING_INTERVAL_MS,
+                        config: &config,
+                    },
+                )
+            })
+            .expect("storage charge should settle");
+
+        let (balance, suspended_at, kinds, amount) = storage_test_account_and_ledger(&service);
+        assert_eq!(balance, 0);
+        assert_eq!(suspended_at, Some(123));
+        assert_eq!(kinds, vec!["storage_charge"]);
+        assert_eq!(amount, -10);
+    }
+
+    #[test]
     fn storage_billing_loads_mounted_databases() {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
@@ -5639,18 +5715,62 @@ mod tests {
         );
     }
 
+    fn storage_test_account_and_ledger(
+        service: &VfsService,
+    ) -> (i64, Option<i64>, Vec<String>, i64) {
+        service
+            .read_index(|conn| {
+                let account = load_storage_cycle_account(conn, "alpha")?;
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT kind FROM database_cycle_ledger
+                         WHERE database_id = 'alpha'
+                         ORDER BY entry_id ASC",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let kinds = crate::sqlite::query_map(&mut stmt, params![], |row| {
+                    crate::sqlite::row_get::<String>(row, 0)
+                })
+                .map_err(|error| error.to_string())?;
+                let amount: i64 = conn
+                    .query_row(
+                        "SELECT amount_cycles FROM database_cycle_ledger
+                         WHERE database_id = 'alpha' AND kind = 'storage_charge'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok((
+                    account.balance_cycles,
+                    account.suspended_at_ms,
+                    kinds,
+                    amount,
+                ))
+            })
+            .expect("storage account and ledger should load")
+    }
+
     fn set_test_database_balance(service: &VfsService, database_id: &str, balance: i64) {
+        set_test_database_account(service, database_id, balance, None);
+    }
+
+    fn set_test_database_account(
+        service: &VfsService,
+        database_id: &str,
+        balance: i64,
+        suspended_at_ms: Option<i64>,
+    ) {
         service
             .write_index(|tx| {
                 tx.execute(
                     "UPDATE database_cycle_accounts
-                     SET balance_cycles = ?2, suspended_at_ms = NULL
+                     SET balance_cycles = ?2, suspended_at_ms = ?3
                      WHERE database_id = ?1",
-                    params![database_id, balance],
+                    params![database_id, balance, suspended_at_ms],
                 )
                 .map_err(|error| error.to_string())?;
                 Ok(())
             })
-            .expect("test database balance should update");
+            .expect("test database account should update");
     }
 }

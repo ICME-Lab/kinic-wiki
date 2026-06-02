@@ -328,7 +328,7 @@ async function oisyCallCyclesPurchase(
   owner: string,
   canisterId: string,
   request: DatabaseCyclesPurchaseRequest
-): Promise<{ blockIndex: string; balanceCycles: string }> {
+): Promise<{ blockIndex: string; amountCycles: string; balanceCycles: string }> {
   const arg = encodeCyclesPurchaseArgs(request);
   const result = await wallet.callCyclesPurchase({
     canisterId,

@@ -254,9 +254,6 @@ type VfsActor = {
   rename_database: (request: { database_id: string; name: string }) => Promise<{ Ok: null } | { Err: string }>;
   read_node: (databaseId: string, path: string) => Promise<{ Ok: [] | [RawNode] } | { Err: string }>;
   list_children: (request: { database_id: string; path: string }) => Promise<{ Ok: RawChild[] } | { Err: string }>;
-  recent_nodes: (request: { database_id: string; path: [] | [string]; limit: number }) => Promise<
-    { Ok: RawRecent[] } | { Err: string }
-  >;
   incoming_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   outgoing_links: (request: { database_id: string; path: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
@@ -707,19 +704,6 @@ export async function listChildren(canisterId: string, databaseId: string, path:
       throwCanisterError(result.Err);
     }
     return sortChildNodes(result.Ok.map(normalizeChild));
-  });
-}
-
-export async function recentNodes(canisterId: string, databaseId: string, limit: number, identity?: Identity, path: string | null = null): Promise<RecentNode[]> {
-  return callVfs(async () => {
-    const actor = await createReadActor(canisterId, identity);
-    const result = await actor.recent_nodes({ database_id: databaseId, path: path ? [path] : [], limit });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return result.Ok.map((node) => ({
-      ...normalizeRecentNode(node)
-    }));
   });
 }
 

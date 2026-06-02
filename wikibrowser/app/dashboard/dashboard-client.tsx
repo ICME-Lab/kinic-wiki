@@ -176,7 +176,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setDatabases([]);
     setCyclesBillingConfig(null);
     setMembers([]);
-    setPendingOperationCount(0);
     setError(null);
     setWarning(null);
     setMemberError(null);

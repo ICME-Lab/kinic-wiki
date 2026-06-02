@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import vm from "node:vm";
+
+const require = createRequire(import.meta.url);
+const ts = require("typescript");
 
 const page = readFileSync(new URL("../app/cycles/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/cycles/cycles-client.tsx", import.meta.url), "utf8");
@@ -102,6 +107,104 @@ assert.match(vfsClient, /export async function getCyclesBillingConfig/);
 assert.doesNotMatch(vfsClient, /previewDatabaseCyclesPurchase/);
 assert.doesNotMatch(vfsClient, /purchaseDatabaseCyclesFrom/);
 
+const cyclesUrlModule = loadTsModule("../lib/cycles-url.ts", {
+  "@/lib/cycles": {
+    KINIC_DECIMALS: 8,
+    kinicBaseUnitsPerToken: () => 100_000_000n
+  }
+});
+assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams("database_id=db_ok-1")).databaseId, "db_ok-1");
+assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams("databaseId=dbLegacy")).databaseId, "dbLegacy");
+assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams()), "database_id is required");
+assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams("database_id=bad/path")), "database_id contains unsupported characters");
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1"), 100_000_000n);
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0.00000001"), 1n);
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1.23456789"), 123_456_789n);
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0"), "KINIC amount must be positive");
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1.000000001"), "KINIC must be a positive number with up to 8 decimals");
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("184467440737.09551616"), "KINIC amount e8s must be <= u64::MAX");
+
+const cborMock = { decoded: {} };
+const walletModule = loadTsModule(
+  "../lib/cycles-wallet.ts",
+  {
+    "@dfinity/oisy-wallet-signer/icrc-wallet": { IcrcWallet: class {} },
+    "@dfinity/utils": {
+      base64ToUint8Array: (value) => new Uint8Array(Buffer.from(value, "base64")),
+      uint8ArrayToBase64: (value) => Buffer.from(value).toString("base64")
+    },
+    "@icp-sdk/core/agent": {
+      Actor: { createActor: () => ({}) },
+      AnonymousIdentity: class {},
+      Cbor: { decode: () => cborMock.decoded },
+      Certificate: { create: async () => ({}) },
+      HttpAgent: { createSync: () => ({ isLocal: () => false, rootKey: new Uint8Array([1]) }) },
+      lookupResultToBuffer: () => null,
+      requestIdOf: () => new Uint8Array([1])
+    },
+    "@icp-sdk/core/candid": { IDL: {} },
+    "@icp-sdk/core/principal": {
+      Principal: {
+        fromText: (value) => ({ toText: () => value }),
+        fromUint8Array: (value) => ({ toText: () => `bytes:${Array.from(value).join(",")}` })
+      }
+    },
+    "@/lib/vfs-client": { getCyclesBillingConfig: async () => ({ kinicLedgerCanisterId: "ledger" }) },
+    "@/lib/vfs-idl": { idlFactory: () => ({}) },
+    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 10_000n }
+  },
+  "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertConfiguredCyclesCanister, purchaseAfterApprove, decodeOisyCyclesPurchaseResult } });"
+);
+const walletTest = walletModule.__test;
+assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 10_000n), 100_010_000n);
+assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured/);
+walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
+assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
+await assert.rejects(
+  () => walletTest.purchaseAfterApprove(async () => {
+    throw new Error("purchase rejected");
+  }, 1_700_000_000_000_000_000n),
+  /cycles purchase failed after approve; approval remains until .*purchase rejected/
+);
+cborMock.decoded = { method_name: "write_node" };
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "aaaaa-aa",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response method mismatch/
+);
+cborMock.decoded = {
+  method_name: "purchase_database_cycles",
+  canister_id: new Uint8Array([2]),
+  arg: new Uint8Array([1])
+};
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "aaaaa-aa",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response canister mismatch/
+);
+cborMock.decoded = {
+  method_name: "purchase_database_cycles",
+  canister_id: new Uint8Array([]),
+  arg: new Uint8Array([9])
+};
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "bytes:",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response argument mismatch/
+);
+
 console.log("Cycles checks OK");
 
 function sliceBetween(source, startText, endText) {
@@ -110,4 +213,33 @@ function sliceBetween(source, startText, endText) {
   const end = source.indexOf(endText, start + startText.length);
   assert.notEqual(end, -1, `${endText} not found`);
   return source.slice(start, end);
+}
+
+function loadTsModule(relativePath, mocks, append = "") {
+  const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
+  const transpiled = ts.transpileModule(`${source}\n${append}`, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true
+    }
+  }).outputText;
+  const module = { exports: {} };
+  const context = {
+    Buffer,
+    Date,
+    TextEncoder,
+    Uint8Array,
+    URLSearchParams,
+    console,
+    exports: module.exports,
+    module,
+    process: { env: {} },
+    require: (id) => {
+      if (Object.prototype.hasOwnProperty.call(mocks, id)) return mocks[id];
+      throw new Error(`unexpected module import: ${id}`);
+    }
+  };
+  vm.runInNewContext(transpiled, context, { filename: relativePath });
+  return Object.assign(module.exports, { __context: context });
 }
