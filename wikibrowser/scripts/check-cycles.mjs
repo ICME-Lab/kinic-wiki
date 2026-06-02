@@ -63,8 +63,12 @@ assert.match(wallet, /icrc2_approve: idl\.Func\(\[approveArgs\], \[idl\.Variant\
 assert.doesNotMatch(wallet, /purchaseDatabaseCyclesFrom|notifyIdentity|wallet as unknown|OisyCanisterCaller/);
 assert.doesNotMatch(wallet, /previewDatabaseCyclesPurchase/);
 assert.match(wallet, /KINIC_LEDGER_FEE_E8S/);
+assert.match(wallet, /MAX_I64/);
+assert.match(wallet, /MAX_U64/);
 assert.match(wallet, /function allowanceForCyclesPurchase\(amountE8s: bigint, transferFeeE8s: bigint\)/);
-assert.match(wallet, /return amountE8s \+ transferFeeE8s/);
+assert.match(wallet, /approved allowance exceeds u64::MAX/);
+assert.match(wallet, /cycles purchase amount exceeds canister limit/);
+assert.match(wallet, /KINIC amount e8s exceeds canister limit/);
 assert.doesNotMatch(wallet, /function paymentAmountE8sForCycles/);
 assert.match(wallet, /payment_amount_e8s: paymentAmountE8s/);
 assert.match(wallet, /min_expected_cycles: minExpectedCycles/);
@@ -77,6 +81,8 @@ assert.match(wallet, /expires_at: \[expiresAt\]/);
 assert.match(wallet, /APPROVE_EXPIRES_IN_MS = 30 \* 60 \* 1000/);
 assert.match(wallet, /assertConfiguredCyclesCanister\(request\.canisterId\)/);
 assert.match(wallet, /oisyCallCyclesPurchase\(connection\.wallet, connection\.owner, request\.canisterId, prepared\.purchaseRequest\)/);
+assert.match(wallet, /sender: owner/);
+assert.match(wallet, /wallet response sender mismatch/);
 assert.match(wallet, /contentMap|Certificate|requestIdOf/);
 assert.match(wallet, /purchase_database_cycles\(prepared\.purchaseRequest\)/);
 assert.match(wallet, /encodeCyclesPurchaseArgs\(request: DatabaseCyclesPurchaseRequest\)/);
@@ -162,10 +168,16 @@ const walletModule = loadTsModule(
     "@/lib/vfs-idl": { idlFactory: () => ({}) },
     "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n, kinicBaseUnitsPerToken: () => 100_000_000n }
   },
-  "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertConfiguredCyclesCanister, purchaseAfterApprove, decodeOisyCyclesPurchaseResult } });"
+  "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, purchaseAfterApprove, decodeOisyCyclesPurchaseResult } });"
 );
 const walletTest = walletModule.__test;
 assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 100_000n), 100_100_000n);
+assert.throws(() => walletTest.assertCanisterPaymentAmountE8s(9_223_372_036_854_775_808n), /KINIC amount e8s exceeds canister limit/);
+assert.throws(() => walletTest.allowanceForCyclesPurchase(18_446_744_073_709_551_615n, 1n), /approved allowance exceeds u64::MAX/);
+assert.throws(
+  () => walletTest.cyclesForPaymentAmountE8s(9_223_372_036_854_775_807n, 200_000_000n),
+  /cycles purchase amount exceeds canister limit/
+);
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured/);
 walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
@@ -211,6 +223,7 @@ cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(
   () => walletTest.decodeOisyCyclesPurchaseResult({
     canisterId: "aaaaa-aa",
+    sender: "bytes:7",
     method: "purchase_database_cycles",
     arg: Buffer.from([1]).toString("base64"),
     result: { contentMap: "unused", certificate: "unused" }
@@ -220,11 +233,13 @@ await assert.rejects(
 cborMock.decoded = {
   method_name: "purchase_database_cycles",
   canister_id: new Uint8Array([2]),
+  sender: new Uint8Array([7]),
   arg: new Uint8Array([1])
 };
 await assert.rejects(
   () => walletTest.decodeOisyCyclesPurchaseResult({
     canisterId: "aaaaa-aa",
+    sender: "bytes:7",
     method: "purchase_database_cycles",
     arg: Buffer.from([1]).toString("base64"),
     result: { contentMap: "unused", certificate: "unused" }
@@ -234,16 +249,34 @@ await assert.rejects(
 cborMock.decoded = {
   method_name: "purchase_database_cycles",
   canister_id: new Uint8Array([]),
+  sender: new Uint8Array([7]),
   arg: new Uint8Array([9])
 };
 await assert.rejects(
   () => walletTest.decodeOisyCyclesPurchaseResult({
     canisterId: "bytes:",
+    sender: "bytes:7",
     method: "purchase_database_cycles",
     arg: Buffer.from([1]).toString("base64"),
     result: { contentMap: "unused", certificate: "unused" }
   }),
   /wallet response argument mismatch/
+);
+cborMock.decoded = {
+  method_name: "purchase_database_cycles",
+  canister_id: new Uint8Array([]),
+  sender: new Uint8Array([8]),
+  arg: new Uint8Array([1])
+};
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "bytes:",
+    sender: "bytes:7",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response sender mismatch/
 );
 
 console.log("Cycles checks OK");

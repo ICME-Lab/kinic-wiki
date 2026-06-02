@@ -134,6 +134,8 @@ declare global {
 const DEFAULT_OISY_SIGNER_URL = "https://oisy.com/sign";
 const CALL_TIMEOUT_MS = 120_000;
 const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
+const MAX_I64 = 9_223_372_036_854_775_807n;
+const MAX_U64 = 18_446_744_073_709_551_615n;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 type CyclesPurchaseIcrcWalletOptions = {
@@ -284,6 +286,7 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
   const config = await getCyclesBillingConfig(request.canisterId);
   const transferFeeE8s = KINIC_LEDGER_FEE_E8S;
   const paymentAmountE8s = request.paymentAmountE8s;
+  assertCanisterPaymentAmountE8s(paymentAmountE8s);
   const minExpectedCycles = cyclesForPaymentAmountE8s(paymentAmountE8s, BigInt(config.cyclesPerKinic));
   const approvedAllowanceE8s = allowanceForCyclesPurchase(paymentAmountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
@@ -304,13 +307,21 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
 }
 
 function allowanceForCyclesPurchase(amountE8s: bigint, transferFeeE8s: bigint): bigint {
-  return amountE8s + transferFeeE8s;
+  const allowance = amountE8s + transferFeeE8s;
+  if (allowance > MAX_U64) throw new Error("approved allowance exceeds u64::MAX");
+  return allowance;
 }
 
 function cyclesForPaymentAmountE8s(amountE8s: bigint, cyclesPerKinic: bigint): bigint {
   const cycles = (amountE8s * cyclesPerKinic) / kinicBaseUnitsPerToken();
   if (cycles <= 0n) throw new Error("KINIC amount is too small for a cycles purchase");
+  if (cycles > MAX_I64) throw new Error("cycles purchase amount exceeds canister limit");
   return cycles;
+}
+
+function assertCanisterPaymentAmountE8s(amountE8s: bigint): void {
+  if (amountE8s <= 0n) throw new Error("KINIC amount must be positive");
+  if (amountE8s > MAX_I64) throw new Error("KINIC amount e8s exceeds canister limit");
 }
 
 function approveExpiresAt(): bigint {
@@ -359,6 +370,7 @@ async function oisyCallCyclesPurchase(
   });
   return decodeOisyCyclesPurchaseResult({
     canisterId,
+    sender: owner,
     method: "purchase_database_cycles",
     arg,
     result
@@ -392,11 +404,13 @@ function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): strin
 
 async function decodeOisyCyclesPurchaseResult({
   canisterId,
+  sender,
   method,
   arg,
   result
 }: {
   canisterId: string;
+  sender: string;
   method: string;
   arg: string;
   result: IcrcCallCanisterResult;
@@ -407,6 +421,10 @@ async function decodeOisyCyclesPurchaseResult({
   const responseCanisterId = bytesFromUnknown(contentMap.canister_id, "wallet response canister");
   if (Principal.fromUint8Array(responseCanisterId).toText() !== Principal.fromText(canisterId).toText()) {
     throw new Error("wallet response canister mismatch");
+  }
+  const responseSender = bytesFromUnknown(contentMap.sender, "wallet response sender");
+  if (Principal.fromUint8Array(responseSender).toText() !== Principal.fromText(sender).toText()) {
+    throw new Error("wallet response sender mismatch");
   }
   const responseArg = bytesFromUnknown(contentMap.arg, "wallet response argument");
   if (!sameBytes(base64ToUint8Array(arg), responseArg)) throw new Error("wallet response argument mismatch");
