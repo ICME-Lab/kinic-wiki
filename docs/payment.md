@@ -8,7 +8,7 @@
 - `cycles`: DB ごとの内部残高。KINIC から換算された raw cycles を整数で保持する。
 - `database_cycle_accounts`: DB ごとの cycles 残高、停止時刻、ストレージ課金カーソルを保持する。
 - `database_cycle_ledger`: cycles 履歴の正本。購入、更新課金、ストレージ課金、停止を記録する。
-- `database_cycle_pending_operations`: transfer 中、または ledger 成功後 local apply 前の cycles 購入を保持する。
+- `database_cycle_pending_operations`: transfer 中、ledger 結果曖昧、または ledger 成功後 local apply 前の cycles 購入を保持する。
 
 ## 課金設定
 
@@ -172,12 +172,12 @@ canister の metered update wrapper は、更新前後の canister cycle balance
 
 `charge_database_update` は現在残高より請求額が大きい場合、残高を全徴収して `balance_after_cycles = 0` にし、DB を suspended にする。ledger の `amount_cycles` は実際に徴収した cycles、`cycles_delta` は実測請求額を記録する。
 
-課金成功時は残高から請求額を引く。更新後残高が `min_update_cycles` 未満なら `suspended_at_ms` を課金時刻に設定し、それ以上なら `NULL` にする。ledger には以下を記録する。
+課金成功時は残高から実徴収額を引く。更新後残高が `min_update_cycles` 未満なら `suspended_at_ms` を課金時刻に設定し、それ以上なら `NULL` にする。ledger には以下を記録する。
 
 | column | 値 |
 | --- | --- |
 | `kind` | `charge` |
-| `amount_cycles` | `-cycles_delta` |
+| `amount_cycles` | 実徴収額 `paid_cycles` の負数 |
 | `balance_after_cycles` | 課金後残高 |
 | `caller` | update caller |
 | `method` | update method name |
@@ -222,6 +222,15 @@ storage_cycles = logical_size_bytes * elapsed_seconds * 127_000 / 2^30
 
 Pending cycles purchase は owner、billing authority、payer が `list_database_cycles_pending_purchases(database_id)` または CLI `database cycles-pending <database-id>` で確認できる。返却値は `operation_id`、`database_id`、`status`、`amount_cycles`、`payment_amount_e8s`、`ledger_block_index`、`created_at_ms`、`required_action` を含む。無関係 caller は拒否される。
 
+`required_action` は `status` から決まる。
+
+| `status` | `required_action` |
+| --- | --- |
+| `in_flight` | `wait_for_ledger_result` |
+| `ambiguous` | `billing_authority_repair_complete_or_cancel` |
+| `completed` | `billing_authority_retry` |
+| その他 | `billing_authority_review` |
+
 ## Ledger 結果と no-credit
 
 `purchase_database_cycles` は `icrc2_transfer_from` が `Ok(block_index)` を返し、local activation/apply も完了した場合だけ内部 cycles 残高へ credit する。明確な ledger error は pending operation を削除し、残高と ledger entry を変更しない。
@@ -250,10 +259,10 @@ ledger transfer 成功後に pending DB activation や cycles apply が失敗し
 ## 実装根拠
 
 - `crates/vfs_runtime/src/lib.rs`: cycles 設定、pending operation、残高反映、billing authority retry/repair、更新課金、ストレージ課金、履歴権限、削除条件。
-- `crates/vfs_canister/src/lib.rs`: canister entrypoint、認証、ICRC ledger call/block repair、ICRC-21 consent、`retry_database_cycles_purchase`、metered update wrapper。
+- `crates/vfs_canister/src/lib.rs`: canister entrypoint、認証、ICRC ledger call/block repair、ICRC-21 consent、`retry_database_cycles_purchase`、`repair_database_cycles_purchase_complete`、`repair_database_cycles_purchase_cancel`、metered update wrapper。
 - `crates/vfs_types/src/fs.rs`: 公開 Candid/serde 型。
 - `crates/vfs_types/src/lib.rs`: fixed KINIC ledger fee。
 - `wikibrowser/lib/cycles-wallet.ts`: OISY/Plug approve と purchase flow。
 - `wikibrowser/lib/cycles-url.ts`: `/cycles` の database ID と KINIC 入力 validation。
 - `wikibrowser/app/cycles/page.tsx`: canister ID を環境変数から固定する route 挙動。
-- `crates/vfs_runtime/tests/database_service.rs`: 購入、履歴 redaction、内部 pending operation、更新課金、削除の期待挙動。
+- `crates/vfs_runtime/tests/database_service.rs`: 購入、履歴 redaction、pending operation 表示、retry/repair、更新課金、削除の期待挙動。
