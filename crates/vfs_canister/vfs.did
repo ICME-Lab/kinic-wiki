@@ -31,6 +31,10 @@ type CyclesBillingConfig = record {
   cycles_per_kinic : nat64;
   min_update_cycles : nat64;
 };
+type CyclesBillingConfigUpdate = record {
+  cycles_per_kinic : nat64;
+  min_update_cycles : nat64;
+};
 type CyclesPurchaseResult = record {
   block_index : nat64;
   balance_cycles : nat64;
@@ -504,18 +508,13 @@ service : (CyclesBillingConfig) -> {
   read_node : (text, text) -> (Result_24) query;
   read_node_context : (NodeContextRequest) -> (Result_25) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
-  repair_database_cycles_purchase_cancel : (text, nat64) -> (Result_1);
-  repair_database_cycles_purchase_complete : (text, nat64, nat64) -> (
-      Result_20,
-    );
-  retry_database_cycles_purchase : (text, nat64) -> (Result_20);
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_26) query;
   search_nodes : (SearchNodesRequest) -> (Result_26) query;
   settle_database_storage_charges : () -> (Result_1);
   source_evidence : (SourceEvidenceRequest) -> (Result_27) query;
   status : (text) -> (Status) query;
-  update_cycles_billing_config : (blob) -> (Result_1);
+  update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
   write_nodes : (WriteNodesRequest) -> (Result_28);

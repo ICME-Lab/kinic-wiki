@@ -91,13 +91,13 @@ assert.match(client, /approved allowance/);
 assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
 assert.match(client, /Any authenticated wallet can purchase non-refundable cycles/);
-assert.match(client, /CyclesPurchaseAfterApproveError/);
-assert.match(client, /extractCyclesRepairTarget/);
-assert.match(client, /saveCyclesRepairRecord/);
-assert.match(client, /window\.localStorage\.setItem\(cyclesRepairRecordKey/);
-assert.match(client, /Billing authority repair required/);
-assert.match(client, /Operation ID/);
-assert.match(client, /Ledger block/);
+assert.doesNotMatch(client, new RegExp("extractCycles" + "RepairTarget"));
+assert.doesNotMatch(client, new RegExp("saveCycles" + "Repair" + "Record"));
+assert.doesNotMatch(
+  client,
+  new RegExp("window\\.local" + "Storage\\.setItem\\(cycles" + "Repair" + "RecordKey"),
+);
+assert.doesNotMatch(client, new RegExp("Billing authority " + "repair " + "required"));
 assert.doesNotMatch(client, /withdraw KINIC|database balance/);
 assert.doesNotMatch(client, /cycles canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.match(url, /KINIC_DECIMALS/);
@@ -199,20 +199,14 @@ const clientModule = loadTsModule(
       parseCyclesTarget: () => ({ databaseId: "db_alpha" })
     },
     "@/lib/cycles-wallet": {
-      CyclesPurchaseAfterApproveError: walletModule.CyclesPurchaseAfterApproveError,
       connectOisyWallet: async () => ({}),
       connectPlugWallet: async () => ({}),
       purchaseCyclesWithOisy: async () => ({}),
       purchaseCyclesWithPlug: async () => ({})
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s: (value) => String(value) }
-  },
-  "Object.assign(exports, { __test: { extractCyclesRepairTarget } });"
+  }
 );
-const repairTarget = clientModule.__test.extractCyclesRepairTarget("cycles purchase payment completed at ledger block 44 but local cycles application failed; pending operation 7 remains completed for retry: apply failed");
-assert.equal(repairTarget.ledgerBlockIndex, "44");
-assert.equal(repairTarget.operationId, "7");
-assert.equal(clientModule.__test.extractCyclesRepairTarget("icrc2_transfer_from result ambiguous for operation_id 7"), null);
 cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(
   () => walletTest.decodeOisyCyclesPurchaseResult({

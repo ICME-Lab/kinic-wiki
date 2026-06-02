@@ -651,9 +651,6 @@ impl Command {
                 DatabaseCommand::Create { .. }
                     | DatabaseCommand::PurchaseCycles { .. }
                     | DatabaseCommand::CyclesHistory { .. }
-                    | DatabaseCommand::CyclesRetry { .. }
-                    | DatabaseCommand::CyclesRepairComplete { .. }
-                    | DatabaseCommand::CyclesRepairCancel { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
@@ -1135,69 +1132,6 @@ mod tests {
         };
         assert_eq!(database_id, "db_alpha");
         assert!(!json);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "cycles-retry",
-            "db_alpha",
-            "42",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::CyclesRetry {
-                    database_id,
-                    operation_id,
-                },
-        } = cli.command
-        else {
-            panic!("expected database cycles-retry command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 42);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "cycles-repair-complete",
-            "db_alpha",
-            "42",
-            "88",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::CyclesRepairComplete {
-                    database_id,
-                    operation_id,
-                    ledger_block_index,
-                },
-        } = cli.command
-        else {
-            panic!("expected database cycles-repair-complete command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 42);
-        assert_eq!(ledger_block_index, 88);
-
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "cycles-repair-cancel",
-            "db_alpha",
-            "42",
-        ]);
-        let Command::Database {
-            command:
-                DatabaseCommand::CyclesRepairCancel {
-                    database_id,
-                    operation_id,
-                },
-        } = cli.command
-        else {
-            panic!("expected database cycles-repair-cancel command");
-        };
-        assert_eq!(database_id, "db_alpha");
-        assert_eq!(operation_id, 42);
 
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
         let Command::Database {

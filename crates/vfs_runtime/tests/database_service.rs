@@ -137,7 +137,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:020_cycles_billing_config_version"),
         1
     );
-    assert_eq!(cycles_billing_config_version(&root), 1);
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
 fn write_mainnet_011_index_schema(index_path: &std::path::Path, status: &str) {
@@ -506,16 +506,14 @@ fn database_cycles_suspended_at(root: &std::path::Path, database_id: &str) -> Op
     .expect("database cycles suspension should load")
 }
 
-fn cycles_billing_config_version(root: &std::path::Path) -> i64 {
+fn cycles_billing_config_key_count(root: &std::path::Path, key: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT value FROM cycles_billing_config WHERE key = 'config_version'",
-        params![],
-        |row| row.get::<_, String>(0),
+        "SELECT COUNT(*) FROM cycles_billing_config WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
     )
-    .expect("cycles config version should load")
-    .parse()
-    .expect("cycles config version should be numeric")
+    .expect("cycles config key count should load")
 }
 
 fn database_pending_operation_count(root: &std::path::Path, database_id: &str) -> i64 {
@@ -1939,9 +1937,9 @@ fn database_cycles_purchase_allows_authenticated_non_owner() {
 }
 
 #[test]
-fn cycles_billing_config_version_changes_only_for_effective_rate_updates() {
+fn cycles_billing_config_update_changes_only_mutable_values() {
     let (service, root) = service_with_root();
-    assert_eq!(cycles_billing_config_version(&root), 1);
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 
     service
         .update_cycles_billing_config(
@@ -1951,8 +1949,8 @@ fn cycles_billing_config_version_changes_only_for_effective_rate_updates() {
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
-        .expect("same config should update without version bump");
-    assert_eq!(cycles_billing_config_version(&root), 1);
+        .expect("same config should update");
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 
     service
         .update_cycles_billing_config(
@@ -1963,7 +1961,14 @@ fn cycles_billing_config_version_changes_only_for_effective_rate_updates() {
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
         .expect("changed config should update");
-    assert_eq!(cycles_billing_config_version(&root), 2);
+    assert_eq!(
+        service
+            .cycles_billing_config()
+            .expect("cycles config should load")
+            .cycles_per_kinic,
+        469_000_000_000
+    );
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
 #[test]

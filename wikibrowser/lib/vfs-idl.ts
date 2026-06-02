@@ -32,6 +32,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     kinic_ledger_canister_id: idl.Text,
     billing_authority_id: idl.Text
   });
+  const CyclesBillingConfigUpdate = idl.Record({ cycles_per_kinic: idl.Nat64, min_update_cycles: idl.Nat64 });
   const CyclesPurchaseResult = idl.Record({
     block_index: idl.Nat64,
     amount_cycles: idl.Nat64,
@@ -319,15 +320,13 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
     outgoing_links: idl.Func([OutgoingLinksRequest], [ResultLinks], ["query"]),
-    repair_database_cycles_purchase_cancel: idl.Func([idl.Text, idl.Nat64], [ResultUnit], []),
-    repair_database_cycles_purchase_complete: idl.Func([idl.Text, idl.Nat64, idl.Nat64], [ResultCyclesPurchase], []),
-    retry_database_cycles_purchase: idl.Func([idl.Text, idl.Nat64], [ResultCyclesPurchase], []),
     revoke_database_access: idl.Func([idl.Text, idl.Text], [ResultUnit], []),
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
     settle_database_storage_charges: idl.Func([], [ResultUnit], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
+    update_cycles_billing_config: idl.Func([CyclesBillingConfigUpdate], [ResultUnit], []),
     purchase_database_cycles: idl.Func([DatabaseCyclesPurchaseRequest], [ResultCyclesPurchase], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [ResultWriteSourceForGeneration], [])

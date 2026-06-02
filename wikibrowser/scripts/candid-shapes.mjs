@@ -24,6 +24,13 @@ export const expectedTypes = {
       billing_authority_id: "text"
     }
   },
+  CyclesBillingConfigUpdate: {
+    kind: "record",
+    fields: {
+      cycles_per_kinic: "nat64",
+      min_update_cycles: "nat64"
+    }
+  },
   CyclesPurchaseResult: {
     kind: "record",
     fields: { block_index: "nat64", amount_cycles: "nat64", balance_cycles: "nat64" }
@@ -461,14 +468,12 @@ export const expectedMethods = {
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
-  repair_database_cycles_purchase_cancel: { input: ["text", "nat64"], output: "ResultUnit", mode: "update" },
-  repair_database_cycles_purchase_complete: { input: ["text", "nat64", "nat64"], output: "ResultCyclesPurchase", mode: "update" },
-  retry_database_cycles_purchase: { input: ["text", "nat64"], output: "ResultCyclesPurchase", mode: "update" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
   settle_database_storage_charges: { input: [], output: "ResultUnit", mode: "update" },
+  update_cycles_billing_config: { input: ["CyclesBillingConfigUpdate"], output: "ResultUnit", mode: "update" },
   purchase_database_cycles: { input: ["DatabaseCyclesPurchaseRequest"], output: "ResultCyclesPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
