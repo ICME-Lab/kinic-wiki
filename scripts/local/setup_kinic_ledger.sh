@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Where: scripts/local/setup_kinic_ledger.sh
-# What: Prepare a project-local ICRC ledger for KINIC credit purchase smoke tests.
+# What: Prepare a project-local ICRC ledger for KINIC cycle purchase smoke tests.
 # Why: The wiki canister stores the ledger principal at init, so local smoke needs a real ledger before deploy.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,7 +11,7 @@ ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local-wiki}"
 LEDGER_ID_DIR="${REPO_ROOT}/.icp/cache/local-kinic-ledger"
 LEDGER_ID_FILE="${LEDGER_ID_DIR}/${ICP_ENVIRONMENT}.id"
 DEFAULT_INITIAL_BALANCE_E8S="${KINIC_LEDGER_INITIAL_BALANCE_E8S:-100000000000}"
-LEDGER_TRANSFER_FEE_E8S="${KINIC_LEDGER_TRANSFER_FEE_E8S:-10000}"
+LEDGER_TRANSFER_FEE_E8S="${KINIC_LEDGER_TRANSFER_FEE_E8S:-100000}"
 
 case "${ICP_ENVIRONMENT}" in
   local | local-wiki) ;;

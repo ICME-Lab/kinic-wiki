@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
+    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
     SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
@@ -24,6 +24,11 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    #[command(about = "Show KINIC cycles configuration")]
+    Cycles {
+        #[command(subcommand)]
+        command: CyclesCommand,
+    },
     #[command(about = "Manage database creation, workspace links, grants, archive, and restore")]
     Database {
         #[command(subcommand)]
@@ -402,7 +407,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Mark a skill improvement proposal as approved")]
+    #[command(about = "Mark a skill improvement proposal as reviewed")]
     ApproveProposal {
         id: String,
         proposal_path: String,
@@ -418,7 +423,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Apply an approved skill proposal when the base etag still matches")]
+    #[command(about = "Apply a reviewed skill proposal when the base etag still matches")]
     ApplyProposal {
         id: String,
         proposal_id: String,
@@ -640,9 +645,12 @@ pub enum GitHubIngestCommand {
 impl Command {
     pub fn requires_identity(&self) -> bool {
         match self {
+            Self::Cycles { command: _ } => false,
             Self::Database { command } => matches!(
                 command,
                 DatabaseCommand::Create { .. }
+                    | DatabaseCommand::PurchaseCycles { .. }
+                    | DatabaseCommand::CyclesHistory { .. }
                     | DatabaseCommand::Rename { .. }
                     | DatabaseCommand::Grant { .. }
                     | DatabaseCommand::GrantCurrentIdentity { .. }
@@ -713,6 +721,7 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
+            | Self::Cycles { .. }
             | Self::Identity { .. }
             | Self::Hermes { .. }
             | Self::Codex { .. }
@@ -748,6 +757,9 @@ impl Command {
 
     pub fn as_vfs_command(&self) -> Option<VfsCommand> {
         match self {
+            Self::Cycles { command } => Some(VfsCommand::Cycles {
+                command: command.clone(),
+            }),
             Self::Database { command } => Some(VfsCommand::Database {
                 command: command.clone(),
             }),
@@ -954,19 +966,12 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeCommand, Cli, CodexCommand, Command, DatabaseCommand, HermesCommand, IdentityModeArg,
-        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        ClaudeCommand, Cli, CodexCommand, Command, CyclesCommand, DatabaseCommand, HermesCommand,
+        IdentityModeArg, NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg,
+        SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
-
-    #[test]
-    fn main_cli_help_does_not_list_beam_bench() {
-        let mut command = Cli::command();
-        let help = command.render_long_help().to_string();
-
-        assert!(!help.contains("beam-bench"));
-    }
 
     #[test]
     fn main_cli_help_describes_agent_entrypoints() {
@@ -1078,6 +1083,56 @@ mod tests {
         assert_eq!(name, "team-db");
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "purchase-cycles",
+            "db_alpha",
+            "1.25",
+        ]);
+        let Command::Database {
+            command: DatabaseCommand::PurchaseCycles { database_id, kinic },
+        } = cli.command
+        else {
+            panic!("expected database cycle purchase command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert_eq!(kinic, "1.25");
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "cycles",
+            "db_alpha",
+            "1.25",
+            "--browser-origin",
+            "http://127.0.0.1:3000",
+        ]);
+        let Command::Database {
+            command:
+                DatabaseCommand::Cycles {
+                    database_id,
+                    kinic,
+                    browser_origin,
+                },
+        } = cli.command
+        else {
+            panic!("expected database cycles command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert_eq!(kinic, "1.25");
+        assert_eq!(browser_origin.as_deref(), Some("http://127.0.0.1:3000"));
+
+        let cli = Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
+        let Command::Database {
+            command: DatabaseCommand::CyclesHistory { database_id, json },
+        } = cli.command
+        else {
+            panic!("expected database cycles-history command");
+        };
+        assert_eq!(database_id, "db_alpha");
+        assert!(!json);
+
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "rename", "db_alpha", "Alpha"]);
         let Command::Database {
             command: DatabaseCommand::Rename { database_id, name },
@@ -1133,6 +1188,18 @@ mod tests {
         assert_eq!(output.to_string_lossy(), "team-db.sqlite");
         assert_eq!(chunk_size, 512);
         assert!(json);
+    }
+
+    #[test]
+    fn main_cli_parses_cycles_commands() {
+        let cli = Cli::parse_from(["kinic-vfs-cli", "cycles", "config"]);
+        let Command::Cycles {
+            command: CyclesCommand::Config { json },
+        } = cli.command
+        else {
+            panic!("expected cycles config command");
+        };
+        assert!(!json);
     }
 
     #[test]
@@ -1193,6 +1260,27 @@ mod tests {
         let list = Cli::parse_from(["kinic-vfs-cli", "database", "list"]);
         assert!(!list.command.requires_identity());
         assert!(list.command.prefers_identity_in_auto());
+
+        let cycles_config = Cli::parse_from(["kinic-vfs-cli", "cycles", "config"]);
+        assert!(!cycles_config.command.requires_identity());
+        assert!(!cycles_config.command.probes_anonymous_database_read());
+
+        let database_cycles_purchase = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "purchase-cycles",
+            "db_alpha",
+            "1.25",
+        ]);
+        assert!(database_cycles_purchase.command.requires_identity());
+
+        let database_cycles_history =
+            Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
+        assert!(database_cycles_history.command.requires_identity());
+
+        let database_cycles =
+            Cli::parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"]);
+        assert!(!database_cycles.command.requires_identity());
     }
 
     #[test]
@@ -1320,7 +1408,7 @@ mod tests {
             "kinic-vfs-cli",
             "--local",
             "--replica-host",
-            "http://127.0.0.1:8001",
+            "http://127.0.0.1:8011",
             "status",
         ]);
         assert!(parsed.is_err());

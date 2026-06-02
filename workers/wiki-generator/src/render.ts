@@ -38,9 +38,14 @@ export function renderGeneratedMarkdown(draft: WikiDraft, source: WikiNode, cont
 }
 
 export function ensureTargetCanBeWritten(existingContent: string | null, targetPath: string, sourcePath: string): void {
-  if (existingContent !== null && !existingContent.includes(sourcePath)) {
+  if (existingContent !== null && !hasMatchingSourceProvenance(existingContent, sourcePath)) {
     throw new Error(`target exists without matching provenance: ${targetPath}`);
   }
+}
+
+function hasMatchingSourceProvenance(content: string, sourcePath: string): boolean {
+  const expected = `- source_path: ${sourcePath}`;
+  return content.split(/\r?\n/).some((line) => line.trim() === expected);
 }
 
 function filenameSegment(value: string): string {

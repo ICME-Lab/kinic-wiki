@@ -56,6 +56,10 @@ pub struct ConnectionArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum VfsCommand {
+    Cycles {
+        #[command(subcommand)]
+        command: CyclesCommand,
+    },
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
@@ -265,6 +269,27 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Purchase non-refundable database cycles with KINIC")]
+    PurchaseCycles { database_id: String, kinic: String },
+    #[command(about = "List cycles ledger entries for one database")]
+    CyclesHistory {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "List pending cycles purchases for one database")]
+    CyclesPending {
+        database_id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Open the browser cycles purchase page for one database")]
+    Cycles {
+        database_id: String,
+        kinic: String,
+        #[arg(long)]
+        browser_origin: Option<String>,
+    },
     #[command(about = "Save a workspace database link so commands can omit --database-id")]
     Link { database_id: String },
     #[command(about = "Show the currently linked workspace database")]
@@ -308,7 +333,7 @@ pub enum DatabaseCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Restore one archived or deleted database from a snapshot")]
+    #[command(about = "Restore one archived database from a snapshot")]
     ArchiveRestore {
         database_id: String,
         #[arg(long)]
@@ -322,6 +347,15 @@ pub enum DatabaseCommand {
     ArchiveCancel { database_id: String },
     #[command(about = "Cancel an interrupted archive restore")]
     RestoreCancel { database_id: String },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum CyclesCommand {
+    #[command(about = "Show canister cycles configuration")]
+    Config {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

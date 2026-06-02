@@ -6,7 +6,7 @@ use chrono::Utc;
 use serde::Serialize;
 use vfs_client::VfsApi;
 use vfs_types::{NodeKind, WriteNodeRequest};
-use wiki_domain::RAW_SOURCES_PREFIX;
+use wiki_domain::{RAW_SOURCES_PREFIX, validate_canonical_source_path};
 
 const CONVERSATION_WIKI_PREFIX: &str = "/Wiki/conversations";
 
@@ -85,6 +85,7 @@ fn parse_raw_conversation(source_path: &str, content: &str) -> Result<RawConvers
 }
 
 fn source_id_from_path(source_path: &str) -> Result<String> {
+    validate_canonical_source_path(source_path).map_err(anyhow::Error::msg)?;
     let relative = source_path
         .strip_prefix(&format!("{RAW_SOURCES_PREFIX}/"))
         .ok_or_else(|| anyhow!("source path must be under {RAW_SOURCES_PREFIX}: {source_path}"))?;
@@ -113,8 +114,15 @@ fn metadata_value(content: &str, key: &str) -> Option<String> {
     content.lines().find_map(|line| {
         let trimmed = line.trim();
         let value = trimmed.strip_prefix(&format!("- {key}:"))?.trim();
-        Some(value.trim_matches('"').to_string()).filter(|value| !value.is_empty())
+        Some(clean_metadata_value(value)).filter(|value| !value.is_empty())
     })
+}
+
+fn clean_metadata_value(value: &str) -> String {
+    if value.starts_with('"') && value.ends_with('"') {
+        return serde_json::from_str::<String>(value).unwrap_or_else(|_| value.to_string());
+    }
+    value.to_string()
 }
 
 fn count_turns(content: &str) -> usize {
@@ -251,6 +259,25 @@ mod tests {
         assert_eq!(raw.provider, "chatgpt");
         assert_eq!(raw.title, "Project Notes");
         assert_eq!(raw.message_count, 2);
+    }
+
+    #[test]
+    fn parse_raw_conversation_unescapes_quoted_metadata() {
+        let raw = parse_raw_conversation(
+            "/Sources/raw/chatgpt/abc.md",
+            "# Raw Conversation Source\n\n## Metadata\n\n- provider: chatgpt\n- conversation_title: \"Project \\\"Alpha\\\"\"\n- message_count: 1\n",
+        )
+        .expect("raw should parse");
+
+        assert_eq!(raw.title, "Project \"Alpha\"");
+    }
+
+    #[test]
+    fn parse_raw_conversation_rejects_noncanonical_source_path() {
+        let error = parse_raw_conversation("/Sources/raw/../evil.md", RAW)
+            .expect_err("noncanonical raw path should fail");
+
+        assert!(error.to_string().contains("canonical form"));
     }
 
     #[test]

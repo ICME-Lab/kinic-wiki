@@ -20,8 +20,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     database_id: idl.Text,
     name: idl.Text,
     archived_at_ms: idl.Opt(idl.Int64),
-    credits_balance: idl.Opt(idl.Nat64),
-    credits_suspended_at_ms: idl.Opt(idl.Int64)
+    cycles_balance: idl.Opt(idl.Nat64),
+    cycles_suspended_at_ms: idl.Opt(idl.Int64)
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });

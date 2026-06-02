@@ -439,16 +439,26 @@ fn now_millis() -> i64 {
 
 fn extract_frontmatter(content: &str) -> Option<&str> {
     let rest = content.strip_prefix("---\n")?;
-    let end = rest.find("\n---")?;
+    let end = frontmatter_end(rest)?;
     Some(&rest[..end])
 }
 
+fn frontmatter_end(rest: &str) -> Option<usize> {
+    rest.find("\n---\n").or_else(|| {
+        rest.ends_with("\n---")
+            .then_some(rest.len() - "\n---".len())
+    })
+}
+
 fn clean_yaml_value(value: &str) -> String {
-    value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_string()
+    let trimmed = value.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    }
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return trimmed[1..trimmed.len() - 1].replace("''", "'");
+    }
+    trimmed.to_string()
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -474,10 +484,11 @@ fn skill_base_path(id: &str) -> String {
 }
 
 fn validate_skill_id(id: &str) -> Result<()> {
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    let mut chars = id.chars();
+    if !matches!(chars.next(), Some(ch) if ch.is_ascii_alphanumeric())
+        || id.len() > 128
+        || id.contains("..")
+        || !chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
     {
         anyhow::bail!("skill id must use a single path-safe name");
     }
@@ -496,4 +507,29 @@ fn validate_package_file(file: &str) -> Result<String> {
         anyhow::bail!("skill file must be a package-local relative path");
     }
     Ok(file.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract_frontmatter, parse_run_frontmatter};
+
+    #[test]
+    fn extract_frontmatter_requires_whole_line_terminator() {
+        let content = "---\nskill_id: legal\n---not-a-terminator\noutcome: success\n---\n# Run\n";
+
+        assert_eq!(
+            extract_frontmatter(content),
+            Some("skill_id: legal\n---not-a-terminator\noutcome: success")
+        );
+    }
+
+    #[test]
+    fn run_frontmatter_unescapes_json_quoted_scalars() {
+        let run = parse_run_frontmatter(
+            "---\nskill_id: \"legal-\\\"review\\\"\"\noutcome: success\n---\n# Run\n",
+        )
+        .expect("run frontmatter should parse");
+
+        assert_eq!(run.skill_id.as_deref(), Some("legal-\"review\""));
+    }
 }

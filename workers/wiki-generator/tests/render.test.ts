@@ -164,6 +164,10 @@ test("draft-provided labels are rendered without worker language detection", () 
 
 test("target conflict requires matching provenance", () => {
   assert.doesNotThrow(() => ensureTargetCanBeWritten(null, "/Wiki/conversations/a.md", source.path));
-  assert.doesNotThrow(() => ensureTargetCanBeWritten(`source_path: ${source.path}`, "/Wiki/conversations/a.md", source.path));
+  assert.doesNotThrow(() => ensureTargetCanBeWritten(`- source_path: ${source.path}`, "/Wiki/conversations/a.md", source.path));
+  assert.throws(
+    () => ensureTargetCanBeWritten(`# Existing\n\nMention ${source.path} in body only.`, "/Wiki/conversations/a.md", source.path),
+    /without matching provenance/
+  );
   assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/raw/b/b.md", "/Wiki/conversations/a.md", source.path), /without matching provenance/);
 });

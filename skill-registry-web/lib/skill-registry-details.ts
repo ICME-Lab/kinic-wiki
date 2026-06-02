@@ -1,6 +1,6 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
-import type { CatalogSkill, EvolutionJob, SkillCorrection, SkillEvent, SkillProposal, SkillRunEvidence, SkillRunSummary, SkillVersion } from "@/lib/skill-registry-catalog";
+import type { CatalogSkill, EvolutionJob, ProposalStatus, SkillCorrection, SkillEvent, SkillProposal, SkillRunEvidence, SkillRunSummary, SkillVersion } from "@/lib/skill-registry-catalog";
 import type { ChildNode } from "@/lib/types";
 import { listChildren, readNode } from "@/lib/vfs-client";
 
@@ -62,32 +62,46 @@ async function loadProposals(canisterId: string, databaseId: string, basePath: s
 }
 
 async function loadEvolutionProposal(canisterId: string, databaseId: string, proposalRoot: string, identity?: Identity): Promise<SkillProposal | null> {
-  const id = proposalRoot.split("/").pop() ?? proposalRoot;
+  const parsedRoot = parseProposalRoot(proposalRoot);
+  if (!parsedRoot) return null;
+  const { skillId, proposalId: id } = parsedRoot;
   const candidatePath = `${proposalRoot}/candidate/SKILL.md`;
   const metricsPath = `${proposalRoot}/metrics.json`;
+  const statusPath = `${proposalRoot}/status.md`;
   const [candidate, metrics, status] = await Promise.all([
     readRegistryNode(canisterId, databaseId, candidatePath, identity),
     readRegistryNode(canisterId, databaseId, metricsPath, identity),
-    readRegistryNode(canisterId, databaseId, `${proposalRoot}/status.md`, identity)
+    readRegistryNode(canisterId, databaseId, statusPath, identity)
   ]);
-  if (!candidate || !metrics) return null;
+  if (!candidate || !metrics || !status) return null;
   const metricsJson = parseJsonObject(metrics.content);
-  const statusFields = status ? frontmatterFields(status.content) : {};
+  const baseEtag = stringField(metricsJson, "base_etag");
+  const statusFields = frontmatterFields(status.content);
+  const proposalStatus = parseProposalStatus(statusFields.status);
+  if (!baseEtag) return null;
+  if (statusFields.kind !== "kinic.skill_evolution_proposal_status" || statusFields.schema_version !== "1") return null;
+  if (statusFields.skill_id !== skillId || statusFields.proposal_id !== id) return null;
+  if (!proposalStatus || !statusFields.recorded_at || Number.isNaN(Date.parse(statusFields.recorded_at))) return null;
   return {
     proposalRoot,
     candidatePath,
     metricsPath,
-    statusPath: status?.path ?? null,
+    statusPath,
     id,
     title: id,
-    status: statusFields.status ?? "proposed",
-    createdAt: stringField(metricsJson, "created_at") ?? String(metricsJson.created_at_ms ?? ""),
+    status: proposalStatus,
+    createdAt: stringField(metricsJson, "created_at") ?? statusFields.recorded_at,
     sourceRuns: arrayStringField(metricsJson, "source_runs"),
     candidatePreview: candidate.content.slice(0, 1200),
-    baseEtag: stringField(metricsJson, "base_etag"),
-    appliedAt: statusFields.recorded_at ?? null,
+    baseEtag,
+    appliedAt: statusFields.recorded_at,
     metricsPreview: metrics.content.slice(0, 2000)
   };
+}
+
+function parseProposalStatus(value: string | undefined): ProposalStatus | null {
+  if (value === "proposed" || value === "reviewed" || value === "auto_applied" || value === "gate_failed" || value === "conflict") return value;
+  return null;
 }
 
 async function loadVersions(canisterId: string, databaseId: string, basePath: string, identity?: Identity): Promise<SkillVersion[]> {
@@ -155,6 +169,18 @@ function missingPackageFiles(children: ChildNode[]): string[] {
 
 function isFileEntry(entry: ChildNode): boolean {
   return entry.kind !== "directory" && entry.kind !== "folder";
+}
+
+function parseProposalRoot(proposalRoot: string): { skillId: string; proposalId: string } | null {
+  const match = proposalRoot.match(/^\/Wiki\/skills\/([^/]+)\/proposals\/([^/]+)$/);
+  if (!match) return null;
+  const [, skillId, proposalId] = match;
+  if (!isSafePathSegment(skillId) || !isSafePathSegment(proposalId)) return null;
+  return { skillId, proposalId };
+}
+
+function isSafePathSegment(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && !value.includes("..");
 }
 
 function summarizeRuns(runs: SkillRunEvidence[]): SkillRunSummary {

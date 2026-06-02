@@ -177,28 +177,34 @@ function ProposalList({
   onPreview: (proposal: SkillProposal) => void;
   onApply: (proposal: SkillProposal) => void;
 }) {
-  if (skill.proposals.length === 0) return <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-muted">No improvement proposals.</p>;
+  if (skill.proposals.length === 0) return <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-muted">No evolution proposals.</p>;
   return (
     <div className="rounded-lg border border-line bg-white p-3">
-      <p className="text-xs uppercase tracking-[0.12em] text-muted">Proposals</p>
+      <p className="text-xs uppercase tracking-[0.12em] text-muted">Evolution Proposals</p>
       {skill.proposals.slice(0, 4).map((proposal) => (
-        <div key={proposal.path} className="mt-3 grid gap-2 text-xs">
+        <div key={proposal.proposalRoot} className="mt-3 grid gap-2 text-xs">
           <div className="flex items-center justify-between gap-3">
             <span className="min-w-0 truncate text-ink">{proposal.title}</span>
             <span className="rounded border border-line px-2 py-1 text-muted">{proposal.status}</span>
           </div>
           {proposal.sourceRuns.length > 0 ? <p className="truncate text-muted">runs: {proposal.sourceRuns.join(", ")}</p> : null}
-          {proposal.diff ? <pre className="max-h-28 overflow-auto rounded border border-line bg-paper p-2 text-[11px] text-muted">{proposal.diff}</pre> : null}
+          {proposal.baseEtag ? <p className="truncate font-mono text-muted">base_etag: {proposal.baseEtag}</p> : null}
+          <pre className="max-h-28 overflow-auto rounded border border-line bg-paper p-2 text-[11px] text-muted">{proposal.candidatePreview}</pre>
+          <pre className="max-h-28 overflow-auto rounded border border-line bg-paper p-2 text-[11px] text-muted">{proposal.metricsPreview}</pre>
           <div className="flex flex-wrap gap-2">
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || proposal.status !== "proposed"} type="button" onClick={() => onApprove(proposal)}>Approve</button>
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposal.diff || proposal.status === "applied"} type="button" onClick={() => onPreview(proposal)}>Preview apply</button>
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || preview?.proposalPath !== proposal.path} type="button" onClick={() => onApply(proposal)}>Apply</button>
+            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || proposal.status !== "proposed"} type="button" onClick={() => onApprove(proposal)}>Mark reviewed</button>
+            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposalCanApply(proposal)} type="button" onClick={() => onPreview(proposal)}>Preview apply</button>
+            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposalCanApply(proposal) || preview?.proposalPath !== proposal.proposalRoot} type="button" onClick={() => onApply(proposal)}>Apply</button>
           </div>
-          {preview?.proposalPath === proposal.path ? <p className="text-muted">Preview: {preview.targetPath} +{preview.additions} -{preview.removals}</p> : null}
+          {preview?.proposalPath === proposal.proposalRoot ? <p className="text-muted">Preview: {preview.targetPath} +{preview.additions} -{preview.removals}</p> : null}
         </div>
       ))}
     </div>
   );
+}
+
+function proposalCanApply(proposal: SkillProposal): boolean {
+  return proposal.status === "proposed" || proposal.status === "reviewed";
 }
 
 function EventList({ skill }: { skill: CatalogSkill }) {

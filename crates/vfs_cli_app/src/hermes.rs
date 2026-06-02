@@ -599,17 +599,36 @@ fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
     if !content.starts_with("---\n") {
         return None;
     }
-    let end = content[4..].find("\n---")? + 4;
+    let rest = &content[4..];
+    let end = frontmatter_end(rest)? + 4;
     for line in content[4..end].lines() {
         if line.starts_with(' ') || !line.contains(':') {
             continue;
         }
         let (field, value) = line.split_once(':')?;
         if field.trim() == key {
-            return Some(value.trim().trim_matches('"').to_string());
+            return Some(clean_yaml_value(value));
         }
     }
     None
+}
+
+fn frontmatter_end(rest: &str) -> Option<usize> {
+    rest.find("\n---\n").or_else(|| {
+        rest.ends_with("\n---")
+            .then_some(rest.len() - "\n---".len())
+    })
+}
+
+fn clean_yaml_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    }
+    if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return trimmed[1..trimmed.len() - 1].replace("''", "'");
+    }
+    trimmed.to_string()
 }
 
 fn pending_json_files(pending_dir: &Path) -> Result<Vec<PathBuf>> {
@@ -760,6 +779,21 @@ mod tests {
         assert_eq!(
             frontmatter_scalar(content, "status"),
             Some("queued".to_string())
+        );
+    }
+
+    #[test]
+    fn frontmatter_scalar_requires_whole_line_terminator_and_unescapes_quotes() {
+        let content =
+            "---\nstatus: \"queued\\\"now\"\n---not-a-terminator\nignored: true\n---\n# Job\n";
+
+        assert_eq!(
+            frontmatter_scalar(content, "status"),
+            Some("queued\"now".to_string())
+        );
+        assert_eq!(
+            frontmatter_scalar(content, "ignored"),
+            Some("true".to_string())
         );
     }
 

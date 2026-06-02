@@ -105,8 +105,8 @@ export type DatabaseSummary = {
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
-  creditsBalance: string | null;
-  creditsSuspendedAtMs: string | null;
+  cyclesBalance: string | null;
+  cyclesSuspendedAtMs: string | null;
   archivedAtMs: string | null;
 };
 

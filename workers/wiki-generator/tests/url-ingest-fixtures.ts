@@ -68,7 +68,7 @@ export class TestVfsClient implements VfsClient {
   failSessionCheck = false;
   sessionChecks: { databaseId: string; requestPath: string; sessionNonce: string }[] = [];
   sourceSessionChecks: { databaseId: string; sourcePath: string; sourceEtag: string; sessionNonce: string }[] = [];
-  writeCreditChecks: string[] = [];
+  writeCycleChecks: string[] = [];
   failExpectedEtagOnce = false;
   sourceAckKind: NodeKind = "source";
   sourceReadsBeforeWrite = 0;
@@ -78,8 +78,8 @@ export class TestVfsClient implements VfsClient {
   lastRequest: UrlIngestRequest | null = null;
   lastSourceWrite: WriteNodeRequest | null = null;
 
-  async checkDatabaseWriteCredits(databaseId: string): Promise<void> {
-    this.writeCreditChecks.push(databaseId);
+  async checkDatabaseWriteCycles(databaseId: string): Promise<void> {
+    this.writeCycleChecks.push(databaseId);
   }
 
   async checkSourceRunSession(databaseId: string, sourcePath: string, sourceEtag: string, sessionNonce: string): Promise<void> {

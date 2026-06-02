@@ -8,12 +8,11 @@ import type { BusyAction } from "./access-control";
 import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
 import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { CreditsConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
-  getCreditsConfig,
+  getCyclesBillingConfig,
   grantDatabaseAccessAuthenticated,
-  listDatabaseCreditPendingOperationsAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
@@ -32,9 +31,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
-  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
+  const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
-  const [pendingOperationCount, setPendingOperationCount] = useState(0);
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -61,9 +59,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       if (!nextDatabaseId) {
         setPrincipal(client?.getIdentity().getPrincipal().toText() ?? null);
         setDatabases([]);
-        setCreditsConfig(null);
+        setCyclesBillingConfig(null);
         setMembers([]);
-        setPendingOperationCount(0);
         setError(null);
         setWarning(null);
         setMemberError(null);
@@ -76,8 +73,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setMemberError(null);
       try {
         const identity = client?.getIdentity() ?? null;
-        const [creditsResult, publicResult, memberResult] = await Promise.allSettled([
-          getCreditsConfig(canisterId),
+        const [cyclesResult, publicResult, memberResult] = await Promise.allSettled([
+          getCyclesBillingConfig(canisterId),
           listDatabasesPublic(canisterId),
           identity ? listDatabasesAuthenticated(canisterId, identity) : Promise.resolve<DatabaseSummary[]>([])
         ]);
@@ -94,31 +91,24 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         const nextDatabase = nextDatabases.find((item) => item.databaseId === nextDatabaseId) ?? null;
         setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
-        setCreditsConfig(creditsResult.status === "fulfilled" ? creditsResult.value : null);
+        setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
         setMembers([]);
-        setPendingOperationCount(0);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
         }
         if (memberResult.status === "rejected") {
           setMemberError(`Member database list unavailable: ${errorMessage(memberResult.reason)}`);
         }
-        if (identity && nextDatabase?.role === "owner" && nextDatabase.status === "active") {
-          try {
-            const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
-            if (!isCurrentRefresh()) return;
-            setMembers(nextMembers);
-          } catch (cause) {
-            if (!isCurrentRefresh()) return;
-            setMemberError(errorMessage(cause));
-          }
-          try {
-            const pendingOperations = await listDatabaseCreditPendingOperationsAuthenticated(canisterId, identity, nextDatabaseId);
-            if (!isCurrentRefresh()) return;
-            setPendingOperationCount(pendingOperations.length);
-          } catch {
-            if (!isCurrentRefresh()) return;
-            setPendingOperationCount(0);
+        if (identity && nextDatabase?.role === "owner") {
+          if (nextDatabase.status === "active") {
+            try {
+              const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
+              if (!isCurrentRefresh()) return;
+              setMembers(nextMembers);
+            } catch (cause) {
+              if (!isCurrentRefresh()) return;
+              setMemberError(errorMessage(cause));
+            }
           }
         } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
           try {
@@ -184,9 +174,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     await authClient.logout();
     setPrincipal(null);
     setDatabases([]);
-    setCreditsConfig(null);
+    setCyclesBillingConfig(null);
     setMembers([]);
-    setPendingOperationCount(0);
     setError(null);
     setWarning(null);
     setMemberError(null);
@@ -296,20 +285,19 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
 
-        {database ? <SummaryPanel creditsConfig={creditsConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
+        {database ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
         {database ? (
           canDeletePendingDatabase ? (
             <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
           ) : canManage ? (
             <OwnerPanel
-              creditsBalance={database.creditsBalance}
+              cyclesBalance={database.cyclesBalance}
               busy={busy}
               busyAction={busyAction}
               databaseId={databaseId}
               databaseName={database.name}
               members={members}
-              pendingOperationCount={pendingOperationCount}
               principal={principal ?? "anonymous"}
               onDelete={deleteDatabase}
               onGrant={grantAccess}

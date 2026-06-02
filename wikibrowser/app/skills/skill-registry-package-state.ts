@@ -10,7 +10,6 @@ const DEFAULT_PACKAGE_DRAFT: PackageDraft = {
   source: "",
   reference: "main",
   id: "",
-  catalog: "private",
   skill: "",
   manifest: "",
   provenance: "",
@@ -61,7 +60,6 @@ export function usePackageManager(input: {
         void run((identity) =>
           upsertSkillPackage(input.canisterId, input.databaseId, identity, {
             id: draft.id,
-            catalog: draft.catalog,
             files: [
               { name: "SKILL.md", content: draft.skill },
               { name: "manifest.md", content: draft.manifest },

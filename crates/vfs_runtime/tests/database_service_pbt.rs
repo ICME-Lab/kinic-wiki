@@ -1,5 +1,5 @@
 // Where: crates/vfs_runtime/tests/database_service_pbt.rs
-// What: Property tests for database credits and lifecycle operation sequences.
+// What: Property tests for database cycles and lifecycle operation sequences.
 // Why: Randomized state-machine checks catch partial updates across balances, status, and mounts.
 use std::path::{Path, PathBuf};
 
@@ -7,15 +7,15 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{CYCLES_PER_CREDIT, VfsService};
+use vfs_runtime::{VfsService, cycles_for_payment_amount_e8s};
 use vfs_types::DatabaseStatus;
 
 const OWNER: &str = "owner";
-const INITIAL_DATABASE_CREDITS: u64 = 1_000;
+const INITIAL_DATABASE_PAYMENT_E8S: u64 = 1_000;
 
 #[derive(Clone, Debug)]
 enum RuntimeOp {
-    PurchaseDatabaseCredits { amount: u64 },
+    PurchaseDatabaseCycles { amount: u64 },
     Charge { cycles_delta: u128 },
     ArchiveFinalize,
     RestoreArchived,
@@ -23,7 +23,7 @@ enum RuntimeOp {
 
 #[derive(Debug)]
 struct Model {
-    database_credits: u64,
+    database_cycles: u64,
     status: DatabaseStatus,
     archive_bytes: Option<Vec<u8>>,
     archive_hash: Option<Vec<u8>>,
@@ -49,7 +49,7 @@ fn property_config() -> ProptestConfig {
 
 fn operation_strategy() -> impl Strategy<Value = RuntimeOp> {
     prop_oneof![
-        4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::PurchaseDatabaseCredits { amount }),
+        4 => (1_u64..=250_000).prop_map(|amount| RuntimeOp::PurchaseDatabaseCycles { amount }),
         4 => (0_u128..=20_000_u128).prop_map(|cycles_delta| RuntimeOp::Charge { cycles_delta }),
         2 => Just(RuntimeOp::ArchiveFinalize),
         2 => Just(RuntimeOp::RestoreArchived),
@@ -70,33 +70,50 @@ fn service_with_root() -> TestService {
     }
 }
 
-fn create_seeded_database(service: &VfsService) -> String {
+fn create_seeded_database(service: &VfsService) -> (String, u64) {
     let meta = service
         .create_generated_database("PBT database", OWNER, 2)
         .expect("database should create");
-    credit_database(
+    let initial_cycles = purchase_database_cycles(
         service,
         &meta.database_id,
         OWNER,
-        INITIAL_DATABASE_CREDITS,
+        INITIAL_DATABASE_PAYMENT_E8S,
         1,
         3,
     )
-    .expect("database seed should credit");
-    meta.database_id
+    .expect("database seed should cycle");
+    (meta.database_id, initial_cycles)
 }
 
-fn credit_database(
+fn purchase_database_cycles(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    credits: u64,
+    payment_amount_e8s: u64,
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
-    service.mark_database_credit_purchase_completed(operation_id, database_id, caller, credits)?;
-    service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
+    let operation_id =
+        service.begin_database_cycles_purchase(database_id, caller, payment_amount_e8s, now)?;
+    let config = service.cycles_billing_config()?;
+    let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+    service.complete_database_cycles_purchase_ledger_transfer(
+        operation_id,
+        database_id,
+        caller,
+        cycles,
+        block_index,
+    )?;
+    service.apply_database_cycles_purchase(
+        operation_id,
+        database_id,
+        caller,
+        cycles,
+        block_index,
+        now,
+    )?;
+    Ok(cycles)
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
@@ -144,30 +161,23 @@ fn database_bytes(root: &Path, service: &VfsService, database_id: &str) -> (Vec<
 }
 
 fn charge_amount(cycles_delta: u128) -> u64 {
-    cycles_delta
-        .div_ceil(CYCLES_PER_CREDIT)
-        .try_into()
-        .expect("generated charge fits u64")
+    u64::try_from(cycles_delta).expect("generated charge fits u64")
 }
 
 fn assert_invariants(service: &VfsService, database_id: &str, model: &Model) {
     let database_entries = service
-        .list_database_credit_entries(database_id, OWNER, None, 100)
+        .list_database_cycle_entries(database_id, OWNER, None, 100)
         .expect("database ledger should load")
         .entries;
     let database_after = database_entries
         .last()
         .expect("database ledger should not be empty")
-        .balance_after_credits;
-    assert_eq!(database_after, model.database_credits);
+        .balance_after_cycles;
+    assert_eq!(database_after, model.database_cycles);
 
     let (status, mount_id) = status_and_mount(service, database_id);
     assert_eq!(status, model.status);
-    if matches!(status, DatabaseStatus::Archived) {
-        assert_eq!(mount_id, None);
-    } else {
-        assert!(mount_id.is_some());
-    }
+    assert!(mount_id.is_some());
 
     let infos = service.list_database_infos().expect("infos should load");
     let mut mount_ids = infos
@@ -191,16 +201,25 @@ fn apply_operation(
     step: i64,
 ) {
     match operation {
-        RuntimeOp::PurchaseDatabaseCredits { amount } => {
-            let result =
-                credit_database(service, database_id, OWNER, amount, step as u64 + 10, step);
-            result.expect("database credit purchase should succeed");
-            model.database_credits += amount;
+        RuntimeOp::PurchaseDatabaseCycles { amount } => {
+            let result = purchase_database_cycles(
+                service,
+                database_id,
+                OWNER,
+                amount,
+                step as u64 + 10,
+                step,
+            );
+            if model.status == DatabaseStatus::Active {
+                model.database_cycles += result.expect("database cycle purchase should succeed");
+            } else {
+                assert!(result.is_err());
+            }
         }
         RuntimeOp::Charge { cycles_delta } => {
             let config = service
-                .credits_config()
-                .expect("credits config should load");
+                .cycles_billing_config()
+                .expect("cycles config should load");
             let result = service.charge_database_update(
                 &config,
                 database_id,
@@ -209,9 +228,9 @@ fn apply_operation(
                 cycles_delta,
                 step,
             );
-            result.expect("database charge should record against credit account");
-            let charge = model.database_credits.min(charge_amount(cycles_delta));
-            model.database_credits -= charge;
+            result.expect("database charge should record against cycle account");
+            let charge = model.database_cycles.min(charge_amount(cycles_delta));
+            model.database_cycles -= charge;
         }
         RuntimeOp::ArchiveFinalize => {
             if model.status == DatabaseStatus::Active {
@@ -286,9 +305,9 @@ proptest! {
     fn database_service_pbt(operations in prop::collection::vec(operation_strategy(), 1..40)) {
         let env = service_with_root();
         let service = &env.service;
-        let database_id = create_seeded_database(service);
+        let (database_id, initial_cycles) = create_seeded_database(service);
         let mut model = Model {
-            database_credits: INITIAL_DATABASE_CREDITS,
+            database_cycles: initial_cycles,
             status: DatabaseStatus::Active,
             archive_bytes: None,
             archive_hash: None,

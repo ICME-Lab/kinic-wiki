@@ -5,9 +5,9 @@ import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
 import { buildUrlIngestRequest } from "./url-ingest-request.js";
 import {
   createVfsActor as defaultCreateVfsActor,
-  getCreditsConfigOrNull,
+  getCyclesBillingConfigOrNull,
   normalizeWritableDatabases,
-  requireDatabaseWriteCreditsAvailable
+  requireDatabaseWriteCyclesAvailable
 } from "./vfs-actor.js";
 
 const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
@@ -50,7 +50,7 @@ export async function queueUrlIngest(tab, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  await requireDatabaseWriteCreditsAvailable(actor, config.databaseId);
+  await requireDatabaseWriteCyclesAvailable(actor, config.databaseId);
   const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
   const request = buildUrlIngestRequest({
     url: tab.url,
@@ -86,7 +86,7 @@ export async function saveRawSource(rawSource, config) {
   if (!config?.databaseId) throw new Error("database id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  await requireDatabaseWriteCreditsAvailable(actor, config.databaseId);
+  await requireDatabaseWriteCyclesAvailable(actor, config.databaseId);
   const existing = await actor.read_node(config.databaseId, rawSource.path);
   if ("Err" in existing) throw new Error(existing.Err);
   const expected = existing.Ok[0]?.etag ? [existing.Ok[0].etag] : [];
@@ -148,12 +148,12 @@ export async function listWritableDatabases(config) {
   if (!config?.canisterId) throw new Error("canister id is required");
   const snapshot = await authenticatedSnapshot();
   const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  const [result, creditsConfig] = await Promise.all([
+  const [result, cyclesConfig] = await Promise.all([
     actor.list_databases(),
-    getCreditsConfigOrNull(actor)
+    getCyclesBillingConfigOrNull(actor)
   ]);
   if ("Err" in result) throw new Error(result.Err);
-  return normalizeWritableDatabases(result.Ok, creditsConfig);
+  return normalizeWritableDatabases(result.Ok, cyclesConfig);
 }
 
 export function setOffscreenDepsForTest(deps = {}) {

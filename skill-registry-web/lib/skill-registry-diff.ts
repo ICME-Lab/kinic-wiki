@@ -1,5 +1,6 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { CatalogSkill, SkillProposal } from "@/lib/skill-registry-catalog";
+import { assertProposalStatus } from "@/lib/skill-registry-operations";
 import type { WikiNode } from "@/lib/types";
 import { readNode, writeNodeAuthenticated } from "@/lib/vfs-client";
 import { ensureParentFoldersAuthenticated } from "@/lib/vfs-folders";
@@ -7,6 +8,7 @@ import { ensureParentFoldersAuthenticated } from "@/lib/vfs-folders";
 export type ProposalDiffPreview = {
   proposalPath: string;
   targetPath: string;
+  baseEtag: string;
   nextContent: string;
   currentEtag: string;
   metadataJson: string;
@@ -21,13 +23,16 @@ export async function previewApplyProposalDiff(canisterId: string, databaseId: s
     requireNode(canisterId, databaseId, proposal.metricsPath, identity)
   ]);
   assertProposalGates(metrics.content);
-  if (proposal.baseEtag && proposal.baseEtag !== current.etag) {
+  assertSafeProposalId(proposal.id);
+  if (!proposal.baseEtag) throw new Error("Proposal metrics base_etag is required.");
+  if (proposal.baseEtag !== current.etag) {
     throw new Error("Current SKILL.md etag no longer matches proposal base_etag.");
   }
   const counts = lineDelta(current.content, candidate.content);
   return {
     proposalPath: proposal.proposalRoot,
     targetPath: `${skill.basePath}/SKILL.md`,
+    baseEtag: proposal.baseEtag,
     nextContent: candidate.content,
     currentEtag: current.etag,
     metadataJson: current.metadataJson,
@@ -37,14 +42,25 @@ export async function previewApplyProposalDiff(canisterId: string, databaseId: s
 }
 
 export async function applyProposalDiff(canisterId: string, databaseId: string, identity: Identity, proposal: SkillProposal, preview: ProposalDiffPreview): Promise<void> {
+  assertSafeProposalId(proposal.id);
+  if (proposal.proposalRoot !== preview.proposalPath) throw new Error("Proposal changed since preview.");
+  if (!proposal.baseEtag) throw new Error("Proposal metrics base_etag is required.");
+  if (proposal.baseEtag !== preview.baseEtag) throw new Error("Proposal base_etag changed since preview.");
+  if (!preview.targetPath.endsWith("/SKILL.md")) throw new Error("Proposal target must be SKILL.md.");
   const basePath = preview.targetPath.replace(/\/SKILL\.md$/, "");
   const current = await requireNode(canisterId, databaseId, preview.targetPath, identity);
   if (current.etag !== preview.currentEtag) throw new Error("Current SKILL.md changed since preview.");
-  const [manifest, metrics] = await Promise.all([
+  if (current.etag !== proposal.baseEtag) throw new Error("Current SKILL.md etag no longer matches proposal base_etag.");
+  const skillId = preview.targetPath.split("/").at(-2);
+  if (!skillId) throw new Error("Skill id is missing.");
+  const statusPath = `${proposal.proposalRoot}/status.md`;
+  const [manifest, metrics, status] = await Promise.all([
     readNode(canisterId, databaseId, `${basePath}/manifest.md`, identity),
-    requireNode(canisterId, databaseId, proposal.metricsPath, identity)
+    requireNode(canisterId, databaseId, proposal.metricsPath, identity),
+    requireNode(canisterId, databaseId, statusPath, identity)
   ]);
   assertProposalGates(metrics.content);
+  assertProposalStatus(status.content, skillId, proposal.id, ["proposed", "reviewed"]);
   const versionId = `${Date.now()}-${(await sha256Hex(current.content)).slice(0, 12)}`;
   const versionBase = `${basePath}/versions/${versionId}`;
   const versionSkillPath = `${versionBase}/SKILL.md`;
@@ -75,15 +91,14 @@ export async function applyProposalDiff(canisterId: string, databaseId: string, 
     metadataJson: preview.metadataJson,
     expectedEtag: preview.currentEtag
   });
-  const statusPath = `${proposal.proposalRoot}/status.md`;
   await ensureParentFoldersAuthenticated(canisterId, databaseId, identity, statusPath);
   await writeNodeAuthenticated(canisterId, identity, {
     databaseId,
     path: statusPath,
     kind: "file",
-    content: ["---", "kind: kinic.skill_evolution_proposal_status", "schema_version: 1", `proposal_id: ${JSON.stringify(proposal.id)}`, "status: auto_applied", `recorded_at: ${new Date().toISOString()}`, "---", "# Proposal Status"].join("\n"),
-    metadataJson: "{}",
-    expectedEtag: null
+    content: ["---", "kind: kinic.skill_evolution_proposal_status", "schema_version: 1", `skill_id: ${JSON.stringify(skillId)}`, `proposal_id: ${JSON.stringify(proposal.id)}`, "status: auto_applied", `recorded_at: ${new Date().toISOString()}`, "---", "# Proposal Status"].join("\n"),
+    metadataJson: status.metadataJson,
+    expectedEtag: status.etag
   });
 }
 
@@ -131,6 +146,12 @@ function parseJsonObject(content: string): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   } catch {
     return {};
+  }
+}
+
+function assertSafeProposalId(value: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) || value.includes("..")) {
+    throw new Error("Proposal id must be a single safe path segment.");
   }
 }
 

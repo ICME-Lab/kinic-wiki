@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { BookOpen, Settings, Share2, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
-import { databaseCreditsView, databaseCreditsHref } from "@/lib/credits-state";
-import type { CreditsConfig, DatabaseSummary } from "@/lib/types";
+import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
+import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 const OFFICIAL_KINIC_WIKI_DATABASE_ID = "db_kva4v2twg6jv";
@@ -57,14 +57,14 @@ export function AuthControls({
 }
 
 export function DatabaseBody({
-  creditsConfig,
+  cyclesConfig,
   loading,
   myDatabases,
   principal,
   publicError,
   publicDatabases
 }: {
-  creditsConfig: CreditsConfig | null;
+  cyclesConfig: CyclesBillingConfig | null;
   loading: boolean;
   myDatabases: DatabaseRow[];
   principal: string | null;
@@ -73,12 +73,12 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection creditsConfig={creditsConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection creditsConfig={creditsConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection creditsConfig={creditsConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} description="Databases where your signed-in principal has a direct role." emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -110,7 +110,7 @@ export function OfficialKinicWikiPanel() {
 }
 
 function DatabaseSection({
-  creditsConfig,
+  cyclesConfig,
   description,
   emptyMessage,
   mode,
@@ -119,7 +119,7 @@ function DatabaseSection({
   showTitle = true,
   title
 }: {
-  creditsConfig: CreditsConfig | null;
+  cyclesConfig: CyclesBillingConfig | null;
   description: string;
   emptyMessage: string;
   mode: "member" | "public";
@@ -150,7 +150,7 @@ function DatabaseSection({
       {!showTitle && publicError && mode === "public" ? <p className="px-4 pt-4 text-sm text-muted">{publicError}</p> : null}
       <div className="grid gap-3 p-3 sm:hidden">
         {rows.map((database) => (
-          <DatabaseMobileCard key={database.databaseId} creditsConfig={creditsConfig} database={database} mode={mode} />
+          <DatabaseMobileCard key={database.databaseId} cyclesConfig={cyclesConfig} database={database} mode={mode} />
         ))}
       </div>
       <div className="hidden overflow-x-auto sm:block">
@@ -161,7 +161,7 @@ function DatabaseSection({
               <th className="px-4 py-3 font-medium">Role</th>
               <th className="px-4 py-3 font-medium">Status</th>
               <th className="px-4 py-3 font-medium">Logical size</th>
-              <th className="px-4 py-3 font-medium">Credits</th>
+              <th className="px-4 py-3 font-medium">Cycles</th>
               <th className="px-4 py-3 font-medium">Open</th>
               <th className="px-4 py-3 font-medium">Share</th>
               {mode === "member" ? <th className="px-4 py-3 font-medium">Skills</th> : null}
@@ -170,7 +170,7 @@ function DatabaseSection({
           </thead>
           <tbody>
             {rows.map((database) => (
-              <DatabaseTableRow key={database.databaseId} creditsConfig={creditsConfig} database={database} mode={mode} />
+              <DatabaseTableRow key={database.databaseId} cyclesConfig={cyclesConfig} database={database} mode={mode} />
             ))}
           </tbody>
         </table>
@@ -179,7 +179,7 @@ function DatabaseSection({
   );
 }
 
-function DatabaseTableRow({ creditsConfig, database, mode }: { creditsConfig: CreditsConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: CyclesBillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   return (
     <tr className="border-t border-line">
@@ -193,15 +193,11 @@ function DatabaseTableRow({ creditsConfig, database, mode }: { creditsConfig: Cr
       <td className="px-4 py-3 capitalize text-ink">{database.role}</td>
       <td className="px-4 py-3 capitalize text-ink">{database.status}</td>
       <td className="px-4 py-3 text-ink">{formatBytes(database.logicalSizeBytes)}</td>
-      <td className="px-4 py-3 text-ink">{databaseCreditsView(database, creditsConfig).summary}</td>
+      <td className="px-4 py-3 text-ink">{databaseCyclesView(database, cyclesConfig).summary}</td>
       <td className="px-4 py-3">
         <div className="flex flex-wrap gap-2">
-          {active ? (
-            <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" />
-          ) : <span className="text-muted">-</span>}
-          {active && mode === "member" && database.publicReadable ? (
-            <DatabaseActionLink href={openPublicDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open public" />
-          ) : null}
+          {active ? <DatabaseActionLink href={openDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open" /> : <span className="text-muted">-</span>}
+          {active && mode === "member" && database.publicReadable ? <DatabaseActionLink href={openPublicDatabaseHref(database)} icon={<BookOpen aria-hidden size={14} />} label="Open public" /> : null}
         </div>
       </td>
       <td className="px-4 py-3">{active && database.publicReadable ? <ShareDatabaseLink database={database} /> : <span className="text-muted">-</span>}</td>
@@ -213,7 +209,7 @@ function DatabaseTableRow({ creditsConfig, database, mode }: { creditsConfig: Cr
                 Registry
               </Link>
             ) : null}
-            <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
+            <DatabaseActionLink href={databaseCyclesHref(database)} icon={<Wallet aria-hidden size={14} />} label="Cycles" />
           </div>
         </td>
       ) : null}
@@ -224,7 +220,7 @@ function DatabaseTableRow({ creditsConfig, database, mode }: { creditsConfig: Cr
   );
 }
 
-function DatabaseMobileCard({ creditsConfig, database, mode }: { creditsConfig: CreditsConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
+function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: CyclesBillingConfig | null; database: DatabaseRow; mode: "member" | "public" }) {
   const active = isActiveRoutableDatabase(database);
   return (
     <article className="rounded-lg border border-line bg-white p-4 text-sm">
@@ -237,7 +233,7 @@ function DatabaseMobileCard({ creditsConfig, database, mode }: { creditsConfig: 
         <DatabaseCardMeta label="Role" value={database.role} />
         <DatabaseCardMeta label="Status" value={database.status} />
         <DatabaseCardMeta label="Logical size" value={formatBytes(database.logicalSizeBytes)} />
-        <DatabaseCardMeta label="Credits" value={databaseCreditsView(database, creditsConfig).summary} />
+        <DatabaseCardMeta label="Cycles" value={databaseCyclesView(database, cyclesConfig).summary} />
       </dl>
       <div className="mt-4 flex flex-wrap gap-3 font-medium">
         {active ? (
@@ -254,7 +250,7 @@ function DatabaseMobileCard({ creditsConfig, database, mode }: { creditsConfig: 
           ) : null
         ) : null}
         {mode === "member" ? (
-          <DatabaseActionLink href={databaseCreditsHref(database)} icon={<Wallet aria-hidden size={14} />} label="Credits" />
+          <DatabaseActionLink href={databaseCyclesHref(database)} icon={<Wallet aria-hidden size={14} />} label="Cycles" />
         ) : null}
         {active && database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
         <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Access" />

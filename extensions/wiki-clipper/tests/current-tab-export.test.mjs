@@ -81,6 +81,35 @@ test("startCurrentTabExport stops before fetching when II is not authenticated",
   }
 });
 
+test("startCurrentTabExport reports auth-status bridge failures before fetching", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalled = false;
+  globalThis.fetch = async () => {
+    fetchCalled = true;
+    throw new Error("fetch should not run");
+  };
+  try {
+    await assert.rejects(
+      () =>
+        startCurrentTabExport({
+          limit: 1,
+          config: { canisterId: "abc", databaseId: "team-db", host: "https://icp0.io" },
+          originalUrl: "https://chatgpt.com/",
+          callbacks: {
+            send: async (message) => {
+              assert.deepEqual(message, { type: "auth-status" });
+              return { ok: false, error: "auth bridge failed" };
+            }
+          }
+        }),
+      /auth bridge failed/
+    );
+    assert.equal(fetchCalled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("fetchRecentConversationTargets paginates, dedupes, and limits", async () => {
   const calls = [];
   const fetchImpl = chatGptFetch(async (url, init) => {
@@ -263,6 +292,21 @@ test("exportTarget treats saved source with failed generation queue as partial e
   assert.equal(state.logs[0].kind, "error");
   assert.match(state.logs[0].message, /Source saved: \/Sources\/raw\/chatgpt\/abc\.md/);
   assert.match(state.logs[0].message, /worker trigger failed: HTTP 502/);
+});
+
+test("exportTarget reports save-source bridge failures as save failures", async () => {
+  const target = { id: "abc", title: "Project", url: "https://chatgpt.com/c/abc" };
+  const event = await exportTarget(
+    target,
+    { canisterId: "canister", host: "http://127.0.0.1:8001" },
+    async () => ({ ok: false, error: "save failed" }),
+    chatGptFetch(async () => jsonResponse(conversationPayload("abc", "Project")))
+  );
+
+  assert.equal(event.ok, false);
+  assert.equal(event.sourceSaved, false);
+  assert.equal(event.generationQueued, false);
+  assert.equal(event.error, "save failed");
 });
 
 test("exportTarget does not save API failures or empty conversations", async () => {

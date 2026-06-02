@@ -13,6 +13,7 @@ canbench-rs = ["dep:canbench-rs", "dep:serde_json"]
 canbench-rs = { version = "0.4.1", optional = true }
 candid = "0.10.26"
 ic-cdk = "0.20.0"
+ic-cdk-timers = "1.0.0"
 ic-http-certification = "3.2.0"
 ic-stable-structures = "0.7.2"
 serde = { version = "1.0.228", features = ["derive"] }

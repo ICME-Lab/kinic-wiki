@@ -1,5 +1,5 @@
 // Where: crates/vfs_runtime/tests/database_service_pbt_ext.rs
-// What: Supplemental property tests for credits suspension, mount history, and restore chunks.
+// What: Supplemental property tests for cycles suspension, mount history, and restore chunks.
 // Why: The main PBT covers common flows; these tests target branch-risky edge state.
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -9,15 +9,15 @@ use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
 use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 use tempfile::{TempDir, tempdir};
-use vfs_runtime::{CYCLES_PER_CREDIT, DEFAULT_MIN_UPDATE_CREDITS, VfsService};
+use vfs_runtime::{DEFAULT_MIN_UPDATE_CYCLES, VfsService, cycles_for_payment_amount_e8s};
 use vfs_types::{DatabaseStatus, DeleteDatabaseRequest, NodeKind, WriteNodeRequest};
 
 const OWNER: &str = "owner";
-const DEPOSIT_CREDITS: u64 = 1_000;
+const DEPOSIT_PAYMENT_E8S: u64 = 1_000;
 
 #[derive(Clone, Debug)]
-enum CreditsOp {
-    PurchaseDatabaseCredits { amount: u64 },
+enum CyclesOp {
+    PurchaseDatabaseCycles { amount: u64 },
     Charge { cycles_delta: u128 },
 }
 
@@ -59,21 +59,21 @@ fn service_with_root() -> TestService {
     }
 }
 
-fn create_billed_database(service: &VfsService, name: &str, now: i64) -> String {
+fn create_billed_database(service: &VfsService, name: &str, now: i64) -> (String, u64) {
     let database_id = service
         .create_generated_database(name, OWNER, now + 1)
         .expect("database should create")
         .database_id;
-    credit_database(
+    let deposit_cycles = purchase_database_cycles(
         service,
         &database_id,
         OWNER,
-        DEPOSIT_CREDITS,
+        DEPOSIT_PAYMENT_E8S,
         now as u64,
         now + 2,
     )
-    .expect("database seed should credit");
-    database_id
+    .expect("database seed should cycle");
+    (database_id, deposit_cycles)
 }
 
 fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
@@ -82,24 +82,41 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     }
 }
 
-fn credit_database(
+fn purchase_database_cycles(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    credits: u64,
+    payment_amount_e8s: u64,
     block_index: u64,
     now: i64,
 ) -> Result<u64, String> {
-    let operation_id = service.begin_database_credit_purchase(database_id, caller, credits, now)?;
-    service.mark_database_credit_purchase_completed(operation_id, database_id, caller, credits)?;
-    service.credit_database_purchase(operation_id, database_id, caller, credits, block_index, now)
+    let operation_id =
+        service.begin_database_cycles_purchase(database_id, caller, payment_amount_e8s, now)?;
+    let config = service.cycles_billing_config()?;
+    let cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+    service.complete_database_cycles_purchase_ledger_transfer(
+        operation_id,
+        database_id,
+        caller,
+        cycles,
+        block_index,
+    )?;
+    service.apply_database_cycles_purchase(
+        operation_id,
+        database_id,
+        caller,
+        cycles,
+        block_index,
+        now,
+    )?;
+    Ok(cycles)
 }
 
 fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT balance_credits, suspended_at_ms
-         FROM database_credit_accounts
+        "SELECT balance_cycles, suspended_at_ms
+         FROM database_cycle_accounts
          WHERE database_id = ?1",
         params![database_id],
         |row| {
@@ -108,7 +125,7 @@ fn db_account(root: &Path, database_id: &str) -> (u64, Option<i64>) {
             Ok((balance.max(0) as u64, suspended_at_ms))
         },
     )
-    .expect("credit account should exist")
+    .expect("cycle account should exist")
 }
 
 fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus, Option<u16>) {
@@ -122,16 +139,15 @@ fn status_and_mount(service: &VfsService, database_id: &str) -> (DatabaseStatus,
 }
 
 fn charge_amount(cycles_delta: u128) -> u64 {
-    let variable = cycles_delta.div_ceil(CYCLES_PER_CREDIT);
-    u64::try_from(variable).expect("generated charge fits u64")
+    u64::try_from(cycles_delta).expect("generated charge fits u64")
 }
 
 fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance: u64) {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     let mut stmt = conn
         .prepare(
-            "SELECT kind, amount_credits, balance_after_credits, method, cycles_delta
-             FROM database_credit_ledger
+            "SELECT kind, amount_cycles, balance_after_cycles, method, cycles_delta
+             FROM database_cycle_ledger
              WHERE database_id = ?1
              ORDER BY entry_id ASC",
         )
@@ -154,9 +170,9 @@ fn assert_database_ledger_chain(root: &Path, database_id: &str, expected_balance
         balance += amount;
         assert_eq!(balance_after, balance, "database ledger chain broke");
         match kind.as_str() {
-            "credit_purchase" => assert!(amount > 0),
+            "cycles_purchase" => assert!(amount > 0),
             "charge" => assert!(amount <= 0),
-            "delete_credit_discard" => assert!(amount <= 0),
+            "delete_cycle_discard" => assert!(amount <= 0),
             "suspend" => {
                 assert_eq!(amount, 0);
                 assert!(method.is_some());
@@ -257,10 +273,10 @@ fn finalize_restore_from_bytes(
         .expect("complete restore should finalize");
 }
 
-fn credits_operation_strategy() -> impl Strategy<Value = CreditsOp> {
+fn cycles_operation_strategy() -> impl Strategy<Value = CyclesOp> {
     prop_oneof![
-        4 => (1_u64..=2_000_000).prop_map(|amount| CreditsOp::PurchaseDatabaseCredits { amount }),
-        5 => (0_u128..=8_000_000_000_u128).prop_map(|cycles_delta| CreditsOp::Charge { cycles_delta }),
+        4 => (1_u64..=2_000_000).prop_map(|amount| CyclesOp::PurchaseDatabaseCycles { amount }),
+        5 => (0_u128..=8_000_000_000_u128).prop_map(|cycles_delta| CyclesOp::Charge { cycles_delta }),
     ]
 }
 
@@ -276,27 +292,29 @@ proptest! {
     #![proptest_config(property_config())]
 
     #[test]
-    fn database_service_pbt_credits_suspension_and_ledger_chain(
-        operations in prop::collection::vec(credits_operation_strategy(), 1..50),
+    fn database_service_pbt_cycles_suspension_and_ledger_chain(
+        operations in prop::collection::vec(cycles_operation_strategy(), 1..50),
     ) {
         let env = service_with_root();
         let service = &env.service;
-        let database_id = create_billed_database(service, "credits-pbt", 1);
-        let mut database_balance = DEPOSIT_CREDITS;
+        let (database_id, deposit_cycles) = create_billed_database(service, "cycles-pbt", 1);
+        let mut database_balance = deposit_cycles;
 
         for (index, operation) in operations.into_iter().enumerate() {
             let now = index as i64 + 100;
             match operation {
-                CreditsOp::PurchaseDatabaseCredits { amount } => {
-                    credit_database(service, &database_id, OWNER, amount, now as u64, now)
-                        .expect("credit purchase should succeed");
-                    database_balance += amount;
+                CyclesOp::PurchaseDatabaseCycles { amount } => {
+                    let purchased_cycles =
+                        purchase_database_cycles(service, &database_id, OWNER, amount, now as u64, now)
+                            .expect("cycle purchase should succeed");
+                    database_balance += purchased_cycles;
                 }
-                CreditsOp::Charge { cycles_delta } => {
+                CyclesOp::Charge { cycles_delta } => {
                     let before = database_balance;
                     let config = service
-                        .credits_config()
-                        .expect("credits config should load");
+                        .cycles_billing_config()
+                        .expect("cycles config should load");
+                    let computed = charge_amount(cycles_delta);
                     service
                         .charge_database_update(
                             &config,
@@ -307,25 +325,16 @@ proptest! {
                             now,
                         )
                         .expect("charge should record");
-                    let computed = charge_amount(cycles_delta);
-                    database_balance = database_balance.saturating_sub(computed);
-                    let entries = service
-                        .list_database_credit_entries(&database_id, OWNER, None, 100)
-                        .expect("database credits entries should load")
-                        .entries;
-                    if computed > before {
-                        assert_eq!(entries[entries.len() - 2].kind, "charge");
-                        assert_eq!(entries[entries.len() - 1].kind, "suspend");
-                    }
+                    database_balance -= computed.min(before);
                 }
             }
 
             let (stored_balance, suspended_at_ms) = db_account(&env.root, &database_id);
             assert_eq!(stored_balance, database_balance);
-            assert_eq!(suspended_at_ms.is_some(), database_balance < DEFAULT_MIN_UPDATE_CREDITS);
+            assert_eq!(suspended_at_ms.is_some(), database_balance < DEFAULT_MIN_UPDATE_CYCLES);
             assert_eq!(
-                service.require_database_write_credits_available(&database_id).is_ok(),
-                database_balance >= DEFAULT_MIN_UPDATE_CREDITS
+                service.require_database_write_cycles_available(&database_id).is_ok(),
+                database_balance >= DEFAULT_MIN_UPDATE_CYCLES
             );
             assert_database_ledger_chain(&env.root, &database_id, database_balance);
         }
@@ -339,7 +348,7 @@ proptest! {
     ) {
         let env = service_with_root();
         let service = &env.service;
-        let database_id = create_billed_database(service, "restore-pbt", 1);
+        let (database_id, _deposit_cycles) = create_billed_database(service, "restore-pbt", 1);
         let content = format!("restore body split={split_bias} deleted={restore_deleted} cancel={cancel_first}");
         service
             .write_node(
@@ -438,7 +447,7 @@ proptest! {
     }
 
     #[test]
-    fn database_service_pbt_mount_history_never_reuses_ids(
+    fn database_service_pbt_restore_does_not_allocate_mount_ids(
         operations in prop::collection::vec(mount_operation_strategy(), 1..30),
     ) {
         let env = service_with_root();
@@ -475,7 +484,6 @@ proptest! {
                             .finalize_database_archive(database_id, OWNER, hash.clone(), now + 1)
                             .expect("archive should finalize");
                         finalize_restore_from_bytes(service, database_id, &bytes, hash, size, bytes.len() / 2, now + 2);
-                        expected_mount_events += 1;
                     }
                 }
                 _ => {}

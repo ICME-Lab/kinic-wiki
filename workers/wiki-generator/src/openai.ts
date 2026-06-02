@@ -46,10 +46,10 @@ export async function generateDraft(source: WikiNode, contextHits: SearchNodeHit
       ]
     })
   });
-  const body = await response.json();
   if (!response.ok) {
-    throw new Error(deepSeekErrorMessage(body));
+    throw new Error(await deepSeekErrorMessageFromResponse(response));
   }
+  const body = await response.json();
   return parseDraftResponse(body);
 }
 
@@ -118,6 +118,17 @@ function wikiDraftSchema(): object {
   };
 }
 
+async function deepSeekErrorMessageFromResponse(response: Response): Promise<string> {
+  const text = await response.text();
+  let body: unknown = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    return `DeepSeek request failed: ${response.status} ${response.statusText || "non-JSON response"}`.trim();
+  }
+  return deepSeekErrorMessage(body);
+}
+
 export function deepSeekErrorMessage(body: unknown): string {
   if (isObject(body)) {
     const error = body.error;
@@ -157,6 +168,7 @@ function isDeepSeekChoice(value: unknown): value is DeepSeekChoice {
 
 function isWikiDraft(value: unknown): value is WikiDraft {
   if (!isObject(value)) return false;
+  if (!hasOnlyKeys(value, ["title", "slug", "labels", "summary", "key_facts", "decisions", "open_questions", "follow_ups"])) return false;
   return (
     typeof value.title === "string" &&
     typeof value.slug === "string" &&
@@ -171,6 +183,7 @@ function isWikiDraft(value: unknown): value is WikiDraft {
 
 function isWikiDraftLabels(value: unknown): boolean {
   if (!isObject(value)) return false;
+  if (!hasOnlyKeys(value, ["summary", "key_facts", "decisions", "open_questions", "follow_ups", "related_context", "provenance", "none"])) return false;
   return (
     isSingleLineLabel(value.summary) &&
     isSingleLineLabel(value.key_facts) &&
@@ -192,9 +205,14 @@ function isDraftItemArray(value: unknown): value is WikiDraftItem[] {
 }
 
 function isDraftItem(value: unknown): value is WikiDraftItem {
-  return isObject(value) && typeof value.text === "string" && typeof value.source_path === "string";
+  return isObject(value) && hasOnlyKeys(value, ["text", "source_path"]) && typeof value.text === "string" && typeof value.source_path === "string";
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key));
 }

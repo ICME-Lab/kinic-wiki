@@ -4,6 +4,7 @@ import ts from "typescript";
 
 const wikiBrowser = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
 const documentPane = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
+const urlIngest = readFileSync(new URL("../lib/url-ingest.ts", import.meta.url), "utf8");
 const triggerRouteModule = await importTs("../app/api/url-ingest/trigger/route.ts");
 const sourceRunRouteModule = await importTs("../app/api/source/run/route.ts");
 const queryAnswerRouteModule = await importTs("../app/api/query/answer/route.ts");
@@ -13,6 +14,9 @@ assert.match(wikiBrowser, /authPromptMode\(readIdentity, currentNode\.error \|\|
 assert.doesNotMatch(wikiBrowser, /tab === "ingest" \|\| tab === "sources"/);
 assert.match(documentPane, /authPrompt\?: "private" \| null/);
 assert.doesNotMatch(documentPane, /Write access/);
+assert.match(urlIngest, /safeIngestRequestId\(Date\.now\(\), crypto\.randomUUID\(\)\)/);
+assert.match(urlIngest, /function isSafeRequestSegment/);
+assert.match(urlIngest, /!value\.includes\("\.\."\)/);
 
 await withEnv({}, async () => {
   const response = await triggerRouteModule.POST(triggerRequest("https://wiki.kinic.xyz"));
@@ -112,6 +116,11 @@ await withEnv(
       sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/../...md" })
     );
     assert.equal(traversalSourcePath.status, 400);
+
+    const dotdotSourcePath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/web/a..b.md" })
+    );
+    assert.equal(dotdotSourcePath.status, 400);
 
     const missingSourceSessionNonce = await sourceRunRouteModule.POST(
       sourceRunRequest("https://kinic.xyz", { sessionNonce: "" })

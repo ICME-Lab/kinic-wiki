@@ -9,13 +9,13 @@ import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-manageme
 import { usePackageManager } from "@/app/skills/skill-registry-package-state";
 import { EmptyState, SkillCard, StatusPanel, SummaryStrip } from "@/app/skills/skill-registry-ui";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { databaseCreditsDisabledReason, databaseCanWrite } from "@/lib/credits-state";
+import { databaseCyclesDisabledReason, databaseCanWrite } from "@/lib/cycles-state";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
 import { loadSkillCatalogDetails } from "@/lib/skill-registry-details";
 import { applyProposalDiff, previewApplyProposalDiff, type ProposalDiffPreview } from "@/lib/skill-registry-diff";
 import { approveSkillProposal, recordSkillEvent, recordSkillRun, updateSkillStatus, type RunOutcome, type SkillStatus } from "@/lib/skill-registry-operations";
-import type { CreditsConfig, DatabaseRole, DatabaseSummary } from "@/lib/types";
-import { getCreditsConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
+import type { CyclesBillingConfig, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type ActionDraft = {
@@ -55,7 +55,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const [actions, setActions] = useState<Record<string, ActionDraft>>({});
   const [databaseRole, setDatabaseRole] = useState<DatabaseRole | null>(null);
   const [databaseSummary, setDatabaseSummary] = useState<DatabaseSummary | null>(null);
-  const [creditsConfig, setCreditsConfig] = useState<CreditsConfig | null>(null);
+  const [cyclesConfig, setCyclesConfig] = useState<CyclesBillingConfig | null>(null);
 
   const loadCatalog = useCallback(
     async (identity?: Identity) => {
@@ -102,13 +102,13 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     } catch {
       setDatabaseSummary(null);
       setDatabaseRole(null);
-      setCreditsConfig(null);
+      setCyclesConfig(null);
       return;
     }
     try {
-      setCreditsConfig(await getCreditsConfig(canisterId));
+      setCyclesConfig(await getCyclesBillingConfig(canisterId));
     } catch {
-      setCreditsConfig(null);
+      setCyclesConfig(null);
     }
   }, [canisterId, databaseId]);
 
@@ -170,7 +170,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     setPrincipal(null);
     setDatabaseRole(null);
     setDatabaseSummary(null);
-    setCreditsConfig(null);
+    setCyclesConfig(null);
     setSkills([]);
     setError(null);
     setLoadState("idle");
@@ -180,8 +180,8 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const filteredSkills = useMemo(() => filterSkills(skills, query, statusFilter), [skills, query, statusFilter]);
   const summary = useMemo(() => summarizeSkills(skills), [skills]);
   const identity = authClient?.getIdentity();
-  const creditsReason = databaseCreditsDisabledReason(databaseSummary, creditsConfig);
-  const writable = databaseCanWrite(databaseSummary, creditsConfig);
+  const cyclesReason = databaseCyclesDisabledReason(databaseSummary, cyclesConfig);
+  const writable = databaseCanWrite(databaseSummary, cyclesConfig);
   const packageManager = usePackageManager({ canisterId, databaseId, identity, writable, refresh: refreshSkillRegistry, errorMessage });
 
   function actionFor(skill: CatalogSkill): ActionDraft {
@@ -303,7 +303,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                             }),
                           true
                         ),
-                      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.path)),
+                      approveProposal: (proposal) => void runSkillAction(skill, (activeIdentity) => approveSkillProposal(canisterId, databaseId, activeIdentity, skill, proposal.proposalRoot)),
                       previewProposal: (proposal) =>
                         void runSkillAction(
                           skill,
@@ -316,7 +316,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
                         ),
                       applyProposal: (proposal) =>
                         void runSkillAction(skill, async (activeIdentity, draft) => {
-                          if (!draft.preview || draft.preview.proposalPath !== proposal.path) throw new Error("Preview this proposal before applying.");
+                          if (!draft.preview || draft.preview.proposalPath !== proposal.proposalRoot) throw new Error("Preview this proposal before applying.");
                           await applyProposalDiff(canisterId, databaseId, activeIdentity, proposal, draft.preview);
                           await recordSkillEvent(canisterId, databaseId, activeIdentity, skill.manifest.id, { action: "proposal.apply", targetPath: draft.preview.targetPath, result: "applied" });
                         })
@@ -329,7 +329,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
             ) : null}
           </div>
           <aside className="space-y-3 lg:sticky lg:top-6">
-            <RoleBanner creditsReason={creditsReason} role={databaseRole} principal={principal} />
+            <RoleBanner cyclesReason={cyclesReason} role={databaseRole} principal={principal} />
             <PackageManager draft={packageManager.draft} busy={packageManager.busy} writable={writable} message={packageManager.message} handlers={packageManager.handlers} />
           </aside>
         </div>

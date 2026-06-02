@@ -104,10 +104,16 @@ function parseTriggerRequest(value: unknown): TriggerRequest | string {
   if (typeof requestPath !== "string" || !requestPath) return "requestPath is required";
   if (typeof sessionNonce !== "string" || !sessionNonce) return "sessionNonce is required";
   if (sessionNonce.length > 128) return "sessionNonce is too long";
-  if (!requestPath.startsWith("/Sources/ingest-requests/") || !requestPath.endsWith(".md")) {
+  if (!isIngestRequestPath(requestPath)) {
     return "requestPath must be a URL ingest request path";
   }
   return { canisterId, databaseId, requestPath, sessionNonce };
+}
+
+function isIngestRequestPath(path: string): boolean {
+  if (!path.startsWith("/Sources/ingest-requests/")) return false;
+  const name = path.slice("/Sources/ingest-requests/".length);
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(name) && !name.includes("..");
 }
 
 function allowedOrigin(request: Request): string | null {

@@ -40,17 +40,19 @@ export type SkillProposal = {
   proposalRoot: string;
   candidatePath: string;
   metricsPath: string;
-  statusPath: string | null;
+  statusPath: string;
   id: string;
   title: string;
-  status: string;
+  status: ProposalStatus;
   createdAt: string;
   sourceRuns: string[];
   candidatePreview: string;
-  baseEtag: string | null;
-  appliedAt: string | null;
+  baseEtag: string;
+  appliedAt: string;
   metricsPreview: string;
 };
+
+export type ProposalStatus = "proposed" | "reviewed" | "auto_applied" | "gate_failed" | "conflict";
 
 export type SkillVersion = {
   path: string;

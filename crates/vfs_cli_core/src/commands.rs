@@ -5,39 +5,57 @@ use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult,
+    AppendNodeRequest, CyclesBillingConfig, DatabaseCyclesPurchaseRequest,
+    DatabaseRestoreChunkRequest, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult,
     EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem,
-    WriteNodeRequest, WriteNodesRequest,
+    IncomingLinksRequest, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
+    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    kinic_base_units_per_token,
 };
 use wiki_domain::validate_source_path_for_kind;
 
-use crate::cli::{DatabaseCommand, VfsCommand};
+use crate::cli::{CyclesCommand, DatabaseCommand, VfsCommand};
 use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
 };
+
+const DEFAULT_BROWSER_ORIGIN: &str = "https://wiki.kinic.xyz";
 
 pub async fn run_vfs_command(
     client: &impl VfsApi,
     connection: &ResolvedConnection,
     command: VfsCommand,
 ) -> Result<()> {
-    if let VfsCommand::Database { command } = command {
-        run_database_command(client, connection, command).await?;
-        return Ok(());
-    }
     let database_id = connection.database_id.as_deref();
+    let command = match command {
+        VfsCommand::Cycles { command } => {
+            run_cycles_command(client, command).await?;
+            return Ok(());
+        }
+        VfsCommand::Database { command } => {
+            run_database_command(client, connection, command).await?;
+            return Ok(());
+        }
+        command => command,
+    };
     let database_id = require_database_id(database_id)?;
+    if command_requires_write_cycles_available(&command) {
+        require_write_cycles_available(client, database_id).await?;
+    }
     match command {
+        VfsCommand::Cycles { .. } => {
+            unreachable!("cycles command handled before db requirement")
+        }
         VfsCommand::Database { .. } => {
             unreachable!("database command handled before db requirement")
         }
@@ -456,6 +474,59 @@ pub async fn run_vfs_command(
     Ok(())
 }
 
+fn command_requires_write_cycles_available(command: &VfsCommand) -> bool {
+    matches!(
+        command,
+        VfsCommand::WriteNode { .. }
+            | VfsCommand::AppendNode { .. }
+            | VfsCommand::EditNode { .. }
+            | VfsCommand::DeleteNode { .. }
+            | VfsCommand::DeleteTree { .. }
+            | VfsCommand::MkdirNode { .. }
+            | VfsCommand::MoveNode { .. }
+            | VfsCommand::MultiEditNode { .. }
+    )
+}
+
+async fn require_write_cycles_available(client: &impl VfsApi, database_id: &str) -> Result<()> {
+    let config = client
+        .get_cycles_billing_config()
+        .await
+        .context("cycles config unavailable")?;
+    let databases = client
+        .list_databases()
+        .await
+        .context("database list unavailable for cycles check")?;
+    let database = databases
+        .iter()
+        .find(|database| database.database_id == database_id)
+        .ok_or_else(|| anyhow!("database cycles state unavailable: {database_id}"))?;
+    if let Some(reason) = database_cycles_disabled_reason(database, &config) {
+        return Err(anyhow!("{reason}"));
+    }
+    Ok(())
+}
+
+fn database_cycles_disabled_reason(
+    database: &DatabaseSummary,
+    config: &CyclesBillingConfig,
+) -> Option<String> {
+    let balance = database.cycles_balance.unwrap_or(0);
+    if database.cycles_suspended_at_ms.is_some() {
+        return Some(format!(
+            "database cycles are suspended: {}",
+            database.database_id
+        ));
+    }
+    if balance < config.min_update_cycles {
+        return Some(format!(
+            "database cycles balance is below minimum: {} balance_cycles={} min_update_cycles={}",
+            database.database_id, balance, config.min_update_cycles
+        ));
+    }
+    None
+}
+
 fn print_links(links: Vec<LinkEdge>, json: bool) -> Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&links)?);
@@ -587,15 +658,94 @@ async fn run_database_command(
             } else {
                 for database in databases {
                     println!(
-                        "{}\t{}\t{:?}\t{:?}\t{}",
+                        "{}\t{}\t{:?}\t{:?}\t{}\t{}\t{}",
                         database.database_id,
                         database.name,
                         database.role,
                         database.status,
-                        database.logical_size_bytes
+                        database.logical_size_bytes,
+                        database.cycles_balance.unwrap_or(0),
+                        database
+                            .cycles_suspended_at_ms
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string())
                     );
                 }
             }
+        }
+        DatabaseCommand::PurchaseCycles { database_id, kinic } => {
+            let payment_amount_e8s = parse_kinic_amount_e8s(&kinic)?;
+            let config = client.get_cycles_billing_config().await?;
+            let min_expected_cycles = cycles_for_payment_amount_e8s(payment_amount_e8s, &config)?;
+            let result = client
+                .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
+                    database_id: database_id.clone(),
+                    payment_amount_e8s,
+                    min_expected_cycles,
+                })
+                .await?;
+            println!(
+                "{database_id}\t{}\t{}\t{}",
+                result.block_index, result.amount_cycles, result.balance_cycles
+            );
+        }
+        DatabaseCommand::CyclesHistory { database_id, json } => {
+            let page = client
+                .list_database_cycle_entries(&database_id, None, 100)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&page)?);
+            } else {
+                for entry in page.entries {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        entry.entry_id,
+                        entry.kind,
+                        entry.amount_cycles,
+                        entry.balance_after_cycles,
+                        entry.caller,
+                        entry.method.unwrap_or_else(|| "-".to_string()),
+                        entry
+                            .ledger_block_index
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        entry.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::CyclesPending { database_id, json } => {
+            let pending = client
+                .list_database_cycles_pending_purchases(&database_id)
+                .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&pending)?);
+            } else {
+                for purchase in pending {
+                    println!(
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                        purchase.operation_id,
+                        purchase.status,
+                        purchase.amount_cycles,
+                        purchase.payment_amount_e8s,
+                        purchase
+                            .ledger_block_index
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                        purchase.required_action,
+                        purchase.created_at_ms
+                    );
+                }
+            }
+        }
+        DatabaseCommand::Cycles {
+            database_id,
+            kinic,
+            browser_origin,
+        } => {
+            let url = database_cycles_url(browser_origin.as_deref(), &database_id, &kinic)?;
+            open_browser_url(&url)?;
+            println!("{url}");
         }
         DatabaseCommand::Link { database_id } => {
             let path = link_workspace_database(connection, &database_id)?;
@@ -676,6 +826,187 @@ async fn run_database_command(
         }
     }
     Ok(())
+}
+
+fn database_cycles_url(
+    browser_origin: Option<&str>,
+    database_id: &str,
+    kinic: &str,
+) -> Result<String> {
+    let kinic = kinic.trim();
+    parse_kinic_amount_e8s(kinic)?;
+    let origin = browser_origin
+        .map(str::to_string)
+        .or_else(|| std::env::var("KINIC_WIKI_BROWSER_ORIGIN").ok())
+        .unwrap_or_else(|| DEFAULT_BROWSER_ORIGIN.to_string());
+    let origin = origin.trim_end_matches('/');
+    if origin.is_empty() {
+        return Err(anyhow!("browser origin must not be empty"));
+    }
+    Ok(format!(
+        "{origin}/cycles?databaseId={}&kinic={}",
+        query_encode(database_id),
+        query_encode(kinic)
+    ))
+}
+
+fn parse_kinic_amount_e8s(value: &str) -> Result<u64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("KINIC amount must not be empty"));
+    }
+    let (whole, fractional) = match trimmed.split_once('.') {
+        Some((whole, fractional)) => (whole, Some(fractional)),
+        None => (trimmed, None),
+    };
+    if whole.is_empty() || !whole.chars().all(|character| character.is_ascii_digit()) {
+        return Err(anyhow!(
+            "KINIC amount must be a positive decimal with up to {} fractional digits",
+            KINIC_DECIMALS
+        ));
+    }
+    let fractional = fractional.unwrap_or("");
+    if fractional.is_empty() && trimmed.contains('.') {
+        return Err(anyhow!(
+            "KINIC amount must be a positive decimal with up to {} fractional digits",
+            KINIC_DECIMALS
+        ));
+    }
+    if fractional.len() > usize::from(KINIC_DECIMALS)
+        || !fractional
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return Err(anyhow!(
+            "KINIC amount must be a positive decimal with up to {} fractional digits",
+            KINIC_DECIMALS
+        ));
+    }
+    let whole = whole
+        .parse::<u128>()
+        .map_err(|_| anyhow!("KINIC amount exceeds u64 e8s limit"))?;
+    let fractional_e8s = if fractional.is_empty() {
+        0
+    } else {
+        let padded = format!("{fractional:0<width$}", width = usize::from(KINIC_DECIMALS));
+        padded
+            .parse::<u128>()
+            .map_err(|_| anyhow!("KINIC amount exceeds u64 e8s limit"))?
+    };
+    let amount = whole
+        .checked_mul(u128::from(kinic_base_units_per_token()))
+        .and_then(|amount| amount.checked_add(fractional_e8s))
+        .ok_or_else(|| anyhow!("KINIC amount exceeds u64 e8s limit"))?;
+    if amount == 0 {
+        return Err(anyhow!("KINIC amount must be positive"));
+    }
+    u64::try_from(amount).map_err(|_| anyhow!("KINIC amount exceeds u64 e8s limit"))
+}
+
+fn query_encode(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(char::from(byte));
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
+}
+
+fn open_browser_url(url: &str) -> Result<()> {
+    let status = if cfg!(target_os = "macos") {
+        ProcessCommand::new("open").arg(url).status()
+    } else if cfg!(target_os = "windows") {
+        ProcessCommand::new("rundll32")
+            .arg("url.dll,FileProtocolHandler")
+            .arg(url)
+            .status()
+    } else {
+        ProcessCommand::new("xdg-open").arg(url).status()
+    };
+    let status = status.map_err(|error| anyhow!("failed to open browser: {error}"))?;
+    if !status.success() {
+        return Err(anyhow!("failed to open browser: exit status {status}"));
+    }
+    Ok(())
+}
+
+async fn run_cycles_command(client: &impl VfsApi, command: CyclesCommand) -> Result<()> {
+    match command {
+        CyclesCommand::Config { json } => {
+            let config = client.get_cycles_billing_config().await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&CyclesBillingConfigOutput::new(
+                        config,
+                        KINIC_LEDGER_FEE_E8S
+                    ))?
+                );
+            } else {
+                for line in cycles_config_lines(&config, KINIC_LEDGER_FEE_E8S) {
+                    println!("{line}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CyclesBillingConfigOutput {
+    kinic_ledger_canister_id: String,
+    billing_authority_id: String,
+    cycles_per_kinic: u64,
+    min_update_cycles: u64,
+    ledger_fee_e8s: u64,
+}
+
+impl CyclesBillingConfigOutput {
+    fn new(config: CyclesBillingConfig, ledger_fee_e8s: u64) -> Self {
+        Self {
+            kinic_ledger_canister_id: config.kinic_ledger_canister_id,
+            billing_authority_id: config.billing_authority_id,
+            cycles_per_kinic: config.cycles_per_kinic,
+            min_update_cycles: config.min_update_cycles,
+            ledger_fee_e8s,
+        }
+    }
+}
+
+fn cycles_config_lines(config: &CyclesBillingConfig, ledger_fee_e8s: u64) -> Vec<String> {
+    vec![
+        format!(
+            "kinic_ledger_canister_id\t{}",
+            config.kinic_ledger_canister_id
+        ),
+        format!("billing_authority_id\t{}", config.billing_authority_id),
+        format!("cycles_per_kinic\t{}", config.cycles_per_kinic),
+        format!("min_update_cycles\t{}", config.min_update_cycles),
+        format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
+    ]
+}
+
+fn cycles_for_payment_amount_e8s(
+    payment_amount_e8s: u64,
+    config: &CyclesBillingConfig,
+) -> Result<u64> {
+    if payment_amount_e8s == 0 {
+        return Err(anyhow!("cycles purchase payment amount must be positive"));
+    }
+    let cycles = u128::from(payment_amount_e8s)
+        .checked_mul(u128::from(config.cycles_per_kinic))
+        .ok_or_else(|| anyhow!("cycles purchase amount overflow"))?
+        / u128::from(kinic_base_units_per_token());
+    let cycles =
+        u64::try_from(cycles).map_err(|_| anyhow!("cycles purchase amount exceeds u64"))?;
+    if cycles == 0 {
+        return Err(anyhow!("cycles purchase amount is too small"));
+    }
+    Ok(cycles)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1071,10 +1402,10 @@ fn default_metadata_json() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::run_vfs_command;
-    use crate::cli::{NodeKindArg, VfsCommand};
+    use super::{command_requires_write_cycles_available, run_vfs_command};
+    use crate::cli::{CyclesCommand, NodeKindArg, VfsCommand};
     use crate::connection::ResolvedConnection;
-    use anyhow::Result;
+    use anyhow::{Result, anyhow};
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Mutex;
@@ -1090,6 +1421,12 @@ mod tests {
         entries: Vec<NodeEntry>,
         created: Mutex<u32>,
         database_lists: Mutex<u32>,
+        database_cycle_purchases: Mutex<Vec<DatabaseCyclesPurchaseRequest>>,
+        database_cycles_history: Mutex<Vec<String>>,
+        database_cycles_pending: Mutex<Vec<String>>,
+        database_summaries: Mutex<Vec<DatabaseSummary>>,
+        cycles_configs: Mutex<u32>,
+        fail_cycles_config: Mutex<bool>,
         writes: Mutex<Vec<WriteNodeRequest>>,
         write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
@@ -1155,6 +1492,23 @@ mod tests {
         }
     }
 
+    fn database_summary(
+        database_id: &str,
+        balance_cycles: Option<u64>,
+        suspended_at_ms: Option<i64>,
+    ) -> DatabaseSummary {
+        DatabaseSummary {
+            database_id: database_id.to_string(),
+            name: database_id.to_string(),
+            status: DatabaseStatus::Active,
+            role: DatabaseRole::Owner,
+            logical_size_bytes: 42,
+            cycles_balance: balance_cycles,
+            cycles_suspended_at_ms: suspended_at_ms,
+            archived_at_ms: None,
+        }
+    }
+
     #[async_trait]
     impl VfsApi for MockClient {
         async fn status(&self, _database_id: &str) -> Result<Status> {
@@ -1168,20 +1522,95 @@ mod tests {
                 name: name.to_string(),
             })
         }
+        async fn purchase_database_cycles(
+            &self,
+            request: DatabaseCyclesPurchaseRequest,
+        ) -> Result<CyclesPurchaseResult> {
+            self.database_cycle_purchases.lock().unwrap().push(request);
+            Ok(CyclesPurchaseResult {
+                block_index: 7,
+                amount_cycles: 1_250,
+                balance_cycles: 1_250,
+            })
+        }
+        async fn list_database_cycle_entries(
+            &self,
+            database_id: &str,
+            _cursor: Option<u64>,
+            _limit: u32,
+        ) -> Result<DatabaseCycleEntryPage> {
+            self.database_cycles_history
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(DatabaseCycleEntryPage {
+                entries: vec![DatabaseCycleEntry {
+                    entry_id: 1,
+                    database_id: database_id.to_string(),
+                    kind: "cycles_purchase".to_string(),
+                    amount_cycles: 500_000,
+                    balance_after_cycles: 500_000,
+                    payment_amount_e8s: Some(50_000_000_000),
+                    caller: "caller".to_string(),
+                    method: Some("purchase_database_cycles".to_string()),
+                    cycles_delta: None,
+                    cycles_per_kinic: None,
+                    ledger_block_index: Some(7),
+                    created_at_ms: 1,
+                }],
+                next_cursor: None,
+            })
+        }
+        async fn list_database_cycles_pending_purchases(
+            &self,
+            database_id: &str,
+        ) -> Result<Vec<DatabaseCyclesPendingPurchase>> {
+            self.database_cycles_pending
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            Ok(vec![DatabaseCyclesPendingPurchase {
+                operation_id: 9,
+                database_id: database_id.to_string(),
+                status: "ambiguous".to_string(),
+                amount_cycles: 1_250,
+                payment_amount_e8s: 125_000_000,
+                ledger_block_index: None,
+                created_at_ms: 3,
+                required_action: "billing_authority_review".to_string(),
+            }])
+        }
+        async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
+            let mut configs = self.cycles_configs.lock().unwrap();
+            *configs += 1;
+            if *self.fail_cycles_config.lock().unwrap() {
+                return Err(anyhow!("cycles config unavailable"));
+            }
+            Ok(CyclesBillingConfig {
+                kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                cycles_per_kinic: 1_000,
+                min_update_cycles: 1,
+            })
+        }
         async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
             Ok(())
         }
         async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
             let mut lists = self.database_lists.lock().unwrap();
             *lists += 1;
+            let summaries = self.database_summaries.lock().unwrap();
+            if !summaries.is_empty() {
+                return Ok(summaries.clone());
+            }
             Ok(vec![DatabaseSummary {
                 database_id: "alpha".to_string(),
                 name: "Alpha".to_string(),
                 status: DatabaseStatus::Active,
                 role: DatabaseRole::Owner,
                 logical_size_bytes: 42,
-                credits_balance: Some(1_000_000),
-                credits_suspended_at_ms: None,
+                cycles_balance: Some(1_000_000),
+                cycles_suspended_at_ms: None,
                 archived_at_ms: None,
             }])
         }
@@ -1412,6 +1841,202 @@ mod tests {
         .await
         .expect("write should succeed");
         assert_eq!(client.writes.lock().unwrap()[0].kind, NodeKind::Source);
+    }
+
+    #[tokio::test]
+    async fn write_node_rejects_low_cycles_balance_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(0), None)]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: true,
+            },
+        )
+        .await
+        .expect_err("low balance should reject");
+
+        assert!(error.to_string().contains("balance is below minimum"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mkdir_node_rejects_suspended_cycles_before_write() {
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("alpha", Some(20_000), Some(1))]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::MkdirNode {
+                path: "/Wiki/new".to_string(),
+                json: false,
+            },
+        )
+        .await
+        .expect_err("suspended cycles should reject");
+
+        assert!(error.to_string().contains("cycles are suspended"));
+    }
+
+    #[tokio::test]
+    async fn mutating_commands_reject_missing_cycles_config_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            fail_cycles_config: Mutex::new(true),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("missing config should reject");
+
+        assert!(error.to_string().contains("cycles config unavailable"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn mutating_commands_reject_missing_database_summary_before_write() {
+        let dir = tempdir().expect("temp dir should exist");
+        let input = PathBuf::from(dir.path()).join("source.md");
+        std::fs::write(&input, "# Source").expect("input should write");
+        let client = MockClient {
+            database_summaries: Mutex::new(vec![database_summary("other", Some(20_000), None)]),
+            ..MockClient::default()
+        };
+
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::WriteNode {
+                path: "/Sources/raw/source/source.md".to_string(),
+                kind: NodeKindArg::Source,
+                input,
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            },
+        )
+        .await
+        .expect_err("missing summary should reject");
+
+        assert!(error.to_string().contains("cycles state unavailable"));
+        assert!(client.writes.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cycles_gate_covers_content_mutation_commands_only() {
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::WriteNode {
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKindArg::File,
+                input: PathBuf::from("a.md"),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::AppendNode {
+                path: "/Wiki/a.md".to_string(),
+                input: PathBuf::from("a.md"),
+                kind: None,
+                metadata_json: None,
+                expected_etag: None,
+                separator: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::EditNode {
+                path: "/Wiki/a.md".to_string(),
+                old_text: "a".to_string(),
+                new_text: "b".to_string(),
+                expected_etag: None,
+                replace_all: false,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::DeleteNode {
+                path: "/Wiki/a.md".to_string(),
+                expected_etag: None,
+                expected_folder_index_etag: None,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::DeleteTree {
+                path: "/Wiki/a".to_string(),
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::MkdirNode {
+                path: "/Wiki/a".to_string(),
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::MoveNode {
+                from_path: "/Wiki/a.md".to_string(),
+                to_path: "/Wiki/b.md".to_string(),
+                expected_etag: None,
+                overwrite: false,
+                json: false,
+            }
+        ));
+        assert!(command_requires_write_cycles_available(
+            &VfsCommand::MultiEditNode {
+                path: "/Wiki/a.md".to_string(),
+                edits_file: PathBuf::from("edits.json"),
+                expected_etag: None,
+                json: false,
+            }
+        ));
+        assert!(!command_requires_write_cycles_available(
+            &VfsCommand::ReadNode {
+                path: "/Wiki/a.md".to_string(),
+                metadata_only: false,
+                fields: None,
+                json: false,
+            }
+        ));
+        assert!(!command_requires_write_cycles_available(
+            &VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCycles {
+                    database_id: "alpha".to_string(),
+                    kinic: "1".to_string(),
+                },
+            }
+        ));
     }
 
     #[tokio::test]
@@ -1677,6 +2302,168 @@ mod tests {
         .await
         .expect("database create should succeed");
         assert_eq!(*client.created.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn database_cycles_purchase_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCycles {
+                    database_id: "db_alpha".to_string(),
+                    kinic: "1.25".to_string(),
+                },
+            },
+        )
+        .await
+        .expect("database cycle purchase should succeed");
+        assert_eq!(
+            *client.database_cycle_purchases.lock().unwrap(),
+            vec![DatabaseCyclesPurchaseRequest {
+                database_id: "db_alpha".to_string(),
+                payment_amount_e8s: 125_000_000,
+                min_expected_cycles: 1_250,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_purchase_requires_cycles_quote() {
+        let client = MockClient {
+            fail_cycles_config: Mutex::new(true),
+            ..MockClient::default()
+        };
+        let error = run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::PurchaseCycles {
+                    database_id: "db_alpha".to_string(),
+                    kinic: "1.25".to_string(),
+                },
+            },
+        )
+        .await
+        .expect_err("database cycle purchase should require quote config");
+        assert!(error.to_string().contains("cycles config unavailable"));
+        assert!(client.database_cycle_purchases.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn database_cycles_purchase_rejects_invalid_kinic_amounts() {
+        for kinic in ["0", "0.000000001", "abc", "184467440737.09551616"] {
+            let client = MockClient::default();
+            let error = run_vfs_command(
+                &client,
+                &test_connection(),
+                VfsCommand::Database {
+                    command: super::DatabaseCommand::PurchaseCycles {
+                        database_id: "db_alpha".to_string(),
+                        kinic: kinic.to_string(),
+                    },
+                },
+            )
+            .await
+            .expect_err("invalid KINIC amount should reject");
+            assert!(error.to_string().contains("KINIC amount"));
+            assert!(client.database_cycle_purchases.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn database_cycles_history_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CyclesHistory {
+                    database_id: "db_alpha".to_string(),
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect("database cycles-history should succeed");
+        assert_eq!(
+            *client.database_cycles_history.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn database_cycles_pending_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Database {
+                command: super::DatabaseCommand::CyclesPending {
+                    database_id: "db_alpha".to_string(),
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect("database cycles-pending should succeed");
+        assert_eq!(
+            *client.database_cycles_pending.lock().unwrap(),
+            vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[test]
+    fn database_cycles_url_uses_browser_origin() {
+        let url = super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db alpha", "1.25")
+            .expect("url should build");
+
+        assert_eq!(
+            url,
+            "http://127.0.0.1:3000/cycles?databaseId=db%20alpha&kinic=1.25"
+        );
+    }
+
+    #[test]
+    fn database_cycles_url_rejects_invalid_kinic_amount() {
+        for kinic in ["0", "0.000000001", "abc", "184467440737.09551616"] {
+            let error =
+                super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db_alpha", kinic)
+                    .expect_err("invalid KINIC amount should reject");
+            assert!(error.to_string().contains("KINIC amount"));
+        }
+    }
+
+    #[tokio::test]
+    async fn cycles_config_json_calls_client() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::Cycles {
+                command: CyclesCommand::Config { json: true },
+            },
+        )
+        .await
+        .expect("cycles config should succeed");
+        assert_eq!(*client.cycles_configs.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn cycles_config_text_includes_billing_authority_principal() {
+        let lines = super::cycles_config_lines(
+            &CyclesBillingConfig {
+                kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+                billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
+                cycles_per_kinic: 1_000,
+                min_update_cycles: 1,
+            },
+            KINIC_LEDGER_FEE_E8S,
+        );
+
+        assert!(lines.contains(&"billing_authority_id\trrkah-fqaaa-aaaaa-aaaaq-cai".to_string()));
+        assert!(lines.contains(&"ledger_fee_e8s\t100000".to_string()));
     }
 
     #[tokio::test]

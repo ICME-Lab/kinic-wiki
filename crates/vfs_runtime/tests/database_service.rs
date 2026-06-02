@@ -7,16 +7,17 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
-    CreditsPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCreditPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
-    MAX_RESTORE_CHUNK_BYTES, VfsService,
+    CyclesPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
+    DatabaseCyclesPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
+    MAX_RESTORE_CHUNK_BYTES, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
-    AppendNodeRequest, CreditsConfigUpdate, DatabaseRole, DatabaseStatus, DeleteDatabaseRequest,
-    DeleteNodeRequest, KINIC_LEDGER_FEE_E8S, MkdirNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
+    AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
+    DeleteDatabaseRequest, DeleteNodeRequest, KINIC_LEDGER_FEE_E8S, MkdirNodeRequest,
+    MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -61,31 +62,55 @@ fn mainnet_011_index_upgrades_to_latest() {
         .expect("database status should load");
     let balance: i64 = conn
         .query_row(
-            "SELECT balance_credits FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = 'db_existing'",
             params![],
             |row| row.get(0),
         )
-        .expect("database credits account should exist");
+        .expect("database cycles account should exist");
     let suspended_at_ms: Option<i64> = conn
         .query_row(
-            "SELECT suspended_at_ms FROM database_credit_accounts WHERE database_id = 'db_existing'",
+            "SELECT suspended_at_ms FROM database_cycle_accounts WHERE database_id = 'db_existing'",
             params![],
             |row| row.get(0),
         )
-        .expect("database credits suspension should exist");
+        .expect("database cycles suspension should exist");
+    let storage_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_accounts')
+             WHERE name = 'storage_charged_at_ms'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("storage charged cursor column should load");
+    let removed_storage_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_accounts')
+             WHERE name = 'storage_unbilled_cycles'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("removed storage column count should load");
     let pending_details_columns: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_pending_operations')
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_pending_operations')
              WHERE name IN ('from_owner', 'from_subaccount', 'to_owner', 'to_subaccount',
                             'ledger_fee_e8s', 'ledger_created_at_time_ns')",
             params![],
             |row| row.get(0),
         )
         .expect("pending details columns should load");
+    let pending_ledger_block_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_pending_operations')
+             WHERE name = 'ledger_block_index'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("pending ledger block column count should load");
     let ledger_cycles_column_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
-             WHERE name = 'cycles_per_credit'",
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_ledger')
+             WHERE name = 'cycles_per_cycle'",
             params![],
             |row| row.get(0),
         )
@@ -102,14 +127,17 @@ fn mainnet_011_index_upgrades_to_latest() {
     assert_eq!(status, "active");
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
+    assert_eq!(storage_columns, 1);
+    assert_eq!(removed_storage_columns, 0);
     assert_eq!(pending_details_columns, 6);
+    assert_eq!(pending_ledger_block_columns, 1);
     assert_eq!(ledger_cycles_column_count, 0);
     assert_eq!(usage_table_count, 0);
     assert_eq!(
-        schema_migration_count(&root, "database_index:020_credits_config_version"),
+        schema_migration_count(&root, "database_index:020_cycles_billing_config_version"),
         1
     );
-    assert_eq!(credits_config_version(&root), 1);
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
 fn write_mainnet_011_index_schema(index_path: &std::path::Path, status: &str) {
@@ -254,7 +282,7 @@ fn partial_billing_index_schema_is_rejected() {
     let conn = Connection::open(&index_path).expect("index should reopen");
     conn.execute(
         "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
-        params!["database_index:012_credits_initial"],
+        params!["database_index:012_cycles_initial"],
     )
     .expect("partial billing marker should insert");
     drop(conn);
@@ -302,7 +330,7 @@ fn pre_011_index_schema_is_rejected() {
 }
 
 #[test]
-fn cycles_per_credit_ledger_schema_is_rejected() {
+fn cycles_per_cycle_ledger_schema_is_rejected() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
     let index_path = root.join("index.sqlite3");
@@ -312,27 +340,27 @@ fn cycles_per_credit_ledger_schema_is_rejected() {
            version TEXT PRIMARY KEY,
            applied_at INTEGER NOT NULL
          );
-         CREATE TABLE database_credit_ledger (
+         CREATE TABLE database_cycle_ledger (
            entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
            database_id TEXT NOT NULL,
            kind TEXT NOT NULL,
-           amount_credits INTEGER NOT NULL,
-           balance_after_credits INTEGER NOT NULL,
+           amount_cycles INTEGER NOT NULL,
+           balance_after_cycles INTEGER NOT NULL,
            payment_amount_e8s INTEGER,
            caller TEXT NOT NULL,
            method TEXT,
            cycles_delta INTEGER,
-           credits_per_kinic INTEGER,
-           cycles_per_credit INTEGER,
+           cycles_per_kinic INTEGER,
+           cycles_per_cycle INTEGER,
            ledger_block_index INTEGER,
            created_at_ms INTEGER NOT NULL
          );
-         CREATE TABLE credits_config (
+         CREATE TABLE cycles_billing_config (
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL
          );",
     )
-    .expect("legacy credits schema should create");
+    .expect("legacy cycles schema should create");
     for version in [
         "database_index:000_initial",
         "database_index:001_lifecycle",
@@ -345,7 +373,7 @@ fn cycles_per_credit_ledger_schema_is_rejected() {
         "database_index:009_restore_chunk_bytes",
         "database_index:010_database_name_breaking",
         "database_index:011_source_run_sessions",
-        "database_index:012_credits_initial",
+        "database_index:012_cycles_initial",
     ] {
         conn.execute(
             "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
@@ -358,13 +386,13 @@ fn cycles_per_credit_ledger_schema_is_rejected() {
     let service = VfsService::new(index_path.clone(), root.join("databases"));
     let error = service
         .run_index_migrations()
-        .expect_err("cycles_per_credit schema should reject");
+        .expect_err("cycles_per_cycle schema should reject");
 
     let conn = Connection::open(index_path).expect("index should reopen");
     let ledger_cycles_column_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
-             WHERE name = 'cycles_per_credit'",
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_ledger')
+             WHERE name = 'cycles_per_cycle'",
             params![],
             |row| row.get(0),
         )
@@ -458,79 +486,92 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
     .expect("member count should load")
 }
 
-fn database_credits_balance(root: &std::path::Path, database_id: &str) -> i64 {
+fn database_cycles_balance(root: &std::path::Path, database_id: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT balance_credits FROM database_credit_accounts WHERE database_id = ?1",
+        "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = ?1",
         params![database_id],
         |row| row.get(0),
     )
-    .expect("database credits balance should load")
+    .expect("database cycles balance should load")
 }
 
-fn database_credits_suspended_at(root: &std::path::Path, database_id: &str) -> Option<i64> {
+fn database_cycles_suspended_at(root: &std::path::Path, database_id: &str) -> Option<i64> {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT suspended_at_ms FROM database_credit_accounts WHERE database_id = ?1",
+        "SELECT suspended_at_ms FROM database_cycle_accounts WHERE database_id = ?1",
         params![database_id],
         |row| row.get(0),
     )
-    .expect("database credits suspension should load")
+    .expect("database cycles suspension should load")
 }
 
-fn credits_config_version(root: &std::path::Path) -> i64 {
+fn cycles_billing_config_key_count(root: &std::path::Path, key: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT value FROM credits_config WHERE key = 'config_version'",
-        params![],
-        |row| row.get::<_, String>(0),
+        "SELECT COUNT(*) FROM cycles_billing_config WHERE key = ?1",
+        params![key],
+        |row| row.get(0),
     )
-    .expect("credits config version should load")
-    .parse()
-    .expect("credits config version should be numeric")
+    .expect("cycles config key count should load")
 }
 
 fn database_pending_operation_count(root: &std::path::Path, database_id: &str) -> i64 {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT COUNT(*) FROM database_credit_pending_operations WHERE database_id = ?1",
+        "SELECT COUNT(*) FROM database_cycle_pending_operations WHERE database_id = ?1",
         params![database_id],
         |row| row.get(0),
     )
-    .expect("pending credit operation count should load")
+    .expect("pending cycle operation count should load")
 }
 
-fn credit_database(
+fn cycle_database(
     service: &VfsService,
     database_id: &str,
     caller: &str,
-    amount_credits: u64,
+    payment_amount_e8s: u64,
     block_index: u64,
     now: i64,
 ) -> u64 {
     let operation_id = service
-        .begin_database_credit_purchase(database_id, caller, amount_credits, now)
-        .expect("database credit purchase should begin");
+        .begin_database_cycles_purchase(database_id, caller, payment_amount_e8s, now)
+        .expect("database cycle purchase should begin");
+    let cycles = cycles_for_payment(service, database_id, payment_amount_e8s);
     service
-        .mark_database_credit_purchase_completed(operation_id, database_id, caller, amount_credits)
-        .expect("database credit purchase should be marked completed");
-    service
-        .credit_database_purchase(
+        .complete_database_cycles_purchase_ledger_transfer(
             operation_id,
             database_id,
             caller,
-            amount_credits,
+            cycles,
             block_index,
-            now,
         )
-        .expect("database credit purchase should credit")
+        .expect("database cycle purchase ledger transfer should complete");
+    service
+        .apply_database_cycles_purchase(operation_id, database_id, caller, cycles, block_index, now)
+        .expect("database cycle purchase should cycle")
+}
+
+fn cycles_for_payment(service: &VfsService, database_id: &str, payment_amount_e8s: u64) -> u64 {
+    service
+        .validate_database_cycles_purchase(database_id, payment_amount_e8s)
+        .expect("database cycle purchase should validate");
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
+    cycles_for_payment_amount_e8s(payment_amount_e8s, &config)
+        .expect("database cycle purchase amount should compute")
+}
+
+fn default_cycles_for_payment(payment_amount_e8s: u64) -> u64 {
+    payment_amount_e8s * 2_345
 }
 
 fn database_ledger_kinds(root: &std::path::Path, database_id: &str) -> Vec<String> {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     let mut stmt = conn
         .prepare(
-            "SELECT kind FROM database_credit_ledger
+            "SELECT kind FROM database_cycle_ledger
              WHERE database_id = ?1
              ORDER BY entry_id ASC",
         )
@@ -781,11 +822,11 @@ fn archive_bytes_for_chunk_size(
 }
 
 #[test]
-fn index_migrations_create_credit_ledger_only_schema_once() {
+fn index_migrations_create_cycle_ledger_only_schema_once() {
     let (service, root) = service_with_root();
 
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    for table_name in ["database_mount_history", "database_credit_ledger"] {
+    for table_name in ["database_mount_history", "database_cycle_ledger"] {
         let table_exists: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -805,15 +846,15 @@ fn index_migrations_create_credit_ledger_only_schema_once() {
     assert_eq!(usage_table_exists, 0);
     let usage_column_exists: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('database_credit_ledger')
+            "SELECT COUNT(*) FROM pragma_table_info('database_cycle_ledger')
              WHERE name = 'usage_event_id'",
             params![],
             |row| row.get(0),
         )
-        .expect("credit ledger column lookup should work");
+        .expect("cycle ledger column lookup should work");
     assert_eq!(usage_column_exists, 0);
     assert_eq!(
-        schema_migration_count(&root, "database_index:018_credit_ledger_only"),
+        schema_migration_count(&root, "database_index:018_cycles_ledger_only"),
         1
     );
     assert_eq!(
@@ -845,7 +886,7 @@ fn index_migrations_create_credit_ledger_only_schema_once() {
         .run_index_migrations()
         .expect("index migrations should be idempotent");
     assert_eq!(
-        schema_migration_count(&root, "database_index:018_credit_ledger_only"),
+        schema_migration_count(&root, "database_index:018_cycles_ledger_only"),
         1
     );
     assert_eq!(
@@ -880,7 +921,7 @@ fn url_ingest_trigger_session_requires_writer_and_allows_replay() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
@@ -911,7 +952,7 @@ fn url_ingest_trigger_session_requires_default_llm_writer() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
     service
@@ -949,7 +990,7 @@ fn url_ingest_trigger_session_rejects_invalid_request_nodes() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "other", DatabaseRole::Reader, 2)
         .expect("reader grant should succeed");
@@ -1059,7 +1100,7 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
 
@@ -1095,7 +1136,7 @@ fn url_ingest_trigger_session_rejects_expired_and_unknown_nonce() {
 }
 
 #[test]
-fn url_ingest_trigger_session_check_requires_write_credits_database() {
+fn url_ingest_trigger_session_check_requires_write_cycles_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -1108,7 +1149,7 @@ fn url_ingest_trigger_session_check_requires_write_credits_database() {
             url_ingest_session_request("alpha", "session-1"),
             100,
         )
-        .expect("session should authorize before credits changes");
+        .expect("session should authorize before cycles changes");
 
     let error = service
         .check_url_ingest_trigger_session(
@@ -1117,7 +1158,7 @@ fn url_ingest_trigger_session_check_requires_write_credits_database() {
         )
         .expect_err("suspended database should reject session check");
 
-    assert!(error.contains("database credits are suspended"));
+    assert!(error.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -1126,7 +1167,7 @@ fn url_ingest_trigger_session_check_allows_generating_status() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     let request_path = "/Sources/ingest-requests/1.md";
     write_url_ingest_request(
         &service,
@@ -1158,7 +1199,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
         .expect("writer grant should succeed");
@@ -1268,7 +1309,7 @@ fn source_run_session_requires_funded_database() {
             101,
         )
         .expect_err("suspended database should reject source run session");
-    assert!(error.contains("database credits are suspended"));
+    assert!(error.contains("database cycles are suspended"));
 }
 
 #[test]
@@ -1314,7 +1355,7 @@ fn ops_answer_session_allows_database_members_and_replay() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
         .expect("writer grant should succeed");
@@ -1347,7 +1388,7 @@ fn ops_answer_session_rejects_anonymous_and_non_members() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "2vxsx-fae", DatabaseRole::Reader, 2)
         .expect("anonymous public grant should succeed");
@@ -1372,24 +1413,24 @@ fn ops_answer_session_rejects_anonymous_and_non_members() {
 }
 
 #[test]
-fn ops_answer_session_check_requires_write_credits_database() {
+fn ops_answer_session_check_requires_write_cycles_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     service
         .authorize_ops_answer_session("owner", ops_answer_session_request("alpha", "session-1"), 0)
-        .expect("session should authorize before credits changes");
+        .expect("session should authorize before cycles changes");
 
     let error = service
         .check_ops_answer_session(ops_answer_session_check_request("alpha", "session-1"), 1)
         .expect_err("suspended database should reject ops answer session check");
 
-    assert!(error.contains("database credits are suspended"));
+    assert!(error.contains("database cycles are suspended"));
 }
 
 #[test]
-fn check_database_write_credits_requires_writer_and_funded_database() {
+fn check_database_write_cycles_requires_writer_and_funded_database() {
     let service = service();
     service
         .create_database("alpha", "owner", 1)
@@ -1402,29 +1443,29 @@ fn check_database_write_credits_requires_writer_and_funded_database() {
         .expect("reader grant should succeed");
 
     let suspended = service
-        .check_database_write_credits("alpha", "writer")
+        .check_database_write_cycles("alpha", "writer")
         .expect_err("suspended database should reject writer");
-    assert!(suspended.contains("database credits are suspended"));
+    assert!(suspended.contains("database cycles are suspended"));
 
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 4);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 4);
     service
-        .check_database_write_credits("alpha", "owner")
-        .expect("owner should pass write credits check");
+        .check_database_write_cycles("alpha", "owner")
+        .expect("owner should pass write cycles check");
     service
-        .check_database_write_credits("alpha", "writer")
-        .expect("writer should pass write credits check");
+        .check_database_write_cycles("alpha", "writer")
+        .expect("writer should pass write cycles check");
 
     let reader = service
-        .check_database_write_credits("alpha", "reader")
-        .expect_err("reader should fail write credits check");
+        .check_database_write_cycles("alpha", "reader")
+        .expect_err("reader should fail write cycles check");
     assert!(reader.contains("principal lacks required database role"));
     let anonymous = service
-        .check_database_write_credits("alpha", "2vxsx-fae")
-        .expect_err("anonymous should fail write credits check");
+        .check_database_write_cycles("alpha", "2vxsx-fae")
+        .expect_err("anonymous should fail write cycles check");
     assert!(anonymous.contains("anonymous caller not allowed"));
     let missing = service
-        .check_database_write_credits("alpha", "missing")
-        .expect_err("non-member should fail write credits check");
+        .check_database_write_cycles("alpha", "missing")
+        .expect_err("non-member should fail write cycles check");
     assert!(missing.contains("principal has no access"));
 }
 
@@ -1434,7 +1475,7 @@ fn ops_answer_session_rechecks_current_role_after_revoke() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
         .expect("reader grant should succeed");
@@ -1470,7 +1511,7 @@ fn ops_answer_session_rejects_invalid_and_expired_nonce() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
 
     service
         .authorize_ops_answer_session("owner", ops_answer_session_request("alpha", "session-1"), 0)
@@ -1513,9 +1554,9 @@ fn database_create_returns_generated_id_and_name() {
     assert_eq!(result.database_id.len(), 15);
     assert_eq!(result.name, "Team skills");
     assert_eq!(database_member_count(&root, &result.database_id), 2);
-    assert_eq!(database_credits_balance(&root, &result.database_id), 0);
+    assert_eq!(database_cycles_balance(&root, &result.database_id), 0);
     assert_eq!(
-        database_credits_suspended_at(&root, &result.database_id),
+        database_cycles_suspended_at(&root, &result.database_id),
         Some(1)
     );
     assert!(database_ledger_kinds(&root, &result.database_id).is_empty());
@@ -1527,7 +1568,7 @@ fn database_create_returns_generated_id_and_name() {
 }
 
 #[test]
-fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation() {
+fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation() {
     let (service, root) = service_with_root();
 
     let pending = service
@@ -1537,9 +1578,9 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
     assert!(pending.database_id.starts_with("db_"));
     assert_eq!(pending.name, "Pending");
     assert_eq!(database_member_count(&root, &pending.database_id), 2);
-    assert_eq!(database_credits_balance(&root, &pending.database_id), 0);
+    assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
     assert_eq!(
-        database_credits_suspended_at(&root, &pending.database_id),
+        database_cycles_suspended_at(&root, &pending.database_id),
         Some(1)
     );
     assert_eq!(mount_history_count(&root), 0);
@@ -1553,76 +1594,48 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
             .expect_err("pending DB should reject VFS reads")
             .contains("database is pending")
     );
-    assert!(
-        service
-            .rename_database(&pending.database_id, "owner", "Renamed", 2)
-            .expect_err("pending DB should reject rename")
-            .contains("database is pending")
-    );
-    assert!(
-        service
-            .grant_database_access(
-                &pending.database_id,
-                "owner",
-                "reader",
-                DatabaseRole::Reader,
-                2
-            )
-            .expect_err("pending DB should reject grants")
-            .contains("database is pending")
-    );
-    assert!(
-        service
-            .revoke_database_access(&pending.database_id, "owner", "reader")
-            .expect_err("pending DB should reject revokes")
-            .contains("database is pending")
-    );
-    assert!(
-        service
-            .list_database_members(&pending.database_id, "owner")
-            .expect_err("pending DB should reject member listing")
-            .contains("database is pending")
-    );
     service
-        .validate_database_credit_purchase(&pending.database_id, 500)
-        .expect("anonymous preview should accept pending DB credit purchase");
+        .validate_database_cycles_purchase(&pending.database_id, 500)
+        .expect("validation should accept pending DB cycle purchase");
 
     let operation_id = service
-        .begin_database_credit_purchase(&pending.database_id, "payer", 1_000_000, 2)
-        .expect("credit purchase should begin");
+        .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
+        .expect("cycle purchase should begin");
     assert_eq!(mount_history_count(&root), 0);
     assert_eq!(
         database_index_row(&root, &pending.database_id),
         ("pending".to_string(), None, 0, None)
     );
     let meta = service
-        .activate_pending_database_for_credit_purchase(&pending.database_id, 2)
+        .activate_pending_database_for_cycles_purchase(&pending.database_id, 2)
         .expect("pending activation should prepare")
         .expect("pending activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
     service
         .run_pending_database_migrations(&pending.database_id)
         .expect("pending migrations should run");
+    let purchased_cycles = default_cycles_for_payment(1_000_000);
     service
-        .mark_database_credit_purchase_completed(
+        .complete_database_cycles_purchase_ledger_transfer(
             operation_id,
             &pending.database_id,
             "payer",
-            1_000_000,
+            purchased_cycles,
+            42,
         )
-        .expect("credit purchase should be marked completed");
+        .expect("cycle purchase ledger transfer should complete");
     let balance = service
-        .credit_database_purchase(
+        .apply_database_cycles_purchase(
             operation_id,
             &pending.database_id,
             "payer",
-            1_000_000,
+            purchased_cycles,
             42,
             4,
         )
-        .expect("credit purchase should activate and credit");
+        .expect("cycle purchase should activate and cycle");
 
-    assert_eq!(balance, 1_000_000);
+    assert_eq!(balance, purchased_cycles);
     let row = database_index_row(&root, &pending.database_id);
     assert_eq!(row.0, "active");
     assert_eq!(row.1, Some(11));
@@ -1634,32 +1647,121 @@ fn pending_database_creation_defers_mount_slot_until_credit_purchase_activation(
 }
 
 #[test]
-fn pending_database_can_be_deleted_before_activation() {
-    let (service, root) = service_with_root();
-    let pending = service
-        .reserve_pending_generated_database("Delete pending", "owner", 1)
-        .expect("pending database should create");
+fn pending_database_creation_limits_unresolved_per_caller() {
+    let service = service();
+
+    for offset in 0..3 {
+        service
+            .reserve_pending_generated_database(
+                &format!("Pending {offset}"),
+                "owner",
+                1_700_000_000_000 + offset,
+            )
+            .expect("pending database should create within limit");
+    }
+
+    let error = service
+        .reserve_pending_generated_database("Pending 3", "owner", 1_700_000_000_010)
+        .expect_err("fourth unresolved pending database should fail");
+    assert!(error.contains("too many pending databases for caller"));
 
     service
-        .delete_database(delete_request(&pending.database_id), "owner", 2)
-        .expect("pending database should delete");
-
-    assert_eq!(database_member_count(&root, &pending.database_id), 0);
-    assert!(!database_index_row_exists(&root, &pending.database_id));
+        .reserve_pending_generated_database("Other caller", "other", 1_700_000_000_010)
+        .expect("pending limit should be per caller");
 }
 
 #[test]
-fn pending_database_credit_purchase_cancel_does_not_allocate_mount_slot() {
+fn pending_database_creation_purges_expired_unstarted_reservations() {
+    let (service, root) = service_with_root();
+    let mut expired_ids = Vec::new();
+    for offset in 0..3 {
+        let pending = service
+            .reserve_pending_generated_database(&format!("Expired {offset}"), "owner", offset)
+            .expect("expired pending database should create");
+        expired_ids.push(pending.database_id);
+    }
+
+    let fresh = service
+        .reserve_pending_generated_database("Fresh", "owner", 86_400_003)
+        .expect("expired unstarted pending databases should be purged before limit check");
+
+    assert!(database_index_row_exists(&root, &fresh.database_id));
+    for database_id in expired_ids {
+        assert!(!database_index_row_exists(&root, &database_id));
+    }
+}
+
+#[test]
+fn pending_database_creation_preserves_in_flight_cycle_operations_during_cleanup() {
+    let (service, root) = service_with_root();
+    let protected = service
+        .reserve_pending_generated_database("In flight", "owner", 0)
+        .expect("pending database should create");
+    service
+        .begin_database_cycles_purchase(&protected.database_id, "payer", 500, 1)
+        .expect("cycle purchase should begin");
+    for offset in 0..2 {
+        service
+            .reserve_pending_generated_database(&format!("Expired {offset}"), "owner", offset + 2)
+            .expect("expired pending database should create");
+    }
+
+    service
+        .reserve_pending_generated_database("Fresh", "owner", 86_400_003)
+        .expect("unprotected expired pending databases should be purged");
+
+    assert!(database_index_row_exists(&root, &protected.database_id));
+    assert_eq!(
+        database_pending_operation_count(&root, &protected.database_id),
+        1
+    );
+}
+
+#[test]
+fn pending_database_creation_preserves_activation_started_reservations_during_cleanup() {
+    let (service, root) = service_with_root();
+    let activated = service
+        .reserve_pending_generated_database("Activating", "owner", 0)
+        .expect("pending database should create");
+    service
+        .activate_pending_database_for_cycles_purchase(&activated.database_id, 1)
+        .expect("pending activation should start")
+        .expect("pending activation should allocate mount");
+    for offset in 0..2 {
+        service
+            .reserve_pending_generated_database(&format!("Expired {offset}"), "owner", offset + 2)
+            .expect("expired pending database should create");
+    }
+
+    service
+        .reserve_pending_generated_database("Fresh", "owner", 86_400_003)
+        .expect("unactivated expired pending databases should be purged");
+
+    assert!(database_index_row_exists(&root, &activated.database_id));
+    assert_eq!(
+        database_index_row(&root, &activated.database_id),
+        ("pending".to_string(), Some(11), 0, None)
+    );
+}
+
+#[test]
+fn pending_database_cycles_purchase_cancel_does_not_allocate_mount_slot() {
     let (service, root) = service_with_root();
     let pending = service
         .reserve_pending_generated_database("Cancel", "owner", 1)
         .expect("pending database should create");
 
     let operation_id = service
-        .begin_database_credit_purchase(&pending.database_id, "payer", 500, 3)
-        .expect("credit purchase should begin");
+        .begin_database_cycles_purchase(&pending.database_id, "payer", 500, 3)
+        .expect("cycle purchase should begin");
+    let purchased_cycles = default_cycles_for_payment(500);
     service
-        .cancel_database_credit_purchase(operation_id, &pending.database_id, "payer", 500)
+        .cancel_database_cycles_purchase(
+            operation_id,
+            &pending.database_id,
+            "payer",
+            purchased_cycles,
+        )
         .expect("ledger reject cancel should delete operation");
 
     assert_eq!(mount_history_count(&root), 0);
@@ -1674,90 +1776,86 @@ fn pending_database_credit_purchase_cancel_does_not_allocate_mount_slot() {
 }
 
 #[test]
-fn direct_credit_purchase_cancel_rejects_non_in_flight_operations() {
-    let (service, root) = service_with_root();
-    for database_id in ["completed-cancel", "ambiguous-cancel"] {
-        service
-            .create_database(database_id, "owner", 1)
-            .expect("database should create");
-    }
-
-    let completed = service
-        .begin_database_credit_purchase("completed-cancel", "payer", 500, 2)
-        .expect("completed operation should begin");
-    service
-        .mark_database_credit_purchase_completed(completed, "completed-cancel", "payer", 500)
-        .expect("completed operation should be marked completed");
-    let completed_error = service
-        .cancel_database_credit_purchase(completed, "completed-cancel", "payer", 500)
-        .expect_err("completed operation should not be directly cancellable");
-    assert!(completed_error.contains("credit purchase operation is completed"));
-    assert_eq!(
-        database_pending_operation_count(&root, "completed-cancel"),
-        1
-    );
-
-    let ambiguous = service
-        .begin_database_credit_purchase("ambiguous-cancel", "payer", 700, 3)
-        .expect("ambiguous operation should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(ambiguous, "ambiguous-cancel", "payer", 700, 4)
-        .expect("ambiguous operation should be marked ambiguous");
-    let ambiguous_error = service
-        .cancel_database_credit_purchase(ambiguous, "ambiguous-cancel", "payer", 700)
-        .expect_err("ambiguous operation should not be directly cancellable");
-    assert!(ambiguous_error.contains("credit purchase operation is ambiguous"));
-    assert_eq!(
-        database_pending_operation_count(&root, "ambiguous-cancel"),
-        1
-    );
-    service
-        .repair_database_credit_purchase_cancel("ambiguous-cancel", ambiguous, "payer", 5)
-        .expect("ambiguous operation should remain repair cancellable");
-    assert_eq!(
-        database_pending_operation_count(&root, "ambiguous-cancel"),
-        0
-    );
-}
-
-#[test]
-fn pending_database_credit_purchase_cancel_rejects_after_activation_started() {
+fn cleanup_database_cycles_purchase_discards_started_pending_activation() {
     let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database("Started", "owner", 1)
+        .reserve_pending_generated_database("Started cleanup", "owner", 1)
         .expect("pending database should create");
     let operation_id = service
-        .begin_database_credit_purchase(&pending.database_id, "payer", 500, 2)
-        .expect("credit purchase should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(
-            operation_id,
-            &pending.database_id,
-            "payer",
-            500,
-            3,
-        )
-        .expect("credit purchase ambiguity should record");
+        .begin_database_cycles_purchase(&pending.database_id, "payer", 500, 2)
+        .expect("cycle purchase should begin");
+    let purchased_cycles = default_cycles_for_payment(500);
     let meta = service
-        .activate_pending_database_for_credit_purchase(&pending.database_id, 4)
+        .activate_pending_database_for_cycles_purchase(&pending.database_id, 4)
         .expect("pending activation should prepare")
         .expect("activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
 
-    let error = service
-        .repair_database_credit_purchase_cancel(&pending.database_id, operation_id, "payer", 5)
-        .expect_err("started activation should require complete repair");
+    service
+        .cleanup_database_cycles_purchase_after_no_credit(
+            operation_id,
+            &pending.database_id,
+            "payer",
+            purchased_cycles,
+        )
+        .expect("no-credit cleanup should discard reservation");
 
-    assert!(error.contains("complete credit purchase repair"));
     assert_eq!(
         database_pending_operation_count(&root, &pending.database_id),
-        1
+        0
     );
-    assert_eq!(mount_history_count(&root), 1);
-    assert_eq!(
-        database_index_row(&root, &pending.database_id),
-        ("pending".to_string(), Some(11), 0, None)
-    );
+    assert_eq!(mount_history_count(&root), 0);
+    assert!(!database_index_row_exists(&root, &pending.database_id));
+}
+
+#[test]
+fn cycles_purchase_rejects_archive_restore_statuses() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    let archive_info = service
+        .begin_database_archive("alpha", "owner", 2)
+        .expect("archive should begin");
+    let archiving = service
+        .validate_database_cycles_purchase("alpha", 500)
+        .expect_err("archiving database should reject purchase");
+    assert!(archiving.contains("database is archiving"));
+
+    let archive = read_archive_in_chunks(&service, "alpha", archive_info.size_bytes, 17);
+    let snapshot_hash = sha256_bytes(&archive);
+    service
+        .finalize_database_archive("alpha", "owner", snapshot_hash.clone(), 3)
+        .expect("archive should finalize");
+    let archived = service
+        .validate_database_cycles_purchase("alpha", 500)
+        .expect_err("archived database should reject purchase");
+    assert!(archived.contains("database is archived"));
+
+    service
+        .begin_database_restore("alpha", "owner", snapshot_hash, archive_info.size_bytes, 4)
+        .expect("restore should begin");
+    let restoring = service
+        .validate_database_cycles_purchase("alpha", 500)
+        .expect_err("restoring database should reject purchase");
+    assert!(restoring.contains("database is restoring"));
+}
+
+#[test]
+fn lifecycle_operations_reject_pending_cycle_purchase() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("cycle purchase should begin");
+
+    let archive = service
+        .begin_database_archive("alpha", "owner", 3)
+        .expect_err("archive should reject pending cycle operation");
+    assert!(archive.contains("pending cycle operation"));
 }
 
 #[test]
@@ -1800,105 +1898,114 @@ fn database_create_rejects_duplicate_requested_id_for_internal_setup() {
 }
 
 #[test]
-fn requested_database_create_starts_with_zero_credits_balance() {
+fn requested_database_create_starts_with_zero_cycles_balance() {
     let (service, root) = service_with_root();
 
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    assert_eq!(database_credits_balance(&root, "alpha"), 0);
-    assert_eq!(database_credits_suspended_at(&root, "alpha"), Some(1));
+    assert_eq!(database_cycles_balance(&root, "alpha"), 0);
+    assert_eq!(database_cycles_suspended_at(&root, "alpha"), Some(1));
     assert!(database_ledger_kinds(&root, "alpha").is_empty());
 }
 
 #[test]
-fn reservation_starts_with_zero_credits_balance() {
+fn reservation_starts_with_zero_cycles_balance() {
     let (service, root) = service_with_root();
 
     service
         .reserve_database("reserved", "Reserved", "owner", 1)
         .expect("reservation should create");
 
-    assert_eq!(database_credits_balance(&root, "reserved"), 0);
-    assert_eq!(database_credits_suspended_at(&root, "reserved"), Some(1));
+    assert_eq!(database_cycles_balance(&root, "reserved"), 0);
+    assert_eq!(database_cycles_suspended_at(&root, "reserved"), Some(1));
     assert!(database_ledger_kinds(&root, "reserved").is_empty());
 }
 
 #[test]
-fn database_credits_purchase_allows_authenticated_non_owner() {
+fn database_cycles_purchase_allows_authenticated_non_owner() {
     let (service, _root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 1_000, 1, 3);
+    cycle_database(&service, "alpha", "owner", 1_000, 1, 3);
 
     service
-        .begin_database_credit_purchase("alpha", "stranger", 100, 4)
-        .expect("authenticated non-owner should be allowed to purchase credits");
+        .begin_database_cycles_purchase("alpha", "stranger", 100, 4)
+        .expect("authenticated non-owner should be allowed to purchase cycles");
 }
 
 #[test]
-fn credits_config_version_changes_only_for_effective_rate_updates() {
+fn cycles_billing_config_update_changes_only_mutable_values() {
     let (service, root) = service_with_root();
-    assert_eq!(credits_config_version(&root), 1);
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 
     service
-        .update_credits_config(
-            CreditsConfigUpdate {
-                credits_per_kinic: 1_000,
-                min_update_credits: 1,
+        .update_cycles_billing_config(
+            CyclesBillingConfigUpdate {
+                cycles_per_kinic: 234_500_000_000,
+                min_update_cycles: 1_000_000,
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
-        .expect("same config should update without version bump");
-    assert_eq!(credits_config_version(&root), 1);
+        .expect("same config should update");
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 
     service
-        .update_credits_config(
-            CreditsConfigUpdate {
-                credits_per_kinic: 2_000,
-                min_update_credits: 1,
+        .update_cycles_billing_config(
+            CyclesBillingConfigUpdate {
+                cycles_per_kinic: 469_000_000_000,
+                min_update_cycles: 1_000_000,
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
         .expect("changed config should update");
-    assert_eq!(credits_config_version(&root), 2);
+    assert_eq!(
+        service
+            .cycles_billing_config()
+            .expect("cycles config should load")
+            .cycles_per_kinic,
+        469_000_000_000
+    );
+    assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
 #[test]
-fn credit_purchase_preview_returns_fixed_payment_inputs() {
+fn cycles_purchase_validation_accepts_current_payment_inputs() {
     let (service, _root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    let preview = service
-        .preview_database_credit_purchase("alpha", 500)
-        .expect("preview should succeed");
+    service
+        .validate_database_cycles_purchase("alpha", 50_000)
+        .expect("purchase should validate");
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
 
-    assert_eq!(preview.payment_amount_e8s, 50_000_000);
-    assert_eq!(preview.ledger_fee_e8s, KINIC_LEDGER_FEE_E8S);
-    assert_eq!(preview.credits_per_kinic, 1_000);
-    assert_eq!(preview.config_version, 1);
+    assert_eq!(
+        cycles_for_payment_amount_e8s(50_000, &config).expect("cycles should compute"),
+        117_250_000
+    );
 }
 
 #[test]
-fn credit_purchase_begin_rejects_stale_expected_values_before_pending_create() {
+fn cycles_purchase_begin_returns_current_config_amount() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
 
-    let stale_amount = service
-        .begin_database_credit_purchase_with_ledger_details(
-            DatabaseCreditPurchaseWithLedgerDetails {
+    let start = service
+        .begin_database_cycles_purchase_with_ledger_details(
+            DatabaseCyclesPurchaseWithLedgerDetails {
                 database_id: "alpha",
                 caller: "payer",
-                credits: 500,
-                expected_payment_amount_e8s: 50_000_001,
-                expected_config_version: 1,
-                ledger: CreditsPendingLedgerDetailsInput {
+                payment_amount_e8s: 50_000,
+                min_expected_cycles: 1,
+                ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: "payer",
                     from_subaccount: None,
                     to_owner: "canister",
@@ -1909,128 +2016,111 @@ fn credit_purchase_begin_rejects_stale_expected_values_before_pending_create() {
                 now: 2,
             },
         )
-        .expect_err("stale amount should reject");
-    assert!(stale_amount.contains("payment amount changed"));
-    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
-
-    let stale_version = service
-        .begin_database_credit_purchase_with_ledger_details(
-            DatabaseCreditPurchaseWithLedgerDetails {
-                database_id: "alpha",
-                caller: "payer",
-                credits: 500,
-                expected_payment_amount_e8s: 50_000_000,
-                expected_config_version: 2,
-                ledger: CreditsPendingLedgerDetailsInput {
-                    from_owner: "payer",
-                    from_subaccount: None,
-                    to_owner: "canister",
-                    to_subaccount: None,
-                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                    ledger_created_at_time_ns: 3_000_000,
-                },
-                now: 3,
-            },
-        )
-        .expect_err("stale version should reject");
-    assert!(stale_version.contains("credits config changed"));
-    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
+        .expect("purchase should begin");
+    assert_eq!(start.amount_cycles, 117_250_000);
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 1);
 }
 
 #[test]
-fn database_credit_purchase_settlement_survives_owner_role_change() {
+fn database_cycles_purchase_settlement_survives_owner_role_change() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
     let operation_id = service
-        .begin_database_credit_purchase("alpha", "owner", 500, 2)
-        .expect("owner should start credit purchase");
+        .begin_database_cycles_purchase("alpha", "owner", 500, 2)
+        .expect("owner should start cycle purchase");
+    let purchased_cycles = cycles_for_payment(&service, "alpha", 500);
     service
         .grant_database_access("alpha", "owner", "replacement", DatabaseRole::Owner, 2)
         .expect("replacement owner should grant");
     service
         .revoke_database_access("alpha", "replacement", "owner")
         .expect("replacement should revoke original owner");
+
     service
-        .mark_database_credit_purchase_completed(operation_id, "alpha", "owner", 500)
-        .expect("credit purchase should be marked completed");
-
+        .complete_database_cycles_purchase_ledger_transfer(
+            operation_id,
+            "alpha",
+            "owner",
+            purchased_cycles,
+            7,
+        )
+        .expect("cycle purchase ledger transfer should complete");
     let balance = service
-        .credit_database_purchase(operation_id, "alpha", "owner", 500, 7, 3)
-        .expect("started credit purchase should settle");
+        .apply_database_cycles_purchase(operation_id, "alpha", "owner", purchased_cycles, 7, 3)
+        .expect("started cycle purchase should settle");
 
-    assert_eq!(balance, 500);
-    assert_eq!(database_credits_balance(&root, "alpha"), 500);
+    assert_eq!(balance, purchased_cycles);
+    assert_eq!(
+        database_cycles_balance(&root, "alpha"),
+        purchased_cycles as i64
+    );
     assert_eq!(
         database_ledger_kinds(&root, "alpha"),
-        vec!["credit_purchase"]
+        vec!["cycles_purchase"]
     );
 }
 
 #[test]
-fn pending_database_credit_purchase_blocks_delete_until_resolved() {
+fn pending_database_cycles_purchase_blocks_delete_until_resolved() {
     let (service, root) = service_with_root();
-    for database_id in ["complete", "cancel", "ambiguous"] {
+    for database_id in ["complete", "cancel"] {
         service
             .create_database(database_id, "owner", 1)
             .expect("database should create");
     }
     let complete = service
-        .begin_database_credit_purchase("complete", "owner", 500, 2)
-        .expect("credit purchase should begin");
+        .begin_database_cycles_purchase("complete", "owner", 500, 2)
+        .expect("cycle purchase should begin");
     let cancel = service
-        .begin_database_credit_purchase("cancel", "owner", 500, 2)
-        .expect("credit purchase should begin");
-    let ambiguous = service
-        .begin_database_credit_purchase("ambiguous", "owner", 500, 2)
-        .expect("credit purchase should begin");
+        .begin_database_cycles_purchase("cancel", "owner", 500, 2)
+        .expect("cycle purchase should begin");
+    let purchased_cycles = cycles_for_payment(&service, "complete", 500);
 
-    for database_id in ["complete", "cancel", "ambiguous"] {
+    for database_id in ["complete", "cancel"] {
         let error = service
             .delete_database(delete_request(database_id), "owner", 3)
-            .expect_err("pending credit purchase should block delete");
-        assert!(error.contains("pending credit operation"));
+            .expect_err("pending cycle purchase should block delete");
+        assert!(error.contains("pending cycle operation"));
         assert_eq!(database_pending_operation_count(&root, database_id), 1);
     }
 
     service
-        .mark_database_credit_purchase_completed(complete, "complete", "owner", 500)
-        .expect("credit purchase should be marked completed");
+        .complete_database_cycles_purchase_ledger_transfer(
+            complete,
+            "complete",
+            "owner",
+            purchased_cycles,
+            10,
+        )
+        .expect("cycle purchase ledger transfer should complete");
     service
-        .credit_database_purchase(complete, "complete", "owner", 500, 10, 4)
-        .expect("credit purchase should complete");
+        .apply_database_cycles_purchase(complete, "complete", "owner", purchased_cycles, 10, 4)
+        .expect("cycle purchase should complete");
     service
-        .cancel_database_credit_purchase(cancel, "cancel", "owner", 500)
-        .expect("credit purchase should cancel");
-    service
-        .mark_database_credit_purchase_ambiguous(ambiguous, "ambiguous", "owner", 500, 4)
-        .expect("ambiguous credit purchase should record");
+        .cancel_database_cycles_purchase(cancel, "cancel", "owner", purchased_cycles)
+        .expect("cycle purchase should cancel");
 
     for database_id in ["complete", "cancel"] {
         assert_eq!(database_pending_operation_count(&root, database_id), 0);
         service
             .delete_database(delete_request(database_id), "owner", 5)
-            .expect("resolved credit purchase should allow delete");
+            .expect("resolved cycle purchase should allow delete");
     }
-    assert_eq!(database_pending_operation_count(&root, "ambiguous"), 1);
-    let error = service
-        .delete_database(delete_request("ambiguous"), "owner", 5)
-        .expect_err("ambiguous credit purchase should keep delete blocked");
-    assert!(error.contains("pending credit operation"));
 }
 
 #[test]
-fn delete_database_removes_index_rows_and_discards_remaining_credits() {
+fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
     let (service, root) = service_with_root();
     service
         .create_database("funded", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "funded", "owner", 100_000_000, 1, 2);
+    cycle_database(&service, "funded", "owner", 100_000_000, 1, 2);
 
     service
         .delete_database(delete_request("funded"), "owner", 3)
-        .expect("remaining credits should be discarded on delete");
+        .expect("remaining cycles should be discarded on delete");
     assert!(!database_index_row_exists(&root, "funded"));
     assert_eq!(database_member_count(&root, "funded"), 0);
     assert_eq!(database_pending_operation_count(&root, "funded"), 0);
@@ -2038,7 +2128,7 @@ fn delete_database_removes_index_rows_and_discards_remaining_credits() {
 }
 
 #[test]
-fn pending_credits_operations_are_visible_to_owner_and_governance_only() {
+fn cycles_history_redacts_principals_for_non_owner_readers() {
     let (service, _root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2049,111 +2139,10 @@ fn pending_credits_operations_are_visible_to_owner_and_governance_only() {
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
         .expect("reader should be granted");
-    service
-        .begin_database_credit_purchase("alpha", "payer", 500, 3)
-        .expect("credit purchase should begin");
-
-    let owner_page = service
-        .list_database_credit_pending_operations("alpha", "owner", None, 10)
-        .expect("owner should list pending operations");
-    assert_eq!(owner_page.entries.len(), 1);
-    assert_eq!(owner_page.entries[0].kind, "credit_purchase");
-    assert_eq!(owner_page.entries[0].caller, "payer");
-    assert_eq!(owner_page.entries[0].operation_status, "in_flight");
-    assert_eq!(owner_page.entries[0].credits, 500);
-    assert_eq!(owner_page.entries[0].payment_amount_e8s, 50_000_000);
-    assert_eq!(owner_page.entries[0].ledger_fee_e8s, Some(0));
-
-    let governance_page = service
-        .list_database_credit_pending_operations("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
-        .expect("governance should list pending operations");
-    assert_eq!(governance_page.entries.len(), 1);
-
-    for caller in ["writer", "reader", "2vxsx-fae"] {
-        let error = service
-            .list_database_credit_pending_operations("alpha", caller, None, 10)
-            .expect_err("non-owner should not list pending operations");
-        assert!(
-            error.contains("principal lacks required database role")
-                || error.contains("principal has no access")
-        );
-    }
-}
-
-#[test]
-fn repair_credit_purchase_cancel_allows_payer_or_owner_only() {
-    let (service, root) = service_with_root();
-    for database_id in ["payer-cancel", "owner-cancel", "reject-cancel"] {
-        service
-            .create_database(database_id, "owner", 1)
-            .expect("database should create");
-        service
-            .grant_database_access(database_id, "owner", "writer", DatabaseRole::Writer, 2)
-            .expect("writer should be granted");
-        service
-            .grant_database_access(database_id, "owner", "reader", DatabaseRole::Reader, 3)
-            .expect("reader should be granted");
-    }
-
-    let payer_cancel = service
-        .begin_database_credit_purchase("payer-cancel", "payer", 500, 4)
-        .expect("payer cancel operation should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(payer_cancel, "payer-cancel", "payer", 500, 5)
-        .expect("payer cancel should mark ambiguous");
-    service
-        .repair_database_credit_purchase_cancel("payer-cancel", payer_cancel, "payer", 6)
-        .expect("payer should cancel own pending purchase");
-    assert_eq!(database_pending_operation_count(&root, "payer-cancel"), 0);
-
-    let owner_cancel = service
-        .begin_database_credit_purchase("owner-cancel", "payer", 700, 7)
-        .expect("owner cancel operation should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(owner_cancel, "owner-cancel", "payer", 700, 8)
-        .expect("owner cancel should mark ambiguous");
-    service
-        .repair_database_credit_purchase_cancel("owner-cancel", owner_cancel, "owner", 9)
-        .expect("owner should cancel pending purchase");
-    assert_eq!(
-        database_ledger_kinds(&root, "owner-cancel"),
-        vec![
-            "credit_purchase_ambiguous",
-            "credit_purchase_repair_cancelled"
-        ]
-    );
-
-    let reject_cancel = service
-        .begin_database_credit_purchase("reject-cancel", "payer", 900, 10)
-        .expect("reject cancel operation should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(reject_cancel, "reject-cancel", "payer", 900, 11)
-        .expect("reject cancel should mark ambiguous");
-    for caller in ["writer", "reader", "outsider"] {
-        let error = service
-            .repair_database_credit_purchase_cancel("reject-cancel", reject_cancel, caller, 12)
-            .expect_err("non-payer non-owner should reject");
-        assert!(error.contains("not credit purchase payer or database owner"));
-        assert_eq!(database_pending_operation_count(&root, "reject-cancel"), 1);
-    }
-}
-
-#[test]
-fn credits_history_redacts_principals_for_non_owner_readers() {
-    let (service, _root) = service_with_root();
-    service
-        .create_database("alpha", "owner", 1)
-        .expect("database should create");
-    service
-        .grant_database_access("alpha", "owner", "writer", DatabaseRole::Writer, 2)
-        .expect("writer should be granted");
-    service
-        .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 2)
-        .expect("reader should be granted");
-    credit_database(&service, "alpha", "payer-principal", 500, 42, 3);
+    cycle_database(&service, "alpha", "payer-principal", 500, 42, 3);
 
     let reader_entry = service
-        .list_database_credit_entries("alpha", "reader", None, 10)
+        .list_database_cycle_entries("alpha", "reader", None, 10)
         .expect("reader should list history")
         .entries
         .remove(0);
@@ -2161,167 +2150,64 @@ fn credits_history_redacts_principals_for_non_owner_readers() {
     assert_eq!(reader_entry.ledger_block_index, Some(42));
 
     let writer_entry = service
-        .list_database_credit_entries("alpha", "writer", None, 10)
+        .list_database_cycle_entries("alpha", "writer", None, 10)
         .expect("writer should list history")
         .entries
         .remove(0);
     assert_eq!(writer_entry.caller, "redacted");
 
     let owner_entry = service
-        .list_database_credit_entries("alpha", "owner", None, 10)
+        .list_database_cycle_entries("alpha", "owner", None, 10)
         .expect("owner should list history")
         .entries
         .remove(0);
     assert_eq!(owner_entry.caller, "payer-principal");
 
-    let governance_entry = service
-        .list_database_credit_entries("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
-        .expect("governance should list history without membership")
+    let billing_authority_entry = service
+        .list_database_cycle_entries("alpha", "rrkah-fqaaa-aaaaa-aaaaq-cai", None, 10)
+        .expect("billing authority should list history without membership")
         .entries
         .remove(0);
-    assert_eq!(governance_entry.caller, "payer-principal");
+    assert_eq!(billing_authority_entry.caller, "payer-principal");
 
     let error = service
-        .list_database_credit_entries("alpha", "outsider", None, 10)
+        .list_database_cycle_entries("alpha", "outsider", None, 10)
         .expect_err("outsider should not list history");
     assert!(error.contains("principal has no access"));
 }
 
 #[test]
-fn verified_complete_allows_authenticated_caller_and_owner_cancel() {
-    let (service, root) = service_with_root();
+fn cycles_history_paginates_with_clamped_limits() {
+    let (service, _root) = service_with_root();
     service
-        .create_database("complete", "owner", 1)
+        .create_database("alpha", "owner", 1)
         .expect("database should create");
-    service
-        .create_database("cancel", "owner", 1)
-        .expect("database should create");
-    let complete = service
-        .begin_database_credit_purchase("complete", "payer", 500, 2)
-        .expect("credit purchase should begin");
-    let cancel = service
-        .begin_database_credit_purchase("cancel", "payer", 700, 2)
-        .expect("credit purchase should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(complete, "complete", "payer", 500, 3)
-        .expect("credit purchase ambiguity should record");
-    service
-        .mark_database_credit_purchase_ambiguous(cancel, "cancel", "payer", 700, 3)
-        .expect("credit purchase ambiguity should record");
-    let pending = service
-        .list_database_credit_pending_operations("complete", "owner", None, 10)
-        .expect("owner should list ambiguous pending operations")
-        .entries;
-    assert_eq!(pending[0].operation_status, "ambiguous");
+    for index in 0..105 {
+        cycle_database(&service, "alpha", "owner", 500, index + 1, index as i64 + 2);
+    }
 
-    let balance = service
-        .repair_database_credit_purchase_complete("complete", complete, 77, 4)
-        .expect("authenticated caller should complete verified credit purchase");
-    assert_eq!(balance, 500);
-    service
-        .repair_database_credit_purchase_cancel("cancel", cancel, "owner", 4)
-        .expect("owner should cancel ambiguous credit purchase after verification");
+    let minimum_page = service
+        .list_database_cycle_entries("alpha", "owner", None, 0)
+        .expect("minimum page should load");
+    assert_eq!(minimum_page.entries.len(), 1);
+    assert_eq!(minimum_page.entries[0].entry_id, 1);
+    assert_eq!(minimum_page.next_cursor, Some(1));
 
-    assert_eq!(database_credits_balance(&root, "complete"), 500);
-    assert_eq!(database_credits_balance(&root, "cancel"), 0);
-    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
-    assert_eq!(database_pending_operation_count(&root, "cancel"), 0);
-    assert_eq!(
-        database_ledger_kinds(&root, "complete"),
-        vec![
-            "credit_purchase_ambiguous",
-            "credit_purchase_repair_complete"
-        ]
-    );
-    assert_eq!(
-        database_ledger_kinds(&root, "cancel"),
-        vec![
-            "credit_purchase_ambiguous",
-            "credit_purchase_repair_cancelled"
-        ]
-    );
-    let entries = service
-        .list_database_credit_entries("complete", "owner", None, 10)
-        .expect("credits entries should load")
-        .entries;
-    assert_eq!(entries[0].amount_credits, 0);
-    assert_eq!(entries[0].balance_after_credits, 0);
-    assert_eq!(entries[1].amount_credits, 500);
-    assert_eq!(entries[1].balance_after_credits, 500);
-    assert_eq!(entries[0].caller, "payer");
-    assert_eq!(entries[1].caller, "payer");
-    assert_eq!(entries[1].ledger_block_index, Some(77));
+    let first_page = service
+        .list_database_cycle_entries("alpha", "owner", None, 200)
+        .expect("first clamped page should load");
+    assert_eq!(first_page.entries.len(), 100);
+    assert_eq!(first_page.entries[0].entry_id, 1);
+    assert_eq!(first_page.entries[99].entry_id, 100);
+    assert_eq!(first_page.next_cursor, Some(100));
 
-    let cancel_entries = service
-        .list_database_credit_entries("cancel", "owner", None, 10)
-        .expect("cancel entries should load")
-        .entries;
-    assert_eq!(cancel_entries[1].caller, "owner");
-    assert_eq!(cancel_entries[0].amount_credits, 0);
-    assert_eq!(cancel_entries[0].balance_after_credits, 0);
-    assert_eq!(cancel_entries[1].amount_credits, 0);
-    assert_eq!(cancel_entries[1].payment_amount_e8s, Some(70_000_000));
-    assert_eq!(cancel_entries[1].balance_after_credits, 0);
-    assert_eq!(cancel_entries[1].ledger_block_index, None);
-}
-
-#[test]
-fn verified_repair_mark_blocks_cancel_before_credit_apply() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("complete", "owner", 1)
-        .expect("database should create");
-    let operation_id = service
-        .begin_database_credit_purchase("complete", "payer", 500, 2)
-        .expect("credit purchase should begin");
-    service
-        .mark_database_credit_purchase_ambiguous(operation_id, "complete", "payer", 500, 3)
-        .expect("credit purchase ambiguity should record");
-
-    service
-        .mark_database_credit_purchase_repair_completed("complete", operation_id)
-        .expect("verified repair should mark operation completed");
-    let cancel_error = service
-        .repair_database_credit_purchase_cancel("complete", operation_id, "owner", 4)
-        .expect_err("completed repair should not be cancellable");
-    assert!(cancel_error.contains("credit purchase operation is completed"));
-
-    let balance = service
-        .repair_database_credit_purchase_complete("complete", operation_id, 77, 5)
-        .expect("completed repair should still credit database");
-    assert_eq!(balance, 500);
-    assert_eq!(database_credits_balance(&root, "complete"), 500);
-    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
-}
-
-#[test]
-fn verified_repair_mark_accepts_in_flight_credit_purchase() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("complete", "owner", 1)
-        .expect("database should create");
-    let operation_id = service
-        .begin_database_credit_purchase("complete", "payer", 500, 2)
-        .expect("credit purchase should begin");
-    let operation = service
-        .get_database_credit_pending_operation_for_complete("complete", operation_id)
-        .expect("verified repair should inspect in-flight operation");
-    assert_eq!(operation.operation_id, operation_id);
-
-    service
-        .mark_database_credit_purchase_repair_completed("complete", operation_id)
-        .expect("verified repair should mark in-flight operation completed");
-    let cancel_error = service
-        .repair_database_credit_purchase_cancel("complete", operation_id, "owner", 4)
-        .expect_err("completed repair should not be cancellable");
-    assert!(cancel_error.contains("credit purchase operation is completed"));
-
-    let balance = service
-        .repair_database_credit_purchase_complete("complete", operation_id, 77, 5)
-        .expect("completed repair should credit database");
-    assert_eq!(balance, 500);
-    assert_eq!(database_credits_balance(&root, "complete"), 500);
-    assert_eq!(database_pending_operation_count(&root, "complete"), 0);
+    let second_page = service
+        .list_database_cycle_entries("alpha", "owner", first_page.next_cursor, 200)
+        .expect("second clamped page should load");
+    assert_eq!(second_page.entries.len(), 5);
+    assert_eq!(second_page.entries[0].entry_id, 101);
+    assert_eq!(second_page.entries[4].entry_id, 105);
+    assert_eq!(second_page.next_cursor, None);
 }
 
 #[test]
@@ -2351,45 +2237,97 @@ fn database_rename_requires_owner() {
 }
 
 #[test]
-fn zero_cycle_charge_skips_credit_ledger() {
+fn zero_cycle_charge_skips_cycle_ledger() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    credit_database(&service, "alpha", "owner", 500, 7, 2);
+    let purchased_cycles = cycle_database(&service, "alpha", "owner", 5_000, 7, 2);
     let config = service
-        .credits_config()
-        .expect("credits config should load");
+        .cycles_billing_config()
+        .expect("cycles config should load");
 
     service
         .charge_database_update(&config, "alpha", "owner", "write_node", 0, 3)
         .expect("zero-cycle update should skip charge");
 
-    assert_eq!(database_credits_balance(&root, "alpha"), 500);
+    assert_eq!(
+        database_cycles_balance(&root, "alpha"),
+        purchased_cycles as i64
+    );
     assert_eq!(
         database_ledger_kinds(&root, "alpha"),
-        vec!["credit_purchase"]
+        vec!["cycles_purchase"]
     );
 
     service
-        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000_000, 4)
-        .expect("charged update should record credit ledger");
+        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000, 4)
+        .expect("charged update should record cycle ledger");
 
-    assert_eq!(database_credits_balance(&root, "alpha"), 499);
+    let after_first_charge = purchased_cycles as i64 - 1_000_000;
+    assert_eq!(database_cycles_balance(&root, "alpha"), after_first_charge);
     service
-        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_000_001, 5)
-        .expect("rounded-up update should record credit ledger");
+        .charge_database_update(&config, "alpha", "owner", "write_node", 1_000_001, 5)
+        .expect("raw update cycle charge should record cycle ledger");
 
-    assert_eq!(database_credits_balance(&root, "alpha"), 497);
-    let entries = service
-        .list_database_credit_entries("alpha", "owner", None, 10)
-        .expect("credit entries should load")
+    let after_second_charge = after_first_charge - 1_000_001;
+    assert_eq!(database_cycles_balance(&root, "alpha"), after_second_charge);
+    service
+        .charge_database_update(
+            &config,
+            "alpha",
+            "owner",
+            "write_node",
+            u128::try_from(after_second_charge).expect("remaining balance should fit") + 1,
+            6,
+        )
+        .expect("overdrawn update cycle charge should consume remaining balance");
+    assert_eq!(database_cycles_balance(&root, "alpha"), 0);
+    assert_eq!(database_cycles_suspended_at(&root, "alpha"), Some(6));
+    assert_eq!(
+        database_ledger_kinds(&root, "alpha"),
+        vec!["cycles_purchase", "charge", "charge", "charge"]
+    );
+
+    let overdrawn_entries = service
+        .list_database_cycle_entries("alpha", "owner", None, 10)
+        .expect("cycle entries should load")
         .entries;
-    assert_eq!(entries.len(), 3);
+    assert_eq!(overdrawn_entries[3].kind, "charge");
+    assert_eq!(overdrawn_entries[3].amount_cycles, -after_second_charge);
+    assert_eq!(
+        overdrawn_entries[3].cycles_delta,
+        Some(after_second_charge as u64 + 1)
+    );
+
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let purchased_cycles = cycle_database(&service, "alpha", "owner", 5_000, 7, 2);
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
+
+    service
+        .charge_database_update(
+            &config,
+            "alpha",
+            "owner",
+            "write_node",
+            u128::from(purchased_cycles),
+            7,
+        )
+        .expect("exact balance cycle charge should succeed");
+
+    assert_eq!(database_cycles_balance(&root, "alpha"), 0);
+    let entries = service
+        .list_database_cycle_entries("alpha", "owner", None, 10)
+        .expect("cycle entries should load")
+        .entries;
+    assert_eq!(entries.len(), 2);
     assert_eq!(entries[1].kind, "charge");
-    assert_eq!(entries[1].amount_credits, -1);
-    assert_eq!(entries[2].kind, "charge");
-    assert_eq!(entries[2].amount_credits, -2);
+    assert_eq!(entries[1].amount_cycles, -(purchased_cycles as i64));
 }
 
 #[test]
@@ -2453,6 +2391,44 @@ fn lists_database_summaries_for_caller_memberships_only() {
 }
 
 #[test]
+fn grant_database_access_enforces_member_limit_for_new_members_only() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    for index in 0..30 {
+        service
+            .grant_database_access(
+                "alpha",
+                "owner",
+                &format!("member-{index}"),
+                DatabaseRole::Reader,
+                2 + index,
+            )
+            .expect("member grant should fit limit");
+    }
+    assert_eq!(database_member_count(&root, "alpha"), 32);
+
+    service
+        .grant_database_access("alpha", "owner", "member-0", DatabaseRole::Writer, 40)
+        .expect("existing member role update should ignore member cap");
+
+    let error = service
+        .grant_database_access("alpha", "owner", "member-30", DatabaseRole::Reader, 41)
+        .expect_err("new member beyond cap should fail");
+    assert!(error.contains("too many database members"));
+
+    service
+        .revoke_database_access("alpha", "owner", "member-1")
+        .expect("member revoke should succeed");
+    service
+        .grant_database_access("alpha", "owner", "member-30", DatabaseRole::Reader, 42)
+        .expect("new member should fit after revoke");
+    assert_eq!(database_member_count(&root, "alpha"), 32);
+}
+
+#[test]
 fn discards_failed_database_reservation_for_retry() {
     let (service, root) = service_with_root();
     service
@@ -2470,6 +2446,131 @@ fn discards_failed_database_reservation_for_retry() {
         .expect("same database_id should create after discard");
     assert_eq!(meta.database_id, "retryable");
     assert_eq!(database_member_count(&root, "retryable"), 2);
+}
+
+#[test]
+fn database_cycles_purchase_rejects_duplicate_pending_operation_for_caller() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+
+    let first = service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("first purchase should begin");
+    let duplicate = service
+        .begin_database_cycles_purchase("alpha", "payer", 600, 3)
+        .expect_err("same caller should not create duplicate pending purchase");
+    assert!(duplicate.contains("cycles purchase already pending for caller"));
+
+    service
+        .begin_database_cycles_purchase("alpha", "other-payer", 600, 4)
+        .expect("different caller can begin separate purchase");
+
+    let cycles = default_cycles_for_payment(500);
+    service
+        .cancel_database_cycles_purchase(first, "alpha", "payer", cycles)
+        .expect("first purchase should cancel");
+    service
+        .begin_database_cycles_purchase("alpha", "payer", 700, 5)
+        .expect("caller can begin after pending operation resolves");
+
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 2);
+}
+
+#[test]
+fn database_cycles_purchase_rejects_when_cycles_below_minimum_quote() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let cycles = default_cycles_for_payment(50_000);
+
+    let error = service
+        .begin_database_cycles_purchase_with_ledger_details(
+            DatabaseCyclesPurchaseWithLedgerDetails {
+                database_id: "alpha",
+                caller: "payer",
+                payment_amount_e8s: 50_000,
+                min_expected_cycles: cycles + 1,
+                ledger: CyclesPendingLedgerDetailsInput {
+                    from_owner: "payer",
+                    from_subaccount: None,
+                    to_owner: "canister",
+                    to_subaccount: None,
+                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                    ledger_created_at_time_ns: 2_000_000,
+                },
+                now: 2,
+            },
+        )
+        .expect_err("stale quote should reject before pending operation");
+
+    assert!(error.contains("below min_expected_cycles"));
+    assert_eq!(database_pending_operation_count(&root, "alpha"), 0);
+}
+
+#[test]
+fn lists_pending_cycles_purchases_for_owner_authority_and_payer() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let operation_id = service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("purchase should begin");
+
+    let owner = service
+        .list_database_cycles_pending_purchases("alpha", "owner")
+        .expect("owner should view pending purchase");
+    assert_eq!(owner.len(), 1);
+    assert_eq!(owner[0].operation_id, operation_id);
+    assert_eq!(owner[0].status, "in_flight");
+    assert_eq!(owner[0].required_action, "wait_for_ledger_result");
+
+    let payer = service
+        .list_database_cycles_pending_purchases("alpha", "payer")
+        .expect("payer should view own pending purchase");
+    assert_eq!(payer, owner);
+
+    let authority = service
+        .cycles_billing_config()
+        .expect("config should load")
+        .billing_authority_id;
+    let authority_view = service
+        .list_database_cycles_pending_purchases("alpha", &authority)
+        .expect("billing authority should view pending purchase");
+    assert_eq!(authority_view, owner);
+
+    let error = service
+        .list_database_cycles_pending_purchases("alpha", "stranger")
+        .expect_err("unrelated caller should reject");
+    assert!(error.contains("cannot view pending cycle purchases"));
+}
+
+#[test]
+fn delete_database_reports_pending_cycles_purchase_action() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let operation_id = service
+        .begin_database_cycles_purchase("alpha", "payer", 500, 2)
+        .expect("purchase should begin");
+
+    let error = service
+        .delete_database(
+            DeleteDatabaseRequest {
+                database_id: "alpha".to_string(),
+            },
+            "owner",
+            3,
+        )
+        .expect_err("delete should block while pending purchase exists");
+
+    assert!(error.contains(&format!("operation_id={operation_id}")));
+    assert!(error.contains("status=in_flight"));
+    assert!(error.contains("required_action=wait_for_ledger_result"));
 }
 
 #[test]
@@ -2866,7 +2967,12 @@ fn archives_and_restores_database_bytes() {
     );
     assert_eq!(
         database_index_row(&root, "alpha"),
-        ("archived".to_string(), None, archive.size_bytes, None)
+        (
+            "archived".to_string(),
+            archiving_mount_id,
+            archive.size_bytes,
+            None,
+        )
     );
     assert!(
         service
@@ -2948,7 +3054,7 @@ fn archives_and_restores_database_bytes() {
 }
 
 #[test]
-fn restored_mount_id_is_not_reused_after_rearchive() {
+fn restore_reuses_archived_mount_id_after_rearchive() {
     let (service, root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2979,6 +3085,7 @@ fn restored_mount_id_is_not_reused_after_rearchive() {
     let restored = service
         .begin_database_restore("alpha", "owner", snapshot_hash, archive.size_bytes, 4)
         .expect("restore should begin");
+    assert_eq!(restored.mount_id, 11);
     service
         .write_database_restore_chunk("alpha", "owner", 0, &bytes)
         .expect("restore chunk should write");
@@ -3001,7 +3108,7 @@ fn restored_mount_id_is_not_reused_after_rearchive() {
     assert_ne!(beta.mount_id, restored.mount_id);
     assert_eq!(
         mount_history_row(&root, restored.mount_id),
-        ("alpha".to_string(), "restore".to_string())
+        ("alpha".to_string(), "create".to_string())
     );
 }
 
@@ -3504,14 +3611,19 @@ fn cancel_database_restore_returns_archived_database_and_removes_partial_state()
 
     assert_eq!(
         database_index_row(&root, "alpha"),
-        ("archived".to_string(), None, archive.size_bytes, None)
+        (
+            "archived".to_string(),
+            Some(restore.meta.mount_id),
+            archive.size_bytes,
+            None,
+        )
     );
     assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
     assert_eq!(database_restore_session_count(&root, "alpha"), 0);
     assert!(!restoring_file.exists());
     assert_eq!(
         mount_history_row(&root, restore.meta.mount_id),
-        ("alpha".to_string(), "restore".to_string())
+        ("alpha".to_string(), "create".to_string())
     );
 }
 
@@ -3649,19 +3761,24 @@ fn rollback_database_restore_begin_restores_archived_state() {
         .expect("restore begin should rollback");
     assert_eq!(
         database_index_row(&root, "alpha"),
-        ("archived".to_string(), None, archive.size_bytes, None)
+        (
+            "archived".to_string(),
+            Some(failed_mount_id),
+            archive.size_bytes,
+            None,
+        )
     );
     assert_eq!(database_restore_chunk_count(&root, "alpha"), 0);
     assert_eq!(database_restore_session_count(&root, "alpha"), 0);
     assert_eq!(
         mount_history_row(&root, failed_mount_id),
-        ("alpha".to_string(), "restore".to_string())
+        ("alpha".to_string(), "create".to_string())
     );
 
     let retry = service
         .begin_database_restore_session("alpha", "owner", snapshot_hash, archive.size_bytes, 7)
         .expect("restore should retry");
-    assert_ne!(retry.meta.mount_id, failed_mount_id);
+    assert_eq!(retry.meta.mount_id, failed_mount_id);
 }
 
 #[test]
@@ -3805,6 +3922,43 @@ fn append_node_validates_effective_kind_paths() {
         .expect_err("kind=None under sources should be treated as file");
     assert!(error.contains("source path must use source kind"));
 
+    ensure_parent_folders(
+        &service,
+        "owner",
+        "alpha",
+        "/Sources/skill-runs/review/1700000000000.md",
+        3,
+    );
+    let error = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Sources/skill-runs/review/1700000000000.md".to_string(),
+                kind: NodeKind::File,
+                content: "bad".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            4,
+        )
+        .expect_err("skill run source path should reject file kind");
+    assert!(error.contains("source path must use source kind"));
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Sources/skill-runs/review/1700000000000.md".to_string(),
+                kind: NodeKind::Source,
+                content: "source".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            5,
+        )
+        .expect("skill run source path should accept source kind");
+
     ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/good/good.md", 3);
     let source = service
         .write_node(
@@ -3853,4 +4007,58 @@ fn append_node_validates_effective_kind_paths() {
         )
         .expect("kind=None should create wiki file");
     assert_eq!(wiki.node.kind, NodeKind::File);
+}
+
+#[test]
+fn move_node_validates_source_target_path() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/abc.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/wrong.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/chatgpt/def.md", 2);
+    let source = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Sources/raw/web/abc.md".to_string(),
+                kind: NodeKind::Source,
+                content: "source".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("source should write");
+
+    let error = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Sources/raw/web/abc.md".to_string(),
+                to_path: "/Sources/raw/web/wrong.txt".to_string(),
+                expected_etag: Some(source.node.etag.clone()),
+                overwrite: false,
+            },
+            4,
+        )
+        .expect_err("non-canonical source target should fail");
+    assert!(error.contains("canonical form"));
+
+    service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Sources/raw/web/abc.md".to_string(),
+                to_path: "/Sources/raw/chatgpt/def.md".to_string(),
+                expected_etag: Some(source.node.etag),
+                overwrite: false,
+            },
+            5,
+        )
+        .expect("canonical source target should pass");
 }

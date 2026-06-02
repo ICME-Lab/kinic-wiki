@@ -1,6 +1,6 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import { splitMarkdownFrontmatter } from "@/lib/markdown-frontmatter";
-import type { CatalogSkill, SkillEvent, SkillProposal, SkillRunEvidence, SkillRunSummary } from "@/lib/skill-registry-catalog";
+import type { CatalogSkill, ProposalStatus, SkillEvent, SkillProposal, SkillRunEvidence, SkillRunSummary } from "@/lib/skill-registry-catalog";
 import type { ChildNode } from "@/lib/types";
 import { listChildren, readNode } from "@/lib/vfs-client";
 
@@ -40,12 +40,48 @@ async function loadRecentRuns(canisterId: string, databaseId: string, skillId: s
 }
 
 async function loadProposals(canisterId: string, databaseId: string, basePath: string, identity?: Identity): Promise<SkillProposal[]> {
-  const entries = await listRegistryChildren(canisterId, databaseId, `${basePath}/improvement-proposals`, identity);
-  const nodes = await Promise.all(entries.filter(isFileEntry).map((entry) => readRegistryNode(canisterId, databaseId, entry.path, identity)));
-  return nodes
-    .flatMap((node) => (node ? [parseProposal(node.path, node.content)] : []))
-    .filter((proposal): proposal is SkillProposal => Boolean(proposal))
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const entries = await listRegistryChildren(canisterId, databaseId, `${basePath}/proposals`, identity);
+  const proposalDirs = entries.filter((entry) => entry.kind === "directory" || entry.kind === "folder");
+  const proposals = await Promise.all(proposalDirs.map((entry) => loadEvolutionProposal(canisterId, databaseId, entry.path, identity)));
+  return proposals.filter((proposal): proposal is SkillProposal => Boolean(proposal)).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+async function loadEvolutionProposal(canisterId: string, databaseId: string, proposalRoot: string, identity?: Identity): Promise<SkillProposal | null> {
+  const parsedRoot = parseProposalRoot(proposalRoot);
+  if (!parsedRoot) return null;
+  const { skillId, proposalId: id } = parsedRoot;
+  const candidatePath = `${proposalRoot}/candidate/SKILL.md`;
+  const metricsPath = `${proposalRoot}/metrics.json`;
+  const statusPath = `${proposalRoot}/status.md`;
+  const [candidate, metrics, status] = await Promise.all([
+    readRegistryNode(canisterId, databaseId, candidatePath, identity),
+    readRegistryNode(canisterId, databaseId, metricsPath, identity),
+    readRegistryNode(canisterId, databaseId, statusPath, identity)
+  ]);
+  if (!candidate || !metrics || !status) return null;
+  const metricsJson = parseJsonObject(metrics.content);
+  const baseEtag = stringField(metricsJson, "base_etag");
+  const statusFields = frontmatterFields(status.content);
+  const proposalStatus = parseProposalStatus(statusFields.status);
+  if (!baseEtag) return null;
+  if (statusFields.kind !== "kinic.skill_evolution_proposal_status" || statusFields.schema_version !== "1") return null;
+  if (statusFields.skill_id !== skillId || statusFields.proposal_id !== id) return null;
+  if (!proposalStatus || !statusFields.recorded_at || Number.isNaN(Date.parse(statusFields.recorded_at))) return null;
+  return {
+    proposalRoot,
+    candidatePath,
+    metricsPath,
+    statusPath,
+    id,
+    title: id,
+    status: proposalStatus,
+    createdAt: stringField(metricsJson, "created_at") ?? statusFields.recorded_at,
+    sourceRuns: arrayStringField(metricsJson, "source_runs"),
+    candidatePreview: candidate.content.slice(0, 1200),
+    baseEtag,
+    appliedAt: statusFields.recorded_at,
+    metricsPreview: metrics.content.slice(0, 2000)
+  };
 }
 
 async function loadEvents(canisterId: string, databaseId: string, skillId: string, identity?: Identity): Promise<SkillEvent[]> {
@@ -98,6 +134,23 @@ function isFileEntry(entry: ChildNode): boolean {
   return entry.kind !== "directory" && entry.kind !== "folder";
 }
 
+function parseProposalStatus(value: string | undefined): ProposalStatus | null {
+  if (value === "proposed" || value === "reviewed" || value === "auto_applied" || value === "gate_failed" || value === "conflict") return value;
+  return null;
+}
+
+function parseProposalRoot(proposalRoot: string): { skillId: string; proposalId: string } | null {
+  const match = proposalRoot.match(/^\/Wiki\/skills\/([^/]+)\/proposals\/([^/]+)$/);
+  if (!match) return null;
+  const [, skillId, proposalId] = match;
+  if (!isSafePathSegment(skillId) || !isSafePathSegment(proposalId)) return null;
+  return { skillId, proposalId };
+}
+
+function isSafePathSegment(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && !value.includes("..");
+}
+
 function summarizeRuns(runs: SkillRunEvidence[]): SkillRunSummary {
   const summary: SkillRunSummary = { runs: 0, success: 0, partial: 0, fail: 0, lastUsedAt: null, lastOutcome: null };
   for (const run of runs) {
@@ -119,21 +172,6 @@ function parseRunEvidence(path: string, content: string): SkillRunEvidence | nul
   return { path, outcome: fields.outcome ?? "unknown", task: fields.task ?? "", agent: fields.agent ?? "", recordedAt: fields.recorded_at ?? "" };
 }
 
-function parseProposal(path: string, content: string): SkillProposal | null {
-  const fields = frontmatterFields(content);
-  if (fields.kind !== "kinic.skill_improvement_proposal") return null;
-  return {
-    path,
-    id: fields.id ?? path.split("/").pop()?.replace(/\.md$/, "") ?? path,
-    title: fields.title ?? fields.id ?? path,
-    status: fields.status ?? "proposed",
-    createdAt: fields.created_at ?? "",
-    sourceRuns: sourceRuns(content),
-    diff: proposalDiff(content),
-    appliedAt: fields.applied_at ?? null
-  };
-}
-
 function parseEvent(path: string, content: string): SkillEvent | null {
   const fields = frontmatterFields(content);
   if (fields.kind !== "kinic.skill_event") return null;
@@ -144,19 +182,20 @@ function frontmatterFields(content: string): Record<string, string> {
   return Object.fromEntries(splitMarkdownFrontmatter(content)?.fields.map((field) => [field.key, field.value]) ?? []);
 }
 
-function sourceRuns(content: string): string[] {
-  const end = content.startsWith("---\n") ? content.indexOf("\n---", 4) : -1;
-  const frontmatter = end >= 0 ? content.slice(4, end) : "";
-  const lines = frontmatter.split("\n");
-  const start = lines.findIndex((line) => line.trim() === "source_runs:");
-  if (start < 0) return [];
-  return lines.slice(start + 1).filter((line) => line.startsWith("  - ")).map((line) => line.slice(4).trim());
+function parseJsonObject(content: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(content);
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
-function proposalDiff(content: string): string | null {
-  const start = content.indexOf("```diff");
-  if (start < 0) return null;
-  const bodyStart = content.indexOf("\n", start);
-  const end = content.indexOf("\n```", bodyStart);
-  return bodyStart >= 0 && end >= 0 ? content.slice(bodyStart + 1, end) : null;
+function stringField(value: Record<string, unknown>, key: string): string | null {
+  return typeof value[key] === "string" ? value[key] : null;
+}
+
+function arrayStringField(value: Record<string, unknown>, key: string): string[] {
+  const field = value[key];
+  return Array.isArray(field) ? field.filter((item): item is string => typeof item === "string") : [];
 }

@@ -365,7 +365,7 @@ def source_runs_from_job(content: str) -> list[str]:
             continue
         if in_source_runs:
             if line.startswith("  - "):
-                paths.append(line[4:].strip().strip('"'))
+                paths.append(clean_yaml_scalar(line[4:]))
                 continue
             if line and not line.startswith(" "):
                 break
@@ -381,17 +381,31 @@ def frontmatter_scalar(content: str, key: str) -> str | None:
             continue
         field, value = line.split(":", 1)
         if field.strip() == key:
-            return value.strip().strip('"')
+            return clean_yaml_scalar(value)
     return None
 
 
 def frontmatter_lines(content: str) -> list[str] | None:
     if not content.startswith("---\n"):
         return None
-    end = content.find("\n---", 4)
-    if end < 0:
-        return None
-    return content[4:end].splitlines()
+    lines: list[str] = []
+    for line in content[4:].splitlines():
+        if line == "---":
+            return lines
+        lines.append(line)
+    return None
+
+
+def clean_yaml_scalar(value: str) -> str:
+    trimmed = value.strip()
+    if trimmed.startswith('"') and trimmed.endswith('"'):
+        parsed = json.loads(trimmed)
+        if isinstance(parsed, str):
+            return parsed
+        raise ValueError("quoted YAML scalar must be a string")
+    if trimmed.startswith("'") and trimmed.endswith("'"):
+        return trimmed[1:-1].replace("''", "'")
+    return trimmed
 
 
 def skill_id_from_job_content(content: str) -> str | None:
@@ -450,7 +464,11 @@ def validate_candidate(current_skill: str, candidate: str) -> dict[str, Any]:
 def same_declared_identity(current_skill: str, candidate: str) -> bool:
     current_title = first_heading(current_skill)
     candidate_title = first_heading(candidate)
-    return not current_title or not candidate_title or current_title.lower() == candidate_title.lower()
+    if not current_title:
+        return True
+    if not candidate_title:
+        return False
+    return current_title.lower() == candidate_title.lower()
 
 
 def first_heading(content: str) -> str | None:

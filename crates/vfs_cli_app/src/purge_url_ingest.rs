@@ -351,10 +351,18 @@ fn parse_frontmatter(content: &str) -> Result<Option<Frontmatter>> {
     let Some(rest) = content.strip_prefix("---\n") else {
         return Ok(None);
     };
-    let Some((frontmatter, _body)) = rest.split_once("\n---") else {
+    let Some(end) = frontmatter_end(rest) else {
         return Ok(None);
     };
+    let frontmatter = &rest[..end];
     Ok(Some(serde_yaml::from_str(frontmatter)?))
+}
+
+fn frontmatter_end(rest: &str) -> Option<usize> {
+    rest.find("\n---\n").or_else(|| {
+        rest.ends_with("\n---")
+            .then_some(rest.len() - "\n---".len())
+    })
 }
 
 fn normalize_url(value: &str) -> Result<String> {
@@ -480,6 +488,18 @@ mod tests {
 
     use async_trait::async_trait;
     use vfs_types::*;
+
+    #[test]
+    fn parse_frontmatter_requires_whole_line_terminator() {
+        let parsed = parse_frontmatter(
+            "---\nkind: kinic.url_ingest_request\nurl: https://example.com\nnote: ---not-a-terminator\nstatus: queued\n---\n# Request\n",
+        )
+        .expect("frontmatter parse should not fail")
+        .expect("frontmatter should be present");
+
+        assert_eq!(parsed.kind.as_deref(), Some("kinic.url_ingest_request"));
+        assert_eq!(parsed.status.as_deref(), Some("queued"));
+    }
 
     #[derive(Default)]
     struct PlanClient {

@@ -158,11 +158,53 @@ test("legacy url ingest queue message without nonce marks request failed", async
       requestPath: "/Sources/ingest-requests/1.md",
       sessionNonce: ""
     }).kind,
-    "legacy_url_ingest_missing_nonce"
+    "invalid"
+  );
+  assert.equal(parseQueueMessageEnvelope({ kind: "source", databaseId: "db_1", sourcePath: "", sourceEtag: "etag-source" }).kind, "invalid");
+  assert.equal(
+    parseQueueMessageEnvelope({
+      kind: "source",
+      databaseId: "db_1",
+      sourcePath: "/Sources/raw/a/a.md",
+      sourceEtag: "etag-source",
+      requestPath: "/Wiki/not-ingest.md",
+      sessionNonce: "session-1"
+    }).kind,
+    "invalid"
+  );
+  assert.equal(
+    parseQueueMessageEnvelope({
+      kind: "source",
+      databaseId: "db_1",
+      sourcePath: "/Sources/raw/a/a.md",
+      sourceEtag: "etag-source",
+      requestPath: "/Sources/ingest-requests/../bad.md",
+      sessionNonce: "session-1"
+    }).kind,
+    "invalid"
+  );
+  assert.equal(
+    parseQueueMessageEnvelope({
+      kind: "url_ingest",
+      canisterId: "canister-1",
+      databaseId: "db_1",
+      requestPath: "/Wiki/not-ingest.md",
+      sessionNonce: "session-1"
+    }).kind,
+    "invalid"
+  );
+  assert.equal(
+    parseQueueMessageEnvelope({
+      kind: "url_ingest",
+      canisterId: "canister-1",
+      databaseId: "db_1",
+      requestPath: "/Sources/ingest-requests/../bad.md"
+    }).kind,
+    "invalid"
   );
 });
 
-test("source queue write credits check failure does not call DeepSeek", async () => {
+test("source queue write cycles check failure does not call DeepSeek", async () => {
   const originalFetch = globalThis.fetch;
   let deepSeekCalls = 0;
   globalThis.fetch = async (): Promise<Response> => {
@@ -173,7 +215,7 @@ test("source queue write credits check failure does not call DeepSeek", async ()
     await processSourceQueueMessageForTest(
       testEnv(new TestQueue()),
       { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source" },
-      { config: workerConfig(), vfs: sourceVfs({ failWriteCredits: true }) }
+      { config: workerConfig(), vfs: sourceVfs({ failWriteCycles: true }) }
     );
 
     assert.equal(deepSeekCalls, 0);
@@ -230,7 +272,7 @@ test("source queue uses source run session before DeepSeek", async () => {
     assert.equal(writtenPages.length, 2);
     assert.equal(writtenPages[0]?.path, "/Wiki/conversations/project-notes.md");
     assert.match(writtenPages[0]?.content ?? "", /## Summary/);
-    assert.ok(db.runs.some((run) => run.query.includes("SET status = 'completed'")));
+    assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'completed'")));
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -315,9 +357,31 @@ test("failed status write after DeepSeek is non-retry", async () => {
   }
 });
 
+test("missing queued source is recorded as failed", async () => {
+  const originalFetch = globalThis.fetch;
+  let deepSeekCalls = 0;
+  const db = new RecordingD1();
+  globalThis.fetch = async (): Promise<Response> => {
+    deepSeekCalls += 1;
+    return Response.json({ choices: [{ message: { content: draftJson() } }] });
+  };
+  try {
+    await processSourceQueueMessageForTest(
+      { ...testEnv(new TestQueue()), DB: db },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/missing.md", sourceEtag: "etag-source" },
+      { config: workerConfig(), vfs: sourceVfs() }
+    );
+
+    assert.equal(deepSeekCalls, 0);
+    assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'failed'") && run.query.includes("target_path = NULL")));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 function failingLogVfs(): VfsClient {
   return {
-    checkDatabaseWriteCredits: async (): Promise<void> => {},
+    checkDatabaseWriteCycles: async (): Promise<void> => {},
     checkSourceRunSession: async (): Promise<void> => {},
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => ({
@@ -346,7 +410,7 @@ type SourceSessionCheck = {
 
 function sourceVfs(
   options: {
-    failWriteCredits?: boolean;
+    failWriteCycles?: boolean;
     failDraftWrite?: boolean;
     failSourceRunSession?: boolean;
     sourceSessionChecks?: SourceSessionCheck[];
@@ -357,8 +421,8 @@ function sourceVfs(
   } = {}
 ): VfsClient {
   return {
-    checkDatabaseWriteCredits: async (): Promise<void> => {
-      if (options.failWriteCredits) throw new Error("database credits are suspended");
+    checkDatabaseWriteCycles: async (): Promise<void> => {
+      if (options.failWriteCycles) throw new Error("database cycles are suspended");
     },
     checkSourceRunSession: async (databaseId, sourcePath, sourceEtag, sessionNonce): Promise<void> => {
       options.sourceSessionChecks?.push({ databaseId, sourcePath, sourceEtag, sessionNonce });

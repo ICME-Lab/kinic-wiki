@@ -11,17 +11,17 @@ type FrontmatterValue = string | number | boolean | null;
 export function parseFrontmatter(content: string): FrontmatterDocument | null {
   if (!content.startsWith("---\n")) return null;
   const rest = content.slice(4);
-  const end = rest.indexOf("\n---");
-  if (end < 0) return null;
+  const terminator = frontmatterTerminator(rest);
+  if (!terminator) return null;
   const fields: Record<string, string | null> = {};
-  for (const line of rest.slice(0, end).split("\n")) {
+  for (const line of rest.slice(0, terminator.index).split("\n")) {
     const match = line.match(/^([^:\s][^:]*):(.*)$/);
     if (!match) continue;
     fields[match[1].trim()] = parseScalar(match[2].trim());
   }
   return {
     fields,
-    body: rest.slice(end + 4).replace(/^\n/, "")
+    body: rest.slice(terminator.index + terminator.length)
   };
 }
 
@@ -36,6 +36,12 @@ function parseScalar(value: string): string | null {
     return JSON.parse(value);
   }
   return value;
+}
+
+function frontmatterTerminator(rest: string): { index: number; length: number } | null {
+  const match = rest.match(/\n---(?:\n|$)/);
+  if (!match || match.index === undefined) return null;
+  return { index: match.index, length: match[0].length };
 }
 
 function formatScalar(value: FrontmatterValue): string {

@@ -18,18 +18,18 @@ const expectedTypes = {
       role: "DatabaseRole",
       logical_size_bytes: "nat64",
       database_id: "text",
-      archived_at_ms: "opt int64",
-      credits_balance: "opt nat64",
-      credits_suspended_at_ms: "opt int64"
+      cycles_balance: "opt nat64",
+      cycles_suspended_at_ms: "opt int64",
+      archived_at_ms: "opt int64"
     }
   },
-  CreditsConfig: {
+  CyclesBillingConfig: {
     kind: "record",
     fields: {
       kinic_ledger_canister_id: "text",
-      sns_governance_id: "text",
-      credits_per_kinic: "nat64",
-      min_update_credits: "nat64"
+      billing_authority_id: "text",
+      cycles_per_kinic: "nat64",
+      min_update_cycles: "nat64"
     }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
@@ -77,12 +77,13 @@ const expectedTypes = {
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 const actorExpectedTypes = {
-  ...expectedTypes
+  ...expectedTypes,
+  DatabaseStatus: { kind: "variant", fields: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
 };
 
 const expectedMethods = {
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
-  get_credits_config: { input: [], output: "ResultCreditsConfig", mode: "query" },
+  get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
@@ -134,7 +135,7 @@ function parseDidMethods(source) {
   for (const raw of service.split(";")) {
     const line = raw.trim().replace(/\s+/g, " ");
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
     if (!match || !(match[1] in expectedMethods)) continue;
     methods[match[1]] = {
       input: splitDidInputs(match[2]),
@@ -191,12 +192,12 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_9") return "ResultCreditsConfig";
+  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_25") return "ResultNode";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_24") return "ResultNode";
+  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -228,7 +229,7 @@ function splitActorInputs(value) {
 function actorResultName(okShape) {
   const normalized = normalizeActorShape(okShape);
   if (normalized === "null") return "ResultUnit";
-  if (normalized === "CreditsConfig") return "ResultCreditsConfig";
+  if (normalized === "CyclesBillingConfig") return "ResultCyclesBillingConfig";
   if (normalized === "CreateDatabaseResult") return "ResultCreateDatabase";
   if (normalized === "Vec(DatabaseSummary)") return "ResultDatabases";
   if (normalized === "MkdirNodeResult") return "ResultMkdirNode";

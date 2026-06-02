@@ -57,7 +57,7 @@ ensure_canister_id "$FRONTEND_CANISTER_ID_FILE"
 II_BACKEND_CANISTER_ID="$(tr -d '[:space:]' < "$BACKEND_CANISTER_ID_FILE")"
 II_FRONTEND_CANISTER_ID="$(tr -d '[:space:]' < "$FRONTEND_CANISTER_ID_FILE")"
 WIKI_CANISTER_ID="$(node -e 'const fs=require("fs"); const file=process.argv[1]; const ids=JSON.parse(fs.readFileSync(file,"utf8")); if(!ids.wiki) throw new Error("wiki canister id is missing"); process.stdout.write(ids.wiki);' "$MAPPING_FILE")"
-II_FRONTEND_INIT_ARGS="$(printf '(record { backend_canister_id = principal "%s"; backend_origin = "http://%s.raw.localhost:8001"; related_origins = null; fetch_root_key = opt true; analytics_config = null; dummy_auth = opt opt record { prompt_for_index = false }; dev_csp = opt true })' "$II_BACKEND_CANISTER_ID" "$II_BACKEND_CANISTER_ID")"
+II_FRONTEND_INIT_ARGS="$(printf '(record { backend_canister_id = principal "%s"; backend_origin = "http://%s.raw.localhost:8011"; related_origins = null; fetch_root_key = opt true; analytics_config = null; dummy_auth = opt opt record { prompt_for_index = false }; dev_csp = opt true })' "$II_BACKEND_CANISTER_ID" "$II_BACKEND_CANISTER_ID")"
 
 if ! icp canister install "$II_BACKEND_CANISTER_ID" \
     -e local-wiki \
@@ -67,7 +67,7 @@ if ! icp canister install "$II_BACKEND_CANISTER_ID" \
     -y; then
   icp canister create --detached -e local-wiki --quiet > "$BACKEND_CANISTER_ID_FILE"
   II_BACKEND_CANISTER_ID="$(tr -d '[:space:]' < "$BACKEND_CANISTER_ID_FILE")"
-  II_FRONTEND_INIT_ARGS="$(printf '(record { backend_canister_id = principal "%s"; backend_origin = "http://%s.raw.localhost:8001"; related_origins = null; fetch_root_key = opt true; analytics_config = null; dummy_auth = opt opt record { prompt_for_index = false }; dev_csp = opt true })' "$II_BACKEND_CANISTER_ID" "$II_BACKEND_CANISTER_ID")"
+  II_FRONTEND_INIT_ARGS="$(printf '(record { backend_canister_id = principal "%s"; backend_origin = "http://%s.raw.localhost:8011"; related_origins = null; fetch_root_key = opt true; analytics_config = null; dummy_auth = opt opt record { prompt_for_index = false }; dev_csp = opt true })' "$II_BACKEND_CANISTER_ID" "$II_BACKEND_CANISTER_ID")"
   icp canister install "$II_BACKEND_CANISTER_ID" \
     -e local-wiki \
     --mode reinstall \
@@ -93,11 +93,11 @@ if ! icp canister install "$II_FRONTEND_CANISTER_ID" \
 fi
 
 {
-  printf 'NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8001\n'
+  printf 'NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011\n'
   printf 'NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
-  printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8001\n' "$II_FRONTEND_CANISTER_ID"
+  printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"
 } > "$ENV_FILE"
 
 printf 'Wrote %s\n' "$ENV_FILE"
 printf 'NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
-printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8001\n' "$II_FRONTEND_CANISTER_ID"
+printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"

@@ -9,9 +9,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ICP_ENVIRONMENT="${ICP_ENVIRONMENT:-local-wiki}"
 IDS_FILE="${REPO_ROOT}/.icp/cache/mappings/${ICP_ENVIRONMENT}.ids.json"
-SMOKE_CREDIT_PURCHASE_CREDITS="${SMOKE_CREDIT_PURCHASE_CREDITS:-1000}"
-SMOKE_CREDIT_PURCHASE_COUNT="${SMOKE_CREDIT_PURCHASE_COUNT:-3}"
-SMOKE_CREDITS_ALLOWANCE_E8S="${SMOKE_CREDITS_ALLOWANCE_E8S:-400000000}"
+SMOKE_CYCLE_PURCHASE_E8S="${SMOKE_CYCLE_PURCHASE_E8S:-100000000}"
+SMOKE_CYCLE_PURCHASE_KINIC="${SMOKE_CYCLE_PURCHASE_KINIC:-1}"
+SMOKE_CYCLE_PURCHASE_COUNT="${SMOKE_CYCLE_PURCHASE_COUNT:-3}"
+SMOKE_CYCLES_ALLOWANCE_E8S="${SMOKE_CYCLES_ALLOWANCE_E8S:-400000000}"
 
 case "${ICP_ENVIRONMENT}" in
   local | local-wiki) ;;
@@ -81,86 +82,40 @@ canister_has_module() {
 }
 
 wiki_ledger_canister_id() {
-  icp canister call wiki get_credits_config '()' -e "${ICP_ENVIRONMENT}" -o candid 2>/dev/null \
+  icp canister call wiki get_cycles_billing_config '()' -e "${ICP_ENVIRONMENT}" -o candid 2>/dev/null \
     | awk -F'"' '/kinic_ledger_canister_id/ { print $2; exit }'
 }
 
 deploy_wiki() {
   ICP_ENVIRONMENT="${ICP_ENVIRONMENT}" \
     KINIC_LEDGER_CANISTER_ID="${KINIC_LEDGER_CANISTER_ID}" \
-    SNS_GOVERNANCE_ID="${SNS_GOVERNANCE_ID}" \
+    BILLING_AUTHORITY_ID="${BILLING_AUTHORITY_ID}" \
     bash scripts/local/deploy_wiki.sh "$@"
 }
 
-approve_credits_allowance() {
+approve_cycles_allowance() {
   local canister_id="$1"
-  echo "approving ${SMOKE_CREDITS_ALLOWANCE_E8S} e8s for wiki canister ${canister_id}" >&2
+  echo "approving ${SMOKE_CYCLES_ALLOWANCE_E8S} e8s for wiki canister ${canister_id}" >&2
   local approve_result
   if ! approve_result="$(icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc2_approve \
-    "(record { spender = record { owner = principal \"${canister_id}\"; subaccount = null }; amount = ${SMOKE_CREDITS_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
+    "(record { spender = record { owner = principal \"${canister_id}\"; subaccount = null }; amount = ${SMOKE_CYCLES_ALLOWANCE_E8S} : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
     -e "${ICP_ENVIRONMENT}" -o candid)"; then
-    echo "KINIC approve failed. Ensure the current identity has enough local KINIC balance for ${SMOKE_CREDIT_PURCHASE_COUNT} credit purchases plus ledger fees." >&2
+    echo "KINIC approve failed. Ensure the current identity has enough local KINIC balance for ${SMOKE_CYCLE_PURCHASE_COUNT} cycle purchases plus ledger fees." >&2
     exit 1
   fi
   if [[ "${approve_result}" == *"Err"* ]]; then
     echo "KINIC approve returned an error: ${approve_result}" >&2
-    echo "Ensure the current identity has enough local KINIC balance for ${SMOKE_CREDIT_PURCHASE_COUNT} credit purchases plus ledger fees." >&2
-    exit 1
-  fi
-}
-
-candid_nat64_field() {
-  local field="$1"
-  node -e '
-    const fs = require("fs");
-    const [field] = process.argv.slice(1);
-    const text = fs.readFileSync(0, "utf8");
-    const match = text.match(new RegExp(`${field}\\s*=\\s*([0-9_]+)\\s*:\\s*nat64`));
-    if (!match) process.exit(1);
-    process.stdout.write(match[1].replaceAll("_", ""));
-  ' "$field"
-}
-
-purchase_smoke_database_credits() {
-  local database_id="$1"
-  local credits="$2"
-  echo "purchasing ${credits} credits for smoke database ${database_id}" >&2
-  local preview_result
-  if ! preview_result="$(icp canister call "${CANISTER_ID}" preview_database_credit_purchase \
-    "(\"${database_id}\", ${credits} : nat64)" \
-    -e "${ICP_ENVIRONMENT}" -o candid)"; then
-    echo "credit purchase preview failed for ${database_id}" >&2
-    exit 1
-  fi
-  if [[ "${preview_result}" == *"Err"* ]]; then
-    echo "credit purchase preview returned an error for ${database_id}: ${preview_result}" >&2
-    exit 1
-  fi
-
-  local expected_payment_amount_e8s
-  local expected_config_version
-  expected_payment_amount_e8s="$(printf '%s' "${preview_result}" | candid_nat64_field payment_amount_e8s)"
-  expected_config_version="$(printf '%s' "${preview_result}" | candid_nat64_field config_version)"
-
-  local purchase_result
-  if ! purchase_result="$(icp canister call "${CANISTER_ID}" purchase_database_credits \
-    "(record { database_id = \"${database_id}\"; credits = ${credits} : nat64; expected_payment_amount_e8s = ${expected_payment_amount_e8s} : nat64; expected_config_version = ${expected_config_version} : nat64 })" \
-    -e "${ICP_ENVIRONMENT}" -o candid)"; then
-    echo "credit purchase failed for ${database_id}" >&2
-    exit 1
-  fi
-  if [[ "${purchase_result}" == *"Err"* ]]; then
-    echo "credit purchase returned an error for ${database_id}: ${purchase_result}" >&2
+    echo "Ensure the current identity has enough local KINIC balance for ${SMOKE_CYCLE_PURCHASE_COUNT} cycle purchases plus ledger fees." >&2
     exit 1
   fi
 }
 
 cd "${REPO_ROOT}"
-validate_unsigned_integer SMOKE_CREDIT_PURCHASE_CREDITS
-validate_unsigned_integer SMOKE_CREDIT_PURCHASE_COUNT
-validate_unsigned_integer SMOKE_CREDITS_ALLOWANCE_E8S
-if [[ -z "${SNS_GOVERNANCE_ID:-}" ]]; then
-  export SNS_GOVERNANCE_ID="$(current_identity_principal)"
+validate_unsigned_integer SMOKE_CYCLE_PURCHASE_E8S
+validate_unsigned_integer SMOKE_CYCLE_PURCHASE_COUNT
+validate_unsigned_integer SMOKE_CYCLES_ALLOWANCE_E8S
+if [[ -z "${BILLING_AUTHORITY_ID:-}" ]]; then
+  export BILLING_AUTHORITY_ID="$(current_identity_principal)"
 fi
 
 if [[ -z "${REPLICA_HOST:-}" ]]; then
@@ -171,7 +126,7 @@ export REPLICA_HOST
 LEDGER_SETUP_OUTPUT="$(ICP_ENVIRONMENT="${ICP_ENVIRONMENT}" bash scripts/local/setup_kinic_ledger.sh)"
 KINIC_LEDGER_CANISTER_ID="${LEDGER_SETUP_OUTPUT#KINIC_LEDGER_CANISTER_ID=}"
 export KINIC_LEDGER_CANISTER_ID
-export SMOKE_CREDIT_PURCHASE_CREDITS
+export SMOKE_CYCLE_PURCHASE_E8S
 
 if ! CANISTER_ID="$(resolve_canister_id)"; then
   echo "local wiki canister id not found; deploying wiki to ${ICP_ENVIRONMENT} environment" >&2
@@ -194,7 +149,7 @@ fi
 CANISTER_ID="$(resolve_canister_id)"
 
 export CANISTER_ID
-approve_credits_allowance "${CANISTER_ID}"
+approve_cycles_allowance "${CANISTER_ID}"
 
 echo "running local canister archive/restore smoke against ${CANISTER_ID} at ${REPLICA_HOST}" >&2
 TMP_DIR="$(mktemp -d)"
@@ -217,7 +172,7 @@ CLI_DB_NAME="${CLI_DB_NAME:-Archive smoke CLI}"
 CLI_DB="$(cd "$CLI_WORKSPACE" && "${VFS[@]}" database create "$CLI_DB_NAME")"
 (
   cd "$CLI_WORKSPACE"
-  purchase_smoke_database_credits "$CLI_DB" "$SMOKE_CREDIT_PURCHASE_CREDITS"
+  "${VFS[@]}" database purchase-cycles "$CLI_DB" "$SMOKE_CYCLE_PURCHASE_KINIC"
   "${VFS[@]}" --database-id "$CLI_DB" write-node --path /Wiki/smoke.md --input "$INPUT_FILE"
   "${VFS[@]}" database archive-export "$CLI_DB" --output "$ARCHIVE_FILE" --chunk-size 65536 --json
   "${VFS[@]}" database archive-restore "$CLI_DB" --input "$ARCHIVE_FILE" --chunk-size 65536 --json

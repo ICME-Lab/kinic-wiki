@@ -14,7 +14,10 @@ const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
-const browserExpectedTypes = expectedTypes;
+const browserExpectedTypes = {
+  ...expectedTypes,
+  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
+};
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
@@ -73,9 +76,9 @@ function parseDidMethods(source) {
   const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
   const methods = {};
   for (const raw of service.split(";")) {
-    const line = raw.replace(/\s+/g, " ").trim();
+    const line = raw.trim();
     if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*?)(?:,\s*)?\)(?:\s+(\w+))?$/);
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
     if (!match) continue;
     methods[match[1]] = {
       input: splitShapes(match[2]),
@@ -207,8 +210,8 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_10") return "ResultLinks";
   if (normalized === "Result_11") return "ResultLinks";
   if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultCreditsEntries";
-  if (normalized === "Result_14") return "ResultCreditsPending";
+  if (normalized === "Result_13") return "ResultCyclesEntries";
+  if (normalized === "Result_14") return "ResultCyclesPendingPurchases";
   if (normalized === "Result_15") return "ResultMembers";
   if (normalized === "Result_16") return "ResultDatabases";
   if (normalized === "Result_1") return "ResultUnit";
@@ -216,16 +219,15 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_5") return "ResultDeleteNode";
   if (normalized === "Result_18") return "ResultMkdirNode";
   if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCreditsPurchasePreview";
-  if (normalized === "Result_21") return "ResultCreditsPurchase";
-  if (normalized === "Result_22") return "ResultQueryContext";
-  if (normalized === "Result_25") return "ResultNode";
-  if (normalized === "Result_26") return "ResultNodeContext";
-  if (normalized === "Result_27") return "ResultSearch";
-  if (normalized === "Result_28") return "ResultSourceEvidence";
+  if (normalized === "Result_20") return "ResultCyclesPurchase";
+  if (normalized === "Result_21") return "ResultQueryContext";
+  if (normalized === "Result_24") return "ResultNode";
+  if (normalized === "Result_25") return "ResultNodeContext";
+  if (normalized === "Result_26") return "ResultSearch";
+  if (normalized === "Result_27") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultCreditsConfig";
+  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

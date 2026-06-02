@@ -22,14 +22,7 @@ export type WriteNodeRequest = {
 
 export type WriteNodeResult = {
   created: boolean;
-  node: NodeMutationAck;
-};
-
-export type NodeMutationAck = {
-  path: string;
-  kind: NodeKind;
-  updatedAt: string;
-  etag: string;
+  node: RecentNode;
 };
 
 export type WriteSourceForGenerationRequest = {
@@ -84,7 +77,7 @@ export type MoveNodeRequest = {
 
 export type MoveNodeResult = {
   fromPath: string;
-  node: NodeMutationAck;
+  node: RecentNode;
   overwrote: boolean;
 };
 
@@ -126,8 +119,8 @@ export type DatabaseSummary = {
   role: DatabaseRole;
   status: DatabaseStatus;
   logicalSizeBytes: string;
-  creditsBalance: string;
-  creditsSuspendedAtMs: string | null;
+  cyclesBalance: string;
+  cyclesSuspendedAtMs: string | null;
   archivedAtMs: string | null;
 };
 
@@ -135,39 +128,23 @@ export type DeleteDatabaseRequest = {
   databaseId: string;
 };
 
-export type CreditsConfig = {
+export type CyclesBillingConfig = {
   kinicLedgerCanisterId: string;
-  snsGovernanceId: string;
-  creditsPerKinic: string;
-  minUpdateCredits: string;
+  billingAuthorityId: string;
+  cyclesPerKinic: string;
+  minUpdateCycles: string;
 };
 
-export type CreditsPurchaseResult = {
+export type CyclesPurchaseResult = {
   blockIndex: string;
-  balanceCredits: string;
-};
-
-export type DatabaseCreditPurchasePreview = {
-  paymentAmountE8s: string;
-  ledgerFeeE8s: string;
-  creditsPerKinic: string;
-  configVersion: string;
+  amountCycles: string;
+  balanceCycles: string;
 };
 
 export type DatabaseMember = {
   databaseId: string;
   principal: string;
   role: DatabaseRole;
-  createdAtMs: string;
-};
-
-export type DatabaseCreditPendingOperation = {
-  operationId: string;
-  databaseId: string;
-  kind: string;
-  operationStatus: string;
-  credits: string;
-  paymentAmountE8s: string;
   createdAtMs: string;
 };
 
@@ -180,6 +157,13 @@ export type ChildNode = {
   sizeBytes: string | null;
   isVirtual: boolean;
   hasChildren: boolean;
+};
+
+export type RecentNode = {
+  path: string;
+  kind: NodeKind;
+  updatedAt: string;
+  etag: string;
 };
 
 export type LinkEdge = {

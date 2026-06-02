@@ -42,6 +42,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const refreshSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
+  const [activeIdentity, setActiveIdentity] = useState<Identity | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [skills, setSkills] = useState<CatalogSkill[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("idle");
@@ -117,10 +118,12 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
         setAuthClient(client);
         if (await client.isAuthenticated()) {
           const identity = client.getIdentity();
+          setActiveIdentity(identity);
           setPrincipal(identity.getPrincipal().toText());
           await loadRole(identity);
           await loadCatalog(identity);
         } else {
+          setActiveIdentity(null);
           listDatabaseMembersPublic(canisterId, databaseId).then(setMembers).catch(() => setMembers([]));
           await loadCatalog();
         }
@@ -142,6 +145,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
       ...authLoginOptions(),
       onSuccess: () => {
         const identity = authClient.getIdentity();
+        setActiveIdentity(identity);
         setPrincipal(identity.getPrincipal().toText());
         void loadRole(identity);
         void loadCatalog(identity);
@@ -157,6 +161,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
     if (!authClient) return;
     refreshSeqRef.current += 1;
     await authClient.logout();
+    setActiveIdentity(null);
     setPrincipal(null);
     setDatabaseRole(null);
     setSkills([]);
@@ -170,9 +175,8 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   const selectedSkill = useMemo(() => skills.find((skill) => skill.manifest.id === selectedSkillId) ?? skills[0] ?? null, [selectedSkillId, skills]);
   const pendingJobs = jobs.filter((job) => job.status === "queued" || job.status === "running").length;
   const conflictJobs = jobs.filter((job) => job.status === "conflict").length;
-  const identity = authClient?.getIdentity();
   const writable = databaseRole === "writer" || databaseRole === "owner";
-  const packageManager = usePackageManager({ canisterId, databaseId, identity, writable, refresh: loadCatalog, errorMessage });
+  const packageManager = usePackageManager({ canisterId, databaseId, identity: activeIdentity ?? undefined, writable, refresh: loadCatalog, errorMessage });
   function actionFor(skill: CatalogSkill): ActionDraft {
     return actions[skill.manifest.id] ?? DEFAULT_ACTION;
   }
@@ -182,16 +186,16 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   }
 
   async function runSkillAction(skill: CatalogSkill, operation: (identity: Identity, draft: ActionDraft) => Promise<void>, clearRun = false) {
-    if (!identity) {
+    if (!activeIdentity) {
       patchAction(skill, { error: "Login is required." });
       return;
     }
     const draft = actionFor(skill);
     patchAction(skill, { busy: true, error: null });
     try {
-      await operation(identity, draft);
+      await operation(activeIdentity, draft);
       patchAction(skill, clearRun ? { busy: false, runTask: "", runNotes: "", message: "Operation completed." } : { busy: false, message: "Operation completed." });
-      await loadCatalog(identity);
+      await loadCatalog(activeIdentity);
     } catch (cause) {
       patchAction(skill, { busy: false, error: errorMessage(cause) });
     }
@@ -242,7 +246,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
           principal={principal}
           onLogin={() => void login()}
           onLogout={() => void logout()}
-          onRefresh={() => void loadCatalog(authClient?.getIdentity())}
+          onRefresh={() => void loadCatalog(activeIdentity ?? undefined)}
         />
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">

@@ -30,8 +30,8 @@ For each queued request it:
 The worker identity in `KINIC_WIKI_WORKER_IDENTITY_PEM` must have writer access to the target database.
 Use the exact PEM output from `icp identity export <identity-name>`.
 New databases include the default LLM writer service principal as a `writer` member. That automatic grant is part of the URL ingest permission model: if an owner revokes the service principal, URL ingest session authorization and checks fail until writer access is restored.
-Session checks are not permanent capability grants. The canister rejects them after credits suspension or low balance, and the worker re-checks immediately before external URL fetch and DeepSeek generation.
-Manual `/run` and source queue jobs without a browser session call `check_database_write_credits` before DeepSeek; the worker identity must be writer or owner.
+Session checks are not permanent capability grants. The canister rejects them after cycles suspension or low balance, and the worker re-checks immediately before external URL fetch and DeepSeek generation.
+Manual `/run` and source queue jobs without a browser session call `check_database_write_cycles` before DeepSeek; the worker identity must be writer or owner.
 
 ## Cloudflare Setup
 
@@ -51,7 +51,7 @@ After `d1 create`, copy the returned database id into `wrangler.jsonc`.
 Use this order when enabling WikiBrowser URL ingest:
 
 1. Deploy this Worker with `KINIC_WIKI_WORKER_TOKEN` and `KINIC_WIKI_WORKER_IDENTITY_PEM` set.
-2. Confirm the target canister exposes `authorize_url_ingest_trigger_session`, `check_url_ingest_trigger_session`, `check_source_run_session`, and `check_database_write_credits`.
+2. Confirm the target canister exposes `authorize_url_ingest_trigger_session`, `check_url_ingest_trigger_session`, `check_source_run_session`, and `check_database_write_cycles`.
 3. Grant the Worker identity writer access to target databases, or keep the default LLM writer service principal grant.
 4. Set WikiBrowser `KINIC_WIKI_GENERATOR_URL` to this Worker URL.
 5. Set the same `KINIC_WIKI_WORKER_TOKEN` as a WikiBrowser runtime secret.

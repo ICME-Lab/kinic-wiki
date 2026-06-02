@@ -21,7 +21,7 @@ const triggerSessionCache = new Map<string, TriggerSessionCacheEntry>();
 export async function createUrlIngestRequest(canisterId: string, databaseId: string, identity: Identity, url: string): Promise<CreatedUrlIngestRequest> {
   const normalizedUrl = normalizedHttpUrl(url);
   const session = await ensureUrlIngestTriggerSession(canisterId, databaseId, identity);
-  const requestId = `${Date.now()}-${crypto.randomUUID()}`;
+  const requestId = safeIngestRequestId(Date.now(), crypto.randomUUID());
   const requestPath = `/Sources/ingest-requests/${requestId}.md`;
   const requestedAt = new Date().toISOString();
   const requestedBy = identity.getPrincipal().toText();
@@ -53,6 +53,22 @@ export async function createUrlIngestRequest(canisterId: string, databaseId: str
   });
   const trigger = await triggerWorker(canisterId, databaseId, requestPath, session);
   return { requestPath, triggered: trigger.ok, triggerError: trigger.error };
+}
+
+export function safeIngestRequestId(timeMs: number, uuid: string): string {
+  const suffix = uuid.trim();
+  if (!isSafeRequestSegment(suffix) || suffix.length > 96) {
+    throw new Error("URL ingest request id is invalid.");
+  }
+  const requestId = `${timeMs}-${suffix}`;
+  if (!isSafeRequestSegment(requestId) || requestId.length > 128) {
+    throw new Error("URL ingest request id is invalid.");
+  }
+  return requestId;
+}
+
+function isSafeRequestSegment(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value) && value !== "." && value !== ".." && !value.includes("..");
 }
 
 async function ensureParentFolders(canisterId: string, databaseId: string, identity: Identity, path: string): Promise<void> {

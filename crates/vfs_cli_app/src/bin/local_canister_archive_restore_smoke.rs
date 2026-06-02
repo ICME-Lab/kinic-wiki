@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    DatabaseCreditPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
+    DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
     NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    kinic_base_units_per_token,
 };
 
 const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
@@ -19,7 +20,7 @@ const PRIMARY_QUERY: &str = "alpha canister";
 const CJK_CONTENT_MARKER: &str = "検索精度改善";
 const CJK_QUERY: &str = "検索精度改善";
 const ISOLATION_CONTENT_MARKER: &str = "beta isolated db";
-const DEFAULT_SMOKE_CREDIT_PURCHASE_CREDITS: u64 = 1_000;
+const DEFAULT_SMOKE_CYCLE_PURCHASE_E8S: u64 = 100_000_000;
 
 #[derive(Debug)]
 struct SmokeArgs {
@@ -56,12 +57,12 @@ async fn main() -> Result<()> {
         .transpose()
         .context("ARCHIVE_CHUNK_SIZE must be a u32")?
         .unwrap_or(64 * 1024);
-    let credit_purchase_credits = env::var("SMOKE_CREDIT_PURCHASE_CREDITS")
+    let cycle_purchase_e8s = env::var("SMOKE_CYCLE_PURCHASE_E8S")
         .ok()
         .map(|value| value.parse::<u64>())
         .transpose()
-        .context("SMOKE_CREDIT_PURCHASE_CREDITS must be a u64")?
-        .unwrap_or(DEFAULT_SMOKE_CREDIT_PURCHASE_CREDITS);
+        .context("SMOKE_CYCLE_PURCHASE_E8S must be a u64")?
+        .unwrap_or(DEFAULT_SMOKE_CYCLE_PURCHASE_E8S);
 
     let identity = vfs_cli_app::identity::load_default_identity(&canister_id, true).await?;
     let client =
@@ -77,8 +78,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let state =
-        run_create_restore_smoke(&client, &canister_id, chunk_size, credit_purchase_credits)
-            .await?;
+        run_create_restore_smoke(&client, &canister_id, chunk_size, cycle_purchase_e8s).await?;
     if let Some(path) = args.state_output {
         write_state(&path, &state)?;
     }
@@ -129,15 +129,15 @@ async fn run_create_restore_smoke(
     client: &CanisterVfsClient,
     canister_id: &str,
     chunk_size: u32,
-    credit_purchase_credits: u64,
+    cycle_purchase_e8s: u64,
 ) -> Result<SmokeState> {
     let database_id = client.create_database("Archive smoke").await?.database_id;
     let isolation_database_id = client
         .create_database("Archive smoke isolation")
         .await?
         .database_id;
-    activate_smoke_database(client, &database_id, credit_purchase_credits).await?;
-    activate_smoke_database(client, &isolation_database_id, credit_purchase_credits).await?;
+    activate_smoke_database(client, &database_id, cycle_purchase_e8s).await?;
+    activate_smoke_database(client, &isolation_database_id, cycle_purchase_e8s).await?;
     ensure_parent_folders(client, &database_id, PRIMARY_SOURCE_PATH).await?;
     ensure_parent_folders(client, &isolation_database_id, PRIMARY_SOURCE_PATH).await?;
     client
@@ -282,22 +282,33 @@ async fn run_create_restore_smoke(
 async fn activate_smoke_database(
     client: &CanisterVfsClient,
     database_id: &str,
-    amount_credits: u64,
+    payment_amount_e8s: u64,
 ) -> Result<()> {
-    let preview = client
-        .preview_database_credit_purchase(database_id, amount_credits)
-        .await
-        .with_context(|| format!("failed to preview credits for smoke database {database_id}"))?;
+    let config = client.get_cycles_billing_config().await?;
+    let min_expected_cycles =
+        cycles_for_payment_amount_e8s(payment_amount_e8s, config.cycles_per_kinic)?;
     client
-        .purchase_database_credits(DatabaseCreditPurchaseRequest {
+        .purchase_database_cycles(DatabaseCyclesPurchaseRequest {
             database_id: database_id.to_string(),
-            credits: amount_credits,
-            expected_payment_amount_e8s: preview.payment_amount_e8s,
-            expected_config_version: preview.config_version,
+            payment_amount_e8s,
+            min_expected_cycles,
         })
         .await
-        .with_context(|| format!("failed to purchase credits for smoke database {database_id}"))?;
+        .with_context(|| format!("failed to purchase cycles for smoke database {database_id}"))?;
     Ok(())
+}
+
+fn cycles_for_payment_amount_e8s(payment_amount_e8s: u64, cycles_per_kinic: u64) -> Result<u64> {
+    let cycles = u128::from(payment_amount_e8s)
+        .checked_mul(u128::from(cycles_per_kinic))
+        .ok_or_else(|| anyhow!("cycles purchase amount overflow"))?
+        / u128::from(kinic_base_units_per_token());
+    let cycles =
+        u64::try_from(cycles).map_err(|_| anyhow!("cycles purchase amount exceeds u64"))?;
+    if cycles == 0 {
+        return Err(anyhow!("cycles purchase amount is too small"));
+    }
+    Ok(cycles)
 }
 
 async fn ensure_parent_folders(

@@ -72,7 +72,7 @@ function normalizeFiles(files: SkillPackageFile[], skillId: string): SkillPackag
   }
   const skill = cleaned.get("SKILL.md");
   if (!skill) throw new Error("SKILL.md is required.");
-  cleaned.set("manifest.md", normalizeManifestForSkill(skillId, cleaned.get("manifest.md") ?? manifestForSkill(skillId, skill)));
+  cleaned.set("manifest.md", normalizeManifestForSkill(skillId, cleaned.get("manifest.md") ?? manifestForSkill(skillId, skill), skill));
   return [...cleaned.entries()].map(([name, content]) => ({ name, content })).sort((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -87,6 +87,8 @@ function normalizeGitHubManifest(files: SkillPackageFile[], skillId: string, sou
 function manifestForSkill(skillId: string, skill: string): string {
   const title = frontmatterValue(skill, "metadata.title") ?? skillId;
   const summary = frontmatterValue(skill, "description") ?? "";
+  const category = frontmatterValue(skill, "metadata.category");
+  const license = frontmatterValue(skill, "license");
   return [
     "---",
     "kind: kinic.skill",
@@ -96,18 +98,24 @@ function manifestForSkill(skillId: string, skill: string): string {
     "entry: SKILL.md",
     `title: ${JSON.stringify(title)}`,
     `summary: ${JSON.stringify(summary)}`,
+    ...(category ? ["tags:", `  - ${JSON.stringify(category)}`] : []),
     "status: draft",
+    ...(license ? ["provenance:", `  license: ${JSON.stringify(license)}`] : []),
     "---",
     `# ${title}`
   ].join("\n");
 }
 
-function normalizeManifestForSkill(skillId: string, content: string): string {
+function normalizeManifestForSkill(skillId: string, content: string, skill: string): string {
   let next = content.startsWith("---\n") ? content : manifestForSkill(skillId, "");
   next = setRootFrontmatterField(next, "kind", "kinic.skill");
   next = setRootFrontmatterField(next, "schema_version", "1");
   next = setRootFrontmatterField(next, "id", skillId);
   next = setRootFrontmatterField(next, "entry", "SKILL.md");
+  next = fillRootFrontmatterField(next, "title", frontmatterValue(skill, "metadata.title"));
+  next = fillRootFrontmatterField(next, "summary", frontmatterValue(skill, "description"));
+  next = fillListFrontmatterField(next, "tags", frontmatterValue(skill, "metadata.category"));
+  next = fillNestedFrontmatterField(next, "provenance", "license", frontmatterValue(skill, "license"));
   return next;
 }
 
@@ -118,13 +126,13 @@ function setManifestProvenance(content: string, source: GitHubSource, sha: strin
     `  revision: ${JSON.stringify(sha)}`
   ];
   if (content.includes("\nprovenance:\n")) return content.replace(/\nprovenance:\n(?:  .+\n?)*/m, `\nprovenance:\n${fields.join("\n")}\n`);
-  return content.replace(/\n---/, `\nprovenance:\n${fields.join("\n")}\n---`);
+  return insertBeforeFrontmatterTerminator(content, ["provenance:", ...fields]);
 }
 
 function setRootFrontmatterField(content: string, key: string, value: string): string {
   if (!content.startsWith("---\n")) throw new Error("manifest.md frontmatter is required.");
   const rest = content.slice(4);
-  const end = rest.indexOf("\n---");
+  const end = frontmatterEnd(rest);
   if (end < 0) throw new Error("manifest.md frontmatter terminator is missing.");
   const lines = rest.slice(0, end).split("\n");
   let replaced = false;
@@ -136,6 +144,21 @@ function setRootFrontmatterField(content: string, key: string, value: string): s
   });
   if (!replaced) next.push(`${key}: ${JSON.stringify(value)}`);
   return `---\n${next.join("\n")}${rest.slice(end)}`;
+}
+
+function fillRootFrontmatterField(content: string, key: string, value: string | null): string {
+  if (!value || frontmatterValue(content, key)) return content;
+  return setRootFrontmatterField(content, key, value);
+}
+
+function fillListFrontmatterField(content: string, key: string, value: string | null): string {
+  if (!value || frontmatterHasListItems(content, key)) return content;
+  return setListFrontmatterField(content, key, [value]);
+}
+
+function fillNestedFrontmatterField(content: string, parent: string, child: string, value: string | null): string {
+  if (!value || frontmatterValue(content, `${parent}.${child}`)) return content;
+  return setNestedFrontmatterField(content, parent, child, value);
 }
 
 type GitHubSource = { owner: string; repo: string; path: string | null };
@@ -170,8 +193,8 @@ async function fetchOptionalText(url: string): Promise<string | null> {
 
 function markdownPackageLinks(content: string): string[] {
   const names = new Set<string>();
-  for (const match of content.matchAll(/\]\(([^)]+)\)/g)) {
-    const name = cleanPackageFileName(match[1].split(/[?#\s]/)[0] ?? "");
+  for (const target of markdownLinkTargets(content)) {
+    const name = cleanPackageFileName(cleanMarkdownDestination(target));
     if (name) names.add(name);
   }
   return [...names];
@@ -179,27 +202,106 @@ function markdownPackageLinks(content: string): string[] {
 
 function cleanSkillId(value: string): string {
   const id = value.trim();
-  if (!/^[a-z0-9][a-z0-9_-]*$/.test(id)) throw new Error("Skill id must use lowercase letters, numbers, _ or -.");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id.includes("..")) {
+    throw new Error("Skill id must be a single path-safe segment.");
+  }
   return id;
 }
 
 function cleanPackageFileName(value: string): string | null {
   const name = value.trim().replace(/^\.\//, "");
   if (!name.endsWith(".md") || name.startsWith("/") || name.includes("..") || name.includes("://")) return null;
+  const segments = name.split("/");
+  if (segments.some((segment) => !segment || segment === ".")) return null;
   return name;
 }
 
 function frontmatterValue(content: string, key: string): string | null {
-  const start = content.startsWith("---\n") ? content.indexOf("\n---", 4) : -1;
+  return frontmatterField(content, key)?.value ?? null;
+}
+
+function frontmatterField(content: string, key: string): { value: string } | null {
+  if (!content.startsWith("---\n")) return null;
+  const rest = content.slice(4);
+  const start = frontmatterEnd(rest);
   if (start < 0) return null;
   const parent = key.split(".")[0];
+  const child = key.split(".")[1];
   let inParent = false;
-  for (const line of content.slice(4, start).split("\n")) {
-    if (line.startsWith(`${parent}:`)) inParent = true;
-    const match = key.includes(".") && inParent ? line.trim().match(new RegExp(`^${key.split(".")[1]}:\\s*(.*)$`)) : line.match(new RegExp(`^${key}:\\s*(.*)$`));
-    if (match) return cleanYaml(match[1]);
+  for (const line of rest.slice(0, start).split("\n")) {
+    if (!line.startsWith(" ") && !line.startsWith("\t")) {
+      inParent = line.startsWith(`${parent}:`);
+    }
+    const match = child && inParent ? line.trim().match(new RegExp(`^${child}:\\s*(.*)$`)) : line.match(new RegExp(`^${key}:\\s*(.*)$`));
+    if (match) return { value: cleanYaml(match[1]) };
   }
   return null;
+}
+
+function frontmatterHasListItems(content: string, key: string): boolean {
+  if (!content.startsWith("---\n")) return false;
+  const rest = content.slice(4);
+  const end = frontmatterEnd(rest);
+  if (end < 0) return false;
+  let inList = false;
+  for (const line of rest.slice(0, end).split("\n")) {
+    if (!line.startsWith(" ") && !line.startsWith("\t")) {
+      const match = line.match(/^([^:\s][^:]*):/);
+      inList = Boolean(match && match[1].trim() === key);
+      continue;
+    }
+    if (inList && line.trim().startsWith("- ")) return true;
+  }
+  return false;
+}
+
+function setListFrontmatterField(content: string, key: string, values: string[]): string {
+  if (!content.startsWith("---\n")) throw new Error("manifest.md frontmatter is required.");
+  const rest = content.slice(4);
+  const end = frontmatterEnd(rest);
+  if (end < 0) throw new Error("manifest.md frontmatter terminator is missing.");
+  const lines = rest.slice(0, end).split("\n");
+  const replacement = [key + ":", ...values.map((value) => `  - ${JSON.stringify(value)}`)];
+  const index = lines.findIndex((line) => line.match(/^([^:\s][^:]*):/)?.[1].trim() === key);
+  if (index < 0) return `---\n${[...lines, ...replacement].join("\n")}${rest.slice(end)}`;
+  let after = index + 1;
+  while (after < lines.length && (lines[after].startsWith(" ") || lines[after].startsWith("\t"))) after += 1;
+  return `---\n${[...lines.slice(0, index), ...replacement, ...lines.slice(after)].join("\n")}${rest.slice(end)}`;
+}
+
+function setNestedFrontmatterField(content: string, parent: string, child: string, value: string): string {
+  if (!content.startsWith("---\n")) throw new Error("manifest.md frontmatter is required.");
+  const rest = content.slice(4);
+  const end = frontmatterEnd(rest);
+  if (end < 0) throw new Error("manifest.md frontmatter terminator is missing.");
+  const lines = rest.slice(0, end).split("\n");
+  let parentIndex = -1;
+  let childIndex = -1;
+  let inParent = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.startsWith(" ") && !line.startsWith("\t")) {
+      const match = line.match(/^([^:\s][^:]*):/);
+      inParent = Boolean(match && match[1].trim() === parent);
+      if (inParent) parentIndex = index;
+      continue;
+    }
+    if (inParent && line.trim().match(new RegExp(`^${child}:`))) {
+      childIndex = index;
+      break;
+    }
+  }
+  const replacement = `  ${child}: ${JSON.stringify(value)}`;
+  if (childIndex >= 0) {
+    const next = [...lines];
+    next[childIndex] = replacement;
+    return `---\n${next.join("\n")}${rest.slice(end)}`;
+  }
+  if (parentIndex >= 0) {
+    const next = [...lines.slice(0, parentIndex + 1), replacement, ...lines.slice(parentIndex + 1)];
+    return `---\n${next.join("\n")}${rest.slice(end)}`;
+  }
+  return `---\n${[...lines, parent + ":", replacement].join("\n")}${rest.slice(end)}`;
 }
 
 function cleanGitHubPath(value: string): string | null {
@@ -211,7 +313,111 @@ function cleanGitHubPath(value: string): string | null {
 
 function cleanYaml(value: string): string {
   const trimmed = value.trim();
-  return trimmed.startsWith("\"") && trimmed.endsWith("\"") ? trimmed.slice(1, -1) : trimmed;
+  if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "string") return parsed;
+      throw new Error("Invalid quoted YAML scalar.");
+    } catch {
+      throw new Error("Invalid quoted YAML scalar.");
+    }
+  }
+  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
+  return trimmed;
+}
+
+function frontmatterEnd(rest: string): number {
+  const match = rest.match(/\n---(?:\n|$)/);
+  return match?.index ?? -1;
+}
+
+function insertBeforeFrontmatterTerminator(content: string, lines: string[]): string {
+  if (!content.startsWith("---\n")) throw new Error("manifest.md frontmatter is required.");
+  const rest = content.slice(4);
+  const end = frontmatterEnd(rest);
+  if (end < 0) throw new Error("manifest.md frontmatter terminator is missing.");
+  const absoluteEnd = 4 + end;
+  return `${content.slice(0, absoluteEnd)}\n${lines.join("\n")}${content.slice(absoluteEnd)}`;
+}
+
+function markdownLinkTargets(content: string): string[] {
+  const targets: string[] = [];
+  let index = 0;
+  while (index < content.length) {
+    const open = content.indexOf("](", index);
+    if (open < 0) break;
+    let cursor = open + 2;
+    if (content[cursor] === "<") {
+      const close = content.indexOf(">", cursor + 1);
+      if (close >= 0 && content[close + 1] === ")") {
+        targets.push(content.slice(cursor, close + 1));
+        index = close + 2;
+        continue;
+      }
+    }
+    let depth = 0;
+    while (cursor < content.length) {
+      const char = content[cursor];
+      if (char === "(") depth += 1;
+      if (char === ")") {
+        if (depth === 0) break;
+        depth -= 1;
+      }
+      cursor += 1;
+    }
+    if (cursor < content.length) targets.push(content.slice(open + 2, cursor));
+    index = cursor + 1;
+  }
+  return targets;
+}
+
+function cleanMarkdownDestination(value: string): string {
+  const trimmed = value.trim();
+  const withoutTitle = markdownDestinationWithoutTitle(trimmed);
+  const destination = withoutTitle.startsWith("<") && withoutTitle.endsWith(">") ? withoutTitle.slice(1, -1) : withoutTitle;
+  return destination.split(/[?#]/)[0]?.trim() ?? "";
+}
+
+function markdownDestinationWithoutTitle(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("<")) {
+    const close = trimmed.indexOf(">");
+    if (close > 0) {
+      const destination = trimmed.slice(1, close);
+      const suffix = trimmed.slice(close + 1).trim();
+      if (!suffix || isMarkdownTitleSuffix(suffix)) return destination;
+    }
+  }
+  return stripQuotedMarkdownTitle(trimmed, "\"") ?? stripQuotedMarkdownTitle(trimmed, "'") ?? stripParenthesizedMarkdownTitle(trimmed) ?? trimmed;
+}
+
+function stripQuotedMarkdownTitle(value: string, quote: string): string | null {
+  if (!value.endsWith(quote)) return null;
+  for (let index = value.length - 2; index > 0; index -= 1) {
+    if (value[index] === quote && /\s/.test(value[index - 1] ?? "")) {
+      const destination = value.slice(0, index - 1).trimEnd();
+      if (isMarkdownDestinationCandidate(destination)) return destination;
+    }
+  }
+  return null;
+}
+
+function stripParenthesizedMarkdownTitle(value: string): string | null {
+  if (!value.endsWith(")")) return null;
+  const titleStart = value.lastIndexOf(" (");
+  if (titleStart < 0) return null;
+  const destination = value.slice(0, titleStart).trimEnd();
+  return isMarkdownDestinationCandidate(destination) ? destination : null;
+}
+
+function isMarkdownTitleSuffix(value: string): boolean {
+  return (value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'")) || (value.startsWith("(") && value.endsWith(")"));
+}
+
+function isMarkdownDestinationCandidate(value: string): boolean {
+  const unwrapped = value.startsWith("<") && value.endsWith(">") ? value.slice(1, -1) : value;
+  const destination = unwrapped.split(/[?#]/)[0]?.trim() ?? "";
+  return Boolean(destination && !destination.startsWith("#") && !destination.startsWith("/") && !destination.includes("://") && destination.endsWith(".md"));
 }
 
 function isCommitPayload(value: unknown): value is { sha: string } {

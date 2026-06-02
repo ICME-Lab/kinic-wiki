@@ -7,11 +7,12 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
-    NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    AppendNodeRequest, CyclesBillingConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeKind,
+    NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
     WriteNodeRequest, WriteNodeResult,
 };
 
@@ -55,6 +56,28 @@ impl VfsApi for MockClient {
             file_count: 0,
             source_count: 0,
         })
+    }
+
+    async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
+        Ok(CyclesBillingConfig {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            billing_authority_id: "aaaaa-aa".to_string(),
+            cycles_per_kinic: 1_000,
+            min_update_cycles: 1,
+        })
+    }
+
+    async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
+        Ok(vec![DatabaseSummary {
+            database_id: "default".to_string(),
+            name: "Default".to_string(),
+            status: DatabaseStatus::Active,
+            role: DatabaseRole::Owner,
+            logical_size_bytes: 0,
+            cycles_balance: Some(10),
+            cycles_suspended_at_ms: None,
+            archived_at_ms: None,
+        }])
     }
 
     async fn read_node(&self, _database_id: &str, _path: &str) -> Result<Option<Node>> {
@@ -338,6 +361,49 @@ async fn write_node_rejects_non_canonical_source_paths() {
 
     let writes = client.writes.lock().expect("writes should lock");
     assert!(writes.is_empty());
+}
+
+#[tokio::test]
+async fn move_node_rejects_non_canonical_source_target() {
+    let client = MockClient {
+        nodes: vec![Node {
+            path: "/Sources/raw/web/abc.md".to_string(),
+            kind: NodeKind::Source,
+            content: "source".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            etag: "etag-source".to_string(),
+            metadata_json: "{}".to_string(),
+        }],
+        ..MockClient::default()
+    };
+
+    let error = run_command(
+        &client,
+        Cli {
+            connection: ConnectionArgs {
+                database_id: Some("default".to_string()),
+                local: false,
+                replica_host: None,
+                canister_id: None,
+                identity_mode: IdentityModeArg::Auto,
+                allow_non_ii_identity: false,
+            },
+            command: Command::MoveNode {
+                from_path: "/Sources/raw/web/abc.md".to_string(),
+                to_path: "/Sources/raw/web/wrong.txt".to_string(),
+                expected_etag: Some("etag-source".to_string()),
+                overwrite: false,
+                json: false,
+            },
+        },
+        &test_connection(),
+    )
+    .await
+    .expect_err("non-canonical source target should fail");
+
+    assert!(error.to_string().contains("canonical form"));
+    assert!(client.moves.lock().expect("moves should lock").is_empty());
 }
 
 #[tokio::test]

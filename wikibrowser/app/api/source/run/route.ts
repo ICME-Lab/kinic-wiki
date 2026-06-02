@@ -113,7 +113,8 @@ function parseSourceRunRequest(value: unknown): SourceRunRequest | string {
 }
 
 function isCanonicalSourcePath(path: string): boolean {
-  return /^\/Sources\/raw\/[a-z][a-z0-9]{0,31}\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/.test(path);
+  const match = path.match(/^\/Sources\/raw\/[a-z][a-z0-9]{0,31}\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
+  return !!match && !match[1].includes("..");
 }
 
 function allowedOrigin(request: Request): string | null {

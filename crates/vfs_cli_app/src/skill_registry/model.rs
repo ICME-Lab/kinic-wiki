@@ -237,6 +237,43 @@ pub(super) fn set_root_frontmatter_field_preserving_content(
     ))
 }
 
+pub(super) fn remove_root_frontmatter_fields_preserving_content(
+    content: &str,
+    keys: &[&str],
+) -> Result<String> {
+    let frontmatter = extract_frontmatter(content)?;
+    let frontmatter_start = "---\n".len();
+    let frontmatter_end = frontmatter_start + frontmatter.len();
+    let mut updated = String::new();
+    let mut skipping_removed_block = false;
+    for line in frontmatter.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let is_root_key =
+            !line.starts_with(' ') && !line.starts_with('\t') && trimmed.contains(':');
+        if is_root_key
+            && keys
+                .iter()
+                .any(|key| trimmed.starts_with(&format!("{key}:")))
+        {
+            skipping_removed_block = true;
+            continue;
+        }
+        if skipping_removed_block {
+            if line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty() {
+                continue;
+            }
+            skipping_removed_block = false;
+        }
+        updated.push_str(line);
+    }
+    Ok(format!(
+        "{}{}{}",
+        &content[..frontmatter_start],
+        updated,
+        &content[frontmatter_end..]
+    ))
+}
+
 pub(super) fn set_manifest_provenance_field(
     content: &str,
     key: &str,
@@ -289,14 +326,21 @@ pub(super) fn extract_frontmatter(content: &str) -> Result<&str> {
         .strip_prefix("---\n")
         .ok_or_else(|| anyhow!("manifest must start with YAML frontmatter"))?;
     let end = rest
-        .find("\n---")
+        .lines()
+        .scan(0_usize, |offset, line| {
+            let start = *offset;
+            *offset += line.len() + 1;
+            Some((start, line))
+        })
+        .find_map(|(offset, line)| (line == "---").then_some(offset.saturating_sub(1)))
         .ok_or_else(|| anyhow!("manifest frontmatter is not closed"))?;
     Ok(&rest[..end])
 }
 
 fn valid_segment(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    let mut chars = value.chars();
+    matches!(chars.next(), Some(ch) if ch.is_ascii_alphanumeric())
+        && value.len() <= 128
+        && !value.contains("..")
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
