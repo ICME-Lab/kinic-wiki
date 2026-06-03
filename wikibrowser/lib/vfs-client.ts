@@ -8,6 +8,9 @@ import type {
   CanisterHealth,
   CyclesBillingConfig,
   ChildNode,
+  DatabaseCycleEntry,
+  DatabaseCycleEntryPage,
+  DatabaseCyclesPendingPurchase,
   DeleteDatabaseRequest,
   DeleteNodeRequest,
   DeleteNodeResult,
@@ -78,6 +81,37 @@ type RawDatabaseSummary = {
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
+};
+
+type RawDatabaseCycleEntry = {
+  method: [] | [string];
+  cycles_per_kinic: [] | [bigint];
+  payment_amount_e8s: [] | [bigint];
+  kind: string;
+  created_at_ms: bigint;
+  amount_cycles: bigint;
+  ledger_block_index: [] | [bigint];
+  database_id: string;
+  balance_after_cycles: bigint;
+  caller: string;
+  cycles_delta: [] | [bigint];
+  entry_id: bigint;
+};
+
+type RawDatabaseCycleEntryPage = {
+  entries: RawDatabaseCycleEntry[];
+  next_cursor: [] | [bigint];
+};
+
+type RawDatabaseCyclesPendingPurchase = {
+  operation_id: bigint;
+  database_id: string;
+  status: string;
+  amount_cycles: bigint;
+  payment_amount_e8s: bigint;
+  ledger_block_index: [] | [bigint];
+  created_at_ms: bigint;
+  required_action: string;
 };
 
 type RawDeleteDatabaseRequest = {
@@ -247,6 +281,8 @@ type VfsActor = {
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
+  list_database_cycle_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseCycleEntryPage } | { Err: string }>;
+  list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
   mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
   move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: string }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
@@ -433,6 +469,38 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
       throw new Error(result.Err);
     }
     return result.Ok.map((raw) => normalizeDatabaseSummary(raw));
+  });
+}
+
+export async function listDatabaseCycleEntries(
+  canisterId: string,
+  databaseId: string,
+  cursor: string | null,
+  limit: number,
+  identity?: Identity
+): Promise<DatabaseCycleEntryPage> {
+  return callVfs(async () => {
+    const actor = await createReadActor(canisterId, identity);
+    const result = await actor.list_database_cycle_entries(databaseId, rawDatabaseCycleCursor(cursor), limit);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return normalizeDatabaseCycleEntryPage(result.Ok);
+  });
+}
+
+export async function listDatabaseCyclesPendingPurchasesAuthenticated(
+  canisterId: string,
+  identity: Identity,
+  databaseId: string
+): Promise<DatabaseCyclesPendingPurchase[]> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.list_database_cycles_pending_purchases(databaseId);
+    if ("Err" in result) {
+      throw new Error(result.Err);
+    }
+    return result.Ok.map(normalizeDatabaseCyclesPendingPurchase);
   });
 }
 
@@ -866,6 +934,43 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   };
 }
 
+function normalizeDatabaseCycleEntryPage(raw: RawDatabaseCycleEntryPage): DatabaseCycleEntryPage {
+  return {
+    entries: raw.entries.map(normalizeDatabaseCycleEntry),
+    nextCursor: raw.next_cursor[0]?.toString() ?? null
+  };
+}
+
+function normalizeDatabaseCycleEntry(raw: RawDatabaseCycleEntry): DatabaseCycleEntry {
+  return {
+    entryId: raw.entry_id.toString(),
+    databaseId: raw.database_id,
+    kind: raw.kind,
+    amountCycles: raw.amount_cycles.toString(),
+    balanceAfterCycles: raw.balance_after_cycles.toString(),
+    caller: raw.caller,
+    method: raw.method[0] ?? null,
+    ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
+    paymentAmountE8s: raw.payment_amount_e8s[0]?.toString() ?? null,
+    cyclesPerKinic: raw.cycles_per_kinic[0]?.toString() ?? null,
+    cyclesDelta: raw.cycles_delta[0]?.toString() ?? null,
+    createdAtMs: raw.created_at_ms.toString()
+  };
+}
+
+function normalizeDatabaseCyclesPendingPurchase(raw: RawDatabaseCyclesPendingPurchase): DatabaseCyclesPendingPurchase {
+  return {
+    operationId: raw.operation_id.toString(),
+    databaseId: raw.database_id,
+    status: raw.status,
+    amountCycles: raw.amount_cycles.toString(),
+    paymentAmountE8s: raw.payment_amount_e8s.toString(),
+    ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
+    createdAtMs: raw.created_at_ms.toString(),
+    requiredAction: raw.required_action
+  };
+}
+
 function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
   return {
     databaseId: raw.database_id,
@@ -966,6 +1071,14 @@ function nodeKindVariant(kind: NodeKind): Variant {
   if (kind === "folder") return { Folder: null };
   if (kind === "source") return { Source: null };
   return { File: null };
+}
+
+function rawDatabaseCycleCursor(cursor: string | null): [] | [bigint] {
+  if (!cursor) return [];
+  if (!/^[0-9]+$/.test(cursor)) {
+    throw new ApiError("Invalid cycles history cursor.", 400);
+  }
+  return [BigInt(cursor)];
 }
 
 function rawUrlIngestTriggerSessionRequest(request: UrlIngestTriggerSessionRequest): RawUrlIngestTriggerSessionRequest {

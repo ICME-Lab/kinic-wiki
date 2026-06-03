@@ -8,8 +8,10 @@ import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRo
 import { ActionButton } from "./action-button";
 import { DatabaseDangerZone } from "./database-danger-zone";
 import { MemberTable } from "./member-table";
+import { formatRawCycles } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
-import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -20,6 +22,8 @@ type PendingAclAction = {
   role?: DatabaseRole;
   kind: "grant" | "revoke";
 };
+
+export type DashboardTab = "access" | "cycles-history";
 
 export function AuthControls(props: { authReady: boolean; loading: boolean; principal: string | null; onLogin: () => void; onLogout: () => void }) {
   if (!props.principal) {
@@ -320,6 +324,157 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
   return <div className={`rounded-lg border px-4 py-3 text-sm ${toneClass}`}>{message}</div>;
 }
 
+export function DashboardTabs({ activeTab, onChange }: { activeTab: DashboardTab; onChange: (tab: DashboardTab) => void }) {
+  return (
+    <nav aria-label="Database dashboard sections" className="flex flex-wrap gap-2 border-b border-line">
+      <DashboardTabButton active={activeTab === "access"} label="Access" onClick={() => onChange("access")} />
+      <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} />
+    </nav>
+  );
+}
+
+export function CyclesHistoryPanel(props: {
+  authenticated: boolean;
+  entries: DatabaseCycleEntry[];
+  entriesError: string | null;
+  entriesLoading: boolean;
+  nextCursor: string | null;
+  pendingError: string | null;
+  pendingLoading: boolean;
+  pendingPurchases: DatabaseCyclesPendingPurchase[];
+  onLoadMore: () => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="grid gap-4">
+      <section className="rounded-lg border border-line bg-paper shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-ink">Pending purchases</h2>
+            <p className="mt-1 text-sm leading-6 text-muted">Owner, billing authority, and payer can inspect purchase operations.</p>
+          </div>
+          <ActionButton disabled={props.entriesLoading || props.pendingLoading} loading={props.pendingLoading} loadingLabel="Refreshing..." onClick={props.onRefresh} size="compact" variant="secondary">
+            Refresh
+          </ActionButton>
+        </div>
+        {!props.authenticated ? <PanelNotice tone="info" message="Login to view pending purchases." /> : null}
+        {props.pendingError ? <PanelNotice tone="error" message={props.pendingError} /> : null}
+        {props.pendingLoading ? <PanelNotice tone="info" message="Loading pending purchases..." /> : null}
+        {!props.pendingLoading && props.authenticated && !props.pendingError && props.pendingPurchases.length === 0 ? <PanelNotice tone="info" message="No pending purchases." /> : null}
+        {props.pendingPurchases.length > 0 ? <PendingPurchasesTable purchases={props.pendingPurchases} /> : null}
+      </section>
+
+      <section className="rounded-lg border border-line bg-paper shadow-sm">
+        <div className="grid gap-2 border-b border-line px-4 py-4">
+          <h2 className="text-lg font-semibold text-ink">Ledger entries</h2>
+          <p className="text-sm leading-6 text-muted">Entries are shown in entry ID order. Reader and writer caller values come from the canister redaction policy.</p>
+        </div>
+        {props.entriesError ? <PanelNotice tone="error" message={props.entriesError} /> : null}
+        {props.entriesLoading && props.entries.length === 0 ? <PanelNotice tone="info" message="Loading ledger entries..." /> : null}
+        {!props.entriesLoading && !props.entriesError && props.entries.length === 0 ? <PanelNotice tone="info" message="No ledger entries." /> : null}
+        {props.entries.length > 0 ? <LedgerEntriesTable entries={props.entries} /> : null}
+        {props.nextCursor ? (
+          <div className="border-t border-line px-4 py-3">
+            <ActionButton disabled={props.entriesLoading} loading={props.entriesLoading} loadingLabel="Loading..." onClick={props.onLoadMore} size="compact" variant="secondary">
+              Load more
+            </ActionButton>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function DashboardTabButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+  const activeClass = active ? "border-accent bg-white text-accent shadow-sm" : "border-transparent bg-transparent text-muted hover:border-line hover:bg-white hover:text-ink";
+  return (
+    <button aria-selected={active} className={`-mb-px rounded-t-lg border px-4 py-2 text-sm font-medium ${activeClass}`} role="tab" type="button" onClick={onClick}>
+      {label}
+    </button>
+  );
+}
+
+function PendingPurchasesTable({ purchases }: { purchases: DatabaseCyclesPendingPurchase[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-[960px] w-full text-left text-sm">
+        <thead className="bg-white text-xs uppercase tracking-[0.12em] text-muted">
+          <tr>
+            <th className="px-4 py-3 font-medium">Operation</th>
+            <th className="px-4 py-3 font-medium">Status</th>
+            <th className="px-4 py-3 font-medium">Required action</th>
+            <th className="px-4 py-3 font-medium">Cycles</th>
+            <th className="px-4 py-3 font-medium">Payment</th>
+            <th className="px-4 py-3 font-medium">Ledger block</th>
+            <th className="px-4 py-3 font-medium">Created</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {purchases.map((purchase) => (
+            <tr key={purchase.operationId}>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{purchase.operationId}</td>
+              <td className="px-4 py-3 text-ink">{purchase.status}</td>
+              <td className="px-4 py-3">
+                <RequiredActionBadge action={purchase.requiredAction} />
+              </td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{formatCycleString(purchase.amountCycles)}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{formatTokenAmountFromE8s(purchase.paymentAmountE8s)}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{purchase.ledgerBlockIndex ?? "-"}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{formatTimestamp(purchase.createdAtMs)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function LedgerEntriesTable({ entries }: { entries: DatabaseCycleEntry[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-[1040px] w-full text-left text-sm">
+        <thead className="bg-white text-xs uppercase tracking-[0.12em] text-muted">
+          <tr>
+            <th className="px-4 py-3 font-medium">Entry</th>
+            <th className="px-4 py-3 font-medium">Kind</th>
+            <th className="px-4 py-3 font-medium">Amount</th>
+            <th className="px-4 py-3 font-medium">Balance after</th>
+            <th className="px-4 py-3 font-medium">Caller</th>
+            <th className="px-4 py-3 font-medium">Method</th>
+            <th className="px-4 py-3 font-medium">Ledger block</th>
+            <th className="px-4 py-3 font-medium">Created</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {entries.map((entry) => (
+            <tr key={entry.entryId}>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{entry.entryId}</td>
+              <td className="px-4 py-3 text-ink">{entry.kind}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{formatCycleString(entry.amountCycles)}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{formatCycleString(entry.balanceAfterCycles)}</td>
+              <td className="max-w-[220px] truncate px-4 py-3 font-mono text-xs text-ink" title={entry.caller}>{entry.caller}</td>
+              <td className="px-4 py-3 text-ink">{entry.method ?? "-"}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{entry.ledgerBlockIndex ?? "-"}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink">{formatTimestamp(entry.createdAtMs)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RequiredActionBadge({ action }: { action: string }) {
+  const warning = action === "billing_authority_review";
+  const toneClass = warning ? "border-amber-200 bg-amber-50 text-amber-900" : "border-line bg-white text-ink";
+  return <span className={`inline-flex rounded-lg border px-2 py-1 text-xs font-medium ${toneClass}`}>{action}</span>;
+}
+
+function PanelNotice({ message, tone }: { message: string; tone: "error" | "info" }) {
+  const toneClass = tone === "error" ? "text-red-900" : "text-muted";
+  return <div className={`border-b border-line px-4 py-3 text-sm ${toneClass}`}>{message}</div>;
+}
+
 function GrantForm({ busy, busyAction, onGrant }: { busy: boolean; busyAction: BusyAction | null; onGrant: (principalText: string, role: DatabaseRole) => void }) {
   const [principalText, setPrincipalText] = useState("");
   const [role, setRole] = useState<DatabaseRole>("reader");
@@ -435,4 +590,16 @@ function formatBytes(value: string): string {
     unitIndex += 1;
   }
   return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[unitIndex]}`;
+}
+
+function formatCycleString(value: string): string {
+  if (!/^-?[0-9]+$/.test(value)) return value;
+  return `${formatRawCycles(BigInt(value))} cycles`;
+}
+
+function formatTimestamp(value: string): string {
+  if (!/^-?[0-9]+$/.test(value)) return value;
+  const time = Number(value);
+  if (!Number.isFinite(time)) return value;
+  return new Date(time).toISOString();
 }

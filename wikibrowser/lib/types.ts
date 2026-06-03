@@ -141,6 +141,37 @@ export type CyclesPurchaseResult = {
   balanceCycles: string;
 };
 
+export type DatabaseCycleEntry = {
+  entryId: string;
+  databaseId: string;
+  kind: string;
+  amountCycles: string;
+  balanceAfterCycles: string;
+  caller: string;
+  method: string | null;
+  ledgerBlockIndex: string | null;
+  paymentAmountE8s: string | null;
+  cyclesPerKinic: string | null;
+  cyclesDelta: string | null;
+  createdAtMs: string;
+};
+
+export type DatabaseCycleEntryPage = {
+  entries: DatabaseCycleEntry[];
+  nextCursor: string | null;
+};
+
+export type DatabaseCyclesPendingPurchase = {
+  operationId: string;
+  databaseId: string;
+  status: string;
+  amountCycles: string;
+  paymentAmountE8s: string;
+  ledgerBlockIndex: string | null;
+  createdAtMs: string;
+  requiredAction: string;
+};
+
 export type DatabaseMember = {
   databaseId: string;
   principal: string;
