@@ -8,6 +8,8 @@ const ts = require("typescript");
 
 const page = readFileSync(new URL("../app/cycles/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/cycles/cycles-client.tsx", import.meta.url), "utf8");
+const appHeader = readFileSync(new URL("../app/app-header.tsx", import.meta.url), "utf8");
+const appSession = readFileSync(new URL("../app/app-session-provider.tsx", import.meta.url), "utf8");
 const wallet = readFileSync(new URL("../lib/cycles-wallet.ts", import.meta.url), "utf8");
 const url = readFileSync(new URL("../lib/cycles-url.ts", import.meta.url), "utf8");
 const idl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
@@ -22,18 +24,32 @@ assert.match(page, /\/cycles/);
 assert.doesNotMatch(page, /canister_id \?\? params\.canisterId/);
 assert.doesNotMatch(page, /amount_e8s \?\? params\.amountE8s/);
 assert.doesNotMatch(page, /params\.kinic|initialKinic/);
+assert.match(page, /parseDatabaseStatus\(first\(params\.status\)\)/);
 assert.match(client, /purchaseCyclesWithOisy/);
 assert.match(client, /purchaseCyclesWithPlug/);
-assert.match(client, /connectOisyWallet/);
-assert.match(client, /connectPlugWallet/);
+assert.match(client, /useAppSession/);
+assert.match(appHeader, /pathname !== "\/" && pathname !== "\/cycles"/);
+assert.match(appHeader, /Database cycles purchase/);
+assert.match(appHeader, /<WalletControls/);
+assert.match(appHeader, /<AuthControls/);
+assert.match(appSession, /sessionStorage\.setItem/);
+assert.match(appSession, /setWallet\(restoredWallet\)/);
 assert.doesNotMatch(client, /AuthClient|AUTH_CLIENT_CREATE_OPTIONS|authLoginOptions|notifyPrincipal|notifyIdentity/);
-assert.match(client, /Connect OISY/);
-assert.match(client, /Connect Plug/);
+assert.doesNotMatch(client, /connectOisyWallet|connectPlugWallet/);
 assert.match(client, /Purchase cycles with OISY/);
 assert.match(client, /Purchase cycles with Plug/);
-assert.match(client, /router\.replace\("\/"\)/);
+assert.match(client, /router\.replace\(cyclesPurchaseSuccessHref\(\{/);
+assert.match(client, /databaseId: parsedTarget\.databaseId/);
+assert.match(client, /kinic: formatTokenAmountFromE8s\(result\.paymentAmountE8s\)/);
+assert.match(client, /provider: result\.provider/);
+assert.match(client, /function cyclesPurchaseSuccessHref/);
+assert.match(client, /params\.set\("funding", "success"\)/);
+assert.match(client, /params\.set\("database_id", databaseId\)/);
+assert.match(client, /params\.set\("provider", provider\)/);
+assert.match(client, /params\.set\("kinic", kinic\)/);
+assert.match(client, /params\.set\("cycles", cycles\)/);
 assert.match(client, /const purchaseDisabled = !selectedProvider \|\| Boolean\(error\) \|\| Boolean\(amountError\) \|\| busy/);
-assert.match(client, /function WalletConnect/);
+assert.doesNotMatch(client, /function WalletConnect/);
 assert.match(client, /onClick=\{\(\) => void purchase\(\)\}/);
 assert.doesNotMatch(client, /onCycles/);
 assert.match(client, /parseKinicAmountE8sInput/);
@@ -73,8 +89,8 @@ assert.match(wallet, /icrc2_approve: idl\.Func\(\[approveArgs\], \[idl\.Variant\
 assert.doesNotMatch(wallet, /purchaseDatabaseCyclesFrom|notifyIdentity|wallet as unknown|OisyCanisterCaller/);
 assert.doesNotMatch(wallet, /previewDatabaseCyclesPurchase/);
 assert.match(wallet, /KINIC_LEDGER_FEE_E8S/);
-assert.match(wallet, /MAX_I64/);
-assert.match(wallet, /MAX_U64/);
+assert.match(wallet, /MAX_CANISTER_I64/);
+assert.match(wallet, /MAX_LEDGER_U64/);
 assert.match(wallet, /function allowanceForCyclesPurchase\(amountE8s: bigint, transferFeeE8s: bigint\)/);
 assert.match(wallet, /approved allowance exceeds u64::MAX/);
 assert.match(wallet, /cycles purchase amount exceeds canister limit/);
@@ -111,6 +127,7 @@ assert.match(client, /approved allowance/);
 assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
 assert.match(client, /A newly created database is pending, not active, until this first cycles purchase completes\./);
+assert.match(client, /databaseStatus === "pending"/);
 assert.match(client, /Any authenticated wallet can purchase non-refundable cycles/);
 assert.doesNotMatch(client, new RegExp("extractCycles" + "RepairTarget"));
 assert.doesNotMatch(client, new RegExp("saveCycles" + "Repair" + "Record"));
@@ -122,9 +139,10 @@ assert.doesNotMatch(client, new RegExp("Billing authority " + "repair " + "requi
 assert.doesNotMatch(client, /withdraw KINIC|database balance/);
 assert.doesNotMatch(client, /cycles canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.match(url, /KINIC_DECIMALS/);
+assert.match(url, /MAX_CANISTER_I64/);
 assert.match(url, /kinicBaseUnitsPerToken/);
 assert.match(url, /KINIC must be a positive number with up to \$\{KINIC_DECIMALS\} decimals/);
-assert.match(url, /KINIC amount e8s must be <= u64::MAX/);
+assert.match(url, /KINIC amount e8s must be <= i64::MAX/);
 assert.match(url, /database_id is required/);
 assert.doesNotMatch(url, /params\.set\("amount_e8s"/);
 assert.match(idl, /get_cycles_billing_config/);
@@ -140,6 +158,7 @@ assert.doesNotMatch(vfsClient, /purchaseDatabaseCyclesFrom/);
 const cyclesUrlModule = loadTsModule("../lib/cycles-url.ts", {
   "@/lib/cycles": {
     KINIC_DECIMALS: 8,
+    MAX_CANISTER_I64: 9_223_372_036_854_775_807n,
     kinicBaseUnitsPerToken: () => 100_000_000n
   }
 });
@@ -152,7 +171,8 @@ assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0.00000001"), 1n);
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1.23456789"), 123_456_789n);
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0"), "KINIC amount must be positive");
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1.000000001"), "KINIC must be a positive number with up to 8 decimals");
-assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("184467440737.09551616"), "KINIC amount e8s must be <= u64::MAX");
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("92233720368.54775807"), 9_223_372_036_854_775_807n);
+assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("92233720368.54775808"), "KINIC amount e8s must be <= i64::MAX");
 
 const clientModule = loadTsModule(
   "../app/cycles/cycles-client.tsx",
@@ -172,14 +192,19 @@ const clientModule = loadTsModule(
       useState: (initial) => [typeof initial === "function" ? initial() : initial, () => undefined]
     },
     "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
+    "@/app/app-session-provider": {
+      useAppSession: () => ({
+        refreshWalletBalance: async () => undefined,
+        wallet: null,
+        walletBalanceError: null,
+        walletBusyProvider: null
+      })
+    },
     "@/lib/cycles-url": {
       parseKinicAmountE8sInput: () => 100n,
       parseCyclesTarget: () => ({ databaseId: "db_alpha" })
     },
     "@/lib/cycles-wallet": {
-      connectOisyWallet: async () => ({}),
-      connectPlugWallet: async () => ({}),
-      getConnectedWalletKinicBalance: async () => "0",
       purchaseCyclesWithOisy: async () => ({}),
       purchaseCyclesWithPlug: async () => ({})
     },

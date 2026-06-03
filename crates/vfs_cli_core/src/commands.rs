@@ -792,7 +792,10 @@ async fn run_database_command(
 pub fn open_database_cycles_page(browser_origin: Option<&str>, database_id: &str) -> Result<()> {
     let url = database_cycles_url(browser_origin, database_id)?;
     println!("{url}");
-    open_browser_url(&url)
+    if let Err(error) = open_browser_url(&url) {
+        eprintln!("{}", browser_open_warning(&error));
+    }
+    Ok(())
 }
 
 pub fn database_cycles_url(browser_origin: Option<&str>, database_id: &str) -> Result<String> {
@@ -902,6 +905,10 @@ pub fn open_browser_url(url: &str) -> Result<()> {
         return Err(anyhow!("failed to open browser: exit status {status}"));
     }
     Ok(())
+}
+
+fn browser_open_warning(error: &anyhow::Error) -> String {
+    format!("warning: could not open browser automatically; open the URL manually: {error}")
 }
 
 async fn run_cycles_command(client: &impl VfsApi, command: CyclesCommand) -> Result<()> {
@@ -2352,6 +2359,16 @@ mod tests {
         let error =
             super::database_cycles_url(Some(""), "db_alpha").expect_err("empty origin should fail");
         assert!(error.to_string().contains("browser origin"));
+    }
+
+    #[test]
+    fn database_cycles_open_warning_keeps_url_actionable() {
+        let error = anyhow!("xdg-open missing");
+        let warning = super::browser_open_warning(&error);
+
+        assert!(warning.contains("warning: could not open browser automatically"));
+        assert!(warning.contains("open the URL manually"));
+        assert!(warning.contains("xdg-open missing"));
     }
 
     #[tokio::test]

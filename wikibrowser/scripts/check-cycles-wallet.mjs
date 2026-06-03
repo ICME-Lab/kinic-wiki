@@ -52,7 +52,13 @@ const walletModule = loadTsModule(
       }
     },
     "@/lib/vfs-idl": { idlFactory: () => ({}) },
-    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n, kinicBaseUnitsPerToken: () => 100_000_000n },
+    "@/lib/cycles": {
+      formatRawCycles: (value) => value.toString(),
+      KINIC_LEDGER_FEE_E8S: 100_000n,
+      MAX_CANISTER_I64: 9_223_372_036_854_775_807n,
+      MAX_LEDGER_U64: 18_446_744_073_709_551_615n,
+      kinicBaseUnitsPerToken: () => 100_000_000n
+    },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s }
   },
   "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, purchaseAfterApprove, decodeOisyCyclesPurchaseResult, formatLedgerApproveError } });"

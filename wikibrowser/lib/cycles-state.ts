@@ -98,6 +98,7 @@ export function databaseCyclesDisabledReason(database: DatabaseSummary | null, c
 export function databaseCyclesHref(database: DatabaseSummary): string {
   const params = new URLSearchParams();
   params.set("databaseId", database.databaseId);
+  params.set("status", database.status);
   return `/cycles?${params.toString()}`;
 }
 

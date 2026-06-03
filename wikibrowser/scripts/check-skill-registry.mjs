@@ -13,7 +13,7 @@ const packages = readFileSync(new URL("../lib/skill-registry-package.ts", import
 const folders = readFileSync(new URL("../lib/vfs-folders.ts", import.meta.url), "utf8");
 const diff = readFileSync(new URL("../lib/skill-registry-diff.ts", import.meta.url), "utf8");
 const homeUi = readFileSync(new URL("../app/home-ui.tsx", import.meta.url), "utf8");
-const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+const homePageClient = readFileSync(new URL("../app/home-page-client.tsx", import.meta.url), "utf8");
 const dashboardClient = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
 const inspector = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
 const skillManifest = readFileSync(new URL("../lib/skill-manifest.ts", import.meta.url), "utf8");
@@ -152,7 +152,7 @@ assert.match(client, /const databases = await listDatabasesAuthenticated\(canist
 assert.match(client, /setCyclesConfig\(await getCyclesBillingConfig\(canisterId\)\)/);
 assert.doesNotMatch(client, /const \[databases, config\] = await Promise\.all/);
 assert.doesNotMatch(homeUi, /href=\{`\/skills\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
-assert.match(homePage, /DatabaseBody/);
+assert.match(homePageClient, /DatabaseBody/);
 assert.match(dashboardClient, /href=\{`\/skills\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
 assert.doesNotMatch(inspector, /skill-manifest/);
 assert.doesNotMatch(inspector, /parseSkillManifest|manifestPathForSkillRegistryFile/);
