@@ -343,6 +343,10 @@ export const expectedTypes = {
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
+  ResultStorageBillingBatch: {
+    kind: "variant",
+    cases: { Ok: "StorageBillingBatchResult", Err: "text" }
+  },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
   ResultOpsAnswerSessionCheck: {
     kind: "variant",
@@ -407,7 +411,21 @@ export const expectedTypes = {
       raw_href: "text"
     }
   },
-  SourceEvidenceRequest: { kind: "record", fields: { node_path: "text", database_id: "text" } }
+  SourceEvidenceRequest: { kind: "record", fields: { node_path: "text", database_id: "text" } },
+  StorageBillingBatchRequest: {
+    kind: "record",
+    fields: { limit: "opt nat32", cursor_mount_id: "opt nat16" }
+  },
+  StorageBillingBatchResult: {
+    kind: "record",
+    fields: {
+      paid_cycles: "nat64",
+      suspended_databases: "nat32",
+      next_cursor_mount_id: "opt nat16",
+      charged_databases: "nat32",
+      processed_databases: "nat32"
+    }
+  }
 };
 
 export const didTypeAliases = {
@@ -432,9 +450,10 @@ export const didTypeAliases = {
   ResultNodeContext: "Result_25",
   ResultQueryContext: "Result_21",
   ResultSearch: "Result_26",
-  ResultSourceEvidence: "Result_27",
+  ResultStorageBillingBatch: "Result_27",
+  ResultSourceEvidence: "Result_28",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_29"
+  ResultWriteSourceForGeneration: "Result_30"
 };
 
 export const expectedMethods = {
@@ -472,7 +491,7 @@ export const expectedMethods = {
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
   source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
-  settle_database_storage_charges: { input: [], output: "ResultUnit", mode: "update" },
+  settle_database_storage_charges_batch: { input: ["StorageBillingBatchRequest"], output: "ResultStorageBillingBatch", mode: "update" },
   update_cycles_billing_config: { input: ["CyclesBillingConfigUpdate"], output: "ResultUnit", mode: "update" },
   purchase_database_cycles: { input: ["DatabaseCyclesPurchaseRequest"], output: "ResultCyclesPurchase", mode: "update" },
   write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },

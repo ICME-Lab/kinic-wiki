@@ -17,7 +17,8 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
     RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -38,7 +39,7 @@ use super::{
     read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
     search_nodes, set_next_ledger_transfer_from_outcome_for_test,
     set_test_caller_principal_for_test, set_update_charge_units_for_test,
-    settle_database_storage_charges, source_evidence, status, transfer_from_error_outcome,
+    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
     update_charge_cycles, update_cycles_billing_config, write_database_restore_chunk, write_node,
     write_nodes,
 };
@@ -230,6 +231,38 @@ fn controller_can_query_index_sql_json() {
 }
 
 #[test]
+fn controller_can_settle_database_storage_charges_batch() {
+    install_test_service();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should install")
+            .write_node(
+                "2vxsx-fae",
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path: "/Wiki/storage.md".to_string(),
+                    kind: NodeKind::File,
+                    content: "storage billing".to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1_700_000_000_002,
+            )
+            .expect("storage node should write");
+    });
+    set_test_caller_principal_for_test(Principal::management_canister());
+
+    let result = settle_database_storage_charges_batch(StorageBillingBatchRequest {
+        cursor_mount_id: None,
+        limit: Some(100),
+    })
+    .expect("controller should settle storage billing batch");
+
+    assert_eq!(result.processed_databases, 1);
+}
+
+#[test]
 fn index_sql_json_rejects_non_controller_callers() {
     install_test_service();
     let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
@@ -243,13 +276,17 @@ fn index_sql_json_rejects_non_controller_callers() {
 }
 
 #[test]
-fn settle_database_storage_charges_rejects_non_controller_callers() {
+fn settle_database_storage_charges_batch_rejects_non_controller_callers() {
     install_test_service();
     let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
         .expect("valid non-controller principal");
     set_test_caller_principal_for_test(non_controller);
 
-    let error = settle_database_storage_charges().expect_err("non-controller should reject");
+    let error = settle_database_storage_charges_batch(StorageBillingBatchRequest {
+        cursor_mount_id: None,
+        limit: None,
+    })
+    .expect_err("non-controller should reject");
 
     assert!(error.contains("caller is not a canister controller"));
 }

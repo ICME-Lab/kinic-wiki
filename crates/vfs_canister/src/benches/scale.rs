@@ -14,7 +14,7 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, DeleteDatabaseRequest, ExportSnapshotRequest, ExportSnapshotResponse,
     FetchUpdatesRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind, SearchNodesRequest,
-    SearchPreviewMode, WriteNodeRequest,
+    SearchPreviewMode, StorageBillingBatchRequest, WriteNodeRequest,
 };
 
 use crate::{
@@ -223,7 +223,7 @@ fn emit_metadata(case: BenchCase, metrics: &SnapshotMetrics) {
 
 fn emit_storage_billing_metadata(case: BenchCase) {
     ic_cdk::eprintln!(
-        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"{}\",\"preview_mode\":\"none\",\"n\":{},\"node_count\":{},\"depth\":0,\"content_size\":{},\"updated_count\":0,\"snapshot_node_count\":0,\"snapshot_bytes\":0,\"shape\":\"storage_billing_active_dbs\",\"certificate_generation\":\"{}\",\"stable_memory_touch_bytes\":null}}",
+        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"{}\",\"preview_mode\":\"none\",\"n\":{},\"node_count\":{},\"depth\":0,\"content_size\":{},\"updated_count\":0,\"snapshot_node_count\":0,\"snapshot_bytes\":0,\"shape\":\"storage_billing_batch_limit100_active_dbs\",\"certificate_generation\":\"{}\",\"stable_memory_touch_bytes\":null}}",
         case.bench_name,
         case.operation,
         case.n,
@@ -498,7 +498,14 @@ pub(super) fn run_storage_billing(case: BenchCase) -> BenchResult {
         let _scope = bench_scope("storage_billing_call");
         with_service(|service| {
             service
-                .settle_database_storage_charges("canister", 30_000 + STORAGE_BILLING_INTERVAL_MS)
+                .settle_database_storage_charges_batch(
+                    "canister",
+                    StorageBillingBatchRequest {
+                        cursor_mount_id: None,
+                        limit: Some(100),
+                    },
+                    30_000 + STORAGE_BILLING_INTERVAL_MS,
+                )
         })
         .expect("bench storage billing should settle");
         black_box(());
@@ -555,7 +562,7 @@ mod tests {
     fn storage_billing_database_id_marks_only_bench_databases() {
         let database_id = storage_billing_database_id(
             BenchCase {
-                bench_name: "storage_billing_n10",
+                bench_name: "storage_billing_batch_n10",
                 operation: "storage_billing",
                 n: 10,
                 updated_count: 0,

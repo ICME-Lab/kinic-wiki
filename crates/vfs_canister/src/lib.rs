@@ -20,7 +20,7 @@ use ic_cdk::api::PerformanceCounterType;
 use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
 #[cfg(target_arch = "wasm32")]
-use ic_cdk_timers::set_timer_interval;
+use ic_cdk_timers::{set_timer, set_timer_interval};
 use ic_http_certification::{
     CERTIFICATE_EXPRESSION_HEADER_NAME, DefaultCelBuilder, DefaultResponseCertification,
     HttpCertification, HttpCertificationPath, HttpCertificationTree, HttpCertificationTreeEntry,
@@ -54,7 +54,8 @@ use vfs_types::{
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
     QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
@@ -70,6 +71,10 @@ const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
 const UPDATE_ACCOUNTING_OVERHEAD_CYCLES: u128 = 15_000_000;
+#[cfg(target_arch = "wasm32")]
+const STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE: u32 = 6;
+#[cfg(target_arch = "wasm32")]
+const STORAGE_BILLING_CONTINUATION_DELAY_MS: u64 = 1;
 #[cfg(target_arch = "wasm32")]
 const INDEX_DB_MEMORY_ID: u16 = 10;
 
@@ -650,10 +655,16 @@ fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResu
 }
 
 #[update]
-fn settle_database_storage_charges() -> Result<(), String> {
+fn settle_database_storage_charges_batch(
+    request: StorageBillingBatchRequest,
+) -> Result<StorageBillingBatchResult, String> {
     require_controller_caller()?;
     with_service(|service| {
-        service.settle_database_storage_charges(&canister_principal().to_text(), now_millis())
+        service.settle_database_storage_charges_batch(
+            &canister_principal().to_text(),
+            request,
+            now_millis(),
+        )
     })
 }
 
@@ -1082,13 +1093,40 @@ fn schedule_storage_billing_timer() {
     {
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
         set_timer_interval(Duration::from_millis(interval_ms), || async {
-            if let Err(error) = with_service(|service| {
-                service
-                    .settle_database_storage_charges(&canister_principal().to_text(), now_millis())
-            }) {
-                ic_cdk::println!("storage billing settle failed: {error}");
-            }
+            run_storage_billing_timer_batches();
         });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_storage_billing_timer_batches() {
+    let mut should_continue = false;
+    for _ in 0..STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE {
+        match with_service(|service| {
+            service.settle_database_storage_charges_timer_batch(
+                &canister_principal().to_text(),
+                now_millis(),
+            )
+        }) {
+            Ok(result) => {
+                should_continue = result.next_cursor_mount_id.is_some();
+                if !should_continue {
+                    break;
+                }
+            }
+            Err(error) => {
+                ic_cdk::println!("storage billing settle failed: {error}");
+                return;
+            }
+        }
+    }
+    if should_continue {
+        set_timer(
+            Duration::from_millis(STORAGE_BILLING_CONTINUATION_DELAY_MS),
+            async {
+                run_storage_billing_timer_batches();
+            },
+        );
     }
 }
 

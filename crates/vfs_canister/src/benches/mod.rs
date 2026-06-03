@@ -137,7 +137,7 @@ macro_rules! storage_billing_bench {
     };
 }
 
-storage_billing_bench!(storage_billing_n1, 1);
-storage_billing_bench!(storage_billing_n10, 10);
-storage_billing_bench!(storage_billing_n100, 100);
-storage_billing_bench!(storage_billing_n1000, 1_000);
+storage_billing_bench!(storage_billing_batch_n1, 1);
+storage_billing_bench!(storage_billing_batch_n10, 10);
+storage_billing_bench!(storage_billing_batch_n100, 100);
+storage_billing_bench!(storage_billing_batch_n1000, 1_000);

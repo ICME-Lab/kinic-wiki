@@ -172,6 +172,7 @@ function normalizeIdlShape(value) {
     .replace(/^Int64$/, "int64")
     .replace(/^Nat64$/, "nat64")
     .replace(/^Nat32$/, "nat32")
+    .replace(/^Nat16$/, "nat16")
     .replace(/^Nat8$/, "nat8")
     .replace(/^Nat$/, "nat")
     .replace(/^Float32$/, "float32")
@@ -224,9 +225,10 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_24") return "ResultNode";
   if (normalized === "Result_25") return "ResultNodeContext";
   if (normalized === "Result_26") return "ResultSearch";
-  if (normalized === "Result_27") return "ResultSourceEvidence";
+  if (normalized === "Result_27") return "ResultStorageBillingBatch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

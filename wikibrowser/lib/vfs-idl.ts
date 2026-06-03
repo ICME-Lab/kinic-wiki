@@ -262,6 +262,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     namespace: idl.Opt(idl.Text)
   });
   const SourceEvidenceRequest = idl.Record({ node_path: idl.Text, database_id: idl.Text });
+  const StorageBillingBatchRequest = idl.Record({ limit: idl.Opt(idl.Nat32), cursor_mount_id: idl.Opt(idl.Nat16) });
+  const StorageBillingBatchResult = idl.Record({
+    paid_cycles: idl.Nat64,
+    suspended_databases: idl.Nat32,
+    next_cursor_mount_id: idl.Opt(idl.Nat16),
+    charged_databases: idl.Nat32,
+    processed_databases: idl.Nat32
+  });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultChildren = idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text });
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
@@ -269,6 +277,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
+  const ResultStorageBillingBatch = idl.Variant({ Ok: StorageBillingBatchResult, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
@@ -324,7 +333,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
-    settle_database_storage_charges: idl.Func([], [ResultUnit], []),
+    settle_database_storage_charges_batch: idl.Func([StorageBillingBatchRequest], [ResultStorageBillingBatch], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     update_cycles_billing_config: idl.Func([CyclesBillingConfigUpdate], [ResultUnit], []),
     purchase_database_cycles: idl.Func([DatabaseCyclesPurchaseRequest], [ResultCyclesPurchase], []),
