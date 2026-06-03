@@ -13,9 +13,9 @@ use vfs_runtime::{
 };
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
-    DeleteDatabaseRequest, DeleteNodeRequest, KINIC_LEDGER_FEE_E8S, MkdirNodeRequest,
-    MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
+    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
+    MkdirNodeRequest, MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteSourceForGenerationRequest,
 };
@@ -2331,6 +2331,20 @@ fn zero_cycle_charge_skips_cycle_ledger() {
 }
 
 #[test]
+fn charge_database_update_reports_missing_cycle_account() {
+    let (service, _) = service_with_root();
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles config should load");
+
+    let error = service
+        .charge_database_update(&config, "missing", "owner", "write_node", 1, 1)
+        .expect_err("missing cycle account should fail");
+
+    assert!(error.contains("database cycles account not found: missing"));
+}
+
+#[test]
 fn creates_databases_with_unique_mount_ids() {
     let service = service();
 
@@ -2721,6 +2735,92 @@ fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
 }
 
 #[test]
+fn logical_size_refreshes_after_node_mutations() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("alpha should create");
+
+    let written = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("write should succeed");
+    assert!(database_index_row(&root, "alpha").2 > 0);
+
+    let appended = service
+        .append_node(
+            "owner",
+            AppendNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                content: "beta body".to_string(),
+                expected_etag: Some(written.node.etag),
+                separator: Some("\n".to_string()),
+                metadata_json: None,
+                kind: None,
+            },
+            3,
+        )
+        .expect("append should succeed");
+    assert!(database_index_row(&root, "alpha").2 > 0);
+
+    let edited = service
+        .edit_node(
+            "owner",
+            EditNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                old_text: "beta body".to_string(),
+                new_text: "gamma body".to_string(),
+                expected_etag: Some(appended.node.etag),
+                replace_all: false,
+            },
+            4,
+        )
+        .expect("edit should succeed");
+    assert!(database_index_row(&root, "alpha").2 > 0);
+
+    let moved = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Wiki/a.md".to_string(),
+                to_path: "/Wiki/b.md".to_string(),
+                expected_etag: Some(edited.node.etag),
+                overwrite: false,
+            },
+            5,
+        )
+        .expect("move should succeed");
+    assert!(database_index_row(&root, "alpha").2 > 0);
+
+    service
+        .delete_node(
+            "owner",
+            DeleteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/b.md".to_string(),
+                expected_etag: Some(moved.node.etag),
+                expected_folder_index_etag: None,
+            },
+            6,
+        )
+        .expect("delete should succeed");
+    assert!(database_index_row(&root, "alpha").2 > 0);
+}
+
+#[test]
 fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
     let (service, root) = service_with_root();
     service
@@ -2754,6 +2854,30 @@ fn delete_database_allows_missing_file_but_rejects_other_remove_errors() {
         .expect_err("non-NotFound remove error should fail");
     assert!(!error.is_empty());
     assert_eq!(database_index_row(&root, "remove_error").0, "active");
+}
+
+#[test]
+fn begin_database_archive_rejects_missing_database_file_without_recreating_it() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    let db_file_name = service
+        .list_databases()
+        .expect("databases should load")
+        .into_iter()
+        .find(|meta| meta.database_id == "alpha")
+        .expect("database meta should exist")
+        .db_file_name;
+    std::fs::remove_file(&db_file_name).expect("database file should delete");
+
+    let error = service
+        .begin_database_archive("alpha", "owner", 2)
+        .expect_err("missing database file should fail archive");
+
+    assert!(!error.is_empty());
+    assert_eq!(database_index_row(&root, "alpha").0, "active");
+    assert!(!PathBuf::from(db_file_name).exists());
 }
 
 #[test]

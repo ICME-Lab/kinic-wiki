@@ -5,7 +5,7 @@ mod sqlite;
 
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
-use std::fs::{File, OpenOptions, create_dir_all, metadata, remove_file};
+use std::fs::{File, OpenOptions, create_dir_all, remove_file};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(not(target_arch = "wasm32"))]
@@ -2326,17 +2326,7 @@ impl VfsService {
     }
 
     fn database_size(&self, meta: &DatabaseMeta) -> Result<u64, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            file_size(&meta.db_file_name)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            (self.database_handle)(meta.mount_id)?
-                .refresh_checksum_chunk(u64::MAX)
-                .map(|report| report.db_size)
-                .map_err(|error| error.to_string())
-        }
+        self.database_store(meta)?.logical_size_bytes()
     }
 
     fn database_export_chunk(
@@ -3869,6 +3859,11 @@ struct DatabaseCharge<'a> {
     computed_charge: i64,
 }
 
+struct AppliedDatabaseCharge {
+    paid_cycles: i64,
+    balance_after_cycles: i64,
+}
+
 struct StorageChargeInput<'a> {
     database_id: &'a str,
     caller: &'a str,
@@ -4024,17 +4019,14 @@ fn charge_database_update_in_tx(
     tx: &Transaction<'_>,
     charge: DatabaseCharge<'_>,
 ) -> Result<(), String> {
-    let balance = database_balance_for_update(tx, charge.database_id)?;
-    let paid_cycles = balance.max(0).min(charge.computed_charge);
-    let next = balance.max(0) - paid_cycles;
-    update_database_cycles_balance(tx, charge.database_id, next, charge.config, charge.now)?;
+    let applied = apply_database_update_charge(tx, &charge)?;
     insert_database_ledger(
         tx,
         DatabaseLedgerInsert {
             database_id: charge.database_id,
             kind: "charge",
-            amount_cycles: -paid_cycles,
-            balance_after_cycles: next,
+            amount_cycles: -applied.paid_cycles,
+            balance_after_cycles: applied.balance_after_cycles,
             payment_amount_e8s: None,
             caller: charge.caller,
             method: Some(charge.method),
@@ -4045,6 +4037,41 @@ fn charge_database_update_in_tx(
         },
     )?;
     Ok(())
+}
+
+fn apply_database_update_charge(
+    tx: &Transaction<'_>,
+    charge: &DatabaseCharge<'_>,
+) -> Result<AppliedDatabaseCharge, String> {
+    let min = cycles_to_i64(charge.config.min_update_cycles)?;
+    tx.query_row(
+        "WITH charge_input AS MATERIALIZED (
+             SELECT min(max(balance_cycles, 0), ?2) AS paid_cycles,
+                    max(balance_cycles, 0) - min(max(balance_cycles, 0), ?2)
+                        AS balance_after_cycles
+             FROM database_cycle_accounts
+             WHERE database_id = ?1
+         )
+         UPDATE database_cycle_accounts
+         SET balance_cycles = (SELECT balance_after_cycles FROM charge_input),
+             suspended_at_ms = CASE
+                 WHEN (SELECT balance_after_cycles FROM charge_input) >= ?3 THEN NULL
+                 ELSE ?4
+             END,
+             updated_at_ms = ?4
+         WHERE database_id = ?1 AND EXISTS (SELECT 1 FROM charge_input)
+         RETURNING (SELECT paid_cycles FROM charge_input), balance_cycles",
+        params![charge.database_id, charge.computed_charge, min, charge.now],
+        |row| {
+            Ok(AppliedDatabaseCharge {
+                paid_cycles: crate::sqlite::row_get(row, 0)?,
+                balance_after_cycles: crate::sqlite::row_get(row, 1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("database cycles account not found: {}", charge.database_id))
 }
 
 fn compute_update_charge(cycles_delta: u128) -> Result<i64, String> {
@@ -4948,13 +4975,6 @@ fn role_allows(role: DatabaseRole, required_role: RequiredRole) -> bool {
         RequiredRole::Writer => matches!(role, DatabaseRole::Writer | DatabaseRole::Owner),
         RequiredRole::Owner => role == DatabaseRole::Owner,
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn file_size(path: &str) -> Result<u64, String> {
-    metadata(path)
-        .map(|metadata| metadata.len())
-        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

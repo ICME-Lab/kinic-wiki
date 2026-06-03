@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::sqlite::OpenFlags;
 use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{DbError, DbHandle};
@@ -164,6 +166,24 @@ impl FsStore {
                 source_count: count_nodes(conn, "source")?,
             })
         })
+    }
+
+    pub fn logical_size_bytes(&self) -> Result<u64, String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let conn = Connection::open_with_flags(
+                &self.database_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | OpenFlags::SQLITE_OPEN_URI
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|error| error.to_string())?;
+            logical_size_bytes_for_conn(&conn)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.read_conn(logical_size_bytes_for_conn)
+        }
     }
 
     pub fn read_node(&self, path: &str) -> Result<Option<Node>, String> {
@@ -1415,6 +1435,26 @@ fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
         )
         .map_err(|error| error.to_string())?;
     u64::try_from(count).map_err(|error| error.to_string())
+}
+
+fn logical_size_bytes_for_conn(conn: &Connection) -> Result<u64, String> {
+    let page_count = conn
+        .query_row("PRAGMA page_count", params![], |row| {
+            crate::sqlite::row_get::<i64>(row, 0)
+        })
+        .map_err(|error| error.to_string())?;
+    let page_size = conn
+        .query_row("PRAGMA page_size", params![], |row| {
+            crate::sqlite::row_get::<i64>(row, 0)
+        })
+        .map_err(|error| error.to_string())?;
+    let page_count =
+        u64::try_from(page_count).map_err(|_| "SQLite page_count is negative".to_string())?;
+    let page_size =
+        u64::try_from(page_size).map_err(|_| "SQLite page_size is negative".to_string())?;
+    page_count
+        .checked_mul(page_size)
+        .ok_or_else(|| "SQLite logical size exceeds u64".to_string())
 }
 
 fn normalize_list_children_path(path: &str) -> Result<String, String> {
