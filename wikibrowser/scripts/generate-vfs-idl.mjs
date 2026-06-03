@@ -90,6 +90,8 @@ const typeOrder = [
   "SearchNodesRequest",
   "QueryContextRequest",
   "SourceEvidenceRequest",
+  "StorageBillingBatchRequest",
+  "StorageBillingBatchResult",
   "ResultNode",
   "ResultChildren",
   "ResultLinks",
@@ -97,6 +99,7 @@ const typeOrder = [
   "ResultSearch",
   "ResultQueryContext",
   "ResultSourceEvidence",
+  "ResultStorageBillingBatch",
   "ResultCreateDatabase",
   "ResultCyclesBillingConfig",
   "ResultCyclesPurchase",
@@ -152,7 +155,7 @@ const methodOrder = [
   "rename_database",
   "search_node_paths",
   "search_nodes",
-  "settle_database_storage_charges",
+  "settle_database_storage_charges_batch",
   "source_evidence",
   "update_cycles_billing_config",
   "purchase_database_cycles",
@@ -254,6 +257,7 @@ function shapeToIdl(shape) {
     int64: "idl.Int64",
     nat: "idl.Nat",
     nat8: "idl.Nat8",
+    nat16: "idl.Nat16",
     nat32: "idl.Nat32",
     nat64: "idl.Nat64",
     null: "idl.Null",
@@ -372,9 +376,10 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_24") return "ResultNode";
   if (normalized === "Result_25") return "ResultNodeContext";
   if (normalized === "Result_26") return "ResultSearch";
-  if (normalized === "Result_27") return "ResultSourceEvidence";
+  if (normalized === "Result_27") return "ResultStorageBillingBatch";
+  if (normalized === "Result_28") return "ResultSourceEvidence";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_29") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

@@ -53,6 +53,14 @@ CREATE TABLE cycles_billing_config (
   value TEXT NOT NULL
 );
 
+CREATE TABLE storage_billing_state (
+  key TEXT PRIMARY KEY,
+  cursor_mount_id INTEGER,
+  billing_now_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  CHECK (key = 'timer')
+);
+
 INSERT INTO database_cycle_accounts
   (database_id, balance_cycles, suspended_at_ms, storage_charged_at_ms,
    created_at_ms, updated_at_ms)

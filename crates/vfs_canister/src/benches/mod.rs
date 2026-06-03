@@ -6,7 +6,7 @@ mod scale;
 use canbench_rs::{BenchResult, bench};
 use scale::{
     BenchCase, FETCH_UPDATED_COUNT, run_append, run_export_snapshot, run_fetch_updates, run_move,
-    run_search, run_write,
+    run_search, run_storage_billing, run_write,
 };
 use vfs_types::SearchPreviewMode;
 
@@ -121,3 +121,23 @@ scale_bench!(
     1_000,
     FETCH_UPDATED_COUNT
 );
+
+macro_rules! storage_billing_bench {
+    ($fn_name:ident, $n:expr) => {
+        #[bench(raw)]
+        fn $fn_name() -> BenchResult {
+            run_storage_billing(BenchCase {
+                bench_name: stringify!($fn_name),
+                operation: "storage_billing",
+                n: $n,
+                updated_count: 0,
+                preview_mode: SearchPreviewMode::None,
+            })
+        }
+    };
+}
+
+storage_billing_bench!(storage_billing_batch_n1, 1);
+storage_billing_bench!(storage_billing_batch_n10, 10);
+storage_billing_bench!(storage_billing_batch_n100, 100);
+storage_billing_bench!(storage_billing_batch_n1000, 1_000);

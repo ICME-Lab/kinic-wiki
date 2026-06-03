@@ -15,6 +15,9 @@ use super::{
 };
 use ic_http_certification::CERTIFICATE_EXPRESSION_HEADER_NAME;
 
+const TEST_CYCLE_PURCHASE_E8S: u64 = 10_000_000;
+const TEST_CYCLE_PURCHASE_CYCLES: u64 = 23_450_000_000;
+
 fn install_test_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
@@ -26,20 +29,25 @@ fn install_test_service() {
         .create_database("default", "2vxsx-fae", 1_700_000_000_000)
         .expect("default database should create");
     service
-        .begin_database_cycles_purchase("default", "2vxsx-fae", 1_000_000, 1_700_000_000_001)
+        .begin_database_cycles_purchase(
+            "default",
+            "2vxsx-fae",
+            TEST_CYCLE_PURCHASE_E8S,
+            1_700_000_000_001,
+        )
         .and_then(|operation_id| {
             service.complete_database_cycles_purchase_ledger_transfer(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                2_345_000_000,
+                TEST_CYCLE_PURCHASE_CYCLES,
                 1,
             )?;
             service.apply_database_cycles_purchase(
                 operation_id,
                 "default",
                 "2vxsx-fae",
-                2_345_000_000,
+                TEST_CYCLE_PURCHASE_CYCLES,
                 1,
                 1_700_000_000_001,
             )

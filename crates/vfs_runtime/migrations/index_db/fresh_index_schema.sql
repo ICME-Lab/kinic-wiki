@@ -158,3 +158,11 @@ CREATE TABLE cycles_billing_config (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE storage_billing_state (
+  key TEXT PRIMARY KEY,
+  cursor_mount_id INTEGER,
+  billing_now_ms INTEGER NOT NULL,
+  updated_at_ms INTEGER NOT NULL,
+  CHECK (key = 'timer')
+);

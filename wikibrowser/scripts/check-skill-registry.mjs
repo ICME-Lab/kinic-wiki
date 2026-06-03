@@ -147,7 +147,7 @@ assert.match(client, /previewProposal:[\s\S]*previewApplyProposalDiff[\s\S]*fals
 assert.match(client, /const databases = await listDatabasesAuthenticated\(canisterId, activeIdentity\)/);
 assert.match(client, /setCyclesConfig\(await getCyclesBillingConfig\(canisterId\)\)/);
 assert.doesNotMatch(client, /const \[databases, config\] = await Promise\.all/);
-assert.match(homeUi, /href=\{`\/skills\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
+assert.doesNotMatch(homeUi, /href=\{`\/skills\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
 assert.match(homePage, /DatabaseBody/);
 assert.match(dashboardClient, /href=\{`\/skills\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
 assert.doesNotMatch(inspector, /skill-manifest/);

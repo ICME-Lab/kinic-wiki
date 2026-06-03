@@ -125,6 +125,21 @@ pub struct DatabaseCyclesPendingPurchase {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct StorageBillingBatchRequest {
+    pub cursor_mount_id: Option<u16>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct StorageBillingBatchResult {
+    pub processed_databases: u32,
+    pub charged_databases: u32,
+    pub suspended_databases: u32,
+    pub paid_cycles: u64,
+    pub next_cursor_mount_id: Option<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct IndexSqlJsonQueryResult {
     pub rows: Vec<String>,
     pub row_count: u32,

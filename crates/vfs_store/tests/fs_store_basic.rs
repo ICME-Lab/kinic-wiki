@@ -17,6 +17,50 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
     (dir, store)
 }
 
+#[test]
+fn logical_size_bytes_rejects_missing_database_without_creating_file() {
+    let dir = tempdir().expect("temp dir should exist");
+    let database_path = dir.path().join("missing.sqlite3");
+    let store = FsStore::new(database_path.clone());
+
+    let error = store
+        .logical_size_bytes()
+        .expect_err("missing database should fail");
+
+    assert!(!error.is_empty());
+    assert!(!database_path.exists());
+}
+
+#[test]
+fn logical_size_bytes_uses_sqlite_page_size() {
+    let (_dir, store) = new_store();
+    let database_path = store.database_path().to_path_buf();
+    let empty_size = store
+        .logical_size_bytes()
+        .expect("empty logical size should load");
+
+    assert!(empty_size > 0);
+    assert_eq!(
+        empty_size,
+        std::fs::metadata(&database_path)
+            .expect("database file should exist")
+            .len()
+    );
+
+    write_file(&store, "/Wiki/size.md", None, 10);
+    let written_size = store
+        .logical_size_bytes()
+        .expect("written logical size should load");
+
+    assert!(written_size >= empty_size);
+    assert_eq!(
+        written_size,
+        std::fs::metadata(database_path)
+            .expect("database file should exist")
+            .len()
+    );
+}
+
 fn old_fs_schema_store() -> (tempfile::TempDir, FsStore) {
     let dir = tempdir().expect("temp dir should exist");
     let database_path = dir.path().join("wiki.sqlite3");

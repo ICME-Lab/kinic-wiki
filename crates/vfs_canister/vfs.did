@@ -358,10 +358,11 @@ type Result_23 = variant { Ok : DatabaseArchiveChunk; Err : text };
 type Result_24 = variant { Ok : opt Node; Err : text };
 type Result_25 = variant { Ok : opt NodeContext; Err : text };
 type Result_26 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_27 = variant { Ok : SourceEvidence; Err : text };
-type Result_28 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_29 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_27 = variant { Ok : StorageBillingBatchResult; Err : text };
+type Result_28 = variant { Ok : SourceEvidence; Err : text };
+type Result_29 = variant { Ok : vec WriteNodeResult; Err : text };
 type Result_3 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
+type Result_30 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_6 = variant { Ok : EditNodeResult; Err : text };
@@ -413,6 +414,17 @@ type SourceRunSessionCheckRequest = record {
   database_id : text;
 };
 type Status = record { source_count : nat64; file_count : nat64 };
+type StorageBillingBatchRequest = record {
+  limit : opt nat32;
+  cursor_mount_id : opt nat16;
+};
+type StorageBillingBatchResult = record {
+  paid_cycles : nat64;
+  suspended_databases : nat32;
+  next_cursor_mount_id : opt nat16;
+  charged_databases : nat32;
+  processed_databases : nat32;
+};
 type UrlIngestTriggerSessionCheckRequest = record {
   request_path : text;
   session_nonce : text;
@@ -511,14 +523,16 @@ service : (CyclesBillingConfig) -> {
   revoke_database_access : (text, text) -> (Result_1);
   search_node_paths : (SearchNodePathsRequest) -> (Result_26) query;
   search_nodes : (SearchNodesRequest) -> (Result_26) query;
-  settle_database_storage_charges : () -> (Result_1);
-  source_evidence : (SourceEvidenceRequest) -> (Result_27) query;
+  settle_database_storage_charges_batch : (StorageBillingBatchRequest) -> (
+      Result_27,
+    );
+  source_evidence : (SourceEvidenceRequest) -> (Result_28) query;
   status : (text) -> (Status) query;
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_28);
+  write_nodes : (WriteNodesRequest) -> (Result_29);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_29,
+      Result_30,
     );
 }

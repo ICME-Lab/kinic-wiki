@@ -4,8 +4,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
 import { connectOisyWallet, connectPlugWallet, purchaseCyclesWithOisy, purchaseCyclesWithPlug, type ConnectedOisyWallet, type ConnectedPlugWallet } from "@/lib/cycles-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -20,6 +21,7 @@ type CyclesClientProps = {
 };
 
 export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesClientProps) {
+  const router = useRouter();
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [provider, setProvider] = useState<CyclesProvider | null>(null);
@@ -52,12 +54,6 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
             ? "plug"
             : null;
   const purchaseDisabled = !selectedProvider || Boolean(error) || Boolean(amountError) || busy;
-
-  useEffect(() => {
-    return () => {
-      if (oisyWallet) void oisyWallet.wallet.disconnect();
-    };
-  }, [oisyWallet]);
 
   async function connect(nextProvider: CyclesProvider) {
     setStatus("connecting");
@@ -105,6 +101,7 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
       );
       if (selectedProvider === "oisy") setOisyWallet(null);
       setStatus("success");
+      router.replace("/");
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : String(cause));
       setStatus("error");

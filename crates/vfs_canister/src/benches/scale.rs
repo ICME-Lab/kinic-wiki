@@ -7,10 +7,14 @@ use std::hint::black_box;
 
 use canbench_rs::{BenchResult, bench_fn, bench_scope};
 use serde_json::to_vec;
+use vfs_runtime::{
+    CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseWithLedgerDetails,
+    STORAGE_BILLING_INTERVAL_MS,
+};
 use vfs_types::{
-    AppendNodeRequest, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    MkdirNodeRequest, MoveNodeRequest, NodeKind, SearchNodesRequest, SearchPreviewMode,
-    WriteNodeRequest,
+    AppendNodeRequest, DeleteDatabaseRequest, ExportSnapshotRequest, ExportSnapshotResponse,
+    FetchUpdatesRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind, SearchNodesRequest,
+    SearchPreviewMode, StorageBillingBatchRequest, WriteNodeRequest,
 };
 
 use crate::{
@@ -27,6 +31,8 @@ const SEARCH_HIT_INTERVAL: usize = 5;
 const BENCH_QUERY: &str = "bench-needle";
 const SHAPE_ID: &str = "uniform_depth4_content256_hits20pct";
 const CERTIFICATION_STATUS: &str = "not_implemented";
+const STORAGE_BILLING_DATABASE_PREFIX: &str = "storage-billing-";
+const STORAGE_BILLING_PAYMENT_E8S: u64 = 10_000;
 
 pub(super) const FETCH_UPDATED_COUNT: usize = 10;
 
@@ -215,6 +221,129 @@ fn emit_metadata(case: BenchCase, metrics: &SnapshotMetrics) {
     );
 }
 
+fn emit_storage_billing_metadata(case: BenchCase) {
+    let batch_limit = case.n.min(1_000);
+    ic_cdk::eprintln!(
+        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"{}\",\"preview_mode\":\"none\",\"n\":{},\"node_count\":{},\"depth\":0,\"content_size\":{},\"updated_count\":0,\"snapshot_node_count\":0,\"snapshot_bytes\":0,\"shape\":\"storage_billing_batch_limit{}_active_dbs\",\"certificate_generation\":\"{}\",\"stable_memory_touch_bytes\":null}}",
+        case.bench_name,
+        case.operation,
+        case.n,
+        case.n,
+        CONTENT_SIZE,
+        batch_limit,
+        CERTIFICATION_STATUS
+    );
+}
+
+fn storage_billing_database_id(case: BenchCase, index: usize) -> String {
+    format!("{STORAGE_BILLING_DATABASE_PREFIX}{:06}-{index:06}", case.n)
+}
+
+fn is_storage_billing_bench_database(database_id: &str) -> bool {
+    database_id == BENCH_DATABASE_ID || database_id.starts_with(STORAGE_BILLING_DATABASE_PREFIX)
+}
+
+fn ensure_storage_billing_service() {
+    let initialized = SERVICE.with(|slot| slot.borrow().is_some());
+    if !initialized {
+        initialize_service_with_config(None).expect("bench service should initialize");
+    }
+}
+
+fn delete_existing_storage_billing_bench_databases(caller: &str) {
+    with_service(|service| {
+        let database_ids = service
+            .list_databases()?
+            .into_iter()
+            .map(|meta| meta.database_id)
+            .filter(|database_id| is_storage_billing_bench_database(database_id))
+            .collect::<Vec<_>>();
+        for (index, database_id) in database_ids.into_iter().enumerate() {
+            service.delete_database(
+                DeleteDatabaseRequest { database_id },
+                caller,
+                1_000 + i64::try_from(index).unwrap_or(i64::MAX),
+            )?;
+        }
+        Ok(())
+    })
+    .expect("bench storage billing databases should reset");
+}
+
+fn fund_database_for_storage_billing(database_id: &str, caller: &str, now: i64) {
+    with_service(|service| {
+        let start = service.begin_database_cycles_purchase_with_ledger_details(
+            DatabaseCyclesPurchaseWithLedgerDetails {
+                database_id,
+                caller,
+                payment_amount_e8s: STORAGE_BILLING_PAYMENT_E8S,
+                min_expected_cycles: 0,
+                ledger: CyclesPendingLedgerDetailsInput {
+                    from_owner: caller,
+                    from_subaccount: None,
+                    to_owner: "canister",
+                    to_subaccount: None,
+                    ledger_fee_e8s: 0,
+                    ledger_created_at_time_ns: 1_000_000,
+                },
+                now,
+            },
+        )?;
+        service.complete_database_cycles_purchase_ledger_transfer(
+            start.operation_id,
+            database_id,
+            caller,
+            start.amount_cycles,
+            start.operation_id,
+        )?;
+        service.apply_database_cycles_purchase(
+            start.operation_id,
+            database_id,
+            caller,
+            start.amount_cycles,
+            start.operation_id,
+            now + 1,
+        )?;
+        Ok(())
+    })
+    .expect("bench database should be funded");
+}
+
+fn seed_storage_billing_databases(case: BenchCase) {
+    ensure_storage_billing_service();
+    let caller = caller_text();
+    delete_existing_storage_billing_bench_databases(&caller);
+    for index in 0..case.n {
+        let database_id = storage_billing_database_id(case, index);
+        with_service(|service| {
+            service.create_database(
+                &database_id,
+                &caller,
+                10_000 + i64::try_from(index).unwrap_or(i64::MAX),
+            )?;
+            service.write_node(
+                &caller,
+                WriteNodeRequest {
+                    database_id: database_id.clone(),
+                    path: "/Wiki/storage-billing.md".to_string(),
+                    kind: NodeKind::File,
+                    content: node_content(index, true),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                20_000 + i64::try_from(index).unwrap_or(i64::MAX),
+            )?;
+            Ok(())
+        })
+        .expect("bench storage billing database should seed");
+        fund_database_for_storage_billing(
+            &database_id,
+            &caller,
+            30_000 + i64::try_from(index).unwrap_or(i64::MAX),
+        );
+    }
+}
+
 pub(super) fn run_write(case: BenchCase) -> BenchResult {
     let prefix = bench_prefix(case);
     seed_dataset(case, &prefix);
@@ -364,9 +493,33 @@ pub(super) fn run_fetch_updates(case: BenchCase) -> BenchResult {
     })
 }
 
+pub(super) fn run_storage_billing(case: BenchCase) -> BenchResult {
+    seed_storage_billing_databases(case);
+    emit_storage_billing_metadata(case);
+    let batch_limit = case.n.min(1_000) as u32;
+    bench_fn(|| {
+        let _scope = bench_scope("storage_billing_call");
+        with_service(|service| {
+            service.settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(batch_limit),
+                },
+                30_000 + STORAGE_BILLING_INTERVAL_MS,
+            )
+        })
+        .expect("bench storage billing should settle");
+        black_box(());
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parent_folder_paths, snapshot_json_bytes};
+    use super::{
+        BenchCase, is_storage_billing_bench_database, parent_folder_paths, snapshot_json_bytes,
+        storage_billing_database_id,
+    };
     use vfs_types::{ExportSnapshotResponse, Node, NodeKind};
 
     #[test]
@@ -405,5 +558,23 @@ mod tests {
                 .expect("snapshot should serialize")
                 .len()
         );
+    }
+
+    #[test]
+    fn storage_billing_database_id_marks_only_bench_databases() {
+        let database_id = storage_billing_database_id(
+            BenchCase {
+                bench_name: "storage_billing_batch_n10",
+                operation: "storage_billing",
+                n: 10,
+                updated_count: 0,
+                preview_mode: vfs_types::SearchPreviewMode::None,
+            },
+            3,
+        );
+        assert_eq!(database_id, "storage-billing-000010-000003");
+        assert!(is_storage_billing_bench_database(&database_id));
+        assert!(is_storage_billing_bench_database("canbench"));
+        assert!(!is_storage_billing_bench_database("user-db"));
     }
 }

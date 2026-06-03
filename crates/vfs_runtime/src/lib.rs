@@ -5,7 +5,7 @@ mod sqlite;
 
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
-use std::fs::{File, OpenOptions, create_dir_all, metadata, remove_file};
+use std::fs::{File, OpenOptions, create_dir_all, remove_file};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,7 +30,8 @@ use vfs_types::{
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
@@ -69,6 +70,7 @@ const INDEX_SCHEMA_VERSION_STORAGE_BILLING: &str = "database_index:023_storage_b
 const INDEX_SCHEMA_VERSION_DIRECT_CYCLES: &str = concat!("database_index:024_", "direct_cycles");
 const INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX: &str =
     "database_index:025_cycles_pending_ledger_block_index";
+const INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH: &str = "database_index:026_storage_billing_batch";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -91,6 +93,10 @@ pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
+const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
+const MAX_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
+const TIMER_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
+const STORAGE_BILLING_BULK_MIN_BATCH_LEN: usize = 50;
 const GIB_BYTES: u128 = 1024 * 1024 * 1024;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -257,30 +263,75 @@ impl VfsService {
         })
     }
 
-    pub fn settle_database_storage_charges(&self, caller: &str, now: i64) -> Result<(), String> {
-        let measured = self
-            .read_index(load_active_databases_for_storage_billing)?
-            .into_iter()
-            .map(|meta| {
-                let size = self.database_size(&meta)?;
-                Ok((meta.database_id, size))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+    pub fn settle_database_storage_charges_batch(
+        &self,
+        caller: &str,
+        request: StorageBillingBatchRequest,
+        now: i64,
+    ) -> Result<StorageBillingBatchResult, String> {
+        let limit = storage_billing_batch_limit(request.limit);
+        let cursor = request.cursor_mount_id.unwrap_or(0);
+        let batch = self.read_index(|conn| {
+            load_active_databases_for_storage_billing_batch(conn, cursor, limit)
+        })?;
+        self.settle_database_storage_billing_batch(caller, batch, now)
+    }
+
+    pub fn settle_database_storage_charges_timer_batch(
+        &self,
+        caller: &str,
+        now: i64,
+    ) -> Result<StorageBillingBatchResult, String> {
+        let state = self.write_index(|tx| load_or_create_storage_billing_timer_state(tx, now))?;
+        let batch = self.read_index(|conn| {
+            load_active_databases_for_storage_billing_batch(
+                conn,
+                state.cursor_mount_id.unwrap_or(0),
+                TIMER_STORAGE_BILLING_BATCH_LIMIT,
+            )
+        })?;
+        let result =
+            self.settle_database_storage_billing_batch(caller, batch, state.billing_now_ms)?;
         self.write_index(|tx| {
-            let config = load_cycles_billing_config(tx)?;
-            for (database_id, size_bytes) in measured {
-                settle_database_storage_charge_in_tx(
-                    tx,
-                    StorageChargeInput {
-                        database_id: &database_id,
-                        caller,
-                        size_bytes,
-                        now,
-                        config: &config,
-                    },
-                )?;
+            if let Some(cursor) = result.next_cursor_mount_id {
+                update_storage_billing_timer_state(tx, Some(cursor), state.billing_now_ms, now)?;
+            } else {
+                clear_storage_billing_timer_state(tx)?;
             }
             Ok(())
+        })?;
+        Ok(result)
+    }
+
+    fn settle_database_storage_billing_batch(
+        &self,
+        caller: &str,
+        batch: StorageBillingDatabaseBatch,
+        now: i64,
+    ) -> Result<StorageBillingBatchResult, String> {
+        let next_cursor_mount_id = batch.next_cursor_mount_id;
+        let databases = batch.databases;
+        self.write_index(|tx| {
+            let config = load_cycles_billing_config(tx)?;
+            if databases.len() < STORAGE_BILLING_BULK_MIN_BATCH_LEN {
+                settle_database_storage_billing_loop_in_tx(
+                    tx,
+                    caller,
+                    databases,
+                    now,
+                    &config,
+                    next_cursor_mount_id,
+                )
+            } else {
+                settle_database_storage_billing_bulk_in_tx(
+                    tx,
+                    caller,
+                    databases,
+                    now,
+                    &config,
+                    next_cursor_mount_id,
+                )
+            }
         })
     }
 
@@ -2326,17 +2377,7 @@ impl VfsService {
     }
 
     fn database_size(&self, meta: &DatabaseMeta) -> Result<u64, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            file_size(&meta.db_file_name)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            (self.database_handle)(meta.mount_id)?
-                .refresh_checksum_chunk(u64::MAX)
-                .map(|report| report.db_size)
-                .map_err(|error| error.to_string())
-        }
+        self.database_store(meta)?.logical_size_bytes()
     }
 
     fn database_export_chunk(
@@ -2593,6 +2634,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    StorageBillingBatchUpgrade,
     Mainnet011,
 }
 
@@ -2602,6 +2644,10 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
+        IndexSchemaState::StorageBillingBatchUpgrade => {
+            apply_storage_billing_batch_index_migration(conn)?;
+            validate_index_schema(conn)
+        }
         IndexSchemaState::Mainnet011 => {
             let config = config
                 .ok_or_else(|| "cycles config required for first cycles upgrade".to_string())?;
@@ -2638,8 +2684,11 @@ fn classify_existing_index_schema_state(
             "unsupported partial billing index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX)? {
+        return Ok(IndexSchemaState::StorageBillingBatchUpgrade);
     }
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         return Err(format!(
@@ -2673,6 +2722,22 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
+    Ok(())
+}
+
+fn apply_storage_billing_batch_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE storage_billing_state (
+           key TEXT PRIMARY KEY,
+           cursor_mount_id INTEGER,
+           billing_now_ms INTEGER NOT NULL,
+           updated_at_ms INTEGER NOT NULL,
+           CHECK (key = 'timer')
+         )",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)?;
     Ok(())
 }
 
@@ -2801,6 +2866,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_STORAGE_BILLING,
     INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
     INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
+    INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -2816,6 +2882,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_cycle_ledger",
     "database_cycle_pending_operations",
     "cycles_billing_config",
+    "storage_billing_state",
 ];
 
 const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
@@ -2833,6 +2900,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_STORAGE_BILLING,
     INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
     INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
+    INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -2840,6 +2908,7 @@ const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
     "database_cycle_ledger",
     "database_cycle_pending_operations",
     "cycles_billing_config",
+    "storage_billing_state",
 ];
 
 fn validate_pre_billing_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
@@ -2972,6 +3041,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_cycle_ledger",
         "database_cycle_pending_operations",
         "cycles_billing_config",
+        "storage_billing_state",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
@@ -3047,6 +3117,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "ledger_block_index",
                 "created_at_ms",
             ][..],
+        ),
+        (
+            "storage_billing_state",
+            &["key", "cursor_mount_id", "billing_now_ms", "updated_at_ms"][..],
         ),
     ] {
         for column in columns {
@@ -3529,21 +3603,6 @@ fn load_storage_cycle_account(
     .ok_or_else(|| format!("database cycles account not found: {database_id}"))
 }
 
-fn update_database_logical_size(
-    conn: &Transaction<'_>,
-    database_id: &str,
-    size_bytes: u64,
-) -> Result<(), String> {
-    conn.execute(
-        "UPDATE databases
-         SET logical_size_bytes = ?2
-         WHERE database_id = ?1",
-        params![database_id, i64::try_from(size_bytes).unwrap_or(i64::MAX)],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 fn update_database_storage_account(
     conn: &Transaction<'_>,
     database_id: &str,
@@ -3869,12 +3928,53 @@ struct DatabaseCharge<'a> {
     computed_charge: i64,
 }
 
+struct AppliedDatabaseCharge {
+    paid_cycles: i64,
+    balance_after_cycles: i64,
+}
+
 struct StorageChargeInput<'a> {
     database_id: &'a str,
     caller: &'a str,
     size_bytes: u64,
     now: i64,
     config: &'a CyclesBillingConfig,
+}
+
+struct StorageBillingDatabaseBatch {
+    databases: Vec<DatabaseMeta>,
+    next_cursor_mount_id: Option<u16>,
+}
+
+struct StorageBillingTimerState {
+    cursor_mount_id: Option<u16>,
+    billing_now_ms: i64,
+}
+
+struct StorageBillingAccountRow {
+    database_id: String,
+    size_bytes: u64,
+    balance_cycles: i64,
+    suspended_at_ms: Option<i64>,
+    storage_charged_at_ms: Option<i64>,
+}
+
+struct StorageBillingWorkRow {
+    database_id: String,
+    next_balance: i64,
+    suspended_at_ms: Option<i64>,
+    storage_charged_at_ms: i64,
+    storage_cycles: i64,
+    paid_cycles: i64,
+    update_account: bool,
+    charged: bool,
+    newly_suspended: bool,
+}
+
+struct StorageChargeOutcome {
+    charged: bool,
+    suspended: bool,
+    paid_cycles: u64,
 }
 
 struct StorageCycleAccount {
@@ -3927,12 +4027,403 @@ fn insert_database_ledger(
     Ok(())
 }
 
+fn settle_database_storage_billing_loop_in_tx(
+    tx: &Transaction<'_>,
+    caller: &str,
+    databases: Vec<DatabaseMeta>,
+    now: i64,
+    config: &CyclesBillingConfig,
+    next_cursor_mount_id: Option<u16>,
+) -> Result<StorageBillingBatchResult, String> {
+    let mut result = StorageBillingBatchResult {
+        processed_databases: 0,
+        charged_databases: 0,
+        suspended_databases: 0,
+        paid_cycles: 0,
+        next_cursor_mount_id,
+    };
+    for meta in databases {
+        let outcome = settle_database_storage_charge_in_tx(
+            tx,
+            StorageChargeInput {
+                database_id: &meta.database_id,
+                caller,
+                size_bytes: meta.logical_size_bytes,
+                now,
+                config,
+            },
+        )?;
+        result.processed_databases += 1;
+        if outcome.charged {
+            result.charged_databases += 1;
+        }
+        if outcome.suspended {
+            result.suspended_databases += 1;
+        }
+        result.paid_cycles = result
+            .paid_cycles
+            .checked_add(outcome.paid_cycles)
+            .ok_or_else(|| "storage billing paid cycles overflow".to_string())?;
+    }
+    Ok(result)
+}
+
+fn settle_database_storage_billing_bulk_in_tx(
+    tx: &Transaction<'_>,
+    caller: &str,
+    databases: Vec<DatabaseMeta>,
+    now: i64,
+    config: &CyclesBillingConfig,
+    next_cursor_mount_id: Option<u16>,
+) -> Result<StorageBillingBatchResult, String> {
+    prepare_storage_billing_input_table(tx)?;
+    insert_storage_billing_input_rows(tx, &databases)?;
+    let account_rows = load_storage_billing_account_rows(tx)?;
+    let min_balance = cycles_to_i64(config.min_update_cycles)?;
+    let work_rows = account_rows
+        .into_iter()
+        .map(|row| storage_billing_work_row(row, now, min_balance))
+        .collect::<Result<Vec<_>, String>>()?;
+    prepare_storage_billing_work_table(tx)?;
+    insert_storage_billing_work_rows(tx, &work_rows)?;
+    bulk_update_storage_billing_accounts(tx, now)?;
+    bulk_insert_storage_billing_ledger(tx, caller, now, config)?;
+    let result = load_storage_billing_bulk_result(tx, next_cursor_mount_id)?;
+    drop_storage_billing_temp_tables(tx)?;
+    Ok(result)
+}
+
+fn prepare_storage_billing_input_table(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("DROP TABLE IF EXISTS temp_storage_billing_input", params![])
+        .map_err(|error| error.to_string())?;
+    tx.execute(
+        "CREATE TEMP TABLE temp_storage_billing_input (
+           database_id TEXT PRIMARY KEY,
+           logical_size_bytes INTEGER NOT NULL
+         )",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn insert_storage_billing_input_rows(
+    tx: &Transaction<'_>,
+    databases: &[DatabaseMeta],
+) -> Result<(), String> {
+    for chunk in databases.chunks(250) {
+        let placeholders = (0..chunk.len())
+            .map(|index| {
+                let first = index * 2 + 1;
+                format!("(?{first}, ?{})", first + 1)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO temp_storage_billing_input (database_id, logical_size_bytes)
+             VALUES {placeholders}"
+        );
+        let mut values = Vec::with_capacity(chunk.len() * 2);
+        for meta in chunk {
+            values.push(crate::sqlite::text_value(meta.database_id.as_str()));
+            values.push(crate::sqlite::integer_value(
+                i64::try_from(meta.logical_size_bytes).unwrap_or(i64::MAX),
+            ));
+        }
+        crate::sqlite::execute_values(tx, &sql, &values).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn load_storage_billing_account_rows(
+    tx: &Transaction<'_>,
+) -> Result<Vec<StorageBillingAccountRow>, String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT i.database_id, i.logical_size_bytes, a.balance_cycles,
+                    a.suspended_at_ms, a.storage_charged_at_ms
+             FROM temp_storage_billing_input i
+             LEFT JOIN database_cycle_accounts a ON a.database_id = i.database_id
+             ORDER BY i.rowid ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get::<String>(row, 0)?,
+            crate::sqlite::row_get::<i64>(row, 1)?,
+            crate::sqlite::row_get::<Option<i64>>(row, 2)?,
+            crate::sqlite::row_get::<Option<i64>>(row, 3)?,
+            crate::sqlite::row_get::<Option<i64>>(row, 4)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    rows.into_iter()
+        .map(
+            |(database_id, size_bytes, balance_cycles, suspended_at_ms, storage_charged_at_ms)| {
+                let balance_cycles = balance_cycles
+                    .ok_or_else(|| format!("database cycles account not found: {database_id}"))?;
+                Ok(StorageBillingAccountRow {
+                    database_id,
+                    size_bytes: size_bytes.max(0) as u64,
+                    balance_cycles,
+                    suspended_at_ms,
+                    storage_charged_at_ms,
+                })
+            },
+        )
+        .collect()
+}
+
+fn storage_billing_work_row(
+    row: StorageBillingAccountRow,
+    now: i64,
+    min_balance: i64,
+) -> Result<StorageBillingWorkRow, String> {
+    let Some(charged_at_ms) = row.storage_charged_at_ms else {
+        return Ok(StorageBillingWorkRow {
+            database_id: row.database_id,
+            next_balance: row.balance_cycles,
+            suspended_at_ms: row.suspended_at_ms,
+            storage_charged_at_ms: now,
+            storage_cycles: 0,
+            paid_cycles: 0,
+            update_account: true,
+            charged: false,
+            newly_suspended: false,
+        });
+    };
+    let elapsed_ms = now.saturating_sub(charged_at_ms);
+    if elapsed_ms < STORAGE_BILLING_INTERVAL_MS {
+        return Ok(StorageBillingWorkRow {
+            database_id: row.database_id,
+            next_balance: row.balance_cycles,
+            suspended_at_ms: row.suspended_at_ms,
+            storage_charged_at_ms: charged_at_ms,
+            storage_cycles: 0,
+            paid_cycles: 0,
+            update_account: false,
+            charged: false,
+            newly_suspended: false,
+        });
+    }
+    let storage_cycles_u128 = compute_storage_charge_cycles(row.size_bytes, elapsed_ms)?;
+    let storage_cycles = i64::try_from(storage_cycles_u128)
+        .map_err(|_| "storage charge exceeds i64 limit".to_string())?;
+    if storage_cycles == 0 {
+        return Ok(StorageBillingWorkRow {
+            database_id: row.database_id,
+            next_balance: row.balance_cycles,
+            suspended_at_ms: row.suspended_at_ms,
+            storage_charged_at_ms: now,
+            storage_cycles,
+            paid_cycles: 0,
+            update_account: true,
+            charged: false,
+            newly_suspended: false,
+        });
+    }
+    let paid_cycles = row.balance_cycles.min(storage_cycles).max(0);
+    let next_balance = row.balance_cycles.saturating_sub(paid_cycles);
+    let should_suspend = paid_cycles < storage_cycles || next_balance < min_balance;
+    let suspended_at_ms = if should_suspend {
+        row.suspended_at_ms.or(Some(now))
+    } else {
+        None
+    };
+    let newly_suspended = should_suspend && row.suspended_at_ms.is_none();
+    Ok(StorageBillingWorkRow {
+        database_id: row.database_id,
+        next_balance,
+        suspended_at_ms,
+        storage_charged_at_ms: now,
+        storage_cycles,
+        paid_cycles,
+        update_account: true,
+        charged: paid_cycles > 0,
+        newly_suspended,
+    })
+}
+
+fn prepare_storage_billing_work_table(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("DROP TABLE IF EXISTS temp_storage_billing_work", params![])
+        .map_err(|error| error.to_string())?;
+    tx.execute(
+        "CREATE TEMP TABLE temp_storage_billing_work (
+           database_id TEXT PRIMARY KEY,
+           next_balance INTEGER NOT NULL,
+           suspended_at_ms INTEGER,
+           storage_charged_at_ms INTEGER NOT NULL,
+           storage_cycles INTEGER NOT NULL,
+           paid_cycles INTEGER NOT NULL,
+           update_account INTEGER NOT NULL,
+           charged INTEGER NOT NULL,
+           newly_suspended INTEGER NOT NULL
+         )",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn insert_storage_billing_work_rows(
+    tx: &Transaction<'_>,
+    rows: &[StorageBillingWorkRow],
+) -> Result<(), String> {
+    for chunk in rows.chunks(100) {
+        let placeholders = (0..chunk.len())
+            .map(|index| {
+                let first = index * 9 + 1;
+                format!(
+                    "(?{first}, ?{}, ?{}, ?{}, ?{}, ?{}, ?{}, ?{}, ?{})",
+                    first + 1,
+                    first + 2,
+                    first + 3,
+                    first + 4,
+                    first + 5,
+                    first + 6,
+                    first + 7,
+                    first + 8
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "INSERT INTO temp_storage_billing_work
+             (database_id, next_balance, suspended_at_ms, storage_charged_at_ms,
+              storage_cycles, paid_cycles, update_account, charged, newly_suspended)
+             VALUES {placeholders}"
+        );
+        let mut values = Vec::with_capacity(chunk.len() * 9);
+        for row in chunk {
+            values.push(crate::sqlite::text_value(row.database_id.as_str()));
+            values.push(crate::sqlite::integer_value(row.next_balance));
+            values.push(crate::sqlite::nullable_integer_value(row.suspended_at_ms));
+            values.push(crate::sqlite::integer_value(row.storage_charged_at_ms));
+            values.push(crate::sqlite::integer_value(row.storage_cycles));
+            values.push(crate::sqlite::integer_value(row.paid_cycles));
+            values.push(crate::sqlite::integer_value(if row.update_account {
+                1
+            } else {
+                0
+            }));
+            values.push(crate::sqlite::integer_value(if row.charged {
+                1
+            } else {
+                0
+            }));
+            values.push(crate::sqlite::integer_value(if row.newly_suspended {
+                1
+            } else {
+                0
+            }));
+        }
+        crate::sqlite::execute_values(tx, &sql, &values).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn bulk_update_storage_billing_accounts(tx: &Transaction<'_>, now: i64) -> Result<(), String> {
+    tx.execute(
+        "UPDATE database_cycle_accounts
+         SET balance_cycles = (
+               SELECT next_balance
+               FROM temp_storage_billing_work
+               WHERE temp_storage_billing_work.database_id = database_cycle_accounts.database_id
+             ),
+             suspended_at_ms = (
+               SELECT suspended_at_ms
+               FROM temp_storage_billing_work
+               WHERE temp_storage_billing_work.database_id = database_cycle_accounts.database_id
+             ),
+             storage_charged_at_ms = (
+               SELECT storage_charged_at_ms
+               FROM temp_storage_billing_work
+               WHERE temp_storage_billing_work.database_id = database_cycle_accounts.database_id
+             ),
+             updated_at_ms = ?1
+         WHERE database_id IN (
+             SELECT database_id FROM temp_storage_billing_work WHERE update_account = 1
+         )",
+        params![now],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn bulk_insert_storage_billing_ledger(
+    tx: &Transaction<'_>,
+    caller: &str,
+    now: i64,
+    config: &CyclesBillingConfig,
+) -> Result<(), String> {
+    let cycles_per_kinic = i64::try_from(config.cycles_per_kinic).unwrap_or(i64::MAX);
+    tx.execute(
+        "INSERT INTO database_cycle_ledger
+         (database_id, kind, amount_cycles, balance_after_cycles, payment_amount_e8s,
+          caller, method, cycles_delta, cycles_per_kinic, ledger_block_index, created_at_ms)
+         SELECT database_id, kind, amount_cycles, next_balance, NULL,
+                ?1, 'storage_billing', storage_cycles, ?2, NULL, ?3
+         FROM (
+             SELECT rowid AS work_order, 0 AS ledger_order, database_id,
+                    'storage_charge' AS kind, -paid_cycles AS amount_cycles,
+                    next_balance, storage_cycles
+             FROM temp_storage_billing_work
+             WHERE paid_cycles > 0
+             UNION ALL
+             SELECT rowid AS work_order, 1 AS ledger_order, database_id,
+                    'suspend' AS kind, 0 AS amount_cycles,
+                    next_balance, storage_cycles
+             FROM temp_storage_billing_work
+             WHERE newly_suspended = 1
+         )
+         ORDER BY work_order ASC, ledger_order ASC",
+        params![caller, cycles_per_kinic, now],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn load_storage_billing_bulk_result(
+    tx: &Transaction<'_>,
+    next_cursor_mount_id: Option<u16>,
+) -> Result<StorageBillingBatchResult, String> {
+    tx.query_row(
+        "SELECT COUNT(*),
+                COALESCE(SUM(charged), 0),
+                COALESCE(SUM(newly_suspended), 0),
+                COALESCE(SUM(paid_cycles), 0)
+         FROM temp_storage_billing_work",
+        params![],
+        |row| {
+            let processed: i64 = crate::sqlite::row_get(row, 0)?;
+            let charged: i64 = crate::sqlite::row_get(row, 1)?;
+            let suspended: i64 = crate::sqlite::row_get(row, 2)?;
+            let paid: i64 = crate::sqlite::row_get(row, 3)?;
+            Ok(StorageBillingBatchResult {
+                processed_databases: processed.max(0) as u32,
+                charged_databases: charged.max(0) as u32,
+                suspended_databases: suspended.max(0) as u32,
+                paid_cycles: paid.max(0) as u64,
+                next_cursor_mount_id,
+            })
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn drop_storage_billing_temp_tables(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("DROP TABLE IF EXISTS temp_storage_billing_work", params![])
+        .map_err(|error| error.to_string())?;
+    tx.execute("DROP TABLE IF EXISTS temp_storage_billing_input", params![])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 fn settle_database_storage_charge_in_tx(
     tx: &Transaction<'_>,
     input: StorageChargeInput<'_>,
-) -> Result<(), String> {
+) -> Result<StorageChargeOutcome, String> {
     let account = load_storage_cycle_account(tx, input.database_id)?;
-    update_database_logical_size(tx, input.database_id, input.size_bytes)?;
     let Some(charged_at_ms) = account.storage_charged_at_ms else {
         update_database_storage_account(
             tx,
@@ -3942,11 +4433,19 @@ fn settle_database_storage_charge_in_tx(
             input.now,
             input.now,
         )?;
-        return Ok(());
+        return Ok(StorageChargeOutcome {
+            charged: false,
+            suspended: false,
+            paid_cycles: 0,
+        });
     };
     let elapsed_ms = input.now.saturating_sub(charged_at_ms);
     if elapsed_ms < STORAGE_BILLING_INTERVAL_MS {
-        return Ok(());
+        return Ok(StorageChargeOutcome {
+            charged: false,
+            suspended: false,
+            paid_cycles: 0,
+        });
     }
     let storage_cycles = compute_storage_charge_cycles(input.size_bytes, elapsed_ms)?;
     if storage_cycles == 0 {
@@ -3958,7 +4457,11 @@ fn settle_database_storage_charge_in_tx(
             input.now,
             input.now,
         )?;
-        return Ok(());
+        return Ok(StorageChargeOutcome {
+            charged: false,
+            suspended: false,
+            paid_cycles: 0,
+        });
     }
     let charge_cycles = i64::try_from(storage_cycles)
         .map_err(|_| "storage charge exceeds i64 limit".to_string())?;
@@ -4017,24 +4520,25 @@ fn settle_database_storage_charge_in_tx(
             },
         )?;
     }
-    Ok(())
+    Ok(StorageChargeOutcome {
+        charged: paid_cycles > 0,
+        suspended: newly_suspended,
+        paid_cycles: u64::try_from(paid_cycles).unwrap_or(0),
+    })
 }
 
 fn charge_database_update_in_tx(
     tx: &Transaction<'_>,
     charge: DatabaseCharge<'_>,
 ) -> Result<(), String> {
-    let balance = database_balance_for_update(tx, charge.database_id)?;
-    let paid_cycles = balance.max(0).min(charge.computed_charge);
-    let next = balance.max(0) - paid_cycles;
-    update_database_cycles_balance(tx, charge.database_id, next, charge.config, charge.now)?;
+    let applied = apply_database_update_charge(tx, &charge)?;
     insert_database_ledger(
         tx,
         DatabaseLedgerInsert {
             database_id: charge.database_id,
             kind: "charge",
-            amount_cycles: -paid_cycles,
-            balance_after_cycles: next,
+            amount_cycles: -applied.paid_cycles,
+            balance_after_cycles: applied.balance_after_cycles,
             payment_amount_e8s: None,
             caller: charge.caller,
             method: Some(charge.method),
@@ -4045,6 +4549,41 @@ fn charge_database_update_in_tx(
         },
     )?;
     Ok(())
+}
+
+fn apply_database_update_charge(
+    tx: &Transaction<'_>,
+    charge: &DatabaseCharge<'_>,
+) -> Result<AppliedDatabaseCharge, String> {
+    let min = cycles_to_i64(charge.config.min_update_cycles)?;
+    tx.query_row(
+        "WITH charge_input AS MATERIALIZED (
+             SELECT min(max(balance_cycles, 0), ?2) AS paid_cycles,
+                    max(balance_cycles, 0) - min(max(balance_cycles, 0), ?2)
+                        AS balance_after_cycles
+             FROM database_cycle_accounts
+             WHERE database_id = ?1
+         )
+         UPDATE database_cycle_accounts
+         SET balance_cycles = (SELECT balance_after_cycles FROM charge_input),
+             suspended_at_ms = CASE
+                 WHEN (SELECT balance_after_cycles FROM charge_input) >= ?3 THEN NULL
+                 ELSE ?4
+             END,
+             updated_at_ms = ?4
+         WHERE database_id = ?1 AND EXISTS (SELECT 1 FROM charge_input)
+         RETURNING (SELECT paid_cycles FROM charge_input), balance_cycles",
+        params![charge.database_id, charge.computed_charge, min, charge.now],
+        |row| {
+            Ok(AppliedDatabaseCharge {
+                paid_cycles: crate::sqlite::row_get(row, 0)?,
+                balance_after_cycles: crate::sqlite::row_get(row, 1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())?
+    .ok_or_else(|| format!("database cycles account not found: {}", charge.database_id))
 }
 
 fn compute_update_charge(cycles_delta: u128) -> Result<i64, String> {
@@ -4760,18 +5299,123 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
         .map_err(|error| error.to_string())
 }
 
+fn load_active_databases_for_storage_billing_batch(
+    conn: &Connection,
+    cursor_mount_id: u16,
+    limit: u32,
+) -> Result<StorageBillingDatabaseBatch, String> {
+    let fetch_limit = i64::from(limit.saturating_add(1));
+    let mut stmt = conn.prepare(
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+         FROM databases
+         WHERE status = 'active'
+           AND active_mount_id IS NOT NULL
+           AND mount_id > ?1
+         ORDER BY mount_id ASC
+         LIMIT ?2",
+    )
+    .map_err(|error| error.to_string())?;
+    let mut databases = crate::sqlite::query_map(
+        &mut stmt,
+        params![i64::from(cursor_mount_id), fetch_limit],
+        map_database_meta,
+    )
+    .map_err(|error| error.to_string())?;
+    let next_cursor_mount_id = if databases.len() > limit as usize {
+        databases.pop();
+        databases.last().map(|meta| meta.mount_id)
+    } else {
+        None
+    };
+    Ok(StorageBillingDatabaseBatch {
+        databases,
+        next_cursor_mount_id,
+    })
+}
+
+#[cfg(test)]
 fn load_active_databases_for_storage_billing(
     conn: &Connection,
 ) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
         "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
-         WHERE active_mount_id IS NOT NULL
+         WHERE status = 'active'
+           AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
     )
     .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
         .map_err(|error| error.to_string())
+}
+
+fn storage_billing_batch_limit(limit: Option<u32>) -> u32 {
+    limit
+        .unwrap_or(DEFAULT_STORAGE_BILLING_BATCH_LIMIT)
+        .clamp(1, MAX_STORAGE_BILLING_BATCH_LIMIT)
+}
+
+fn load_or_create_storage_billing_timer_state(
+    tx: &Transaction<'_>,
+    now: i64,
+) -> Result<StorageBillingTimerState, String> {
+    let existing = tx
+        .query_row(
+            "SELECT cursor_mount_id, billing_now_ms
+             FROM storage_billing_state
+             WHERE key = 'timer'",
+            params![],
+            |row| {
+                let cursor: Option<i64> = crate::sqlite::row_get(row, 0)?;
+                Ok(StorageBillingTimerState {
+                    cursor_mount_id: cursor.map(mount_id_from_db).transpose()?,
+                    billing_now_ms: crate::sqlite::row_get(row, 1)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(|error| error.to_string())?;
+    if let Some(state) = existing {
+        return Ok(state);
+    }
+    update_storage_billing_timer_state(tx, None, now, now)?;
+    Ok(StorageBillingTimerState {
+        cursor_mount_id: None,
+        billing_now_ms: now,
+    })
+}
+
+fn update_storage_billing_timer_state(
+    tx: &Transaction<'_>,
+    cursor_mount_id: Option<u16>,
+    billing_now_ms: i64,
+    updated_at_ms: i64,
+) -> Result<(), String> {
+    tx.execute(
+        "INSERT INTO storage_billing_state
+         (key, cursor_mount_id, billing_now_ms, updated_at_ms)
+         VALUES ('timer', ?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET
+           cursor_mount_id = excluded.cursor_mount_id,
+           billing_now_ms = excluded.billing_now_ms,
+           updated_at_ms = excluded.updated_at_ms",
+        params![
+            crate::sqlite::nullable_integer_value(cursor_mount_id.map(i64::from)),
+            billing_now_ms,
+            updated_at_ms
+        ],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn clear_storage_billing_timer_state(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute(
+        "DELETE FROM storage_billing_state WHERE key = 'timer'",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
@@ -4948,13 +5592,6 @@ fn role_allows(role: DatabaseRole, required_role: RequiredRole) -> bool {
         RequiredRole::Writer => matches!(role, DatabaseRole::Writer | DatabaseRole::Owner),
         RequiredRole::Owner => role == DatabaseRole::Owner,
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn file_size(path: &str) -> Result<u64, String> {
-    metadata(path)
-        .map(|metadata| metadata.len())
-        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
@@ -5778,8 +6415,9 @@ mod tests {
         for (database_id, status, mount_id) in [
             ("active", "active", Some(11_i64)),
             ("pending", "pending", Some(12_i64)),
-            ("archived", "archived", Some(13_i64)),
-            ("restoring", "restoring", Some(14_i64)),
+            ("archiving", "archiving", Some(13_i64)),
+            ("archived", "archived", Some(14_i64)),
+            ("restoring", "restoring", Some(15_i64)),
             ("deleted", "deleted", None),
         ] {
             service
@@ -5804,10 +6442,482 @@ mod tests {
             .map(|meta| meta.database_id)
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            database_ids,
-            vec!["active", "pending", "archived", "restoring"]
+        assert_eq!(database_ids, vec!["active"]);
+    }
+
+    #[test]
+    fn storage_billing_batch_clamps_limits_and_paginates() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
         );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        for index in 0..101 {
+            seed_storage_billing_database(&service, &format!("db-{index:03}"), index);
+        }
+
+        let first = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: None,
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("first batch should settle");
+        assert_eq!(first.processed_databases, 100);
+        assert_eq!(first.charged_databases, 100);
+        assert_eq!(first.suspended_databases, 0);
+        assert_eq!(first.next_cursor_mount_id, Some(110));
+
+        let second = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: first.next_cursor_mount_id,
+                    limit: Some(500),
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("second batch should settle");
+        assert_eq!(second.processed_databases, 1);
+        assert_eq!(second.charged_databases, 1);
+        assert_eq!(second.next_cursor_mount_id, None);
+
+        let limited = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(0),
+                },
+                STORAGE_BILLING_INTERVAL_MS * 2,
+            )
+            .expect("limited batch should settle");
+        assert_eq!(limited.processed_databases, 1);
+        assert_eq!(limited.next_cursor_mount_id, Some(11));
+    }
+
+    #[test]
+    fn storage_billing_batch_filters_non_active_mounted_databases() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        seed_storage_billing_database(&service, "active", 0);
+        for (database_id, status, mount_id) in [
+            ("pending", "pending", 100_i64),
+            ("archiving", "archiving", 101_i64),
+            ("archived", "archived", 102_i64),
+            ("restoring", "restoring", 103_i64),
+        ] {
+            service
+                .write_index(|tx| {
+                    tx.execute(
+                        "INSERT INTO databases
+                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
+                          schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
+                         VALUES (?1, ?1, ?1, ?3, ?3, ?2, ?4, 0, 0, 0)",
+                        params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
+                    )
+                    .map_err(|error| error.to_string())?;
+                    Ok(())
+                })
+                .expect("non-active mounted row should insert");
+        }
+
+        let result = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: None,
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("batch should settle");
+
+        assert_eq!(result.processed_databases, 1);
+        assert_eq!(result.charged_databases, 1);
+        assert_eq!(result.next_cursor_mount_id, None);
+    }
+
+    #[test]
+    fn storage_billing_batch_clamps_manual_limit_to_thousand() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        for index in 0..1001 {
+            seed_storage_billing_index_database(
+                &service,
+                &format!("db-{index:04}"),
+                MIN_DATABASE_MOUNT_ID + index as u16,
+                GIB_BYTES as i64,
+            );
+        }
+
+        let result = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(100_000),
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("oversized batch should settle at max limit");
+
+        assert_eq!(result.processed_databases, 1000);
+        assert_eq!(result.next_cursor_mount_id, Some(1010));
+    }
+
+    #[test]
+    fn storage_billing_batch_uses_cached_logical_size_without_opening_database() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        seed_storage_billing_database(&service, "cached-size", 0);
+        let cached_size = GIB_BYTES as i64;
+        let meta = service
+            .database_meta("cached-size")
+            .expect("database metadata should load");
+        service
+            .write_index(|tx| {
+                tx.execute(
+                    "UPDATE databases
+                     SET logical_size_bytes = ?2
+                     WHERE database_id = ?1",
+                    params!["cached-size", cached_size],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("cached logical size should update");
+        remove_file(&meta.db_file_name).expect("test database file should be removed");
+
+        let result = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: None,
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("storage billing should use cached logical size");
+
+        assert_eq!(result.processed_databases, 1);
+        assert_eq!(result.charged_databases, 1);
+        let cycles_delta: i64 = service
+            .read_index(|conn| {
+                conn.query_row(
+                    "SELECT cycles_delta
+                     FROM database_cycle_ledger
+                     WHERE database_id = 'cached-size' AND kind = 'storage_charge'",
+                    params![],
+                    |row| crate::sqlite::row_get(row, 0),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("storage charge ledger should load");
+        let expected =
+            compute_storage_charge_cycles(cached_size as u64, STORAGE_BILLING_INTERVAL_MS)
+                .expect("expected storage cycles should compute");
+        assert_eq!(cycles_delta, expected as i64);
+    }
+
+    #[test]
+    fn storage_billing_batch_bulk_handles_mixed_outcomes() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        let base_databases = [
+            (0, "no-op", GIB_BYTES as i64),
+            (1, "zero", 0),
+            (2, "suspended", GIB_BYTES as i64),
+            (3, "charged", GIB_BYTES as i64),
+        ];
+        for (index, database_id, size) in base_databases {
+            seed_storage_billing_index_database(
+                &service,
+                database_id,
+                MIN_DATABASE_MOUNT_ID + index,
+                size,
+            );
+        }
+        for index in 4..STORAGE_BILLING_BULK_MIN_BATCH_LEN {
+            let database_id = format!("skip-{index:03}");
+            seed_storage_billing_index_database(
+                &service,
+                &database_id,
+                MIN_DATABASE_MOUNT_ID + 100 + index as u16,
+                GIB_BYTES as i64,
+            );
+        }
+        service
+            .write_index(|tx| {
+                tx.execute(
+                    "UPDATE database_cycle_accounts
+                     SET storage_charged_at_ms = ?2
+                     WHERE database_id = ?1",
+                    params!["no-op", 1_i64],
+                )
+                .map_err(|error| error.to_string())?;
+                tx.execute(
+                    "UPDATE database_cycle_accounts
+                     SET balance_cycles = 10
+                     WHERE database_id = 'suspended'",
+                    params![],
+                )
+                .map_err(|error| error.to_string())?;
+                tx.execute(
+                    "UPDATE database_cycle_accounts
+                     SET storage_charged_at_ms = ?1
+                     WHERE database_id LIKE 'skip-%'",
+                    params![STORAGE_BILLING_INTERVAL_MS - 1],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("mixed accounts should update");
+
+        let result = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(STORAGE_BILLING_BULK_MIN_BATCH_LEN as u32),
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("mixed batch should settle");
+
+        let expected_charge =
+            compute_storage_charge_cycles(GIB_BYTES as u64, STORAGE_BILLING_INTERVAL_MS)
+                .expect("expected storage cycles should compute") as u64;
+        assert_eq!(
+            result.processed_databases,
+            STORAGE_BILLING_BULK_MIN_BATCH_LEN as u32
+        );
+        assert_eq!(result.charged_databases, 2);
+        assert_eq!(result.suspended_databases, 1);
+        assert_eq!(result.paid_cycles, expected_charge + 10);
+        let (no_op_charged_at, zero_charged_at, ledger_entries, suspend_rows): (
+            i64,
+            i64,
+            Vec<(String, String)>,
+            i64,
+        ) = service
+            .read_index(|conn| {
+                let no_op_charged_at = conn
+                    .query_row(
+                        "SELECT storage_charged_at_ms
+                             FROM database_cycle_accounts
+                             WHERE database_id = 'no-op'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let zero_charged_at = conn
+                    .query_row(
+                        "SELECT storage_charged_at_ms
+                             FROM database_cycle_accounts
+                             WHERE database_id = 'zero'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT database_id, kind
+                             FROM database_cycle_ledger
+                             ORDER BY entry_id ASC",
+                    )
+                    .map_err(|error| error.to_string())?;
+                let ledger_entries = crate::sqlite::query_map(&mut stmt, params![], |row| {
+                    Ok((
+                        crate::sqlite::row_get::<String>(row, 0)?,
+                        crate::sqlite::row_get::<String>(row, 1)?,
+                    ))
+                })
+                .map_err(|error| error.to_string())?;
+                let suspend_rows = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM database_cycle_ledger WHERE kind = 'suspend'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok((
+                    no_op_charged_at,
+                    zero_charged_at,
+                    ledger_entries,
+                    suspend_rows,
+                ))
+            })
+            .expect("mixed batch state should load");
+        assert_eq!(no_op_charged_at, 1);
+        assert_eq!(zero_charged_at, STORAGE_BILLING_INTERVAL_MS);
+        assert_eq!(
+            ledger_entries,
+            vec![
+                ("suspended".to_string(), "storage_charge".to_string()),
+                ("suspended".to_string(), "suspend".to_string()),
+                ("charged".to_string(), "storage_charge".to_string()),
+            ]
+        );
+        assert_eq!(suspend_rows, 1);
+    }
+
+    #[test]
+    fn storage_billing_batch_rolls_back_when_account_is_missing() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        seed_storage_billing_index_database(&service, "first", 11, GIB_BYTES as i64);
+        seed_storage_billing_index_database(&service, "missing-account", 12, GIB_BYTES as i64);
+        for index in 2..STORAGE_BILLING_BULK_MIN_BATCH_LEN {
+            let database_id = format!("rollback-skip-{index:03}");
+            seed_storage_billing_index_database(
+                &service,
+                &database_id,
+                MIN_DATABASE_MOUNT_ID + 100 + index as u16,
+                GIB_BYTES as i64,
+            );
+        }
+        service
+            .write_index(|tx| {
+                tx.execute(
+                    "DELETE FROM database_cycle_accounts WHERE database_id = 'missing-account'",
+                    params![],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("test account should delete");
+
+        let error = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(STORAGE_BILLING_BULK_MIN_BATCH_LEN as u32),
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect_err("missing account should reject batch");
+
+        assert!(error.contains("database cycles account not found: missing-account"));
+        let (charged_at, ledger_rows): (i64, i64) = service
+            .read_index(|conn| {
+                let charged_at = conn
+                    .query_row(
+                        "SELECT storage_charged_at_ms
+                         FROM database_cycle_accounts
+                         WHERE database_id = 'first'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let ledger_rows = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM database_cycle_ledger",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok((charged_at, ledger_rows))
+            })
+            .expect("rollback state should load");
+        assert_eq!(charged_at, 0);
+        assert_eq!(ledger_rows, 0);
+    }
+
+    #[test]
+    fn storage_billing_timer_state_reuses_billing_time_across_batches() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        for index in 0..1001 {
+            seed_storage_billing_index_database(
+                &service,
+                &format!("db-{index:04}"),
+                MIN_DATABASE_MOUNT_ID + index as u16,
+                GIB_BYTES as i64,
+            );
+        }
+
+        let first = service
+            .settle_database_storage_charges_timer_batch("canister", STORAGE_BILLING_INTERVAL_MS)
+            .expect("first timer batch should settle");
+        assert_eq!(first.processed_databases, 1000);
+        assert_eq!(first.next_cursor_mount_id, Some(1010));
+        let second = service
+            .settle_database_storage_charges_timer_batch(
+                "canister",
+                STORAGE_BILLING_INTERVAL_MS * 10,
+            )
+            .expect("second timer batch should settle");
+        assert_eq!(second.processed_databases, 1);
+        assert_eq!(second.next_cursor_mount_id, None);
+
+        let (logical_size_bytes, cycles_delta): (i64, i64) = service
+            .read_index(|conn| {
+                let logical_size_bytes = conn
+                    .query_row(
+                        "SELECT logical_size_bytes FROM databases WHERE database_id = 'db-1000'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                let cycles_delta = conn
+                    .query_row(
+                        "SELECT cycles_delta FROM database_cycle_ledger
+                         WHERE database_id = 'db-1000' AND kind = 'storage_charge'",
+                        params![],
+                        |row| crate::sqlite::row_get(row, 0),
+                    )
+                    .map_err(|error| error.to_string())?;
+                Ok((logical_size_bytes, cycles_delta))
+            })
+            .expect("timer billed row should load");
+        let expected =
+            compute_storage_charge_cycles(logical_size_bytes as u64, STORAGE_BILLING_INTERVAL_MS)
+                .expect("expected storage cycles should compute");
+        assert_eq!(cycles_delta, expected as i64);
     }
 
     fn storage_test_account_and_ledger(
@@ -5867,5 +6977,60 @@ mod tests {
                 Ok(())
             })
             .expect("test database account should update");
+    }
+
+    fn seed_storage_billing_database(service: &VfsService, database_id: &str, index: usize) {
+        service
+            .create_database(database_id, "owner", 0)
+            .expect("database should create");
+        service
+            .write_node(
+                "owner",
+                WriteNodeRequest {
+                    database_id: database_id.to_string(),
+                    path: "/Wiki/storage.md".to_string(),
+                    kind: NodeKind::File,
+                    content: format!("storage billing payload {index}"),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1,
+            )
+            .expect("storage node should write");
+        set_test_database_balance(service, database_id, 1_000_000_000);
+    }
+
+    fn seed_storage_billing_index_database(
+        service: &VfsService,
+        database_id: &str,
+        mount_id: u16,
+        logical_size_bytes: i64,
+    ) {
+        service
+            .write_index(|tx| {
+                tx.execute(
+                    "INSERT INTO databases
+                     (database_id, name, db_file_name, mount_id, active_mount_id, status,
+                      schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
+                     VALUES (?1, ?1, ?1, ?2, ?2, 'active', ?3, ?4, 0, 0)",
+                    params![
+                        database_id,
+                        i64::from(mount_id),
+                        DATABASE_SCHEMA_VERSION,
+                        logical_size_bytes,
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+                tx.execute(
+                    "INSERT INTO database_cycle_accounts
+                     (database_id, balance_cycles, suspended_at_ms, storage_charged_at_ms,
+                      created_at_ms, updated_at_ms)
+                     VALUES (?1, ?2, NULL, 0, 0, 0)",
+                    params![database_id, 1_000_000_000_000_i64],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("storage billing index database should insert");
     }
 }

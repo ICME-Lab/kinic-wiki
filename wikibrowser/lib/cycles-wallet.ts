@@ -115,7 +115,6 @@ type LedgerAccount = {
 };
 
 export type ConnectedOisyWallet = {
-  wallet: CyclesPurchaseIcrcWallet;
   owner: string;
 };
 
@@ -165,19 +164,30 @@ class CyclesPurchaseIcrcWallet extends IcrcWallet {
   }
 }
 
-export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
-  const wallet = await CyclesPurchaseIcrcWallet.connect({
+function openOisyWallet(): Promise<CyclesPurchaseIcrcWallet> {
+  return CyclesPurchaseIcrcWallet.connect({
     url: process.env.NEXT_PUBLIC_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
     host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
   });
+}
+
+async function safeDisconnectOisyWallet(wallet: CyclesPurchaseIcrcWallet): Promise<void> {
+  try {
+    await wallet.disconnect();
+  } catch {
+    // Cleanup failures must not hide connect, approve, or purchase errors.
+  }
+}
+
+export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
+  const wallet = await openOisyWallet();
   try {
     const accounts = await wallet.accounts();
     const account = accounts[0];
     if (!account) throw new Error("OISY account not found");
-    return { wallet, owner: account.owner };
-  } catch (cause) {
-    await wallet.disconnect();
-    throw cause;
+    return { owner: account.owner };
+  } finally {
+    await safeDisconnectOisyWallet(wallet);
   }
 }
 
@@ -195,26 +205,35 @@ export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
 
 export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
   const prepared = await prepareCyclesPurchase(request, connection.owner);
-  const approveBlockIndex = await connection.wallet.approve({
-    owner: connection.owner,
-    ledgerCanisterId: prepared.kinicLedgerCanisterId,
-    params: approveParams(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowanceE8s, prepared.expiresAt),
-    options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
-  });
-  const purchase = await purchaseAfterApprove(
-    () => oisyCallCyclesPurchase(connection.wallet, connection.owner, request.canisterId, prepared.purchaseRequest),
-    { approveBlockIndex: approveBlockIndex.toString(), expiresAt: prepared.expiresAt }
-  );
-  return {
-    provider: "oisy",
-    approveBlockIndex: approveBlockIndex.toString(),
-    approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
-    purchasedCycles: formatRawCycles(BigInt(purchase.amountCycles)),
-    paymentAmountE8s: prepared.paymentAmountE8s.toString(),
-    transferFeeE8s: prepared.transferFeeE8s.toString(),
-    purchaseBlockIndex: purchase.blockIndex,
-    balanceCycles: purchase.balanceCycles ? formatRawCycles(BigInt(purchase.balanceCycles)) : null
-  };
+  const wallet = await openOisyWallet();
+  try {
+    const accounts = await wallet.accounts();
+    const account = accounts[0];
+    if (!account) throw new Error("OISY account not found");
+    if (account.owner !== connection.owner) throw new Error("OISY owner changed; connect OISY again");
+    const approveBlockIndex = await wallet.approve({
+      owner: connection.owner,
+      ledgerCanisterId: prepared.kinicLedgerCanisterId,
+      params: approveParams(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowanceE8s, prepared.expiresAt),
+      options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
+    });
+    const purchase = await purchaseAfterApprove(
+      () => oisyCallCyclesPurchase(wallet, connection.owner, request.canisterId, prepared.purchaseRequest),
+      { approveBlockIndex: approveBlockIndex.toString(), expiresAt: prepared.expiresAt }
+    );
+    return {
+      provider: "oisy",
+      approveBlockIndex: approveBlockIndex.toString(),
+      approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
+      purchasedCycles: formatRawCycles(BigInt(purchase.amountCycles)),
+      paymentAmountE8s: prepared.paymentAmountE8s.toString(),
+      transferFeeE8s: prepared.transferFeeE8s.toString(),
+      purchaseBlockIndex: purchase.blockIndex,
+      balanceCycles: purchase.balanceCycles ? formatRawCycles(BigInt(purchase.balanceCycles)) : null
+    };
+  } finally {
+    await safeDisconnectOisyWallet(wallet);
+  }
 }
 
 export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, connection: ConnectedPlugWallet): Promise<CyclesPurchaseResult> {

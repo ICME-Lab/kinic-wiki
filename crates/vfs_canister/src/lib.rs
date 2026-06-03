@@ -15,10 +15,12 @@ use std::time::Duration;
 use candid::utils::decode_args;
 use candid::{CandidType, Decode, Deserialize, Nat, Principal, export_service};
 #[cfg(not(test))]
+use ic_cdk::api::PerformanceCounterType;
+#[cfg(not(test))]
 use ic_cdk::call::Call;
 use ic_cdk::{init, post_upgrade, query, update};
 #[cfg(target_arch = "wasm32")]
-use ic_cdk_timers::set_timer_interval;
+use ic_cdk_timers::{set_timer, set_timer_interval};
 use ic_http_certification::{
     CERTIFICATE_EXPRESSION_HEADER_NAME, DefaultCelBuilder, DefaultResponseCertification,
     HttpCertification, HttpCertificationPath, HttpCertificationTree, HttpCertificationTreeEntry,
@@ -52,7 +54,8 @@ use vfs_types::{
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
     QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
@@ -66,6 +69,12 @@ const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wik
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
+const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
+const UPDATE_ACCOUNTING_OVERHEAD_CYCLES: u128 = 15_000_000;
+#[cfg(target_arch = "wasm32")]
+const STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE: u32 = 6;
+#[cfg(target_arch = "wasm32")]
+const STORAGE_BILLING_CONTINUATION_DELAY_MS: u64 = 1;
 #[cfg(target_arch = "wasm32")]
 const INDEX_DB_MEMORY_ID: u16 = 10;
 
@@ -238,9 +247,18 @@ enum TransferFromError {
     GenericError { error_code: Nat, message: String },
 }
 
+#[cfg(not(feature = "canbench-rs"))]
 #[init]
 fn init_hook(config: CyclesBillingConfig) {
     initialize_or_trap(Some(config));
+    certify_http_responses();
+    schedule_storage_billing_timer();
+}
+
+#[cfg(feature = "canbench-rs")]
+#[init]
+fn init_hook() {
+    initialize_or_trap(None);
     certify_http_responses();
     schedule_storage_billing_timer();
 }
@@ -366,7 +384,7 @@ fn grant_database_access(
     principal: String,
     role: DatabaseRole,
 ) -> Result<(), String> {
-    with_role_unmetered_update(
+    with_role_metered_update(
         "grant_database_access",
         Some(database_id.clone()),
         RequiredRole::Owner,
@@ -637,10 +655,16 @@ fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResu
 }
 
 #[update]
-fn settle_database_storage_charges() -> Result<(), String> {
+fn settle_database_storage_charges_batch(
+    request: StorageBillingBatchRequest,
+) -> Result<StorageBillingBatchResult, String> {
     require_controller_caller()?;
     with_service(|service| {
-        service.settle_database_storage_charges(&canister_principal().to_text(), now_millis())
+        service.settle_database_storage_charges_batch(
+            &canister_principal().to_text(),
+            request,
+            now_millis(),
+        )
     })
 }
 
@@ -1069,13 +1093,40 @@ fn schedule_storage_billing_timer() {
     {
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
         set_timer_interval(Duration::from_millis(interval_ms), || async {
-            if let Err(error) = with_service(|service| {
-                service
-                    .settle_database_storage_charges(&canister_principal().to_text(), now_millis())
-            }) {
-                ic_cdk::println!("storage billing settle failed: {error}");
-            }
+            run_storage_billing_timer_batches();
         });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn run_storage_billing_timer_batches() {
+    let mut should_continue = false;
+    for _ in 0..STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE {
+        match with_service(|service| {
+            service.settle_database_storage_charges_timer_batch(
+                &canister_principal().to_text(),
+                now_millis(),
+            )
+        }) {
+            Ok(result) => {
+                should_continue = result.next_cursor_mount_id.is_some();
+                if !should_continue {
+                    break;
+                }
+            }
+            Err(error) => {
+                ic_cdk::println!("storage billing settle failed: {error}");
+                return;
+            }
+        }
+    }
+    if should_continue {
+        set_timer(
+            Duration::from_millis(STORAGE_BILLING_CONTINUATION_DELAY_MS),
+            async {
+                run_storage_billing_timer_batches();
+            },
+        );
     }
 }
 
@@ -1195,7 +1246,7 @@ thread_local! {
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_CYCLE_BALANCES: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
+    static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
 }
 
 #[cfg(test)]
@@ -1216,9 +1267,9 @@ fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOut
 }
 
 #[cfg(test)]
-fn set_cycle_balances_for_test(balances: Vec<u128>) {
-    TEST_CYCLE_BALANCES.with(|slot| {
-        slot.replace(balances);
+fn set_update_charge_units_for_test(units: Vec<u128>) {
+    TEST_UPDATE_CHARGE_UNITS.with(|slot| {
+        slot.replace(units);
     });
 }
 
@@ -1230,7 +1281,7 @@ fn clear_ledger_transactions_for_test() {
     TEST_LEDGER_TRANSFER_FEES.with(|slot| {
         slot.borrow_mut().clear();
     });
-    TEST_CYCLE_BALANCES.with(|slot| {
+    TEST_UPDATE_CHARGE_UNITS.with(|slot| {
         slot.borrow_mut().clear();
     });
 }
@@ -1397,22 +1448,30 @@ fn now_millis() -> i64 {
     }
 }
 
-fn cycle_balance() -> u128 {
+fn update_charge_units() -> u128 {
     #[cfg(test)]
     {
-        TEST_CYCLE_BALANCES.with(|slot| {
-            let mut balances = slot.borrow_mut();
-            if balances.is_empty() {
-                1_000_000_000_000
-            } else {
-                balances.remove(0)
-            }
+        TEST_UPDATE_CHARGE_UNITS.with(|slot| {
+            let mut units = slot.borrow_mut();
+            if units.is_empty() { 0 } else { units.remove(0) }
         })
     }
     #[cfg(not(test))]
     {
-        ic_cdk::api::canister_cycle_balance()
+        u128::from(ic_cdk::api::performance_counter(
+            PerformanceCounterType::InstructionCounter,
+        ))
     }
+}
+
+fn update_charge_cycles(before: u128, after: u128) -> Result<u128, String> {
+    let instruction_delta = after
+        .checked_sub(before)
+        .ok_or_else(|| "instruction counter decreased during update".to_string())?;
+    UPDATE_EXECUTION_BASE_CYCLES
+        .checked_add(UPDATE_ACCOUNTING_OVERHEAD_CYCLES)
+        .and_then(|base| base.checked_add(instruction_delta))
+        .ok_or_else(|| "cycle charge overflow".to_string())
 }
 
 fn now_nanos() -> u64 {
@@ -1592,7 +1651,7 @@ where
 {
     let caller = caller_text();
     let now = now_millis();
-    let before_cycles = cycle_balance();
+    let before_charge_units = update_charge_units();
     SERVICE.with(|slot| {
         let borrowed = slot.borrow();
         let service = borrowed
@@ -1600,20 +1659,24 @@ where
             .ok_or_else(|| "wiki service is not initialized".to_string())?;
         let cycles_billing_config = authorize(service, &caller)?;
         let result = f(service, &caller, now);
-        let after_cycles = cycle_balance();
-        let cycles_delta = before_cycles.saturating_sub(after_cycles);
+        let after_charge_units = update_charge_units();
         if result.is_ok()
             && let Some(database_id) = database_id.as_deref()
-            && let Err(error) = service.charge_database_update(
-                &cycles_billing_config,
-                database_id,
-                &caller,
-                method,
-                cycles_delta,
-                now,
-            )
         {
-            ic_cdk::trap(format!("cycles charge failed after update: {error}"));
+            let charge_result = update_charge_cycles(before_charge_units, after_charge_units)
+                .and_then(|cycles_delta| {
+                    service.charge_database_update(
+                        &cycles_billing_config,
+                        database_id,
+                        &caller,
+                        method,
+                        cycles_delta,
+                        now,
+                    )
+                });
+            if let Err(error) = charge_result {
+                ic_cdk::trap(format!("cycles charge failed after update: {error}"));
+            }
         }
         result
     })

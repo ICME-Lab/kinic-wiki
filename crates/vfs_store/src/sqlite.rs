@@ -4,8 +4,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use rusqlite::{
-    Connection, Error, OptionalExtension, Params, Result, Row, Statement, Transaction, params,
-    params_from_iter,
+    Connection, Error, OpenFlags, OptionalExtension, Params, Result, Row, Statement, Transaction,
+    params, params_from_iter,
 };
 
 #[cfg(not(target_arch = "wasm32"))]

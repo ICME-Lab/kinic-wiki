@@ -104,7 +104,7 @@ export ICP_ENVIRONMENT
 export KINIC_LEDGER_CANISTER_ID
 export SMOKE_CYCLE_PURCHASE_E8S
 
-scripts/local/deploy_wiki.sh
+scripts/local/deploy_wiki.sh "$@"
 CANISTER_ID="$(resolve_canister_id)"
 export CANISTER_ID
 export REPLICA_HOST

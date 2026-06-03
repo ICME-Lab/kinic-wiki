@@ -17,7 +17,8 @@ use vfs_types::{
     ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
     RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -36,10 +37,11 @@ use super::{
     multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
     purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
     read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
-    search_nodes, set_cycle_balances_for_test, set_next_ledger_transfer_from_outcome_for_test,
-    set_test_caller_principal_for_test, settle_database_storage_charges, source_evidence, status,
-    transfer_from_error_outcome, update_cycles_billing_config, write_database_restore_chunk,
-    write_node, write_nodes,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_test_caller_principal_for_test, set_update_charge_units_for_test,
+    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
+    update_charge_cycles, update_cycles_billing_config, write_database_restore_chunk, write_node,
+    write_nodes,
 };
 
 fn install_test_service() {
@@ -229,6 +231,38 @@ fn controller_can_query_index_sql_json() {
 }
 
 #[test]
+fn controller_can_settle_database_storage_charges_batch() {
+    install_test_service();
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should install")
+            .write_node(
+                "2vxsx-fae",
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path: "/Wiki/storage.md".to_string(),
+                    kind: NodeKind::File,
+                    content: "storage billing".to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1_700_000_000_002,
+            )
+            .expect("storage node should write");
+    });
+    set_test_caller_principal_for_test(Principal::management_canister());
+
+    let result = settle_database_storage_charges_batch(StorageBillingBatchRequest {
+        cursor_mount_id: None,
+        limit: Some(100),
+    })
+    .expect("controller should settle storage billing batch");
+
+    assert_eq!(result.processed_databases, 1);
+}
+
+#[test]
 fn index_sql_json_rejects_non_controller_callers() {
     install_test_service();
     let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
@@ -242,13 +276,17 @@ fn index_sql_json_rejects_non_controller_callers() {
 }
 
 #[test]
-fn settle_database_storage_charges_rejects_non_controller_callers() {
+fn settle_database_storage_charges_batch_rejects_non_controller_callers() {
     install_test_service();
     let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
         .expect("valid non-controller principal");
     set_test_caller_principal_for_test(non_controller);
 
-    let error = settle_database_storage_charges().expect_err("non-controller should reject");
+    let error = settle_database_storage_charges_batch(StorageBillingBatchRequest {
+        cursor_mount_id: None,
+        limit: None,
+    })
+    .expect_err("non-controller should reject");
 
     assert!(error.contains("caller is not a canister controller"));
 }
@@ -1168,7 +1206,7 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
 }
 
 fn database_charge_methods(database_id: &str) -> Vec<String> {
-    list_database_cycle_entries(database_id.to_string(), None, 20)
+    list_database_cycle_entries(database_id.to_string(), None, 100)
         .expect("database cycles ledger should load")
         .entries
         .into_iter()
@@ -1247,7 +1285,7 @@ fn install_low_balance_default_service() {
         .update_cycles_billing_config(
             CyclesBillingConfigUpdate {
                 cycles_per_kinic: 1_000,
-                min_update_cycles: 2_000_000,
+                min_update_cycles: 3_000_000_000,
             },
             &test_billing_authority_principal().to_text(),
         )
@@ -1334,8 +1372,25 @@ fn canister_list_databases_hides_deleted_databases() {
 }
 
 #[test]
-fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
+fn update_charge_cycles_checks_counter_order_and_overflow() {
+    assert_eq!(
+        update_charge_cycles(10, 11).expect("charge should compute"),
+        20_000_001
+    );
+    assert_eq!(
+        update_charge_cycles(11, 10).expect_err("decreased counter should fail"),
+        "instruction counter decreased during update"
+    );
+    assert_eq!(
+        update_charge_cycles(0, u128::MAX).expect_err("overflow should fail"),
+        "cycle charge overflow"
+    );
+}
+
+#[test]
+fn write_nodes_records_instruction_charge_and_writes_nodes() {
     install_test_service();
+    set_update_charge_units_for_test(vec![10_000, 10_321]);
 
     let results = write_nodes(WriteNodesRequest {
         database_id: "default".to_string(),
@@ -1359,7 +1414,16 @@ fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
     .expect("batch write should succeed");
 
     assert_eq!(results.len(), 2);
-    assert!(database_charge_methods("default").is_empty());
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charge = entries
+        .iter()
+        .find(|entry| entry.kind == "charge")
+        .expect("charge entry should exist");
+    assert_eq!(charge.amount_cycles, -20_000_321);
+    assert_eq!(charge.cycles_delta, Some(20_000_321));
+    assert_eq!(charge.method.as_deref(), Some("write_nodes"));
     assert!(
         read_node("default".to_string(), "/Wiki/batch-a.md".to_string())
             .expect("read should succeed")
@@ -1368,8 +1432,9 @@ fn write_nodes_skips_zero_charge_ledger_and_writes_nodes() {
 }
 
 #[test]
-fn write_node_and_write_nodes_skip_zero_charge_ledger() {
+fn write_node_and_write_nodes_record_instruction_charges() {
     install_test_service();
+    set_update_charge_units_for_test(vec![7, 11, 13, 19]);
 
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
@@ -1392,7 +1457,18 @@ fn write_node_and_write_nodes_skip_zero_charge_ledger() {
     })
     .expect("batch write should succeed");
 
-    assert!(database_charge_methods("default").is_empty());
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charges = entries
+        .iter()
+        .filter(|entry| entry.kind == "charge")
+        .collect::<Vec<_>>();
+    assert_eq!(charges.len(), 2);
+    assert_eq!(charges[0].method.as_deref(), Some("write_node"));
+    assert_eq!(charges[0].cycles_delta, Some(20_000_004));
+    assert_eq!(charges[1].method.as_deref(), Some("write_nodes"));
+    assert_eq!(charges[1].cycles_delta, Some(20_000_006));
 }
 
 #[test]
@@ -1405,7 +1481,7 @@ fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
         .and_then(|database| database.cycles_balance)
         .expect("default database should have cycles balance");
 
-    set_cycle_balances_for_test(vec![1_000_000_000_000, 0]);
+    set_update_charge_units_for_test(vec![0, 1_000_000_000_000]);
     let written = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Wiki/overdrawn.md".to_string(),
@@ -1439,8 +1515,30 @@ fn write_node_overdrawn_charge_consumes_balance_and_suspends_database() {
         .expect("charge entry should exist");
     assert_eq!(charge.amount_cycles, -(before_balance as i64));
     assert_eq!(charge.balance_after_cycles, 0);
-    assert_eq!(charge.cycles_delta, Some(1_000_000_000_000));
+    assert_eq!(charge.cycles_delta, Some(1_000_020_000_000));
     assert_eq!(charge.method.as_deref(), Some("write_node"));
+}
+
+#[test]
+fn failed_update_keeps_original_error_when_instruction_counter_decreases() {
+    install_test_service();
+    set_update_charge_units_for_test(vec![20, 10]);
+
+    let error = write_node(WriteNodeRequest {
+        database_id: "default".to_string(),
+        path: "/Wiki/stale.md".to_string(),
+        kind: NodeKind::File,
+        content: "stale write".to_string(),
+        metadata_json: "{}".to_string(),
+        expected_etag: Some("stale".to_string()),
+    })
+    .expect_err("stale etag write should fail");
+
+    assert!(error.contains("etag"));
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    assert!(entries.iter().all(|entry| entry.kind != "charge"));
 }
 
 #[test]
@@ -1514,8 +1612,16 @@ fn suspended_database_rejects_metered_mutations() {
 }
 
 #[test]
-fn suspended_database_allows_owner_management_operations() {
+fn suspended_database_rejects_grant_but_allows_unmetered_owner_management_operations() {
     install_suspended_default_service();
+
+    let grant = grant_database_access(
+        "default".to_string(),
+        "aaaaa-aa".to_string(),
+        DatabaseRole::Reader,
+    )
+    .expect_err("suspended database should reject metered grant");
+    assert!(grant.contains("database cycles are suspended"));
 
     rename_database(RenameDatabaseRequest {
         database_id: "default".to_string(),
@@ -1527,8 +1633,16 @@ fn suspended_database_allows_owner_management_operations() {
 }
 
 #[test]
-fn low_balance_database_allows_owner_revoke_and_delete() {
+fn low_balance_database_rejects_grant_but_allows_revoke_and_delete() {
     install_low_balance_default_service();
+
+    let grant = grant_database_access(
+        "default".to_string(),
+        "aaaaa-aa".to_string(),
+        DatabaseRole::Reader,
+    )
+    .expect_err("low-balance database should reject metered grant");
+    assert!(grant.contains("database cycles balance is too low"));
 
     revoke_database_access(
         "default".to_string(),
@@ -1760,6 +1874,37 @@ fn canister_rename_database_requires_owner() {
 }
 
 #[test]
+fn grant_database_access_records_instruction_charge_and_grants_role() {
+    install_test_service();
+    set_update_charge_units_for_test(vec![100, 125]);
+    let principal = Principal::self_authenticating([42]).to_text();
+
+    grant_database_access(
+        "default".to_string(),
+        principal.clone(),
+        DatabaseRole::Reader,
+    )
+    .expect("reader should grant");
+
+    let entries = list_database_cycle_entries("default".to_string(), None, 20)
+        .expect("database cycles ledger should load")
+        .entries;
+    let charge = entries
+        .iter()
+        .find(|entry| entry.kind == "charge")
+        .expect("grant charge should record");
+    assert_eq!(charge.method.as_deref(), Some("grant_database_access"));
+    assert_eq!(charge.cycles_delta, Some(20_000_025));
+    let members =
+        list_database_members("default".to_string()).expect("database members should load");
+    assert!(
+        members
+            .iter()
+            .any(|member| member.principal == principal && member.role == DatabaseRole::Reader)
+    );
+}
+
+#[test]
 fn grant_database_access_rejects_invalid_principal() {
     install_test_service();
 
@@ -1771,6 +1916,25 @@ fn grant_database_access_rejects_invalid_principal() {
     .expect_err("invalid principal should fail");
 
     assert!(error.contains("invalid principal"));
+    assert!(database_charge_methods("default").is_empty());
+}
+
+#[test]
+fn grant_database_access_rejects_non_owner_without_charge() {
+    install_test_service();
+
+    {
+        let _caller = AuthenticatedCallerGuard::install();
+        let error = grant_database_access(
+            "default".to_string(),
+            "aaaaa-aa".to_string(),
+            DatabaseRole::Reader,
+        )
+        .expect_err("non-owner grant should fail");
+        assert!(error.contains("principal has no access"));
+    }
+
+    assert!(database_charge_methods("default").is_empty());
 }
 
 #[test]
@@ -1793,6 +1957,7 @@ fn grant_database_access_rejects_member_limit() {
     )
     .expect_err("member cap should reject new member");
     assert!(error.contains("too many database members"));
+    assert_eq!(database_charge_methods("default").len(), 30);
 
     grant_database_access(
         "default".to_string(),
