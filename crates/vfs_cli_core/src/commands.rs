@@ -7,19 +7,18 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, DatabaseCyclesPurchaseRequest,
-    DatabaseRestoreChunkRequest, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult,
-    EditNodeRequest, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
-    kinic_base_units_per_token,
+    DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -489,42 +488,7 @@ fn command_requires_write_cycles_available(command: &VfsCommand) -> bool {
 }
 
 async fn require_write_cycles_available(client: &impl VfsApi, database_id: &str) -> Result<()> {
-    let config = client
-        .get_cycles_billing_config()
-        .await
-        .context("cycles config unavailable")?;
-    let databases = client
-        .list_databases()
-        .await
-        .context("database list unavailable for cycles check")?;
-    let database = databases
-        .iter()
-        .find(|database| database.database_id == database_id)
-        .ok_or_else(|| anyhow!("database cycles state unavailable: {database_id}"))?;
-    if let Some(reason) = database_cycles_disabled_reason(database, &config) {
-        return Err(anyhow!("{reason}"));
-    }
-    Ok(())
-}
-
-fn database_cycles_disabled_reason(
-    database: &DatabaseSummary,
-    config: &CyclesBillingConfig,
-) -> Option<String> {
-    let balance = database.cycles_balance.unwrap_or(0);
-    if database.cycles_suspended_at_ms.is_some() {
-        return Some(format!(
-            "database cycles are suspended: {}",
-            database.database_id
-        ));
-    }
-    if balance < config.min_update_cycles {
-        return Some(format!(
-            "database cycles balance is below minimum: {} balance_cycles={} min_update_cycles={}",
-            database.database_id, balance, config.min_update_cycles
-        ));
-    }
-    None
+    client.check_database_write_cycles(database_id).await
 }
 
 fn print_links(links: Vec<LinkEdge>, json: bool) -> Result<()> {
@@ -740,12 +704,9 @@ async fn run_database_command(
         }
         DatabaseCommand::Cycles {
             database_id,
-            kinic,
             browser_origin,
         } => {
-            let url = database_cycles_url(browser_origin.as_deref(), &database_id, &kinic)?;
-            open_browser_url(&url)?;
-            println!("{url}");
+            open_database_cycles_page(browser_origin.as_deref(), &database_id)?;
         }
         DatabaseCommand::Link { database_id } => {
             let path = link_workspace_database(connection, &database_id)?;
@@ -828,13 +789,13 @@ async fn run_database_command(
     Ok(())
 }
 
-fn database_cycles_url(
-    browser_origin: Option<&str>,
-    database_id: &str,
-    kinic: &str,
-) -> Result<String> {
-    let kinic = kinic.trim();
-    parse_kinic_amount_e8s(kinic)?;
+pub fn open_database_cycles_page(browser_origin: Option<&str>, database_id: &str) -> Result<()> {
+    let url = database_cycles_url(browser_origin, database_id)?;
+    println!("{url}");
+    open_browser_url(&url)
+}
+
+pub fn database_cycles_url(browser_origin: Option<&str>, database_id: &str) -> Result<String> {
     let origin = browser_origin
         .map(str::to_string)
         .or_else(|| std::env::var("KINIC_WIKI_BROWSER_ORIGIN").ok())
@@ -844,9 +805,8 @@ fn database_cycles_url(
         return Err(anyhow!("browser origin must not be empty"));
     }
     Ok(format!(
-        "{origin}/cycles?databaseId={}&kinic={}",
-        query_encode(database_id),
-        query_encode(kinic)
+        "{origin}/cycles?database_id={}",
+        query_encode(database_id)
     ))
 }
 
@@ -916,7 +876,7 @@ fn query_encode(value: &str) -> String {
     encoded
 }
 
-fn open_browser_url(url: &str) -> Result<()> {
+pub fn open_browser_url(url: &str) -> Result<()> {
     let status = if cfg!(target_os = "macos") {
         ProcessCommand::new("open").arg(url).status()
     } else if cfg!(target_os = "windows") {
@@ -1427,6 +1387,8 @@ mod tests {
         database_summaries: Mutex<Vec<DatabaseSummary>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
+        write_cycle_checks: Mutex<Vec<String>>,
+        write_cycle_check_error: Mutex<Option<String>>,
         writes: Mutex<Vec<WriteNodeRequest>>,
         write_batches: Mutex<Vec<WriteNodesRequest>>,
         deletes: Mutex<Vec<DeleteNodeRequest>>,
@@ -1489,23 +1451,6 @@ mod tests {
             updated_at: 2,
             etag: etag.to_string(),
             has_children,
-        }
-    }
-
-    fn database_summary(
-        database_id: &str,
-        balance_cycles: Option<u64>,
-        suspended_at_ms: Option<i64>,
-    ) -> DatabaseSummary {
-        DatabaseSummary {
-            database_id: database_id.to_string(),
-            name: database_id.to_string(),
-            status: DatabaseStatus::Active,
-            role: DatabaseRole::Owner,
-            logical_size_bytes: 42,
-            cycles_balance: balance_cycles,
-            cycles_suspended_at_ms: suspended_at_ms,
-            archived_at_ms: None,
         }
     }
 
@@ -1592,6 +1537,16 @@ mod tests {
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 1,
             })
+        }
+        async fn check_database_write_cycles(&self, database_id: &str) -> Result<()> {
+            self.write_cycle_checks
+                .lock()
+                .unwrap()
+                .push(database_id.to_string());
+            if let Some(error) = self.write_cycle_check_error.lock().unwrap().take() {
+                return Err(anyhow!(error));
+            }
+            Ok(())
         }
         async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
             Ok(())
@@ -1844,16 +1799,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn write_node_rejects_low_cycles_balance_before_write() {
+    async fn mutating_command_checks_write_cycles_before_write() {
         let dir = tempdir().expect("temp dir should exist");
         let input = PathBuf::from(dir.path()).join("source.md");
         std::fs::write(&input, "# Source").expect("input should write");
-        let client = MockClient {
-            database_summaries: Mutex::new(vec![database_summary("alpha", Some(0), None)]),
-            ..MockClient::default()
-        };
+        let client = MockClient::default();
 
-        let error = run_vfs_command(
+        run_vfs_command(
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
@@ -1866,16 +1818,19 @@ mod tests {
             },
         )
         .await
-        .expect_err("low balance should reject");
+        .expect("write should pass after cycles check");
 
-        assert!(error.to_string().contains("balance is below minimum"));
-        assert!(client.writes.lock().unwrap().is_empty());
+        assert_eq!(
+            *client.write_cycle_checks.lock().unwrap(),
+            vec!["alpha".to_string()]
+        );
+        assert_eq!(client.writes.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn mkdir_node_rejects_suspended_cycles_before_write() {
+    async fn mutating_command_rejects_canister_write_cycles_error_before_write() {
         let client = MockClient {
-            database_summaries: Mutex::new(vec![database_summary("alpha", Some(20_000), Some(1))]),
+            write_cycle_check_error: Mutex::new(Some("database cycles are suspended".to_string())),
             ..MockClient::default()
         };
 
@@ -1888,66 +1843,13 @@ mod tests {
             },
         )
         .await
-        .expect_err("suspended cycles should reject");
+        .expect_err("canister cycles check should reject");
 
         assert!(error.to_string().contains("cycles are suspended"));
-    }
-
-    #[tokio::test]
-    async fn mutating_commands_reject_missing_cycles_config_before_write() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = PathBuf::from(dir.path()).join("source.md");
-        std::fs::write(&input, "# Source").expect("input should write");
-        let client = MockClient {
-            fail_cycles_config: Mutex::new(true),
-            ..MockClient::default()
-        };
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
-                kind: NodeKindArg::Source,
-                input,
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-                json: false,
-            },
-        )
-        .await
-        .expect_err("missing config should reject");
-
-        assert!(error.to_string().contains("cycles config unavailable"));
-        assert!(client.writes.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn mutating_commands_reject_missing_database_summary_before_write() {
-        let dir = tempdir().expect("temp dir should exist");
-        let input = PathBuf::from(dir.path()).join("source.md");
-        std::fs::write(&input, "# Source").expect("input should write");
-        let client = MockClient {
-            database_summaries: Mutex::new(vec![database_summary("other", Some(20_000), None)]),
-            ..MockClient::default()
-        };
-
-        let error = run_vfs_command(
-            &client,
-            &test_connection(),
-            VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
-                kind: NodeKindArg::Source,
-                input,
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-                json: false,
-            },
-        )
-        .await
-        .expect_err("missing summary should reject");
-
-        assert!(error.to_string().contains("cycles state unavailable"));
+        assert_eq!(
+            *client.write_cycle_checks.lock().unwrap(),
+            vec!["alpha".to_string()]
+        );
         assert!(client.writes.lock().unwrap().is_empty());
     }
 
@@ -2416,23 +2318,17 @@ mod tests {
 
     #[test]
     fn database_cycles_url_uses_browser_origin() {
-        let url = super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db alpha", "1.25")
+        let url = super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db alpha")
             .expect("url should build");
 
-        assert_eq!(
-            url,
-            "http://127.0.0.1:3000/cycles?databaseId=db%20alpha&kinic=1.25"
-        );
+        assert_eq!(url, "http://127.0.0.1:3000/cycles?database_id=db%20alpha");
     }
 
     #[test]
-    fn database_cycles_url_rejects_invalid_kinic_amount() {
-        for kinic in ["0", "0.000000001", "abc", "184467440737.09551616"] {
-            let error =
-                super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db_alpha", kinic)
-                    .expect_err("invalid KINIC amount should reject");
-            assert!(error.to_string().contains("KINIC amount"));
-        }
+    fn database_cycles_url_rejects_empty_browser_origin() {
+        let error =
+            super::database_cycles_url(Some(""), "db_alpha").expect_err("empty origin should fail");
+        assert!(error.to_string().contains("browser origin"));
     }
 
     #[tokio::test]

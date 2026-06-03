@@ -1,6 +1,6 @@
 // Where: /cycles client UI.
 // What: collects a KINIC amount locally, then submits wallet approval and cycles purchase.
-// Why: CLI/query can seed KINIC, and the final purchase amount remains user-editable.
+// Why: the final purchase amount belongs to wallet-facing UI state.
 "use client";
 
 import Link from "next/link";
@@ -17,15 +17,14 @@ type CyclesProvider = "oisy" | "plug";
 type CyclesClientProps = {
   canisterId: string;
   databaseId: string;
-  initialKinic?: string;
 };
 
-export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesClientProps) {
+export function CyclesClient({ canisterId, databaseId }: CyclesClientProps) {
   const router = useRouter();
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [provider, setProvider] = useState<CyclesProvider | null>(null);
-  const [amount, setAmount] = useState(() => (initialKinic?.trim() ? initialKinic : "1"));
+  const [amount, setAmount] = useState("1");
   const [oisyWallet, setOisyWallet] = useState<ConnectedOisyWallet | null>(null);
   const [plugWallet, setPlugWallet] = useState<ConnectedPlugWallet | null>(null);
   const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
@@ -134,6 +133,7 @@ export function CyclesClient({ canisterId, databaseId, initialKinic }: CyclesCli
           </label>
         </section>
 
+        <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." />
         <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable cycles for this database." />
 
         <div className="grid gap-3">

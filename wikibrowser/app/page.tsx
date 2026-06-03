@@ -2,21 +2,27 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import Image from "next/image";
-import Link from "next/link";
-import { Plus, TerminalSquare } from "lucide-react";
+import { Plus } from "lucide-react";
 import { CreateDatabaseDialog } from "./create-database-dialog";
-import { AuthControls, CreatedDatabasePanel, DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
+import { AuthControls, DatabaseBody, OfficialKinicWikiPanel, StatusPanel, WalletControls, type HeaderWalletProvider } from "./home-ui";
+import { AdminHeader } from "@/components/admin-header";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
+import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, purchaseCyclesWithOisy, purchaseCyclesWithPlug, type ConnectedKinicWallet } from "@/lib/cycles-wallet";
+import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import type { DatabaseRow } from "./home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
+type ConnectedHeaderWallet = ConnectedKinicWallet;
+
+const CREATE_DATABASE_PURCHASE_KINIC = "1";
 
 export default function HomePage() {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const refreshSeqRef = useRef(0);
+  const walletBalanceSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseRow[]>([]);
@@ -25,7 +31,12 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [publicError, setPublicError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
-  const [createdDatabase, setCreatedDatabase] = useState<{ databaseId: string; name: string } | null>(null);
+  const [walletMessage, setWalletMessage] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<ConnectedHeaderWallet | null>(null);
+  const [walletBalance, setWalletBalance] = useState<string | null>(null);
+  const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
+  const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
+  const [walletBusyProvider, setWalletBusyProvider] = useState<HeaderWalletProvider | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newDatabaseName, setNewDatabaseName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -116,12 +127,72 @@ export default function HomePage() {
     await authClient.logout();
     setPrincipal(null);
     setCyclesBillingConfig(null);
-    setCreatedDatabase(null);
     setCreateDialogOpen(false);
     setNewDatabaseName("");
     setError(null);
     setPublicError(null);
+    setWalletMessage(null);
+    walletBalanceSeqRef.current += 1;
+    setWallet(null);
+    setWalletBalance(null);
+    setWalletBalanceLoading(false);
+    setWalletBalanceError(null);
     await refreshDatabases(null);
+  }
+
+  async function refreshWalletBalance(nextWallet: ConnectedHeaderWallet) {
+    const balanceSeq = (walletBalanceSeqRef.current += 1);
+    const isCurrentBalance = () => balanceSeq === walletBalanceSeqRef.current;
+    setWalletBalance(null);
+    setWalletBalanceLoading(true);
+    setWalletBalanceError(null);
+    try {
+      const balance = await getConnectedWalletKinicBalance(canisterId, nextWallet);
+      if (!isCurrentBalance()) return;
+      setWalletBalance(balance);
+    } catch (cause) {
+      if (!isCurrentBalance()) return;
+      setWalletBalance(null);
+      setWalletBalanceError(`KINIC balance unavailable: ${errorMessage(cause)}`);
+    } finally {
+      if (!isCurrentBalance()) return;
+      setWalletBalanceLoading(false);
+    }
+  }
+
+  async function connectWallet(provider: HeaderWalletProvider) {
+    if (creating || walletBusyProvider) return;
+    setWalletBusyProvider(provider);
+    setError(null);
+    setWalletMessage(null);
+    try {
+      if (provider === "oisy") {
+        const connection = await connectOisyWallet();
+        const nextWallet: ConnectedHeaderWallet = { provider, connection };
+        setWallet(nextWallet);
+        void refreshWalletBalance(nextWallet);
+      } else {
+        const connection = await connectPlugWallet();
+        const nextWallet: ConnectedHeaderWallet = { provider, connection };
+        setWallet(nextWallet);
+        void refreshWalletBalance(nextWallet);
+      }
+    } catch (cause) {
+      setError(errorMessage(cause));
+      setLoadState("error");
+    } finally {
+      setWalletBusyProvider(null);
+    }
+  }
+
+  function disconnectWallet(provider: HeaderWalletProvider) {
+    if (creating || walletBusyProvider || wallet?.provider !== provider) return;
+    walletBalanceSeqRef.current += 1;
+    setWallet(null);
+    setWalletBalance(null);
+    setWalletBalanceLoading(false);
+    setWalletBalanceError(null);
+    setWalletMessage(null);
   }
 
   async function createDatabase() {
@@ -133,16 +204,44 @@ export default function HomePage() {
       setLoadState("error");
       return;
     }
+    if (!wallet) {
+      setError(`Connect OISY or Plug with at least ${formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())} before creating a database.`);
+      setLoadState("error");
+      return;
+    }
+    if (!walletCanFundCreate(walletBalance)) {
+      setError(`Create database requires at least ${formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())} in the connected wallet.`);
+      setLoadState("error");
+      return;
+    }
     setCreating(true);
     setError(null);
+    setWalletMessage(null);
+    let createdDatabaseId: string | null = null;
     try {
       const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput);
-      setCreatedDatabase({ databaseId: result.database_id, name: result.name });
+      createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
+      const paymentAmountE8s = createDatabasePurchaseAmountE8s();
+      setWalletMessage(`Database created pending. Requesting ${walletLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
+      const purchaseResult =
+        wallet.provider === "oisy"
+          ? await purchaseCyclesWithOisy({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet.connection)
+          : await purchaseCyclesWithPlug({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet.connection);
+      setWalletMessage(
+        `${walletLabel(wallet.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
+      );
+      await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
     } catch (cause) {
-      setError(errorMessage(cause));
+      const message = errorMessage(cause);
+      if (createdDatabaseId) {
+        await refreshDatabases(authClient);
+        setError(`Database created pending, but initial cycles purchase failed: ${message}`);
+      } else {
+        setError(message);
+      }
       setLoadState("error");
     } finally {
       setCreating(false);
@@ -153,40 +252,50 @@ export default function HomePage() {
   const publicDatabases = databases.filter((database) => !database.member && database.publicReadable);
   const trimmedDatabaseName = newDatabaseName.trim();
   const databaseNameValidationError = databaseNameError(trimmedDatabaseName);
-  const createDisabled = creating || loadState === "loading" || databaseNameValidationError !== null;
+  const walletReadyToFundCreate = walletCanFundCreate(walletBalance);
+  const createUnavailable = loadState === "loading" || walletBusyProvider !== null || walletBalanceLoading || !walletReadyToFundCreate;
+  const createDisabled = creating || createUnavailable || databaseNameValidationError !== null;
+  const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(walletPrincipal(wallet))}` : null;
+  const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
+  const createButtonLabel = databaseCreateButtonLabel({ creating, walletConnected: Boolean(wallet), walletBalanceLoading, walletReadyToFundCreate });
 
   return (
     <main className="min-h-screen px-6 py-8">
       <section className="mx-auto flex max-w-6xl flex-col gap-6">
-        <header className="flex flex-col gap-4 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <Image className="h-11 w-11 rounded-xl shadow-sm" src="/icon.png" alt="" width={44} height={44} unoptimized />
-            <div className="min-w-0">
-              <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Kinic Wiki</p>
-              <h1 className="mt-1 text-3xl font-semibold text-ink">Database dashboard</h1>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink no-underline hover:border-accent hover:text-accent" href="/cli">
-              <TerminalSquare aria-hidden size={15} />
-              <span>CLI</span>
-            </Link>
-            <AuthControls
-              authReady={Boolean(authClient)}
-              principal={principal}
-              loading={loadState === "loading"}
-              onLogin={login}
-              onLogout={logout}
-              onRefresh={() => {
-                if (authClient) void refreshDatabases(authClient);
-              }}
-            />
-          </div>
-        </header>
+        <AdminHeader
+          title="Database dashboard"
+          actions={
+            <>
+              <WalletControls
+                busyProvider={walletBusyProvider}
+                connectedBalanceLabel={connectedWalletBalanceLabel}
+                connectedLabel={connectedWalletLabel}
+                connectedProvider={wallet?.provider ?? null}
+                balanceLoading={walletBalanceLoading}
+                disabled={creating}
+                onConnect={(provider) => {
+                  void connectWallet(provider);
+                }}
+                onDisconnect={disconnectWallet}
+              />
+              <AuthControls
+                authReady={Boolean(authClient)}
+                principal={principal}
+                loading={loadState === "loading"}
+                onLogin={login}
+                onLogout={logout}
+                onRefresh={() => {
+                  if (authClient) void refreshDatabases(authClient);
+                }}
+              />
+            </>
+          }
+        />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
+        {walletBalanceError ? <StatusPanel tone="error" message={walletBalanceError} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
-        {createdDatabase ? <CreatedDatabasePanel databaseId={createdDatabase.databaseId} name={createdDatabase.name} /> : null}
+        {walletMessage ? <StatusPanel tone="info" message={walletMessage} /> : null}
         <CreateDatabaseDialog
           createDisabled={createDisabled}
           creating={creating}
@@ -205,26 +314,25 @@ export default function HomePage() {
         <OfficialKinicWikiPanel />
 
         {principal ? (
-          <>
-            <section className="rounded-lg border border-line bg-paper shadow-sm">
-              <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold text-ink">Database dashboard</h2>
-                  <p className="mt-1 font-mono text-xs text-muted">{principal}</p>
-                </div>
-                <button
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
-                  disabled={creating || loadState === "loading"}
-                  type="button"
-                  onClick={() => setCreateDialogOpen(true)}
-                >
-                  <Plus aria-hidden size={15} />
-                  <span>{creating ? "Creating..." : "Create database"}</span>
-                </button>
-              </div>
-            </section>
-            <DatabaseBody cyclesConfig={cyclesConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
-          </>
+          <DatabaseBody
+            createDatabaseAction={
+              <button
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={creating || createUnavailable}
+                type="button"
+                onClick={() => setCreateDialogOpen(true)}
+              >
+                <Plus aria-hidden size={15} />
+                <span>{createButtonLabel}</span>
+              </button>
+            }
+            cyclesConfig={cyclesConfig}
+            loading={loadState === "loading"}
+            myDatabases={myDatabases}
+            principal={principal}
+            publicDatabases={publicDatabases}
+            publicError={publicError}
+          />
         ) : (
           <section className="rounded-lg border border-line bg-paper shadow-sm">
             <div className="flex flex-col gap-3 border-b border-line px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
@@ -256,6 +364,48 @@ function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: 
 function listWarning(memberResult: PromiseSettledResult<DatabaseSummary[]>): string | null {
   if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
   return null;
+}
+
+function createDatabasePurchaseAmountE8s(): bigint {
+  const parsed = parseKinicAmountE8sInput(CREATE_DATABASE_PURCHASE_KINIC);
+  if (typeof parsed === "string") throw new Error(parsed);
+  return parsed;
+}
+
+function walletLabel(provider: HeaderWalletProvider): string {
+  return provider === "oisy" ? "OISY" : "Plug";
+}
+
+function walletPrincipal(wallet: ConnectedHeaderWallet): string {
+  return wallet.provider === "oisy" ? wallet.connection.owner : wallet.connection.principal;
+}
+
+function walletCanFundCreate(balanceE8s: string | null): boolean {
+  if (!balanceE8s || !/^\d+$/.test(balanceE8s)) return false;
+  return BigInt(balanceE8s) >= createDatabasePurchaseAmountE8s();
+}
+
+function databaseCreateButtonLabel({
+  creating,
+  walletConnected,
+  walletBalanceLoading,
+  walletReadyToFundCreate
+}: {
+  creating: boolean;
+  walletConnected: boolean;
+  walletBalanceLoading: boolean;
+  walletReadyToFundCreate: boolean;
+}): string {
+  if (creating) return "Creating...";
+  if (!walletConnected) return "Connect wallet first";
+  if (walletBalanceLoading) return "Checking balance...";
+  if (!walletReadyToFundCreate) return "Insufficient KINIC";
+  return "Create and fund database";
+}
+
+function shortPrincipal(value: string): string {
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 8)}...${value.slice(-5)}`;
 }
 
 function errorMessage(cause: unknown): string {

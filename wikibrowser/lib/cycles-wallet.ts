@@ -7,6 +7,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
 import { formatRawCycles, KINIC_LEDGER_FEE_E8S, kinicBaseUnitsPerToken } from "@/lib/cycles";
+import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 
 type WalletProvider = "oisy" | "plug";
 
@@ -82,6 +83,7 @@ type PlugVfsActor = {
 };
 
 type LedgerActor = {
+  icrc1_balance_of: (request: LedgerAccount) => Promise<bigint>;
   icrc2_allowance: (request: LedgerAllowanceArgs) => Promise<LedgerAllowance>;
   icrc2_approve: (request: LedgerApproveArgs) => Promise<{ Ok: bigint } | { Err: unknown }>;
 };
@@ -121,6 +123,8 @@ export type ConnectedOisyWallet = {
 export type ConnectedPlugWallet = {
   principal: string;
 };
+
+export type ConnectedKinicWallet = { provider: "oisy"; connection: ConnectedOisyWallet } | { provider: "plug"; connection: ConnectedPlugWallet };
 
 declare global {
   interface Window {
@@ -203,6 +207,13 @@ export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
   return { principal: principal.toText() };
 }
 
+export async function getConnectedWalletKinicBalance(canisterId: string, wallet: ConnectedKinicWallet): Promise<string> {
+  assertConfiguredCyclesCanister(canisterId);
+  const config = await getCyclesBillingConfig(canisterId);
+  const balance = await getLedgerBalance(config.kinicLedgerCanisterId, connectedWalletPrincipal(wallet));
+  return balance.toString();
+}
+
 export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
   const prepared = await prepareCyclesPurchase(request, connection.owner);
   const wallet = await openOisyWallet();
@@ -255,7 +266,7 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
   const approve = await ledgerActor.icrc2_approve(
     rawApproveArgs(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowanceE8s, prepared.expiresAt)
   );
-  if ("Err" in approve) throw new Error(`ledger approve failed: ${JSON.stringify(approve.Err)}`);
+  if ("Err" in approve) throw new Error(`ledger approve failed: ${formatLedgerApproveError(approve.Err)}`);
   const vfsActor = await plug.createActor<PlugVfsActor>({
     canisterId: request.canisterId,
     interfaceFactory: idlFactory
@@ -367,11 +378,30 @@ async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spend
   return result.allowance;
 }
 
+async function getLedgerBalance(ledgerCanisterId: string, owner: string): Promise<bigint> {
+  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
+  if (agent.isLocal()) await agent.fetchRootKey();
+  const actor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
+    agent,
+    canisterId: Principal.fromText(ledgerCanisterId)
+  });
+  return actor.icrc1_balance_of(defaultAccount(owner));
+}
+
 function allowanceArgs(owner: string, spender: string): LedgerAllowanceArgs {
   return {
-    account: { owner: Principal.fromText(owner), subaccount: [] },
-    spender: { owner: Principal.fromText(spender), subaccount: [] }
+    account: defaultAccount(owner),
+    spender: defaultAccount(spender)
   };
+}
+
+function defaultAccount(owner: string): LedgerAccount {
+  return { owner: Principal.fromText(owner), subaccount: [] };
+}
+
+function connectedWalletPrincipal(wallet: ConnectedKinicWallet): string {
+  return wallet.provider === "oisy" ? wallet.connection.owner : wallet.connection.principal;
 }
 
 async function oisyCallCyclesPurchase(
@@ -491,6 +521,71 @@ function purchaseResultType() {
   });
 }
 
+function formatLedgerApproveError(error: unknown): string {
+  const known = formatKnownLedgerApproveError(error);
+  return known ?? safeJsonWithBigInts(error);
+}
+
+function formatKnownLedgerApproveError(error: unknown): string | null {
+  if (!isObject(error)) return null;
+  if (hasOwn(error, "InsufficientFunds")) {
+    return formatApproveErrorField(error, "InsufficientFunds", "balance", "kinic");
+  }
+  if (hasOwn(error, "BadFee")) {
+    return formatApproveErrorField(error, "BadFee", "expected_fee", "kinic");
+  }
+  if (hasOwn(error, "AllowanceChanged")) {
+    return formatApproveErrorField(error, "AllowanceChanged", "current_allowance", "kinic");
+  }
+  if (hasOwn(error, "Duplicate")) {
+    return formatApproveErrorField(error, "Duplicate", "duplicate_of", null);
+  }
+  if (hasOwn(error, "CreatedInFuture")) {
+    return formatApproveErrorField(error, "CreatedInFuture", "ledger_time", null);
+  }
+  if (hasOwn(error, "Expired")) {
+    return formatApproveErrorField(error, "Expired", "ledger_time", null);
+  }
+  if (hasOwn(error, "GenericError")) {
+    const generic = Reflect.get(error, "GenericError");
+    if (!isObject(generic)) return "GenericError";
+    const message = Reflect.get(generic, "message");
+    const errorCode = Reflect.get(generic, "error_code");
+    const messageText = typeof message === "string" ? message : "unknown ledger error";
+    const codeText = scalarText(errorCode);
+    return codeText ? `GenericError: ${messageText} (code ${codeText})` : `GenericError: ${messageText}`;
+  }
+  if (hasOwn(error, "TemporarilyUnavailable")) return "TemporarilyUnavailable";
+  if (hasOwn(error, "TooOld")) return "TooOld";
+  return null;
+}
+
+function formatApproveErrorField(error: object, variant: string, field: string, unit: "kinic" | null): string {
+  const details = Reflect.get(error, variant);
+  if (!isObject(details)) return variant;
+  const value = Reflect.get(details, field);
+  const text = scalarText(value);
+  if (!text) return variant;
+  const display = unit === "kinic" ? formatTokenAmountFromE8s(text) : text;
+  return `${variant}: ${field} ${display}`;
+}
+
+function scalarText(value: unknown): string | null {
+  if (typeof value === "bigint" || typeof value === "number" || typeof value === "string") {
+    return value.toString();
+  }
+  return null;
+}
+
+function safeJsonWithBigInts(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? item.toString() : item));
+    return serialized ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function bytesFromUnknown(value: unknown, label: string): Uint8Array {
   if (value instanceof Uint8Array) return value;
   throw new Error(`${label} mismatch`);
@@ -534,6 +629,7 @@ const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     InsufficientFunds: idl.Record({ balance: idl.Nat })
   });
   return idl.Service({
+    icrc1_balance_of: idl.Func([account], [idl.Nat], ["query"]),
     icrc2_allowance: idl.Func([allowanceArgs], [allowance], ["query"]),
     icrc2_approve: idl.Func([approveArgs], [idl.Variant({ Ok: idl.Nat, Err: approveError })], [])
   });

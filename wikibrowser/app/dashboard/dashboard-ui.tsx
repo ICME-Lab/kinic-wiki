@@ -25,7 +25,7 @@ export function AuthControls(props: { authReady: boolean; loading: boolean; prin
   if (!props.principal) {
     return (
       <ActionButton disabled={!props.authReady} dataTid="login-button" onClick={props.onLogin} variant="primary">
-        Login with Internet Identity
+        Internet Identity
       </ActionButton>
     );
   }
@@ -108,11 +108,9 @@ export function OwnerPanel(props: {
   principal: string;
   onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
-  onRename: (name: string) => void;
   onRevoke: (principalText: string) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAclAction | null>(null);
-  const [databaseName, setDatabaseName] = useState(props.databaseName);
   const publicMember = props.members.find((member) => member.principal === ANONYMOUS_PRINCIPAL);
   const publicEnabled = Boolean(publicMember);
   const publicBusy = isBusyGrant(props.busyAction, ANONYMOUS_PRINCIPAL, "reader") || isBusyRevoke(props.busyAction, ANONYMOUS_PRINCIPAL);
@@ -225,33 +223,14 @@ export function OwnerPanel(props: {
     }
     setPendingAction(null);
   }
-  function submitRename(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextName = databaseName.trim();
-    if (!nextName || nextName === props.databaseName || props.busy) return;
-    props.onRename(nextName);
-  }
   return (
     <section className="rounded-lg border border-line bg-paper shadow-sm">
       <div className="grid gap-3 border-b border-line px-4 py-4">
         <h2 className="text-lg font-semibold text-ink">Members</h2>
-        <form className="flex flex-col gap-2 sm:flex-row sm:items-end" onSubmit={submitRename}>
-          <label className="grid flex-1 gap-1 text-sm">
-            <span className="text-xs uppercase tracking-[0.12em] text-muted">Database name</span>
-            <input
-              className="rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent"
-              maxLength={80}
-              type="text"
-              value={databaseName}
-              onChange={(event) => setDatabaseName(event.target.value)}
-            />
-          </label>
-          <ActionButton disabled={props.busy || databaseName.trim() === "" || databaseName.trim() === props.databaseName} loading={props.busyAction?.kind === "rename"} loadingLabel="Saving..." type="submit" variant="secondary">
-            Rename
-          </ActionButton>
-        </form>
-        <AclQuickAction label="Public" enabled={publicEnabled} busy={props.busy} actionBusy={publicBusy} enabledLabel="Disable public" disabledLabel="Enable public" onDisable={() => publicMember && requestRevoke(publicMember)} onEnable={() => requestGrant(ANONYMOUS_PRINCIPAL, "reader")} />
-        <AclQuickAction label={LLM_WRITER_LABEL} enabled={llmWriterEnabled} busy={props.busy} actionBusy={llmWriterBusy} enabledLabel="Disable LLM writer" disabledLabel={llmWriterButtonLabel} onDisable={() => llmWriterMember && requestRevoke(llmWriterMember)} onEnable={() => requestGrant(LLM_WRITER_PRINCIPAL, "writer")} />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <AclQuickAction enabled={publicEnabled} busy={props.busy} actionBusy={publicBusy} enabledLabel="Disable public" disabledLabel="Enable public" onDisable={() => publicMember && requestRevoke(publicMember)} onEnable={() => requestGrant(ANONYMOUS_PRINCIPAL, "reader")} />
+          <AclQuickAction enabled={llmWriterEnabled} busy={props.busy} actionBusy={llmWriterBusy} enabledLabel="Disable LLM writer" disabledLabel={llmWriterButtonLabel} onDisable={() => llmWriterMember && requestRevoke(llmWriterMember)} onEnable={() => requestGrant(LLM_WRITER_PRINCIPAL, "writer")} />
+        </div>
         <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-muted">
           URL ingest trigger sessions are valid for 30 minutes. Revoking writer access does not immediately invalidate an already issued session ticket before it expires.
         </p>
@@ -268,6 +247,50 @@ export function OwnerPanel(props: {
         onDelete={props.onDelete}
       />
     </section>
+  );
+}
+
+export function RenameDatabaseDialog(props: {
+  busy: boolean;
+  busyAction: BusyAction | null;
+  databaseName: string;
+  draft: string;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onSubmit: (name: string) => void;
+}) {
+  const trimmed = props.draft.trim();
+  const renameBusy = props.busyAction?.kind === "rename";
+  const submitDisabled = props.busy || trimmed === "" || trimmed === props.databaseName;
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitDisabled) return;
+    props.onSubmit(trimmed);
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4">
+      <form className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
+        <h3 className="text-lg font-semibold text-ink">Rename database</h3>
+        <label className="mt-4 grid gap-1 text-sm">
+          <span className="text-xs uppercase tracking-[0.12em] text-muted">Database name</span>
+          <input
+            className="rounded-lg border border-line bg-white px-3 py-2 text-ink outline-none focus:border-accent"
+            maxLength={80}
+            type="text"
+            value={props.draft}
+            onChange={(event) => props.onChange(event.target.value)}
+          />
+        </label>
+        <div className="mt-5 flex justify-end gap-2">
+          <ActionButton disabled={props.busy} onClick={props.onCancel} variant="secondary">
+            Cancel
+          </ActionButton>
+          <ActionButton disabled={submitDisabled} loading={renameBusy} loadingLabel="Saving..." type="submit" variant="primary">
+            Rename
+          </ActionButton>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -351,16 +374,11 @@ function ConfirmAclDialog(props: { action: PendingAclAction; busy: boolean; busy
   );
 }
 
-function AclQuickAction(props: { label: string; enabled: boolean; busy: boolean; actionBusy: boolean; enabledLabel: string; disabledLabel: string; onDisable: () => void; onEnable: () => void }) {
+function AclQuickAction(props: { enabled: boolean; busy: boolean; actionBusy: boolean; enabledLabel: string; disabledLabel: string; onDisable: () => void; onEnable: () => void }) {
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-sm text-muted">
-        {props.label}: {props.enabled ? "enabled" : "disabled"}
-      </p>
-      <ActionButton disabled={props.busy} loading={props.actionBusy} loadingLabel={props.enabled ? "Disabling..." : "Enabling..."} onClick={props.enabled ? props.onDisable : props.onEnable} variant={props.enabled ? "secondary" : "primary"}>
-        {props.enabled ? props.enabledLabel : props.disabledLabel}
-      </ActionButton>
-    </div>
+    <ActionButton disabled={props.busy} loading={props.actionBusy} loadingLabel={props.enabled ? "Disabling..." : "Enabling..."} onClick={props.enabled ? props.onDisable : props.onEnable} variant={props.enabled ? "secondary" : "primary"}>
+      {props.enabled ? props.enabledLabel : props.disabledLabel}
+    </ActionButton>
   );
 }
 

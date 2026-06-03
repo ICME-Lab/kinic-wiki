@@ -286,7 +286,6 @@ pub enum DatabaseCommand {
     #[command(about = "Open the browser cycles purchase page for one database")]
     Cycles {
         database_id: String,
-        kinic: String,
         #[arg(long)]
         browser_origin: Option<String>,
     },

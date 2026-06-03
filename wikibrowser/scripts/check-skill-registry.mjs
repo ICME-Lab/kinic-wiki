@@ -4,6 +4,7 @@ import ts from "typescript";
 
 const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
+const adminHeader = readFileSync(new URL("../components/admin-header.tsx", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../app/skills/skill-registry-ui.tsx", import.meta.url), "utf8");
 const catalog = readFileSync(new URL("../lib/skill-registry-catalog.ts", import.meta.url), "utf8");
 const details = readFileSync(new URL("../lib/skill-registry-details.ts", import.meta.url), "utf8");
@@ -21,6 +22,9 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 assert.match(route, /params: Promise<\{ databaseId: string \}>/);
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /SkillRegistryClient/);
+assert.match(adminHeader, /export function AdminHeader/);
+assert.match(client, /<AdminHeader/);
+assert.doesNotMatch(client, /unknown database/);
 assert.match(client, /loadSkillCatalog/);
 assert.match(client, /updateSkillStatus/);
 assert.match(client, /recordSkillRun/);

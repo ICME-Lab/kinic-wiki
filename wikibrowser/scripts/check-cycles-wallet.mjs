@@ -1,0 +1,209 @@
+// Where: wikibrowser/scripts/check-cycles-wallet.mjs
+// What: exercises cycles wallet helpers through a small TypeScript VM harness.
+// Why: keep wallet behavior checks separate from /cycles page structure guards.
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import vm from "node:vm";
+
+const require = createRequire(import.meta.url);
+const ts = require("typescript");
+
+const cborMock = { decoded: {} };
+let lastBalanceAccount = null;
+let lastConfigCanister = null;
+const ledgerActorMock = {
+  icrc1_balance_of: async (account) => {
+    lastBalanceAccount = account;
+    return 123_456_789n;
+  },
+  icrc2_allowance: async () => ({ allowance: 0n, expires_at: [] }),
+  icrc2_approve: async () => ({ Ok: 1n })
+};
+
+const walletModule = loadTsModule(
+  "../lib/cycles-wallet.ts",
+  {
+    "@dfinity/oisy-wallet-signer/icrc-wallet": { IcrcWallet: class {} },
+    "@dfinity/utils": {
+      base64ToUint8Array: (value) => new Uint8Array(Buffer.from(value, "base64")),
+      uint8ArrayToBase64: (value) => Buffer.from(value).toString("base64")
+    },
+    "@icp-sdk/core/agent": {
+      Actor: { createActor: () => ledgerActorMock },
+      AnonymousIdentity: class {},
+      Cbor: { decode: () => cborMock.decoded },
+      Certificate: { create: async () => ({}) },
+      HttpAgent: { createSync: () => ({ isLocal: () => false, rootKey: new Uint8Array([1]) }) },
+      lookupResultToBuffer: () => null,
+      requestIdOf: () => new Uint8Array([1])
+    },
+    "@icp-sdk/core/candid": { IDL: {} },
+    "@icp-sdk/core/principal": {
+      Principal: {
+        fromText: (value) => ({ toText: () => value }),
+        fromUint8Array: (value) => ({ toText: () => `bytes:${Array.from(value).join(",")}` })
+      }
+    },
+    "@/lib/vfs-client": {
+      getCyclesBillingConfig: async (canisterId) => {
+        lastConfigCanister = canisterId;
+        return { kinicLedgerCanisterId: "ledger", cyclesPerKinic: "1000" };
+      }
+    },
+    "@/lib/vfs-idl": { idlFactory: () => ({}) },
+    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n, kinicBaseUnitsPerToken: () => 100_000_000n },
+    "@/lib/kinic-amount": { formatTokenAmountFromE8s }
+  },
+  "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, purchaseAfterApprove, decodeOisyCyclesPurchaseResult, formatLedgerApproveError } });"
+);
+const walletTest = walletModule.__test;
+
+assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 100_000n), 100_100_000n);
+assert.throws(() => walletTest.assertCanisterPaymentAmountE8s(9_223_372_036_854_775_808n), /KINIC amount e8s exceeds canister limit/);
+assert.throws(() => walletTest.allowanceForCyclesPurchase(18_446_744_073_709_551_615n, 1n), /approved allowance exceeds u64::MAX/);
+assert.throws(
+  () => walletTest.cyclesForPaymentAmountE8s(9_223_372_036_854_775_807n, 200_000_000n),
+  /cycles purchase amount exceeds canister limit/
+);
+assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured/);
+walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
+assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
+await assert.rejects(
+  () => walletTest.purchaseAfterApprove(async () => {
+    throw new Error("purchase rejected");
+  }, { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n }),
+  /cycles purchase failed after approve; approval remains until .*purchase rejected/
+);
+await walletTest.purchaseAfterApprove(async () => "ok", { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n });
+assert.equal(
+  walletTest.formatLedgerApproveError({ InsufficientFunds: { balance: 100_000n } }),
+  "InsufficientFunds: balance 0.001 KINIC"
+);
+assert.equal(
+  walletTest.formatLedgerApproveError({ BadFee: { expected_fee: 100_000n } }),
+  "BadFee: expected_fee 0.001 KINIC"
+);
+assert.equal(
+  walletTest.formatLedgerApproveError({ AllowanceChanged: { current_allowance: 100_000n } }),
+  "AllowanceChanged: current_allowance 0.001 KINIC"
+);
+assert.doesNotThrow(() => walletTest.formatLedgerApproveError({ Unknown: { nested: { value: 42n } } }));
+assert.match(walletTest.formatLedgerApproveError({ Unknown: { nested: { value: 42n } } }), /"value":"42"/);
+
+assert.equal(
+  await walletModule.getConnectedWalletKinicBalance("aaaaa-aa", { provider: "oisy", connection: { owner: "oisy-principal" } }),
+  "123456789"
+);
+assert.equal(lastConfigCanister, "aaaaa-aa");
+assert.equal(lastBalanceAccount.owner.toText(), "oisy-principal");
+assert.equal(Array.isArray(lastBalanceAccount.subaccount), true);
+assert.equal(lastBalanceAccount.subaccount.length, 0);
+assert.equal(
+  await walletModule.getConnectedWalletKinicBalance("aaaaa-aa", { provider: "plug", connection: { principal: "plug-principal" } }),
+  "123456789"
+);
+assert.equal(lastBalanceAccount.owner.toText(), "plug-principal");
+assert.equal(Array.isArray(lastBalanceAccount.subaccount), true);
+assert.equal(lastBalanceAccount.subaccount.length, 0);
+
+cborMock.decoded = { method_name: "write_node" };
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "aaaaa-aa",
+    sender: "bytes:7",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response method mismatch/
+);
+cborMock.decoded = {
+  method_name: "purchase_database_cycles",
+  canister_id: new Uint8Array([2]),
+  sender: new Uint8Array([7]),
+  arg: new Uint8Array([1])
+};
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "aaaaa-aa",
+    sender: "bytes:7",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response canister mismatch/
+);
+cborMock.decoded = {
+  method_name: "purchase_database_cycles",
+  canister_id: new Uint8Array([]),
+  sender: new Uint8Array([7]),
+  arg: new Uint8Array([9])
+};
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "bytes:",
+    sender: "bytes:7",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response argument mismatch/
+);
+cborMock.decoded = {
+  method_name: "purchase_database_cycles",
+  canister_id: new Uint8Array([]),
+  sender: new Uint8Array([8]),
+  arg: new Uint8Array([1])
+};
+await assert.rejects(
+  () => walletTest.decodeOisyCyclesPurchaseResult({
+    canisterId: "bytes:",
+    sender: "bytes:7",
+    method: "purchase_database_cycles",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response sender mismatch/
+);
+
+console.log("Cycles wallet checks OK");
+
+function formatTokenAmountFromE8s(value) {
+  const e8s = typeof value === "bigint" ? value : BigInt(value);
+  if (e8s === 0n) return "0.000 KINIC";
+  const whole = e8s / 100_000_000n;
+  const thousandths = (e8s % 100_000_000n) / 100_000n;
+  if (whole === 0n && thousandths === 0n) return "<0.001 KINIC";
+  return `${whole.toString()}.${thousandths.toString().padStart(3, "0")} KINIC`;
+}
+
+function loadTsModule(relativePath, mocks, append = "") {
+  const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
+  const transpiled = ts.transpileModule(`${source}\n${append}`, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+      esModuleInterop: true
+    }
+  }).outputText;
+  const commonjsModule = { exports: {} };
+  const context = {
+    Buffer,
+    Date,
+    TextEncoder,
+    Uint8Array,
+    URLSearchParams,
+    console,
+    exports: commonjsModule.exports,
+    module: commonjsModule,
+    process: { env: {} },
+    require: (id) => {
+      if (Object.prototype.hasOwnProperty.call(mocks, id)) return mocks[id];
+      throw new Error(`unexpected module import: ${id}`);
+    }
+  };
+  vm.runInNewContext(transpiled, context, { filename: relativePath });
+  return Object.assign(commonjsModule.exports, { __context: context });
+}

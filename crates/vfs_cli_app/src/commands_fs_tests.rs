@@ -67,6 +67,10 @@ impl VfsApi for MockClient {
         })
     }
 
+    async fn check_database_write_cycles(&self, _database_id: &str) -> Result<()> {
+        Ok(())
+    }
+
     async fn list_databases(&self) -> Result<Vec<DatabaseSummary>> {
         Ok(vec![DatabaseSummary {
             database_id: "default".to_string(),

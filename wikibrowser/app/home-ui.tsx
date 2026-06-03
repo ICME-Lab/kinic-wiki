@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BookOpen, Settings, Share2, Wallet } from "lucide-react";
+import { BookOpen, PlugZap, PowerOff, Settings, Share2, TerminalSquare, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import { formatCycles as formatCycleBalance } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref, type DatabaseCycleView } from "@/lib/cycles-state";
@@ -15,6 +15,113 @@ export type DatabaseRow = DatabaseSummary & {
   member: boolean;
   publicReadable: boolean;
 };
+
+export type HeaderWalletProvider = "oisy" | "plug";
+
+export function WalletControls({
+  balanceLoading,
+  busyProvider,
+  connectedBalanceLabel,
+  connectedLabel,
+  connectedProvider,
+  disabled,
+  onConnect,
+  onDisconnect
+}: {
+  balanceLoading: boolean;
+  busyProvider: HeaderWalletProvider | null;
+  connectedBalanceLabel: string | null;
+  connectedLabel: string | null;
+  connectedProvider: HeaderWalletProvider | null;
+  disabled: boolean;
+  onConnect: (provider: HeaderWalletProvider) => void;
+  onDisconnect: (provider: HeaderWalletProvider) => void;
+}) {
+  const oisyConnected = connectedProvider === "oisy";
+  const plugConnected = connectedProvider === "plug";
+  return (
+    <div className="flex flex-wrap gap-2">
+      <WalletConnectButton
+        busy={busyProvider === "oisy"}
+        ariaLabel={oisyConnected ? "Disconnect OISY" : undefined}
+        balanceLabel={oisyConnected ? connectedBalanceLabel : null}
+        balanceLoading={oisyConnected && balanceLoading}
+        connected={oisyConnected}
+        connectedLabel={oisyConnected ? connectedLabel : null}
+        disabled={disabled || busyProvider !== null}
+        hoverIcon={oisyConnected ? <PowerOff aria-hidden size={15} /> : null}
+        icon={<Wallet aria-hidden size={15} />}
+        label="OISY"
+        onClick={() => (oisyConnected ? onDisconnect("oisy") : onConnect("oisy"))}
+      />
+      <WalletConnectButton
+        busy={busyProvider === "plug"}
+        ariaLabel={plugConnected ? "Disconnect Plug" : undefined}
+        balanceLabel={plugConnected ? connectedBalanceLabel : null}
+        balanceLoading={plugConnected && balanceLoading}
+        connected={plugConnected}
+        connectedLabel={plugConnected ? connectedLabel : null}
+        disabled={disabled || busyProvider !== null}
+        hoverIcon={plugConnected ? <PowerOff aria-hidden size={15} /> : null}
+        icon={<PlugZap aria-hidden size={15} />}
+        label="Plug"
+        onClick={() => (plugConnected ? onDisconnect("plug") : onConnect("plug"))}
+      />
+    </div>
+  );
+}
+
+function WalletConnectButton({
+  ariaLabel,
+  balanceLabel,
+  balanceLoading,
+  busy,
+  connected,
+  connectedLabel,
+  disabled,
+  hoverIcon,
+  icon,
+  label,
+  onClick
+}: {
+  ariaLabel?: string;
+  balanceLabel: string | null;
+  balanceLoading: boolean;
+  busy: boolean;
+  connected: boolean;
+  connectedLabel: string | null;
+  disabled: boolean;
+  hoverIcon: ReactNode | null;
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  const classes = connected
+    ? "border-action bg-action text-white hover:border-accent hover:bg-accent"
+    : "border-line bg-white text-ink hover:border-accent hover:text-accent";
+  const primaryLabel = busy ? "Connecting..." : connectedLabel ?? label;
+  const secondaryLabel = balanceLoading ? "Loading KINIC" : balanceLabel;
+  return (
+    <button
+      aria-label={ariaLabel}
+      className={`group inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
+      disabled={disabled}
+      type="button"
+      onClick={onClick}
+    >
+      <span className="relative inline-flex size-[15px] shrink-0 items-center justify-center">
+        <span className={hoverIcon && !disabled ? "absolute inset-0 inline-flex items-center justify-center transition-opacity group-hover:opacity-0" : "absolute inset-0 inline-flex items-center justify-center"}>
+          {icon}
+        </span>
+        {hoverIcon && !disabled ? <span className="absolute inset-0 inline-flex items-center justify-center opacity-0 transition-opacity group-hover:opacity-100">{hoverIcon}</span> : null}
+      </span>
+      <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5">
+        <span className="truncate">{primaryLabel}</span>
+        {connected && secondaryLabel ? <span className="font-mono text-xs opacity-90">/ {secondaryLabel}</span> : null}
+      </span>
+    </button>
+  );
+}
 
 export function AuthControls({
   authReady,
@@ -34,13 +141,13 @@ export function AuthControls({
   if (!principal) {
     return (
       <button
-        className="rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
+        className="rounded-lg border border-action bg-action px-4 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
         disabled={!authReady}
         data-tid="login-button"
         type="button"
         onClick={onLogin}
       >
-        Login with Internet Identity
+        Internet Identity
       </button>
     );
   }
@@ -58,6 +165,7 @@ export function AuthControls({
 }
 
 export function DatabaseBody({
+  createDatabaseAction,
   cyclesConfig,
   loading,
   myDatabases,
@@ -65,6 +173,7 @@ export function DatabaseBody({
   publicError,
   publicDatabases
 }: {
+  createDatabaseAction?: ReactNode;
   cyclesConfig: CyclesBillingConfig | null;
   loading: boolean;
   myDatabases: DatabaseRow[];
@@ -78,7 +187,7 @@ export function DatabaseBody({
   }
   return (
     <div className="grid gap-5">
-      <DatabaseSection cyclesConfig={cyclesConfig} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
+      <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
       <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
@@ -99,9 +208,9 @@ export function OfficialKinicWikiPanel() {
             <BookOpen aria-hidden size={15} />
             <span>Open</span>
           </Link>
-          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink no-underline hover:border-accent hover:text-accent" href={`/dashboard/${encodeURIComponent(OFFICIAL_KINIC_WIKI_DATABASE_ID)}`}>
-            <Settings aria-hidden size={15} />
-            <span>Manage</span>
+          <Link className="inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm font-medium text-ink no-underline hover:border-accent hover:text-accent" href="/cli">
+            <TerminalSquare aria-hidden size={15} />
+            <span>CLI</span>
           </Link>
         </div>
       </div>
@@ -110,6 +219,7 @@ export function OfficialKinicWikiPanel() {
 }
 
 function DatabaseSection({
+  action,
   cyclesConfig,
   description,
   emptyMessage,
@@ -119,6 +229,7 @@ function DatabaseSection({
   showTitle = true,
   title
 }: {
+  action?: ReactNode;
   cyclesConfig: CyclesBillingConfig | null;
   description?: string;
   emptyMessage: string;
@@ -130,23 +241,16 @@ function DatabaseSection({
 }) {
   if (rows.length === 0) {
     return (
-      <section className={showTitle ? "rounded-lg border border-line bg-paper p-4 shadow-sm" : "p-4"}>
-        {showTitle ? <h3 className="text-sm font-semibold text-ink">{title}</h3> : null}
-        {showTitle && description ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
-        {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
-        <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
+      <section className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : "p-4"}>
+        {showTitle ? <DatabaseSectionHeader action={action} description={description} title={title} /> : null}
+        {publicError && mode === "public" ? <p className={showTitle ? "px-4 pt-3 text-sm text-muted" : "mt-2 text-sm text-muted"}>{publicError}</p> : null}
+        <p className={showTitle ? "px-4 pb-4 pt-3 text-sm text-muted" : "mt-2 text-sm text-muted"}>{emptyMessage}</p>
       </section>
     );
   }
   return (
     <section className={showTitle ? "rounded-lg border border-line bg-paper shadow-sm" : undefined}>
-      {showTitle ? (
-        <div className="border-b border-line px-4 py-3">
-          <h3 className="text-sm font-semibold text-ink">{title}</h3>
-          {description ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
-          {publicError && mode === "public" ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
-        </div>
-      ) : null}
+      {showTitle ? <DatabaseSectionHeader action={action} description={description} publicError={mode === "public" ? publicError : null} title={title} /> : null}
       {!showTitle && publicError && mode === "public" ? <p className="px-4 pt-4 text-sm text-muted">{publicError}</p> : null}
       <div className="grid gap-3 p-3 sm:hidden">
         {rows.map((database) => (
@@ -176,6 +280,19 @@ function DatabaseSection({
         </table>
       </div>
     </section>
+  );
+}
+
+function DatabaseSectionHeader({ action, description, publicError = null, title }: { action?: ReactNode; description?: string; publicError?: string | null; title: string }) {
+  return (
+    <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+        {description ? <p className="mt-1 text-xs leading-5 text-muted">{description}</p> : null}
+        {publicError ? <p className="mt-2 text-sm text-muted">{publicError}</p> : null}
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
   );
 }
 

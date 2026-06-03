@@ -4,8 +4,10 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil } from "lucide-react";
 import type { BusyAction } from "./access-control";
-import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AdminHeader } from "@/components/admin-header";
 import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
@@ -41,6 +43,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [actionTone, setActionTone] = useState<"error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
   const isActiveDatabase = database?.status === "active";
@@ -179,6 +183,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setError(null);
     setWarning(null);
     setMemberError(null);
+    setRenameOpen(false);
+    setRenameDraft("");
     await refresh(null, databaseId);
   }
 
@@ -220,8 +226,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
-  async function renameDatabase(name: string) {
-    if (!authClient || !databaseId) return;
+  async function renameDatabase(name: string): Promise<boolean> {
+    if (!authClient || !databaseId) return false;
     setBusy(true);
     setBusyAction({ kind: "rename" });
     setActionMessage(null);
@@ -230,12 +236,29 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setActionTone("info");
       setActionMessage("Database name updated.");
       await refresh(authClient, databaseId);
+      return true;
     } catch (cause) {
       setActionTone("error");
       setActionMessage(errorMessage(cause));
+      return false;
     } finally {
       setBusy(false);
       setBusyAction(null);
+    }
+  }
+
+  function openRenameDialog() {
+    if (!database || !canManage) return;
+    setRenameDraft(database.name);
+    setRenameOpen(true);
+  }
+
+  async function submitRename(name: string) {
+    if (!database || busy) return;
+    const nextName = name.trim();
+    if (!nextName || nextName === database.name) return;
+    if (await renameDatabase(nextName)) {
+      setRenameOpen(false);
     }
   }
 
@@ -262,28 +285,55 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   return (
     <main className="min-h-screen px-6 py-8">
       <section className="mx-auto flex max-w-6xl flex-col gap-6">
-        <header className="flex flex-col gap-4 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <Link className="text-sm text-accent no-underline hover:underline" href="/">
-              Dashboard
-            </Link>
-            {databaseId && isActiveDatabase ? (
-              <Link className="ml-3 text-sm text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
-                Skill Registry
+        <AdminHeader
+          title={database?.name ?? "Database access"}
+          titleAction={
+            canManage ? (
+              <button
+                aria-label="Rename database"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-white text-muted hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                title="Rename database"
+                type="button"
+                onClick={openRenameDialog}
+              >
+                <Pencil aria-hidden size={15} />
+              </button>
+            ) : null
+          }
+          nav={
+            <>
+              <Link className="text-accent no-underline hover:underline" href="/">
+                Database dashboard
               </Link>
-            ) : null}
-            <h1 className="mt-2 text-3xl font-semibold text-ink">{database?.name ?? "Database access"}</h1>
-            <p className="mt-1 font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
-            <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
-          </div>
-        </header>
+              {databaseId && isActiveDatabase ? (
+                <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
+                  Skill Registry
+                </Link>
+              ) : null}
+            </>
+          }
+          actions={
+            <>
+              {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
+              <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
+            </>
+          }
+        />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
+        {renameOpen && database ? (
+          <RenameDatabaseDialog
+            busy={busy}
+            busyAction={busyAction}
+            databaseName={database.name}
+            draft={renameDraft}
+            onCancel={() => setRenameOpen(false)}
+            onChange={setRenameDraft}
+            onSubmit={(name) => void submitRename(name)}
+          />
+        ) : null}
 
         {database ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
 
@@ -301,7 +351,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               principal={principal ?? "anonymous"}
               onDelete={deleteDatabase}
               onGrant={grantAccess}
-              onRename={renameDatabase}
               onRevoke={revokeAccess}
             />
           ) : database.publicReadable ? (

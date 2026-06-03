@@ -13,14 +13,15 @@ const url = readFileSync(new URL("../lib/cycles-url.ts", import.meta.url), "utf8
 const idl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
 const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
 const connectOisy = sliceBetween(wallet, "export async function connectOisyWallet", "export async function connectPlugWallet");
-const connectPlug = sliceBetween(wallet, "export async function connectPlugWallet", "export async function purchaseCyclesWithOisy");
+const connectPlug = sliceBetween(wallet, "export async function connectPlugWallet", "export async function getConnectedWalletKinicBalance");
+const walletBalance = sliceBetween(wallet, "export async function getConnectedWalletKinicBalance", "export async function purchaseCyclesWithOisy");
 const purchaseOisy = sliceBetween(wallet, "export async function purchaseCyclesWithOisy", "export async function purchaseCyclesWithPlug");
 const purchasePlug = sliceBetween(wallet, "export async function purchaseCyclesWithPlug", "function approveParams");
 
 assert.match(page, /\/cycles/);
 assert.doesNotMatch(page, /canister_id \?\? params\.canisterId/);
 assert.doesNotMatch(page, /amount_e8s \?\? params\.amountE8s/);
-assert.match(page, /initialKinic=\{first\(params\.kinic\)\}/);
+assert.doesNotMatch(page, /params\.kinic|initialKinic/);
 assert.match(client, /purchaseCyclesWithOisy/);
 assert.match(client, /purchaseCyclesWithPlug/);
 assert.match(client, /connectOisyWallet/);
@@ -37,8 +38,8 @@ assert.match(client, /onClick=\{\(\) => void purchase\(\)\}/);
 assert.doesNotMatch(client, /onCycles/);
 assert.match(client, /parseKinicAmountE8sInput/);
 assert.match(client, /parseCyclesTarget/);
-assert.match(client, /initialKinic\?: string/);
-assert.match(client, /useState\(\(\) => \(initialKinic\?\.trim\(\) \? initialKinic : "1"\)\)/);
+assert.doesNotMatch(client, /initialKinic/);
+assert.match(client, /useState\("1"\)/);
 assert.match(client, /KINIC/);
 assert.doesNotMatch(client, /Login with Internet Identity|Notify identity/);
 assert.match(wallet, /export async function connectOisyWallet/);
@@ -55,10 +56,15 @@ assert.match(connectOisy, /safeDisconnectOisyWallet\(wallet\)/);
 assert.doesNotMatch(connectOisy, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
 assert.match(connectPlug, /plug\.requestConnect\(\{\s*host:/);
 assert.doesNotMatch(connectPlug, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
+assert.match(walletBalance, /getCyclesBillingConfig\(canisterId\)/);
+assert.match(walletBalance, /getLedgerBalance\(config\.kinicLedgerCanisterId, connectedWalletPrincipal\(wallet\)\)/);
 assert.match(purchaseOisy, /prepareCyclesPurchase\(request, connection\.owner\)/);
 assert.match(purchasePlug, /prepareCyclesPurchase\(request, connection\.principal\)/);
 assert.match(purchasePlug, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
 assert.match(wallet, /icrc2_approve/);
+assert.match(wallet, /icrc1_balance_of/);
+assert.doesNotMatch(purchasePlug, /JSON\.stringify\(approve\.Err\)/);
+assert.match(purchasePlug, /formatLedgerApproveError\(approve\.Err\)/);
 assert.match(wallet, /icrc2_allowance/);
 assert.doesNotMatch(wallet, /icrc1_fee/);
 assert.match(wallet, /async function prepareCyclesPurchase/);
@@ -95,7 +101,7 @@ assert.match(wallet, /contentMap|Certificate|requestIdOf/);
 assert.match(wallet, /purchase_database_cycles\(prepared\.purchaseRequest\)/);
 assert.match(wallet, /encodeCyclesPurchaseArgs\(request: DatabaseCyclesPurchaseRequest\)/);
 assert.match(wallet, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
-assert.match(wallet, /spender: \{ owner: Principal\.fromText\(canisterId\), subaccount: \[\] \}/);
+assert.match(wallet, /function defaultAccount\(owner: string\): LedgerAccount/);
 assert.match(wallet, /DEFAULT_OISY_SIGNER_URL/);
 assert.match(wallet, /cycles purchase failed after approve; approval remains until/);
 assert.match(wallet, /class CyclesPurchaseAfterApproveError extends Error/);
@@ -104,6 +110,7 @@ assert.match(client, /purchasedCycles/);
 assert.match(client, /approved allowance/);
 assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
+assert.match(client, /A newly created database is pending, not active, until this first cycles purchase completes\./);
 assert.match(client, /Any authenticated wallet can purchase non-refundable cycles/);
 assert.doesNotMatch(client, new RegExp("extractCycles" + "RepairTarget"));
 assert.doesNotMatch(client, new RegExp("saveCycles" + "Repair" + "Record"));
@@ -147,56 +154,6 @@ assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0"), "KINIC amount must b
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1.000000001"), "KINIC must be a positive number with up to 8 decimals");
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("184467440737.09551616"), "KINIC amount e8s must be <= u64::MAX");
 
-const cborMock = { decoded: {} };
-const walletModule = loadTsModule(
-  "../lib/cycles-wallet.ts",
-  {
-    "@dfinity/oisy-wallet-signer/icrc-wallet": { IcrcWallet: class {} },
-    "@dfinity/utils": {
-      base64ToUint8Array: (value) => new Uint8Array(Buffer.from(value, "base64")),
-      uint8ArrayToBase64: (value) => Buffer.from(value).toString("base64")
-    },
-    "@icp-sdk/core/agent": {
-      Actor: { createActor: () => ({}) },
-      AnonymousIdentity: class {},
-      Cbor: { decode: () => cborMock.decoded },
-      Certificate: { create: async () => ({}) },
-      HttpAgent: { createSync: () => ({ isLocal: () => false, rootKey: new Uint8Array([1]) }) },
-      lookupResultToBuffer: () => null,
-      requestIdOf: () => new Uint8Array([1])
-    },
-    "@icp-sdk/core/candid": { IDL: {} },
-    "@icp-sdk/core/principal": {
-      Principal: {
-        fromText: (value) => ({ toText: () => value }),
-        fromUint8Array: (value) => ({ toText: () => `bytes:${Array.from(value).join(",")}` })
-      }
-    },
-    "@/lib/vfs-client": { getCyclesBillingConfig: async () => ({ kinicLedgerCanisterId: "ledger", cyclesPerKinic: "1000" }) },
-    "@/lib/vfs-idl": { idlFactory: () => ({}) },
-    "@/lib/cycles": { formatRawCycles: (value) => value.toString(), KINIC_LEDGER_FEE_E8S: 100_000n, kinicBaseUnitsPerToken: () => 100_000_000n }
-  },
-  "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, purchaseAfterApprove, decodeOisyCyclesPurchaseResult } });"
-);
-const walletTest = walletModule.__test;
-assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 100_000n), 100_100_000n);
-assert.throws(() => walletTest.assertCanisterPaymentAmountE8s(9_223_372_036_854_775_808n), /KINIC amount e8s exceeds canister limit/);
-assert.throws(() => walletTest.allowanceForCyclesPurchase(18_446_744_073_709_551_615n, 1n), /approved allowance exceeds u64::MAX/);
-assert.throws(
-  () => walletTest.cyclesForPaymentAmountE8s(9_223_372_036_854_775_807n, 200_000_000n),
-  /cycles purchase amount exceeds canister limit/
-);
-assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured/);
-walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
-assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
-await assert.rejects(
-  () => walletTest.purchaseAfterApprove(async () => {
-    throw new Error("purchase rejected");
-  }, { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n }),
-  /cycles purchase failed after approve; approval remains until .*purchase rejected/
-);
-await walletTest.purchaseAfterApprove(async () => "ok", { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n });
-
 const clientModule = loadTsModule(
   "../app/cycles/cycles-client.tsx",
   {
@@ -222,70 +179,12 @@ const clientModule = loadTsModule(
     "@/lib/cycles-wallet": {
       connectOisyWallet: async () => ({}),
       connectPlugWallet: async () => ({}),
+      getConnectedWalletKinicBalance: async () => "0",
       purchaseCyclesWithOisy: async () => ({}),
       purchaseCyclesWithPlug: async () => ({})
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s: (value) => String(value) }
   }
-);
-cborMock.decoded = { method_name: "write_node" };
-await assert.rejects(
-  () => walletTest.decodeOisyCyclesPurchaseResult({
-    canisterId: "aaaaa-aa",
-    sender: "bytes:7",
-    method: "purchase_database_cycles",
-    arg: Buffer.from([1]).toString("base64"),
-    result: { contentMap: "unused", certificate: "unused" }
-  }),
-  /wallet response method mismatch/
-);
-cborMock.decoded = {
-  method_name: "purchase_database_cycles",
-  canister_id: new Uint8Array([2]),
-  sender: new Uint8Array([7]),
-  arg: new Uint8Array([1])
-};
-await assert.rejects(
-  () => walletTest.decodeOisyCyclesPurchaseResult({
-    canisterId: "aaaaa-aa",
-    sender: "bytes:7",
-    method: "purchase_database_cycles",
-    arg: Buffer.from([1]).toString("base64"),
-    result: { contentMap: "unused", certificate: "unused" }
-  }),
-  /wallet response canister mismatch/
-);
-cborMock.decoded = {
-  method_name: "purchase_database_cycles",
-  canister_id: new Uint8Array([]),
-  sender: new Uint8Array([7]),
-  arg: new Uint8Array([9])
-};
-await assert.rejects(
-  () => walletTest.decodeOisyCyclesPurchaseResult({
-    canisterId: "bytes:",
-    sender: "bytes:7",
-    method: "purchase_database_cycles",
-    arg: Buffer.from([1]).toString("base64"),
-    result: { contentMap: "unused", certificate: "unused" }
-  }),
-  /wallet response argument mismatch/
-);
-cborMock.decoded = {
-  method_name: "purchase_database_cycles",
-  canister_id: new Uint8Array([]),
-  sender: new Uint8Array([8]),
-  arg: new Uint8Array([1])
-};
-await assert.rejects(
-  () => walletTest.decodeOisyCyclesPurchaseResult({
-    canisterId: "bytes:",
-    sender: "bytes:7",
-    method: "purchase_database_cycles",
-    arg: Buffer.from([1]).toString("base64"),
-    result: { contentMap: "unused", certificate: "unused" }
-  }),
-  /wallet response sender mismatch/
 );
 
 console.log("Cycles checks OK");
