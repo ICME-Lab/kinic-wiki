@@ -7,6 +7,7 @@ import { CreateDatabaseDialog } from "./create-database-dialog";
 import { AuthControls, DatabaseBody, OfficialKinicWikiPanel, StatusPanel, WalletControls, type HeaderWalletProvider } from "./home-ui";
 import { AdminHeader } from "@/components/admin-header";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, purchaseCyclesWithOisy, purchaseCyclesWithPlug, type ConnectedKinicWallet } from "@/lib/cycles-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -205,12 +206,12 @@ export default function HomePage() {
       return;
     }
     if (!wallet) {
-      setError(`Connect OISY or Plug with at least ${formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())} before creating a database.`);
+      setError(`Connect OISY or Plug with at least ${formatTokenAmountFromE8s(createDatabaseRequiredBalanceE8s())} before creating a database.`);
       setLoadState("error");
       return;
     }
     if (!walletCanFundCreate(walletBalance)) {
-      setError(`Create database requires at least ${formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())} in the connected wallet.`);
+      setError(`Create database requires at least ${formatTokenAmountFromE8s(createDatabaseRequiredBalanceE8s())} in the connected wallet.`);
       setLoadState("error");
       return;
     }
@@ -301,6 +302,7 @@ export default function HomePage() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
+          requiredBalanceLabel={formatTokenAmountFromE8s(createDatabaseRequiredBalanceE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
@@ -372,6 +374,10 @@ function createDatabasePurchaseAmountE8s(): bigint {
   return parsed;
 }
 
+function createDatabaseRequiredBalanceE8s(): bigint {
+  return createDatabasePurchaseAmountE8s() + KINIC_LEDGER_FEE_E8S * 2n;
+}
+
 function walletLabel(provider: HeaderWalletProvider): string {
   return provider === "oisy" ? "OISY" : "Plug";
 }
@@ -382,7 +388,7 @@ function walletPrincipal(wallet: ConnectedHeaderWallet): string {
 
 function walletCanFundCreate(balanceE8s: string | null): boolean {
   if (!balanceE8s || !/^\d+$/.test(balanceE8s)) return false;
-  return BigInt(balanceE8s) >= createDatabasePurchaseAmountE8s();
+  return BigInt(balanceE8s) >= createDatabaseRequiredBalanceE8s();
 }
 
 function databaseCreateButtonLabel({

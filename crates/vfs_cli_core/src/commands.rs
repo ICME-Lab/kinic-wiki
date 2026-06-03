@@ -804,10 +804,20 @@ pub fn database_cycles_url(browser_origin: Option<&str>, database_id: &str) -> R
     if origin.is_empty() {
         return Err(anyhow!("browser origin must not be empty"));
     }
+    if !is_browser_cycles_database_id(database_id) {
+        return Err(anyhow!("database_id contains unsupported characters"));
+    }
     Ok(format!(
         "{origin}/cycles?database_id={}",
         query_encode(database_id)
     ))
+}
+
+fn is_browser_cycles_database_id(database_id: &str) -> bool {
+    !database_id.is_empty()
+        && database_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 fn parse_kinic_amount_e8s(value: &str) -> Result<u64> {
@@ -2318,10 +2328,23 @@ mod tests {
 
     #[test]
     fn database_cycles_url_uses_browser_origin() {
-        let url = super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db alpha")
+        let url = super::database_cycles_url(Some("http://127.0.0.1:3000/"), "db_alpha")
             .expect("url should build");
 
-        assert_eq!(url, "http://127.0.0.1:3000/cycles?database_id=db%20alpha");
+        assert_eq!(url, "http://127.0.0.1:3000/cycles?database_id=db_alpha");
+    }
+
+    #[test]
+    fn database_cycles_url_rejects_unsupported_database_id() {
+        for database_id in ["db alpha", "bad/path", ""] {
+            let error = super::database_cycles_url(Some("http://127.0.0.1:3000/"), database_id)
+                .expect_err("unsupported database id should fail");
+            assert!(
+                error
+                    .to_string()
+                    .contains("database_id contains unsupported characters")
+            );
+        }
     }
 
     #[test]

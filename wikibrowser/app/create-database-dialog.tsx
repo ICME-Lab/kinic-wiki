@@ -10,6 +10,7 @@ export function CreateDatabaseDialog({
   creating,
   databaseName,
   open,
+  requiredBalanceLabel,
   validationError,
   onCancel,
   onChange,
@@ -19,6 +20,7 @@ export function CreateDatabaseDialog({
   creating: boolean;
   databaseName: string;
   open: boolean;
+  requiredBalanceLabel: string;
   validationError: string | null;
   onCancel: () => void;
   onChange: (value: string) => void;
@@ -39,7 +41,7 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Connect a wallet with at least 1 KINIC before creating. New databases are created pending, not active, until the first purchase completes.
+              Connect a wallet with at least {requiredBalanceLabel} before creating. New databases are created pending, not active, until the first purchase completes.
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
