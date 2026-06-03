@@ -43,7 +43,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
   const [authRefreshSeq, setAuthRefreshSeq] = useState(0);
   const [principal, setPrincipal] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
+  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -55,11 +55,11 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearStoredWallet = useCallback(() => {
-    sessionStorage.removeItem(WALLET_SESSION_KEY);
+    safeSessionStorageRemove(WALLET_SESSION_KEY);
   }, []);
 
   const storeWallet = useCallback((nextWallet: ConnectedKinicWallet) => {
-    sessionStorage.setItem(
+    safeSessionStorageSet(
       WALLET_SESSION_KEY,
       JSON.stringify({
         provider: nextWallet.provider,
@@ -113,7 +113,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
             : { provider, connection: await connectPlugWallet() };
         setWallet(nextWallet);
         storeWallet(nextWallet);
-        void refreshWalletBalance(nextWallet);
       } catch (cause) {
         setWalletBalance(null);
         setWalletBalanceError(errorMessage(cause));
@@ -121,7 +120,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         setWalletBusyProvider(null);
       }
     },
-    [refreshWalletBalance, storeWallet, walletBusyProvider, walletControlsLocked]
+    [storeWallet, walletBusyProvider, walletControlsLocked]
   );
 
   const disconnectWallet = useCallback(
@@ -208,11 +207,16 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, [syncAuth]);
 
   useEffect(() => {
-    const restoredWallet = readStoredWallet();
-    if (!restoredWallet) return;
-    setWallet(restoredWallet);
-    void refreshWalletBalance(restoredWallet);
-  }, [refreshWalletBalance]);
+    if (!wallet) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void refreshWalletBalance(wallet);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshWalletBalance, wallet]);
 
   return (
     <AppSession.Provider
@@ -254,7 +258,7 @@ export function connectedWalletPrincipal(wallet: ConnectedKinicWallet): string {
 }
 
 function readStoredWallet(): ConnectedKinicWallet | null {
-  const stored = sessionStorage.getItem(WALLET_SESSION_KEY);
+  const stored = safeSessionStorageGet(WALLET_SESSION_KEY);
   if (!stored) return null;
   try {
     const parsed: unknown = JSON.parse(stored);
@@ -265,6 +269,30 @@ function readStoredWallet(): ConnectedKinicWallet | null {
     return provider === "oisy" ? { provider, connection: { owner: principal } } : { provider, connection: { principal } };
   } catch {
     return null;
+  }
+}
+
+function safeSessionStorageGet(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeSessionStorageSet(key: string, value: string): void {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch {
+    // Wallet persistence is best effort; connection state remains valid in memory.
+  }
+}
+
+function safeSessionStorageRemove(key: string): void {
+  try {
+    sessionStorage.removeItem(key);
+  } catch {
+    // Wallet persistence is best effort; disconnect state remains valid in memory.
   }
 }
 

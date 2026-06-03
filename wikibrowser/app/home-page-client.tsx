@@ -91,7 +91,14 @@ export function HomePageClient() {
 
   useEffect(() => {
     if (!authReady) return;
-    void refreshDatabases(authClient);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void refreshDatabases(authClient);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [authClient, authReady, authRefreshSeq, refreshDatabases]);
 
   useEffect(() => {
@@ -101,10 +108,17 @@ export function HomePageClient() {
 
   useEffect(() => {
     if (principal) return;
-    setCyclesBillingConfig(null);
-    setCreateDialogOpen(false);
-    setNewDatabaseName("");
-    setWalletMessage(null);
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setCyclesBillingConfig(null);
+      setCreateDialogOpen(false);
+      setNewDatabaseName("");
+      setWalletMessage(null);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [principal]);
 
   async function createDatabase() {

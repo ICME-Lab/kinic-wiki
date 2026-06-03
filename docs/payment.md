@@ -132,7 +132,7 @@ OISY と Plug の wallet flow は、購入直前に canister config を取得す
 approved_allowance_e8s = payment_amount_e8s + ledger_fee_e8s
 ```
 
-approve の transaction fee は wallet 残高から別途支払われる。approve は現在 allowance を `expected_allowance` として渡し、30 分後に expire する。approve 後に purchase が失敗した場合、UI は approval が expire まで残る旨を error に含める。
+approve の transaction fee は wallet 残高から別途支払われる。未期限切れ allowance が `approved_allowance_e8s` 以上残っている場合、UI は再 approve せず既存 allowance で `purchase_database_cycles` を再試行する。approve が必要な場合は現在 allowance を `expected_allowance` として渡し、30 分後に expire する。approval 後に purchase が失敗した場合、UI は approval が expire まで残る旨を error に含める。無期限 allowance を再利用した場合は、無期限 approval が残る旨を error に含める。
 
 UI は `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` と request canister ID が一致しない場合に拒否する。Plug は VFS canister と KINIC ledger canister を whitelist して接続する。OISY は接続確認後に signer popup を閉じ、購入時に再度 signer を開いて同じ owner であることを確認する。OISY は ICRC wallet の call-canister 結果 certificate を検証し、method、canister、arg、reply を照合する。
 

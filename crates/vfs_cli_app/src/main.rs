@@ -3,9 +3,7 @@
 // Why: Wiki operations and Skill Registry operations share connection, identity, and DB selection.
 use anyhow::Result;
 use clap::Parser;
-use vfs_cli::commands::{
-    database_cycles_url, open_database_cycles_page, print_database_current, run_database_unlink,
-};
+use vfs_cli::commands::{open_database_cycles_page, print_database_current, run_database_unlink};
 use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
 };
@@ -159,6 +157,7 @@ async fn new_identity_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vfs_cli::commands::database_cycles_url;
 
     #[test]
     fn database_cycles_url_resolves_without_connection_or_client() {

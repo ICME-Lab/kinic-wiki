@@ -12,13 +12,32 @@ const ts = require("typescript");
 const cborMock = { decoded: {} };
 let lastBalanceAccount = null;
 let lastConfigCanister = null;
+let ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
+let approveCalls = 0;
+let purchaseCalls = 0;
+let lastApproveArgs = null;
 const ledgerActorMock = {
   icrc1_balance_of: async (account) => {
     lastBalanceAccount = account;
     return 123_456_789n;
   },
-  icrc2_allowance: async () => ({ allowance: 0n, expires_at: [] }),
-  icrc2_approve: async () => ({ Ok: 1n })
+  icrc2_allowance: async () => ledgerAllowanceMock,
+  icrc2_approve: async (args) => {
+    approveCalls += 1;
+    lastApproveArgs = args;
+    return { Ok: 1n };
+  }
+};
+const vfsActorMock = {
+  purchase_database_cycles: async () => {
+    purchaseCalls += 1;
+    return { Ok: { block_index: 7n, amount_cycles: 1000n, balance_cycles: 2000n } };
+  }
+};
+const plugMock = {
+  requestConnect: async () => true,
+  agent: { getPrincipal: async () => ({ toText: () => "plug-principal" }) },
+  createActor: async ({ canisterId }) => (canisterId === "ledger" ? ledgerActorMock : vfsActorMock)
 };
 
 const walletModule = loadTsModule(
@@ -79,7 +98,13 @@ await assert.rejects(
   () => walletTest.purchaseAfterApprove(async () => {
     throw new Error("purchase rejected");
   }, { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n }),
-  /cycles purchase failed after approve; approval remains until .*purchase rejected/
+  /cycles purchase failed after approval; approval remains until .*purchase rejected/
+);
+await assert.rejects(
+  () => walletTest.purchaseAfterApprove(async () => {
+    throw new Error("purchase rejected");
+  }, { approveBlockIndex: null, expiresAt: null }),
+  /cycles purchase failed after approval; approval remains without expiry: purchase rejected/
 );
 await walletTest.purchaseAfterApprove(async () => "ok", { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n });
 assert.equal(
@@ -112,6 +137,59 @@ assert.equal(
 assert.equal(lastBalanceAccount.owner.toText(), "plug-principal");
 assert.equal(Array.isArray(lastBalanceAccount.subaccount), true);
 assert.equal(lastBalanceAccount.subaccount.length, 0);
+
+ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
+approveCalls = 0;
+purchaseCalls = 0;
+lastApproveArgs = null;
+assert.equal(
+  (
+    await walletModule.purchaseCyclesWithPlug(
+      { canisterId: "aaaaa-aa", databaseId: "db_alpha", paymentAmountE8s: 100_000_000n },
+      { principal: "plug-principal" }
+    )
+  ).approveBlockIndex,
+  "1"
+);
+assert.equal(approveCalls, 1);
+assert.equal(lastApproveArgs.expected_allowance[0], 0n);
+assert.equal(purchaseCalls, 1);
+
+ledgerAllowanceMock = { allowance: 100_100_000n, expires_at: [] };
+approveCalls = 0;
+purchaseCalls = 0;
+assert.equal(
+  (
+    await walletModule.purchaseCyclesWithPlug(
+      { canisterId: "aaaaa-aa", databaseId: "db_alpha", paymentAmountE8s: 100_000_000n },
+      { principal: "plug-principal" }
+    )
+  ).approveBlockIndex,
+  null
+);
+assert.equal(approveCalls, 0);
+assert.equal(purchaseCalls, 1);
+
+ledgerAllowanceMock = { allowance: 100_100_000n, expires_at: [BigInt(Date.now() + 60_000) * 1_000_000n] };
+approveCalls = 0;
+assert.equal(
+  (
+    await walletModule.purchaseCyclesWithPlug(
+      { canisterId: "aaaaa-aa", databaseId: "db_alpha", paymentAmountE8s: 100_000_000n },
+      { principal: "plug-principal" }
+    )
+  ).approveBlockIndex,
+  null
+);
+assert.equal(approveCalls, 0);
+
+ledgerAllowanceMock = { allowance: 100_100_000n, expires_at: [BigInt(Date.now() - 60_000) * 1_000_000n] };
+approveCalls = 0;
+await walletModule.purchaseCyclesWithPlug(
+  { canisterId: "aaaaa-aa", databaseId: "db_alpha", paymentAmountE8s: 100_000_000n },
+  { principal: "plug-principal" }
+);
+assert.equal(approveCalls, 1);
 
 cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(
@@ -173,6 +251,53 @@ await assert.rejects(
   /wallet response sender mismatch/
 );
 
+const sessionModule = loadTsModule(
+  "../app/app-session-provider.tsx",
+  {
+    "@icp-sdk/auth/client": { AuthClient: { create: async () => ({}) } },
+    "react": {
+      createContext: () => ({}),
+      useCallback: (run) => run,
+      useContext: () => null,
+      useEffect: () => undefined,
+      useRef: (current) => ({ current }),
+      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => undefined]
+    },
+    "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
+    "@/lib/auth": { AUTH_CLIENT_CREATE_OPTIONS: {}, authLoginOptions: () => ({}) },
+    "@/lib/cycles-wallet": {
+      connectOisyWallet: async () => ({ owner: "oisy-principal" }),
+      connectPlugWallet: async () => ({ principal: "plug-principal" }),
+      getConnectedWalletKinicBalance: async () => "123456789"
+    }
+  },
+  "Object.assign(exports, { __test: { readStoredWallet, safeSessionStorageGet, safeSessionStorageSet, safeSessionStorageRemove } });"
+);
+const sessionTest = sessionModule.__test;
+sessionModule.__context.sessionStorage = {
+  getItem: () => {
+    throw new Error("get blocked");
+  },
+  setItem: () => {
+    throw new Error("set blocked");
+  },
+  removeItem: () => {
+    throw new Error("remove blocked");
+  }
+};
+assert.equal(sessionTest.safeSessionStorageGet("wallet"), null);
+assert.doesNotThrow(() => sessionTest.safeSessionStorageSet("wallet", "value"));
+assert.doesNotThrow(() => sessionTest.safeSessionStorageRemove("wallet"));
+assert.equal(sessionTest.readStoredWallet(), null);
+sessionModule.__context.sessionStorage = {
+  getItem: () => JSON.stringify({ provider: "plug", principal: "plug-principal" }),
+  setItem: () => undefined,
+  removeItem: () => undefined
+};
+const restoredSessionWallet = sessionTest.readStoredWallet();
+assert.equal(restoredSessionWallet.provider, "plug");
+assert.equal(restoredSessionWallet.connection.principal, "plug-principal");
+
 console.log("Cycles wallet checks OK");
 
 function formatTokenAmountFromE8s(value) {
@@ -205,6 +330,7 @@ function loadTsModule(relativePath, mocks, append = "") {
     exports: commonjsModule.exports,
     module: commonjsModule,
     process: { env: {} },
+    window: { ic: { plug: plugMock } },
     require: (id) => {
       if (Object.prototype.hasOwnProperty.call(mocks, id)) return mocks[id];
       throw new Error(`unexpected module import: ${id}`);
