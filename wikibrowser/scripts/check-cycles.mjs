@@ -136,6 +136,7 @@ assert.match(wallet, /class CyclesPurchaseAfterApproveError extends Error/);
 assert.match(client, /purchased cycles/);
 assert.match(client, /purchasedCycles/);
 assert.match(client, /approved allowance/);
+assert.doesNotMatch(client, /formatTokenAmountFromE8s\(result\.paymentAmountE8s\)\} KINIC/);
 assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
 assert.match(client, /A newly created database is pending, not active, until this first cycles purchase completes\./);
@@ -185,6 +186,11 @@ assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0"), "KINIC amount must b
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1.000000001"), "KINIC must be a positive number with up to 8 decimals");
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("92233720368.54775807"), 9_223_372_036_854_775_807n);
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("92233720368.54775808"), "KINIC amount e8s must be <= i64::MAX");
+
+const cyclesStateModule = loadTsModule("../lib/cycles-state.ts", {
+  "@/lib/cycles": { formatCycles: (value) => value.toString() }
+});
+assert.equal(cyclesStateModule.databaseCyclesHref({ databaseId: "db_ok-1", status: "active" }), "/cycles?database_id=db_ok-1&status=active");
 
 const clientModule = loadTsModule(
   "../app/cycles/cycles-client.tsx",

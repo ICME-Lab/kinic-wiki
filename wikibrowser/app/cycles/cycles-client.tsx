@@ -58,7 +58,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
           : await purchaseCyclesWithPlug(request, wallet.connection);
       const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
       setMessage(
-        `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} KINIC; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
+        `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
       );
       await refreshWalletBalance(wallet);
       setStatus("success");
