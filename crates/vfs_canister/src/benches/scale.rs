@@ -222,13 +222,15 @@ fn emit_metadata(case: BenchCase, metrics: &SnapshotMetrics) {
 }
 
 fn emit_storage_billing_metadata(case: BenchCase) {
+    let batch_limit = case.n.min(1_000);
     ic_cdk::eprintln!(
-        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"{}\",\"preview_mode\":\"none\",\"n\":{},\"node_count\":{},\"depth\":0,\"content_size\":{},\"updated_count\":0,\"snapshot_node_count\":0,\"snapshot_bytes\":0,\"shape\":\"storage_billing_batch_limit100_active_dbs\",\"certificate_generation\":\"{}\",\"stable_memory_touch_bytes\":null}}",
+        "CANBENCH_META {{\"bench_name\":\"{}\",\"operation\":\"{}\",\"preview_mode\":\"none\",\"n\":{},\"node_count\":{},\"depth\":0,\"content_size\":{},\"updated_count\":0,\"snapshot_node_count\":0,\"snapshot_bytes\":0,\"shape\":\"storage_billing_batch_limit{}_active_dbs\",\"certificate_generation\":\"{}\",\"stable_memory_touch_bytes\":null}}",
         case.bench_name,
         case.operation,
         case.n,
         case.n,
         CONTENT_SIZE,
+        batch_limit,
         CERTIFICATION_STATUS
     );
 }
@@ -494,18 +496,18 @@ pub(super) fn run_fetch_updates(case: BenchCase) -> BenchResult {
 pub(super) fn run_storage_billing(case: BenchCase) -> BenchResult {
     seed_storage_billing_databases(case);
     emit_storage_billing_metadata(case);
+    let batch_limit = case.n.min(1_000) as u32;
     bench_fn(|| {
         let _scope = bench_scope("storage_billing_call");
         with_service(|service| {
-            service
-                .settle_database_storage_charges_batch(
-                    "canister",
-                    StorageBillingBatchRequest {
-                        cursor_mount_id: None,
-                        limit: Some(100),
-                    },
-                    30_000 + STORAGE_BILLING_INTERVAL_MS,
-                )
+            service.settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(batch_limit),
+                },
+                30_000 + STORAGE_BILLING_INTERVAL_MS,
+            )
         })
         .expect("bench storage billing should settle");
         black_box(());

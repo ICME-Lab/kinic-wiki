@@ -51,6 +51,8 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /type: "list-writable-databases"/);
   assert.match(contentUi, /type: "save-config"/);
   assert.match(contentUi, /<select value=\{config\.value\.databaseId\}/);
+  assert.match(contentUi, /writeCyclesAvailable !== false/);
+  assert.match(contentUi, /saveDatabase\(""\)/);
   assert.match(contentUi, /databaseOptionLabel/);
   assert.match(contentUi, /exportProviderLabel/);
   assert.match(contentUi, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);

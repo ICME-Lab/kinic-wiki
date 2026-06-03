@@ -206,9 +206,14 @@ async function refreshDatabases() {
   try {
     databaseStatus.value = "loading";
     const response = await send({ type: "list-writable-databases" });
-    databases.value = response.result || [];
+    const selectableDatabases = (response.result || []).filter((database) => database.writeCyclesAvailable !== false);
+    databases.value = selectableDatabases;
     databaseStatus.value = databases.value.length > 0 ? "ready" : "empty";
-    if (databases.value.length > 0 && !databases.value.some((database) => database.databaseId === config.value.databaseId)) {
+    if (databases.value.length === 0) {
+      if (config.value.databaseId) await saveDatabase("");
+      return;
+    }
+    if (!databases.value.some((database) => database.databaseId === config.value.databaseId)) {
       await saveDatabase(databases.value[0].databaseId);
     }
   } catch {

@@ -70,8 +70,7 @@ const INDEX_SCHEMA_VERSION_STORAGE_BILLING: &str = "database_index:023_storage_b
 const INDEX_SCHEMA_VERSION_DIRECT_CYCLES: &str = concat!("database_index:024_", "direct_cycles");
 const INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX: &str =
     "database_index:025_cycles_pending_ledger_block_index";
-const INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH: &str =
-    "database_index:026_storage_billing_batch";
+const INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH: &str = "database_index:026_storage_billing_batch";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -95,7 +94,8 @@ pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
 const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
-const MAX_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
+const MAX_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
+const TIMER_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
 const GIB_BYTES: u128 = 1024 * 1024 * 1024;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
 const FNV1A64_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -286,10 +286,11 @@ impl VfsService {
             load_active_databases_for_storage_billing_batch(
                 conn,
                 state.cursor_mount_id.unwrap_or(0),
-                DEFAULT_STORAGE_BILLING_BATCH_LIMIT,
+                TIMER_STORAGE_BILLING_BATCH_LIMIT,
             )
         })?;
-        let result = self.settle_database_storage_billing_batch(caller, batch, state.billing_now_ms)?;
+        let result =
+            self.settle_database_storage_billing_batch(caller, batch, state.billing_now_ms)?;
         self.write_index(|tx| {
             if let Some(cursor) = result.next_cursor_mount_id {
                 update_storage_billing_timer_state(tx, Some(cursor), state.billing_now_ms, now)?;
@@ -307,14 +308,8 @@ impl VfsService {
         batch: StorageBillingDatabaseBatch,
         now: i64,
     ) -> Result<StorageBillingBatchResult, String> {
-        let measured = batch
-            .databases
-            .into_iter()
-            .map(|meta| {
-                let size = self.database_size(&meta)?;
-                Ok((meta.database_id, size))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let next_cursor_mount_id = batch.next_cursor_mount_id;
+        let databases = batch.databases;
         self.write_index(|tx| {
             let config = load_cycles_billing_config(tx)?;
             let mut result = StorageBillingBatchResult {
@@ -322,15 +317,15 @@ impl VfsService {
                 charged_databases: 0,
                 suspended_databases: 0,
                 paid_cycles: 0,
-                next_cursor_mount_id: batch.next_cursor_mount_id,
+                next_cursor_mount_id,
             };
-            for (database_id, size_bytes) in measured {
+            for meta in databases {
                 let outcome = settle_database_storage_charge_in_tx(
                     tx,
                     StorageChargeInput {
-                        database_id: &database_id,
+                        database_id: &meta.database_id,
                         caller,
-                        size_bytes,
+                        size_bytes: meta.logical_size_bytes,
                         now,
                         config: &config,
                     },
@@ -3136,12 +3131,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         ),
         (
             "storage_billing_state",
-            &[
-                "key",
-                "cursor_mount_id",
-                "billing_now_ms",
-                "updated_at_ms",
-            ][..],
+            &["key", "cursor_mount_id", "billing_now_ms", "updated_at_ms"][..],
         ),
     ] {
         for column in columns {
@@ -3624,21 +3614,6 @@ fn load_storage_cycle_account(
     .ok_or_else(|| format!("database cycles account not found: {database_id}"))
 }
 
-fn update_database_logical_size(
-    conn: &Transaction<'_>,
-    database_id: &str,
-    size_bytes: u64,
-) -> Result<(), String> {
-    conn.execute(
-        "UPDATE databases
-         SET logical_size_bytes = ?2
-         WHERE database_id = ?1",
-        params![database_id, i64::try_from(size_bytes).unwrap_or(i64::MAX)],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 fn update_database_storage_account(
     conn: &Transaction<'_>,
     database_id: &str,
@@ -4048,7 +4023,6 @@ fn settle_database_storage_charge_in_tx(
     input: StorageChargeInput<'_>,
 ) -> Result<StorageChargeOutcome, String> {
     let account = load_storage_cycle_account(tx, input.database_id)?;
-    update_database_logical_size(tx, input.database_id, input.size_bytes)?;
     let Some(charged_at_ms) = account.storage_charged_at_ms else {
         update_database_storage_account(
             tx,
@@ -6176,6 +6150,99 @@ mod tests {
     }
 
     #[test]
+    fn storage_billing_batch_clamps_manual_limit_to_thousand() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        for index in 0..1001 {
+            seed_storage_billing_index_database(
+                &service,
+                &format!("db-{index:04}"),
+                MIN_DATABASE_MOUNT_ID + index as u16,
+                GIB_BYTES as i64,
+            );
+        }
+
+        let result = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: Some(100_000),
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("oversized batch should settle at max limit");
+
+        assert_eq!(result.processed_databases, 1000);
+        assert_eq!(result.next_cursor_mount_id, Some(1010));
+    }
+
+    #[test]
+    fn storage_billing_batch_uses_cached_logical_size_without_opening_database() {
+        let dir = tempdir().expect("tempdir should create");
+        let service = VfsService::new(
+            dir.path().join("index.sqlite3"),
+            dir.path().join("databases"),
+        );
+        service
+            .run_index_migrations()
+            .expect("index migrations should run");
+        seed_storage_billing_database(&service, "cached-size", 0);
+        let cached_size = GIB_BYTES as i64;
+        let meta = service
+            .database_meta("cached-size")
+            .expect("database metadata should load");
+        service
+            .write_index(|tx| {
+                tx.execute(
+                    "UPDATE databases
+                     SET logical_size_bytes = ?2
+                     WHERE database_id = ?1",
+                    params!["cached-size", cached_size],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("cached logical size should update");
+        remove_file(&meta.db_file_name).expect("test database file should be removed");
+
+        let result = service
+            .settle_database_storage_charges_batch(
+                "canister",
+                StorageBillingBatchRequest {
+                    cursor_mount_id: None,
+                    limit: None,
+                },
+                STORAGE_BILLING_INTERVAL_MS,
+            )
+            .expect("storage billing should use cached logical size");
+
+        assert_eq!(result.processed_databases, 1);
+        assert_eq!(result.charged_databases, 1);
+        let cycles_delta: i64 = service
+            .read_index(|conn| {
+                conn.query_row(
+                    "SELECT cycles_delta
+                     FROM database_cycle_ledger
+                     WHERE database_id = 'cached-size' AND kind = 'storage_charge'",
+                    params![],
+                    |row| crate::sqlite::row_get(row, 0),
+                )
+                .map_err(|error| error.to_string())
+            })
+            .expect("storage charge ledger should load");
+        let expected = compute_storage_charge_cycles(cached_size as u64, STORAGE_BILLING_INTERVAL_MS)
+            .expect("expected storage cycles should compute");
+        assert_eq!(cycles_delta, expected as i64);
+    }
+
+    #[test]
     fn storage_billing_timer_state_reuses_billing_time_across_batches() {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
@@ -6185,15 +6252,20 @@ mod tests {
         service
             .run_index_migrations()
             .expect("index migrations should run");
-        for index in 0..101 {
-            seed_storage_billing_database(&service, &format!("db-{index:03}"), index);
+        for index in 0..1001 {
+            seed_storage_billing_index_database(
+                &service,
+                &format!("db-{index:04}"),
+                MIN_DATABASE_MOUNT_ID + index as u16,
+                GIB_BYTES as i64,
+            );
         }
 
         let first = service
             .settle_database_storage_charges_timer_batch("canister", STORAGE_BILLING_INTERVAL_MS)
             .expect("first timer batch should settle");
-        assert_eq!(first.processed_databases, 100);
-        assert_eq!(first.next_cursor_mount_id, Some(110));
+        assert_eq!(first.processed_databases, 1000);
+        assert_eq!(first.next_cursor_mount_id, Some(1010));
         let second = service
             .settle_database_storage_charges_timer_batch(
                 "canister",
@@ -6207,7 +6279,7 @@ mod tests {
             .read_index(|conn| {
                 let logical_size_bytes = conn
                     .query_row(
-                        "SELECT logical_size_bytes FROM databases WHERE database_id = 'db-100'",
+                        "SELECT logical_size_bytes FROM databases WHERE database_id = 'db-1000'",
                         params![],
                         |row| crate::sqlite::row_get(row, 0),
                     )
@@ -6215,7 +6287,7 @@ mod tests {
                 let cycles_delta = conn
                     .query_row(
                         "SELECT cycles_delta FROM database_cycle_ledger
-                         WHERE database_id = 'db-100' AND kind = 'storage_charge'",
+                         WHERE database_id = 'db-1000' AND kind = 'storage_charge'",
                         params![],
                         |row| crate::sqlite::row_get(row, 0),
                     )
@@ -6223,11 +6295,9 @@ mod tests {
                 Ok((logical_size_bytes, cycles_delta))
             })
             .expect("timer billed row should load");
-        let expected = compute_storage_charge_cycles(
-            logical_size_bytes as u64,
-            STORAGE_BILLING_INTERVAL_MS,
-        )
-        .expect("expected storage cycles should compute");
+        let expected =
+            compute_storage_charge_cycles(logical_size_bytes as u64, STORAGE_BILLING_INTERVAL_MS)
+                .expect("expected storage cycles should compute");
         assert_eq!(cycles_delta, expected as i64);
     }
 
@@ -6309,5 +6379,39 @@ mod tests {
             )
             .expect("storage node should write");
         set_test_database_balance(service, database_id, 1_000_000_000);
+    }
+
+    fn seed_storage_billing_index_database(
+        service: &VfsService,
+        database_id: &str,
+        mount_id: u16,
+        logical_size_bytes: i64,
+    ) {
+        service
+            .write_index(|tx| {
+                tx.execute(
+                    "INSERT INTO databases
+                     (database_id, name, db_file_name, mount_id, active_mount_id, status,
+                      schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
+                     VALUES (?1, ?1, ?1, ?2, ?2, 'active', ?3, ?4, 0, 0)",
+                    params![
+                        database_id,
+                        i64::from(mount_id),
+                        DATABASE_SCHEMA_VERSION,
+                        logical_size_bytes,
+                    ],
+                )
+                .map_err(|error| error.to_string())?;
+                tx.execute(
+                    "INSERT INTO database_cycle_accounts
+                     (database_id, balance_cycles, suspended_at_ms, storage_charged_at_ms,
+                      created_at_ms, updated_at_ms)
+                     VALUES (?1, ?2, NULL, 0, 0, 0)",
+                    params![database_id, 1_000_000_000_000_i64],
+                )
+                .map_err(|error| error.to_string())?;
+                Ok(())
+            })
+            .expect("storage billing index database should insert");
     }
 }
