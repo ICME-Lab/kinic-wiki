@@ -4,7 +4,7 @@
 use anyhow::Result;
 use clap::Parser;
 use vfs_cli::commands::{
-    database_cycles_url, open_browser_url, print_database_current, run_database_unlink,
+    database_cycles_url, open_database_cycles_page, print_database_current, run_database_unlink,
 };
 use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
@@ -43,9 +43,7 @@ async fn main() -> Result<()> {
                 database_id,
                 browser_origin,
             } => {
-                let url = database_cycles_url(browser_origin.as_deref(), database_id)?;
-                println!("{url}");
-                open_browser_url(&url)?;
+                open_database_cycles_page(browser_origin.as_deref(), database_id)?;
                 return Ok(());
             }
             _ => {}
