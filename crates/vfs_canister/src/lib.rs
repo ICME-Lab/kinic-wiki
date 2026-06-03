@@ -69,6 +69,7 @@ const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
+const UPDATE_ACCOUNTING_OVERHEAD_CYCLES: u128 = 15_000_000;
 #[cfg(target_arch = "wasm32")]
 const INDEX_DB_MEMORY_ID: u16 = 10;
 
@@ -241,9 +242,18 @@ enum TransferFromError {
     GenericError { error_code: Nat, message: String },
 }
 
+#[cfg(not(feature = "canbench-rs"))]
 #[init]
 fn init_hook(config: CyclesBillingConfig) {
     initialize_or_trap(Some(config));
+    certify_http_responses();
+    schedule_storage_billing_timer();
+}
+
+#[cfg(feature = "canbench-rs")]
+#[init]
+fn init_hook() {
+    initialize_or_trap(None);
     certify_http_responses();
     schedule_storage_billing_timer();
 }
@@ -369,7 +379,7 @@ fn grant_database_access(
     principal: String,
     role: DatabaseRole,
 ) -> Result<(), String> {
-    with_role_unmetered_update(
+    with_role_metered_update(
         "grant_database_access",
         Some(database_id.clone()),
         RequiredRole::Owner,
@@ -1416,8 +1426,14 @@ fn update_charge_units() -> u128 {
     }
 }
 
-fn update_charge_cycles(before: u128, after: u128) -> u128 {
-    UPDATE_EXECUTION_BASE_CYCLES + after.saturating_sub(before)
+fn update_charge_cycles(before: u128, after: u128) -> Result<u128, String> {
+    let instruction_delta = after
+        .checked_sub(before)
+        .ok_or_else(|| "instruction counter decreased during update".to_string())?;
+    UPDATE_EXECUTION_BASE_CYCLES
+        .checked_add(UPDATE_ACCOUNTING_OVERHEAD_CYCLES)
+        .and_then(|base| base.checked_add(instruction_delta))
+        .ok_or_else(|| "cycle charge overflow".to_string())
 }
 
 fn now_nanos() -> u64 {
@@ -1606,19 +1622,23 @@ where
         let cycles_billing_config = authorize(service, &caller)?;
         let result = f(service, &caller, now);
         let after_charge_units = update_charge_units();
-        let cycles_delta = update_charge_cycles(before_charge_units, after_charge_units);
         if result.is_ok()
             && let Some(database_id) = database_id.as_deref()
-            && let Err(error) = service.charge_database_update(
-                &cycles_billing_config,
-                database_id,
-                &caller,
-                method,
-                cycles_delta,
-                now,
-            )
         {
-            ic_cdk::trap(format!("cycles charge failed after update: {error}"));
+            let charge_result = update_charge_cycles(before_charge_units, after_charge_units)
+                .and_then(|cycles_delta| {
+                    service.charge_database_update(
+                        &cycles_billing_config,
+                        database_id,
+                        &caller,
+                        method,
+                        cycles_delta,
+                        now,
+                    )
+                });
+            if let Err(error) = charge_result {
+                ic_cdk::trap(format!("cycles charge failed after update: {error}"));
+            }
         }
         result
     })
