@@ -94,12 +94,13 @@ export function HomePageClient() {
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
-      void refreshDatabases(authClient);
+      const databaseRefreshClient = principal && authClient ? authClient : null;
+      void refreshDatabases(databaseRefreshClient);
     });
     return () => {
       cancelled = true;
     };
-  }, [authClient, authReady, authRefreshSeq, refreshDatabases]);
+  }, [authClient, authReady, authRefreshSeq, principal, refreshDatabases]);
 
   useEffect(() => {
     setWalletControlsLocked(creating);
@@ -179,10 +180,27 @@ export function HomePageClient() {
   const trimmedDatabaseName = newDatabaseName.trim();
   const databaseNameValidationError = databaseNameError(trimmedDatabaseName);
   const walletReadyToFundCreate = walletCanFundCreate(walletBalance);
-  const createUnavailable = loadState === "loading" || walletBusyProvider !== null || walletBalanceLoading || !walletReadyToFundCreate;
+  const createUnavailable = !principal || loadState === "loading" || walletBusyProvider !== null || walletBalanceLoading || !walletReadyToFundCreate;
   const createDisabled = creating || createUnavailable || databaseNameValidationError !== null;
-  const createButtonLabel = databaseCreateButtonLabel({ creating, walletConnected: Boolean(wallet), walletBalanceLoading, walletReadyToFundCreate });
+  const createButtonLabel = databaseCreateButtonLabel({
+    creating,
+    iiConnected: Boolean(principal),
+    walletConnected: Boolean(wallet),
+    walletBalanceLoading,
+    walletReadyToFundCreate
+  });
   const fundingSuccessMessage = dashboardFundingSuccessMessage(searchParams);
+  const createDatabaseAction = (
+    <button
+      className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+      disabled={creating || createUnavailable}
+      type="button"
+      onClick={() => setCreateDialogOpen(true)}
+    >
+      <Plus aria-hidden size={15} />
+      <span>{createButtonLabel}</span>
+    </button>
+  );
 
   return (
     <main className="min-h-screen px-6 pb-8 pt-6">
@@ -213,17 +231,7 @@ export function HomePageClient() {
 
         {principal ? (
           <DatabaseBody
-            createDatabaseAction={
-              <button
-                className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={creating || createUnavailable}
-                type="button"
-                onClick={() => setCreateDialogOpen(true)}
-              >
-                <Plus aria-hidden size={15} />
-                <span>{createButtonLabel}</span>
-              </button>
-            }
+            createDatabaseAction={createDatabaseAction}
             cyclesConfig={cyclesConfig}
             loading={loadState === "loading"}
             myDatabases={myDatabases}
@@ -238,8 +246,9 @@ export function HomePageClient() {
                 <h2 className="text-lg font-semibold text-ink">Public databases</h2>
                 <p className="mt-1 text-sm leading-6 text-muted">Public databases open without login. Login with Internet Identity to show My databases linked to your principal.</p>
               </div>
+              {createDatabaseAction}
             </div>
-            <DatabaseBody cyclesConfig={cyclesConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
+            <DatabaseBody createDatabaseAction={createDatabaseAction} cyclesConfig={cyclesConfig} loading={loadState === "loading"} myDatabases={myDatabases} principal={principal} publicDatabases={publicDatabases} publicError={publicError} />
           </section>
         )}
       </section>
@@ -285,17 +294,20 @@ function walletCanFundCreate(balanceE8s: string | null): boolean {
 
 function databaseCreateButtonLabel({
   creating,
+  iiConnected,
   walletConnected,
   walletBalanceLoading,
   walletReadyToFundCreate
 }: {
   creating: boolean;
+  iiConnected: boolean;
   walletConnected: boolean;
   walletBalanceLoading: boolean;
   walletReadyToFundCreate: boolean;
 }): string {
   if (creating) return "Creating...";
-  if (!walletConnected) return "Connect wallet first";
+  if (!iiConnected) return "Connect Internet Identity";
+  if (!walletConnected) return "Connect OISY or Plug";
   if (walletBalanceLoading) return "Checking balance...";
   if (!walletReadyToFundCreate) return "Insufficient KINIC";
   return "Create and fund database";
