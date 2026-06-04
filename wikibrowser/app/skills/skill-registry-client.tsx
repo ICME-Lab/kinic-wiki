@@ -8,6 +8,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { PackageManager, RoleBanner } from "@/app/skills/skill-registry-management-ui";
 import { usePackageManager } from "@/app/skills/skill-registry-package-state";
 import { EmptyState, SkillCard, StatusPanel, SummaryStrip } from "@/app/skills/skill-registry-ui";
+import { AdminHeader } from "@/components/admin-header";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCanWrite } from "@/lib/cycles-state";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
@@ -211,37 +212,37 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
   return (
     <main className="min-h-screen px-4 py-6 sm:px-6 lg:px-8">
       <section className="mx-auto flex max-w-7xl flex-col gap-5">
-        <header className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+        <AdminHeader
+          title="Skill Registry"
+          nav={
+            <>
               <Link className="text-accent no-underline hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/">
-                Dashboard
+                Database dashboard
               </Link>
-              <span aria-hidden>/</span>
               <Link className="text-accent no-underline hover:underline" href={`/${encodeURIComponent(databaseId)}/Wiki`}>
                 Wiki
               </Link>
-            </div>
-            <h1 className="mt-2 text-2xl font-semibold text-ink sm:text-3xl">Skill Registry</h1>
-            <p className="mt-1 max-w-full truncate font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {principal ? <span className="max-w-[320px] truncate rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">{principal}</span> : null}
-            <button className="inline-flex items-center rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={loadState === "loading"} type="button" onClick={() => identity ? void refreshSkillRegistry(identity) : void loadCatalog()}>
-              <RefreshCw aria-hidden size={15} />
-              <span className="ml-2">Refresh</span>
-            </button>
-            {principal ? (
-              <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" type="button" onClick={() => void logout()}>
-                Logout
+            </>
+          }
+          actions={
+            <>
+              {principal ? <span className="max-w-[320px] truncate rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-muted">{principal}</span> : null}
+              <button className="inline-flex items-center rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={loadState === "loading"} type="button" onClick={() => identity ? void refreshSkillRegistry(identity) : void loadCatalog()}>
+                <RefreshCw aria-hidden size={15} />
+                <span className="ml-2">Refresh</span>
               </button>
-            ) : (
-              <button className="rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:translate-y-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={!authClient} type="button" onClick={() => void login()}>
-                Login
-              </button>
-            )}
-          </div>
-        </header>
+              {principal ? (
+                <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" type="button" onClick={() => void logout()}>
+                  Logout
+                </button>
+              ) : (
+                <button className="rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:translate-y-0 disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" disabled={!authClient} type="button" onClick={() => void login()}>
+                  Login
+                </button>
+              )}
+            </>
+          }
+        />
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="min-w-0 space-y-5">

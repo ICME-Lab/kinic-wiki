@@ -4,15 +4,19 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Pencil } from "lucide-react";
 import type { BusyAction } from "./access-control";
-import { AuthControls, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, StatusPanel, SummaryPanel } from "./dashboard-ui";
+import { AuthControls, CyclesHistoryPanel, DashboardTabs, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
+import { AdminHeader } from "@/components/admin-header";
 import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { CyclesBillingConfig, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
   getCyclesBillingConfig,
   grantDatabaseAccessAuthenticated,
+  listDatabaseCycleEntries,
+  listDatabaseCyclesPendingPurchasesAuthenticated,
   listDatabaseMembersAuthenticated,
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
@@ -23,11 +27,13 @@ import {
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 type DatabaseAccessSummary = DatabaseSummary & { publicReadable: boolean };
+const CYCLES_HISTORY_LIMIT = 100;
 
 export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const router = useRouter();
   const refreshSeqRef = useRef(0);
+  const cyclesHistorySeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
@@ -41,11 +47,32 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [actionTone, setActionTone] = useState<"error" | "info">("info");
   const [busy, setBusy] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [activeTab, setActiveTab] = useState<DashboardTab>("access");
+  const [cycleEntries, setCycleEntries] = useState<DatabaseCycleEntry[]>([]);
+  const [cycleEntriesError, setCycleEntriesError] = useState<string | null>(null);
+  const [cycleEntriesLoading, setCycleEntriesLoading] = useState(false);
+  const [cycleNextCursor, setCycleNextCursor] = useState<string | null>(null);
+  const [pendingPurchases, setPendingPurchases] = useState<DatabaseCyclesPendingPurchase[]>([]);
+  const [pendingPurchasesError, setPendingPurchasesError] = useState<string | null>(null);
+  const [pendingPurchasesLoading, setPendingPurchasesLoading] = useState(false);
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
   const isActiveDatabase = database?.status === "active";
   const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
   const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
+  const showDashboardTabs = Boolean(databaseId && (database || principal));
+
+  const resetCyclesHistoryState = useCallback(() => {
+    setCycleEntries([]);
+    setCycleEntriesError(null);
+    setCycleEntriesLoading(false);
+    setCycleNextCursor(null);
+    setPendingPurchases([]);
+    setPendingPurchasesError(null);
+    setPendingPurchasesLoading(false);
+  }, []);
 
   const refresh = useCallback(
     async (client: AuthClient | null, nextDatabaseId: string) => {
@@ -64,6 +91,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setError(null);
         setWarning(null);
         setMemberError(null);
+        resetCyclesHistoryState();
         setLoadState("ready");
         return;
       }
@@ -128,7 +156,55 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setLoadState("error");
       }
     },
-    [canisterId]
+    [canisterId, resetCyclesHistoryState]
+  );
+
+  const loadCyclesHistory = useCallback(
+    async (append: boolean, cursor: string | null) => {
+      if (!canisterId || !databaseId) return;
+      if (append && !cursor) return;
+      const requestSeq = (cyclesHistorySeqRef.current += 1);
+      const isCurrentRequest = () => requestSeq === cyclesHistorySeqRef.current;
+      const identity = principal && authClient ? authClient.getIdentity() : null;
+      await Promise.resolve();
+      if (!isCurrentRequest()) return;
+      setCycleEntriesLoading(true);
+      setCycleEntriesError(null);
+      if (!append) {
+        setCycleEntries([]);
+        setCycleNextCursor(null);
+        setPendingPurchases([]);
+        setPendingPurchasesError(null);
+        setPendingPurchasesLoading(Boolean(identity));
+      }
+      try {
+        const entriesPromise = listDatabaseCycleEntries(canisterId, databaseId, cursor, CYCLES_HISTORY_LIMIT, identity ?? undefined);
+        const pendingPromise = identity ? listDatabaseCyclesPendingPurchasesAuthenticated(canisterId, identity, databaseId) : Promise.resolve<DatabaseCyclesPendingPurchase[]>([]);
+        const [entriesResult, pendingResult] = await Promise.allSettled([entriesPromise, pendingPromise]);
+        if (!isCurrentRequest()) return;
+        if (entriesResult.status === "fulfilled") {
+          setCycleEntries((current) => append ? [...current, ...entriesResult.value.entries] : entriesResult.value.entries);
+          setCycleNextCursor(entriesResult.value.nextCursor);
+        } else {
+          setCycleEntriesError(errorMessage(entriesResult.reason));
+        }
+        if (!append && identity) {
+          if (pendingResult.status === "fulfilled") {
+            setPendingPurchases(pendingResult.value);
+            setPendingPurchasesError(null);
+          } else {
+            setPendingPurchases([]);
+            setPendingPurchasesError(errorMessage(pendingResult.reason));
+          }
+        }
+      } finally {
+        if (isCurrentRequest()) {
+          setCycleEntriesLoading(false);
+          setPendingPurchasesLoading(false);
+        }
+      }
+    },
+    [authClient, canisterId, databaseId, principal]
   );
 
   useEffect(() => {
@@ -153,6 +229,14 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     };
   }, [databaseId, refresh]);
 
+  useEffect(() => {
+    if (activeTab !== "cycles-history") return;
+    const timer = window.setTimeout(() => {
+      void loadCyclesHistory(false, null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, databaseId, loadCyclesHistory, principal]);
+
   async function login() {
     if (!authClient) return;
     setError(null);
@@ -171,6 +255,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   async function logout() {
     if (!authClient) return;
     refreshSeqRef.current += 1;
+    cyclesHistorySeqRef.current += 1;
     await authClient.logout();
     setPrincipal(null);
     setDatabases([]);
@@ -179,6 +264,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setError(null);
     setWarning(null);
     setMemberError(null);
+    setRenameOpen(false);
+    setRenameDraft("");
+    resetCyclesHistoryState();
     await refresh(null, databaseId);
   }
 
@@ -220,8 +308,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
-  async function renameDatabase(name: string) {
-    if (!authClient || !databaseId) return;
+  async function renameDatabase(name: string): Promise<boolean> {
+    if (!authClient || !databaseId) return false;
     setBusy(true);
     setBusyAction({ kind: "rename" });
     setActionMessage(null);
@@ -230,12 +318,29 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
       setActionTone("info");
       setActionMessage("Database name updated.");
       await refresh(authClient, databaseId);
+      return true;
     } catch (cause) {
       setActionTone("error");
       setActionMessage(errorMessage(cause));
+      return false;
     } finally {
       setBusy(false);
       setBusyAction(null);
+    }
+  }
+
+  function openRenameDialog() {
+    if (!database || !canManage) return;
+    setRenameDraft(database.name);
+    setRenameOpen(true);
+  }
+
+  async function submitRename(name: string) {
+    if (!database || busy) return;
+    const nextName = name.trim();
+    if (!nextName || nextName === database.name) return;
+    if (await renameDatabase(nextName)) {
+      setRenameOpen(false);
     }
   }
 
@@ -262,32 +367,73 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   return (
     <main className="min-h-screen px-6 py-8">
       <section className="mx-auto flex max-w-6xl flex-col gap-6">
-        <header className="flex flex-col gap-4 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <Link className="text-sm text-accent no-underline hover:underline" href="/">
-              Dashboard
-            </Link>
-            {databaseId && isActiveDatabase ? (
-              <Link className="ml-3 text-sm text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
-                Skill Registry
+        <AdminHeader
+          title={database?.name ?? "Database access"}
+          titleAction={
+            canManage ? (
+              <button
+                aria-label="Rename database"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-white text-muted hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                title="Rename database"
+                type="button"
+                onClick={openRenameDialog}
+              >
+                <Pencil aria-hidden size={15} />
+              </button>
+            ) : null
+          }
+          nav={
+            <>
+              <Link className="text-accent no-underline hover:underline" href="/">
+                Database dashboard
               </Link>
-            ) : null}
-            <h1 className="mt-2 text-3xl font-semibold text-ink">{database?.name ?? "Database access"}</h1>
-            <p className="mt-1 font-mono text-xs text-muted">{databaseId || "unknown database"}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
-            <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
-          </div>
-        </header>
+              {databaseId && isActiveDatabase ? (
+                <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
+                  Skill Registry
+                </Link>
+              ) : null}
+            </>
+          }
+          actions={
+            <>
+              {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
+              <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
+            </>
+          }
+        />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
         {warning ? <StatusPanel tone="info" message={warning} /> : null}
         {actionMessage ? <StatusPanel tone={actionTone} message={actionMessage} /> : null}
+        {renameOpen && database ? (
+          <RenameDatabaseDialog
+            busy={busy}
+            busyAction={busyAction}
+            databaseName={database.name}
+            draft={renameDraft}
+            onCancel={() => setRenameOpen(false)}
+            onChange={setRenameDraft}
+            onSubmit={(name) => void submitRename(name)}
+          />
+        ) : null}
 
-        {database ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database.publicReadable} /> : null}
+        {databaseId && (database || principal) ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database?.publicReadable ?? false} /> : null}
+        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} onChange={setActiveTab} /> : null}
 
-        {database ? (
+        {activeTab === "cycles-history" && showDashboardTabs ? (
+          <CyclesHistoryPanel
+            authenticated={Boolean(principal)}
+            entries={cycleEntries}
+            entriesError={cycleEntriesError}
+            entriesLoading={cycleEntriesLoading}
+            nextCursor={cycleNextCursor}
+            pendingError={pendingPurchasesError}
+            pendingLoading={pendingPurchasesLoading}
+            pendingPurchases={pendingPurchases}
+            onLoadMore={() => void loadCyclesHistory(true, cycleNextCursor)}
+            onRefresh={() => void loadCyclesHistory(false, null)}
+          />
+        ) : database ? (
           canDeletePendingDatabase ? (
             <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
           ) : canManage ? (
@@ -301,7 +447,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               principal={principal ?? "anonymous"}
               onDelete={deleteDatabase}
               onGrant={grantAccess}
-              onRename={renameDatabase}
               onRevoke={revokeAccess}
             />
           ) : database.publicReadable ? (
@@ -319,6 +464,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               Open Database dashboard
             </Link>
           </section>
+        ) : principal ? (
+          <StatusPanel tone="info" message={memberError ?? "Select Cycles History to inspect cycle visibility for this database."} />
         ) : (
           <section className="rounded-lg border border-line bg-paper p-8 shadow-sm">
             <p className="text-sm leading-6 text-muted">Public anonymous read is not available for this database. Login with Internet Identity to manage database access.</p>

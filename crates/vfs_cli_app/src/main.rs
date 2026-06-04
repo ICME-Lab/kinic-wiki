@@ -3,7 +3,7 @@
 // Why: Wiki operations and Skill Registry operations share connection, identity, and DB selection.
 use anyhow::Result;
 use clap::Parser;
-use vfs_cli::commands::{print_database_current, run_database_unlink};
+use vfs_cli::commands::{open_database_cycles_page, print_database_current, run_database_unlink};
 use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
 };
@@ -35,6 +35,13 @@ async fn main() -> Result<()> {
             }
             DatabaseCommand::Unlink => {
                 run_database_unlink()?;
+                return Ok(());
+            }
+            DatabaseCommand::Cycles {
+                database_id,
+                browser_origin,
+            } => {
+                open_database_cycles_page(browser_origin.as_deref(), database_id)?;
                 return Ok(());
             }
             _ => {}
@@ -145,4 +152,30 @@ async fn new_identity_client(
         identity,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vfs_cli::commands::database_cycles_url;
+
+    #[test]
+    fn database_cycles_url_resolves_without_connection_or_client() {
+        let command = DatabaseCommand::Cycles {
+            database_id: "db_alpha".to_string(),
+            browser_origin: Some("http://127.0.0.1:3000".to_string()),
+        };
+        let DatabaseCommand::Cycles {
+            database_id,
+            browser_origin,
+        } = command
+        else {
+            panic!("expected cycles command");
+        };
+
+        let url = database_cycles_url(browser_origin.as_deref(), &database_id)
+            .expect("cycles URL should build without canister client");
+
+        assert_eq!(url, "http://127.0.0.1:3000/cycles?database_id=db_alpha");
+    }
 }

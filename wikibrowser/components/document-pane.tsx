@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
+import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
-import { useState } from "react";
 import type { Identity } from "@icp-sdk/core/agent";
 import { FileCode, FileText, Folder, Loader2, Route } from "lucide-react";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
@@ -37,7 +37,8 @@ export function DocumentHeader({
   isDirectory,
   canEditDirectory,
   editState,
-  rawContent
+  rawContent,
+  readMode = null
 }: {
   canisterId: string;
   databaseId: string;
@@ -48,6 +49,7 @@ export function DocumentHeader({
   canEditDirectory: boolean;
   editState: DocumentEditState;
   rawContent: string | null;
+  readMode?: "anonymous" | null;
 }) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   async function copyText(label: string, value: string) {
@@ -60,13 +62,9 @@ export function DocumentHeader({
   }
   return (
     <div className="flex min-h-[52px] flex-wrap items-center justify-between gap-2 border-b border-line bg-paper/80 px-5 py-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-xl border border-line bg-white p-1 text-sm">
-          <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
-          <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
-          {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
-        </div>
-        <div className="flex rounded-xl border border-line bg-white p-1 text-xs">
+      <div className="flex min-w-0 max-w-full items-center gap-2">
+        <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} readMode={readMode} />
+        <div className="flex h-10 shrink-0 rounded-xl border border-line bg-white p-1 text-xs">
           <button
             aria-label="Copy path"
             className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
@@ -76,7 +74,16 @@ export function DocumentHeader({
           >
             <Route aria-hidden="true" size={15} />
           </button>
-          {rawContent !== null ? (
+        </div>
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex rounded-xl border border-line bg-white p-1 text-sm">
+          <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
+          <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
+          {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
+        </div>
+        {rawContent !== null ? (
+          <div className="flex h-10 rounded-xl border border-line bg-white p-1 text-xs">
             <button
               aria-label="Copy raw"
               className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
@@ -86,17 +93,57 @@ export function DocumentHeader({
             >
               <FileCode aria-hidden="true" size={15} />
             </button>
-          ) : null}
+          </div>
+        ) : null}
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {view === "edit" ? <HeaderBadge label="Editing" tone="blue" /> : null}
+          {view === "edit" && editState.dirty ? <HeaderBadge label="Unsaved" tone="yellow" /> : null}
+          {view === "edit" && editState.saveState === "saving" ? <HeaderBadge label="Saving" tone="blue" /> : null}
+          {view === "edit" && editState.saveState === "saved" ? <HeaderBadge label="Saved" tone="green" /> : null}
+          {copyStatus ? <HeaderBadge label={copyStatus} tone={copyStatus.endsWith("failed") ? "yellow" : "green"} /> : null}
         </div>
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-1">
-        {view === "edit" ? <HeaderBadge label="Editing" tone="blue" /> : null}
-        {view === "edit" && editState.dirty ? <HeaderBadge label="Unsaved" tone="yellow" /> : null}
-        {view === "edit" && editState.saveState === "saving" ? <HeaderBadge label="Saving" tone="blue" /> : null}
-        {view === "edit" && editState.saveState === "saved" ? <HeaderBadge label="Saved" tone="green" /> : null}
-        {copyStatus ? <HeaderBadge label={copyStatus} tone={copyStatus.endsWith("failed") ? "yellow" : "green"} /> : null}
-      </div>
     </div>
+  );
+}
+
+function DocumentHeaderPath({
+  canisterId,
+  databaseId,
+  path,
+  readMode
+}: {
+  canisterId: string;
+  databaseId: string;
+  path: string;
+  readMode: "anonymous" | null;
+}) {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length === 0) {
+    return <div className="flex h-10 w-fit min-w-0 max-w-full items-center rounded-xl border border-line bg-white px-3 font-mono text-xs font-medium text-ink">/</div>;
+  }
+  return (
+    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-line bg-white px-3 font-mono text-xs" aria-label="Current wiki path">
+      {segments.map((segment, index) => {
+        const crumbPath = `/${segments.slice(0, index + 1).join("/")}`;
+        const last = index === segments.length - 1;
+        return (
+          <Fragment key={crumbPath}>
+            {index > 0 ? <span className="shrink-0 text-muted">/</span> : null}
+            {last ? (
+              <span className="max-w-[24rem] truncate font-medium text-ink">{segment}</span>
+            ) : (
+              <Link
+                className="max-w-[14rem] shrink-0 truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-white hover:text-ink"
+                href={hrefForPath(canisterId, databaseId, crumbPath, undefined, undefined, undefined, undefined, readMode)}
+              >
+                {segment}
+              </Link>
+            )}
+          </Fragment>
+        );
+      })}
+    </nav>
   );
 }
 

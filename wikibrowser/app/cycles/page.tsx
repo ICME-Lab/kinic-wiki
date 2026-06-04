@@ -1,7 +1,8 @@
 // Where: /cycles route.
 // What: passes the configured canister and target database into the client.
-// Why: CLI/query can seed cycles, but canister selection must not come from URL input.
+// Why: the purchase amount is UI state, and canister selection must not come from URL input.
 import type { Metadata } from "next";
+import type { DatabaseStatus } from "@/lib/types";
 import { CyclesClient } from "./cycles-client";
 
 export const metadata: Metadata = {
@@ -17,7 +18,7 @@ export default async function CyclesPage({ searchParams }: { searchParams: PageS
     <CyclesClient
       canisterId={process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID || ""}
       databaseId={first(params.database_id ?? params.databaseId)}
-      initialKinic={first(params.kinic)}
+      databaseStatus={parseDatabaseStatus(first(params.status))}
     />
   );
 }
@@ -25,4 +26,11 @@ export default async function CyclesPage({ searchParams }: { searchParams: PageS
 function first(value: string | string[] | undefined): string {
   if (Array.isArray(value)) return value[0] ?? "";
   return value ?? "";
+}
+
+function parseDatabaseStatus(value: string): DatabaseStatus | null {
+  if (value === "pending" || value === "active" || value === "restoring" || value === "archiving" || value === "archived") {
+    return value;
+  }
+  return null;
 }

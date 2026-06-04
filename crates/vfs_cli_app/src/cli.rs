@@ -1104,7 +1104,6 @@ mod tests {
             "database",
             "cycles",
             "db_alpha",
-            "1.25",
             "--browser-origin",
             "http://127.0.0.1:3000",
         ]);
@@ -1112,7 +1111,6 @@ mod tests {
             command:
                 DatabaseCommand::Cycles {
                     database_id,
-                    kinic,
                     browser_origin,
                 },
         } = cli.command
@@ -1120,8 +1118,11 @@ mod tests {
             panic!("expected database cycles command");
         };
         assert_eq!(database_id, "db_alpha");
-        assert_eq!(kinic, "1.25");
         assert_eq!(browser_origin.as_deref(), Some("http://127.0.0.1:3000"));
+        assert!(
+            Cli::try_parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"])
+                .is_err()
+        );
 
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
         let Command::Database {
@@ -1278,8 +1279,7 @@ mod tests {
             Cli::parse_from(["kinic-vfs-cli", "database", "cycles-history", "db_alpha"]);
         assert!(database_cycles_history.command.requires_identity());
 
-        let database_cycles =
-            Cli::parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha", "1.25"]);
+        let database_cycles = Cli::parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha"]);
         assert!(!database_cycles.command.requires_identity());
     }
 

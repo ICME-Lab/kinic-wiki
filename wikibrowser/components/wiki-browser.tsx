@@ -745,6 +745,7 @@ export function WikiBrowser() {
                 view={view}
                 editState={activeEditState}
                 rawContent={currentNode.data?.kind === "file" ? currentNode.data.content : null}
+                readMode={readMode}
                 onViewChange={(nextView) => {
                   if (nextView !== "edit" && !canLeaveDirtyEdit()) {
                     return;
@@ -754,7 +755,6 @@ export function WikiBrowser() {
                 isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
                 canEditDirectory={currentNode.data?.kind === "folder" && isWikiPath(selectedPath)}
               />
-              <DocumentBreadcrumbs canisterId={canisterId} databaseId={databaseId} path={selectedPath} readMode={readMode} />
               <DocumentPane
                 node={currentNode}
                 folderIndexNode={currentFolderIndexNode}
@@ -1565,46 +1565,6 @@ function ModeTabs({
           </Link>
         ))}
       </div>
-    </nav>
-  );
-}
-
-function DocumentBreadcrumbs({
-  canisterId,
-  databaseId,
-  path,
-  readMode
-}: {
-  canisterId: string;
-  databaseId: string;
-  path: string;
-  readMode: "anonymous" | null;
-}) {
-  const segments = path.split("/").filter(Boolean);
-  const crumbs = segments.map((segment, index) => ({
-    segment,
-    path: `/${segments.slice(0, index + 1).join("/")}`,
-    last: index === segments.length - 1
-  }));
-  return (
-    <nav className="flex min-h-[36px] items-center gap-1 overflow-x-auto border-b border-line bg-white px-5 py-2 text-xs" aria-label="Breadcrumb">
-      {crumbs.map((crumb, index) => {
-        return (
-          <span key={crumb.path} className="flex items-center gap-1">
-            {index > 0 ? <span className="text-muted">/</span> : null}
-            {crumb.last ? (
-              <span className="max-w-[180px] truncate font-medium text-ink">{crumb.segment}</span>
-            ) : (
-              <Link
-                className="max-w-[180px] truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-paper hover:text-ink"
-                href={hrefForPath(canisterId, databaseId, crumb.path, undefined, undefined, undefined, undefined, readMode)}
-              >
-                {crumb.segment}
-              </Link>
-            )}
-          </span>
-        );
-      })}
     </nav>
   );
 }

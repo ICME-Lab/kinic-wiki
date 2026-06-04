@@ -4,6 +4,7 @@ import ts from "typescript";
 
 const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
+const adminHeader = readFileSync(new URL("../components/admin-header.tsx", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../app/skills/skill-registry-ui.tsx", import.meta.url), "utf8");
 const catalog = readFileSync(new URL("../lib/skill-registry-catalog.ts", import.meta.url), "utf8");
 const details = readFileSync(new URL("../lib/skill-registry-details.ts", import.meta.url), "utf8");
@@ -12,7 +13,7 @@ const packages = readFileSync(new URL("../lib/skill-registry-package.ts", import
 const folders = readFileSync(new URL("../lib/vfs-folders.ts", import.meta.url), "utf8");
 const diff = readFileSync(new URL("../lib/skill-registry-diff.ts", import.meta.url), "utf8");
 const homeUi = readFileSync(new URL("../app/home-ui.tsx", import.meta.url), "utf8");
-const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+const homePageClient = readFileSync(new URL("../app/home-page-client.tsx", import.meta.url), "utf8");
 const dashboardClient = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
 const inspector = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
 const skillManifest = readFileSync(new URL("../lib/skill-manifest.ts", import.meta.url), "utf8");
@@ -21,6 +22,9 @@ const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.me
 assert.match(route, /params: Promise<\{ databaseId: string \}>/);
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /SkillRegistryClient/);
+assert.match(adminHeader, /export function AdminHeader/);
+assert.match(client, /<AdminHeader/);
+assert.doesNotMatch(client, /unknown database/);
 assert.match(client, /loadSkillCatalog/);
 assert.match(client, /updateSkillStatus/);
 assert.match(client, /recordSkillRun/);
@@ -148,7 +152,7 @@ assert.match(client, /const databases = await listDatabasesAuthenticated\(canist
 assert.match(client, /setCyclesConfig\(await getCyclesBillingConfig\(canisterId\)\)/);
 assert.doesNotMatch(client, /const \[databases, config\] = await Promise\.all/);
 assert.doesNotMatch(homeUi, /href=\{`\/skills\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
-assert.match(homePage, /DatabaseBody/);
+assert.match(homePageClient, /DatabaseBody/);
 assert.match(dashboardClient, /href=\{`\/skills\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
 assert.doesNotMatch(inspector, /skill-manifest/);
 assert.doesNotMatch(inspector, /parseSkillManifest|manifestPathForSkillRegistryFile/);

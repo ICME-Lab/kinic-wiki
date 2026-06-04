@@ -6,7 +6,8 @@ import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
-import { formatRawCycles, KINIC_LEDGER_FEE_E8S, kinicBaseUnitsPerToken } from "@/lib/cycles";
+import { formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64, kinicBaseUnitsPerToken } from "@/lib/cycles";
+import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 
 type WalletProvider = "oisy" | "plug";
 
@@ -18,7 +19,7 @@ type CyclesPurchaseRequest = {
 
 type CyclesPurchaseResult = {
   provider: WalletProvider;
-  approveBlockIndex: string;
+  approveBlockIndex: string | null;
   approvedAllowanceE8s: string;
   purchasedCycles: string;
   paymentAmountE8s: string;
@@ -28,12 +29,15 @@ type CyclesPurchaseResult = {
 };
 
 export class CyclesPurchaseAfterApproveError extends Error {
-  approveBlockIndex: string;
+  approveBlockIndex: string | null;
   causeMessage: string;
 
-  constructor(input: { approveBlockIndex: string; causeMessage: string; expiresAt: bigint }) {
-    const expiry = new Date(Number(input.expiresAt / 1_000_000n)).toISOString();
-    super(`cycles purchase failed after approve; approval remains until ${expiry}: ${input.causeMessage}`);
+  constructor(input: { approveBlockIndex: string | null; causeMessage: string; expiresAt: bigint | null }) {
+    const approvalText =
+      input.expiresAt === null
+        ? "approval remains without expiry"
+        : `approval remains until ${new Date(Number(input.expiresAt / 1_000_000n)).toISOString()}`;
+    super(`cycles purchase failed after approval; ${approvalText}: ${input.causeMessage}`);
     this.name = "CyclesPurchaseAfterApproveError";
     this.approveBlockIndex = input.approveBlockIndex;
     this.causeMessage = input.causeMessage;
@@ -46,7 +50,9 @@ type PreparedCyclesPurchase = {
   transferFeeE8s: bigint;
   paymentAmountE8s: bigint;
   approvedAllowanceE8s: bigint;
-  currentAllowanceE8s: bigint;
+  currentAllowance: LedgerAllowance;
+  approvalExpiresAt: bigint | null;
+  approvalRequired: boolean;
   expiresAt: bigint;
 };
 
@@ -82,6 +88,7 @@ type PlugVfsActor = {
 };
 
 type LedgerActor = {
+  icrc1_balance_of: (request: LedgerAccount) => Promise<bigint>;
   icrc2_allowance: (request: LedgerAllowanceArgs) => Promise<LedgerAllowance>;
   icrc2_approve: (request: LedgerApproveArgs) => Promise<{ Ok: bigint } | { Err: unknown }>;
 };
@@ -122,6 +129,8 @@ export type ConnectedPlugWallet = {
   principal: string;
 };
 
+export type ConnectedKinicWallet = { provider: "oisy"; connection: ConnectedOisyWallet } | { provider: "plug"; connection: ConnectedPlugWallet };
+
 declare global {
   interface Window {
     ic?: {
@@ -133,8 +142,6 @@ declare global {
 const DEFAULT_OISY_SIGNER_URL = "https://oisy.com/sign";
 const CALL_TIMEOUT_MS = 120_000;
 const APPROVE_EXPIRES_IN_MS = 30 * 60 * 1000;
-const MAX_I64 = 9_223_372_036_854_775_807n;
-const MAX_U64 = 18_446_744_073_709_551_615n;
 type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 
 type CyclesPurchaseIcrcWalletOptions = {
@@ -203,6 +210,13 @@ export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
   return { principal: principal.toText() };
 }
 
+export async function getConnectedWalletKinicBalance(canisterId: string, wallet: ConnectedKinicWallet): Promise<string> {
+  assertConfiguredCyclesCanister(canisterId);
+  const config = await getCyclesBillingConfig(canisterId);
+  const balance = await getLedgerBalance(config.kinicLedgerCanisterId, connectedWalletPrincipal(wallet));
+  return balance.toString();
+}
+
 export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
   const prepared = await prepareCyclesPurchase(request, connection.owner);
   const wallet = await openOisyWallet();
@@ -211,19 +225,23 @@ export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, con
     const account = accounts[0];
     if (!account) throw new Error("OISY account not found");
     if (account.owner !== connection.owner) throw new Error("OISY owner changed; connect OISY again");
-    const approveBlockIndex = await wallet.approve({
-      owner: connection.owner,
-      ledgerCanisterId: prepared.kinicLedgerCanisterId,
-      params: approveParams(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowanceE8s, prepared.expiresAt),
-      options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
-    });
+    let approveBlockIndex: string | null = null;
+    if (prepared.approvalRequired) {
+      const approvedBlockIndex = await wallet.approve({
+        owner: connection.owner,
+        ledgerCanisterId: prepared.kinicLedgerCanisterId,
+        params: approveParams(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt),
+        options: { timeoutInMilliseconds: CALL_TIMEOUT_MS }
+      });
+      approveBlockIndex = approvedBlockIndex.toString();
+    }
     const purchase = await purchaseAfterApprove(
       () => oisyCallCyclesPurchase(wallet, connection.owner, request.canisterId, prepared.purchaseRequest),
-      { approveBlockIndex: approveBlockIndex.toString(), expiresAt: prepared.expiresAt }
+      { approveBlockIndex, expiresAt: prepared.approvalExpiresAt }
     );
     return {
       provider: "oisy",
-      approveBlockIndex: approveBlockIndex.toString(),
+      approveBlockIndex,
       approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
       purchasedCycles: formatRawCycles(BigInt(purchase.amountCycles)),
       paymentAmountE8s: prepared.paymentAmountE8s.toString(),
@@ -248,14 +266,18 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
   if (principal.toText() !== connection.principal) throw new Error("Plug principal changed; connect Plug again");
-  const ledgerActor = await plug.createActor<PlugLedgerActor>({
-    canisterId: prepared.kinicLedgerCanisterId,
-    interfaceFactory: ledgerIdlFactory
-  });
-  const approve = await ledgerActor.icrc2_approve(
-    rawApproveArgs(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowanceE8s, prepared.expiresAt)
-  );
-  if ("Err" in approve) throw new Error(`ledger approve failed: ${JSON.stringify(approve.Err)}`);
+  let approveBlockIndex: string | null = null;
+  if (prepared.approvalRequired) {
+    const ledgerActor = await plug.createActor<PlugLedgerActor>({
+      canisterId: prepared.kinicLedgerCanisterId,
+      interfaceFactory: ledgerIdlFactory
+    });
+    const approve = await ledgerActor.icrc2_approve(
+      rawApproveArgs(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt)
+    );
+    if ("Err" in approve) throw new Error(`ledger approve failed: ${formatLedgerApproveError(approve.Err)}`);
+    approveBlockIndex = approve.Ok.toString();
+  }
   const vfsActor = await plug.createActor<PlugVfsActor>({
     canisterId: request.canisterId,
     interfaceFactory: idlFactory
@@ -264,10 +286,10 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
     const result = await vfsActor.purchase_database_cycles(prepared.purchaseRequest);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
-  }, { approveBlockIndex: approve.Ok.toString(), expiresAt: prepared.expiresAt });
+  }, { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
   return {
     provider: "plug",
-    approveBlockIndex: approve.Ok.toString(),
+    approveBlockIndex,
     approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
     purchasedCycles: formatRawCycles(purchase.amount_cycles),
     paymentAmountE8s: prepared.paymentAmountE8s.toString(),
@@ -309,7 +331,8 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
   const minExpectedCycles = cyclesForPaymentAmountE8s(paymentAmountE8s, BigInt(config.cyclesPerKinic));
   const approvedAllowanceE8s = allowanceForCyclesPurchase(paymentAmountE8s, transferFeeE8s);
   const expiresAt = approveExpiresAt();
-  const currentAllowanceE8s = await getLedgerAllowance(config.kinicLedgerCanisterId, payer, request.canisterId);
+  const currentAllowance = await getLedgerAllowance(config.kinicLedgerCanisterId, payer, request.canisterId);
+  const approvalRequired = !allowanceIsUsable(currentAllowance, approvedAllowanceE8s, nowNs());
   return {
     kinicLedgerCanisterId: config.kinicLedgerCanisterId,
     purchaseRequest: {
@@ -320,31 +343,47 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
     transferFeeE8s,
     paymentAmountE8s,
     approvedAllowanceE8s,
-    currentAllowanceE8s,
+    currentAllowance,
+    approvalExpiresAt: approvalRequired ? expiresAt : allowanceExpiresAt(currentAllowance),
+    approvalRequired,
     expiresAt
   };
 }
 
 function allowanceForCyclesPurchase(amountE8s: bigint, transferFeeE8s: bigint): bigint {
   const allowance = amountE8s + transferFeeE8s;
-  if (allowance > MAX_U64) throw new Error("approved allowance exceeds u64::MAX");
+  if (allowance > MAX_LEDGER_U64) throw new Error("approved allowance exceeds u64::MAX");
   return allowance;
 }
 
 function cyclesForPaymentAmountE8s(amountE8s: bigint, cyclesPerKinic: bigint): bigint {
   const cycles = (amountE8s * cyclesPerKinic) / kinicBaseUnitsPerToken();
   if (cycles <= 0n) throw new Error("KINIC amount is too small for a cycles purchase");
-  if (cycles > MAX_I64) throw new Error("cycles purchase amount exceeds canister limit");
+  if (cycles > MAX_CANISTER_I64) throw new Error("cycles purchase amount exceeds canister limit");
   return cycles;
 }
 
 function assertCanisterPaymentAmountE8s(amountE8s: bigint): void {
   if (amountE8s <= 0n) throw new Error("KINIC amount must be positive");
-  if (amountE8s > MAX_I64) throw new Error("KINIC amount e8s exceeds canister limit");
+  if (amountE8s > MAX_CANISTER_I64) throw new Error("KINIC amount e8s exceeds canister limit");
+}
+
+function allowanceIsUsable(allowance: LedgerAllowance, requiredAllowanceE8s: bigint, currentTimeNs: bigint): boolean {
+  if (allowance.allowance < requiredAllowanceE8s) return false;
+  const expiresAt = allowanceExpiresAt(allowance);
+  return expiresAt === null || expiresAt > currentTimeNs;
+}
+
+function allowanceExpiresAt(allowance: LedgerAllowance): bigint | null {
+  return allowance.expires_at[0] ?? null;
 }
 
 function approveExpiresAt(): bigint {
-  return BigInt(Date.now() + APPROVE_EXPIRES_IN_MS) * 1_000_000n;
+  return nowNs() + BigInt(APPROVE_EXPIRES_IN_MS) * 1_000_000n;
+}
+
+function nowNs(): bigint {
+  return BigInt(Date.now()) * 1_000_000n;
 }
 
 function assertConfiguredCyclesCanister(canisterId: string): void {
@@ -355,7 +394,7 @@ function assertConfiguredCyclesCanister(canisterId: string): void {
   }
 }
 
-async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spender: string): Promise<bigint> {
+async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spender: string): Promise<LedgerAllowance> {
   const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
   const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
   if (agent.isLocal()) await agent.fetchRootKey();
@@ -363,15 +402,33 @@ async function getLedgerAllowance(ledgerCanisterId: string, owner: string, spend
     agent,
     canisterId: Principal.fromText(ledgerCanisterId)
   });
-  const result = await actor.icrc2_allowance(allowanceArgs(owner, spender));
-  return result.allowance;
+  return actor.icrc2_allowance(allowanceArgs(owner, spender));
+}
+
+async function getLedgerBalance(ledgerCanisterId: string, owner: string): Promise<bigint> {
+  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const agent = HttpAgent.createSync({ identity: new AnonymousIdentity(), host });
+  if (agent.isLocal()) await agent.fetchRootKey();
+  const actor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
+    agent,
+    canisterId: Principal.fromText(ledgerCanisterId)
+  });
+  return actor.icrc1_balance_of(defaultAccount(owner));
 }
 
 function allowanceArgs(owner: string, spender: string): LedgerAllowanceArgs {
   return {
-    account: { owner: Principal.fromText(owner), subaccount: [] },
-    spender: { owner: Principal.fromText(spender), subaccount: [] }
+    account: defaultAccount(owner),
+    spender: defaultAccount(spender)
   };
+}
+
+function defaultAccount(owner: string): LedgerAccount {
+  return { owner: Principal.fromText(owner), subaccount: [] };
+}
+
+function connectedWalletPrincipal(wallet: ConnectedKinicWallet): string {
+  return wallet.provider === "oisy" ? wallet.connection.owner : wallet.connection.principal;
 }
 
 async function oisyCallCyclesPurchase(
@@ -396,7 +453,7 @@ async function oisyCallCyclesPurchase(
   });
 }
 
-async function purchaseAfterApprove<T>(run: () => Promise<T>, context: { approveBlockIndex: string; expiresAt: bigint }): Promise<T> {
+async function purchaseAfterApprove<T>(run: () => Promise<T>, context: { approveBlockIndex: string | null; expiresAt: bigint | null }): Promise<T> {
   try {
     return await run();
   } catch (cause) {
@@ -409,7 +466,12 @@ async function purchaseAfterApprove<T>(run: () => Promise<T>, context: { approve
 }
 
 function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+  if (cause instanceof Error) return cause.message;
+  if (isObject(cause)) {
+    const message = Reflect.get(cause, "message");
+    if (typeof message === "string") return message;
+  }
+  return String(cause);
 }
 
 function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): string {
@@ -491,6 +553,71 @@ function purchaseResultType() {
   });
 }
 
+function formatLedgerApproveError(error: unknown): string {
+  const known = formatKnownLedgerApproveError(error);
+  return known ?? safeJsonWithBigInts(error);
+}
+
+function formatKnownLedgerApproveError(error: unknown): string | null {
+  if (!isObject(error)) return null;
+  if (hasOwn(error, "InsufficientFunds")) {
+    return formatApproveErrorField(error, "InsufficientFunds", "balance", "kinic");
+  }
+  if (hasOwn(error, "BadFee")) {
+    return formatApproveErrorField(error, "BadFee", "expected_fee", "kinic");
+  }
+  if (hasOwn(error, "AllowanceChanged")) {
+    return formatApproveErrorField(error, "AllowanceChanged", "current_allowance", "kinic");
+  }
+  if (hasOwn(error, "Duplicate")) {
+    return formatApproveErrorField(error, "Duplicate", "duplicate_of", null);
+  }
+  if (hasOwn(error, "CreatedInFuture")) {
+    return formatApproveErrorField(error, "CreatedInFuture", "ledger_time", null);
+  }
+  if (hasOwn(error, "Expired")) {
+    return formatApproveErrorField(error, "Expired", "ledger_time", null);
+  }
+  if (hasOwn(error, "GenericError")) {
+    const generic = Reflect.get(error, "GenericError");
+    if (!isObject(generic)) return "GenericError";
+    const message = Reflect.get(generic, "message");
+    const errorCode = Reflect.get(generic, "error_code");
+    const messageText = typeof message === "string" ? message : "unknown ledger error";
+    const codeText = scalarText(errorCode);
+    return codeText ? `GenericError: ${messageText} (code ${codeText})` : `GenericError: ${messageText}`;
+  }
+  if (hasOwn(error, "TemporarilyUnavailable")) return "TemporarilyUnavailable";
+  if (hasOwn(error, "TooOld")) return "TooOld";
+  return null;
+}
+
+function formatApproveErrorField(error: object, variant: string, field: string, unit: "kinic" | null): string {
+  const details = Reflect.get(error, variant);
+  if (!isObject(details)) return variant;
+  const value = Reflect.get(details, field);
+  const text = scalarText(value);
+  if (!text) return variant;
+  const display = unit === "kinic" ? formatTokenAmountFromE8s(text) : text;
+  return `${variant}: ${field} ${display}`;
+}
+
+function scalarText(value: unknown): string | null {
+  if (typeof value === "bigint" || typeof value === "number" || typeof value === "string") {
+    return value.toString();
+  }
+  return null;
+}
+
+function safeJsonWithBigInts(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? item.toString() : item));
+    return serialized ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function bytesFromUnknown(value: unknown, label: string): Uint8Array {
   if (value instanceof Uint8Array) return value;
   throw new Error(`${label} mismatch`);
@@ -534,6 +661,7 @@ const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     InsufficientFunds: idl.Record({ balance: idl.Nat })
   });
   return idl.Service({
+    icrc1_balance_of: idl.Func([account], [idl.Nat], ["query"]),
     icrc2_allowance: idl.Func([allowanceArgs], [allowance], ["query"]),
     icrc2_approve: idl.Func([approveArgs], [idl.Variant({ Ok: idl.Nat, Err: approveError })], [])
   });
