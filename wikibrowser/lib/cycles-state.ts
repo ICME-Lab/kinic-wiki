@@ -60,6 +60,19 @@ export function databaseCyclesView(database: DatabaseSummary | null, config: Cyc
       reason: "Database cycles are suspended."
     };
   }
+  if (database.status !== "active") {
+    return {
+      state: "suspended",
+      label: databaseStatusLabel(database.status),
+      summary: `${databaseStatusLabel(database.status)} / ${formatCycles(balance)}`,
+      balanceCycles: balance,
+      minUpdateCycles: minimum,
+      configAvailable: true,
+      purchaseAvailable: false,
+      writeCyclesAvailable: false,
+      reason: "Database is not active."
+    };
+  }
   if (balance < minimum) {
     return {
       state: "low-balance",
@@ -109,4 +122,11 @@ function parseOptionalCycles(value: string | null | undefined): bigint {
 
 export function formatCycles(value: bigint): string {
   return `${formatCycleAmount(value)} cycles`;
+}
+
+function databaseStatusLabel(status: DatabaseSummary["status"]): string {
+  if (status === "restoring") return "Restoring";
+  if (status === "archiving") return "Archiving";
+  if (status === "archived") return "Archived";
+  return "Pending";
 }

@@ -29,6 +29,7 @@ assert.doesNotMatch(page, /canister_id \?\? params\.canisterId/);
 assert.doesNotMatch(page, /amount_e8s \?\? params\.amountE8s/);
 assert.doesNotMatch(page, /params\.kinic|initialKinic/);
 assert.match(page, /parseDatabaseStatus\(first\(params\.status\)\)/);
+assert.doesNotMatch(page, /value === "deleted"/);
 assert.match(client, /purchaseCyclesWithOisy/);
 assert.match(client, /purchaseCyclesWithPlug/);
 assert.match(client, /useAppSession/);
@@ -212,6 +213,8 @@ const cyclesStateModule = loadTsModule("../lib/cycles-state.ts", {
   "@/lib/cycles": { formatCycles: (value) => value.toString() }
 });
 assert.equal(cyclesStateModule.databaseCyclesHref({ databaseId: "db_ok-1", status: "active" }), "/cycles?database_id=db_ok-1&status=active");
+assert.equal(cyclesStateModule.databaseCyclesView({ databaseId: "db_archived", role: "owner", status: "archived", cyclesBalance: "0", cyclesSuspendedAtMs: null }, { minUpdateCycles: "1" }).writeCyclesAvailable, false);
+assert.equal(cyclesStateModule.databaseCyclesView({ databaseId: "db_archived", role: "owner", status: "archived", cyclesBalance: "0", cyclesSuspendedAtMs: null }, { minUpdateCycles: "1" }).purchaseAvailable, false);
 
 const clientModule = loadTsModule(
   "../app/cycles/cycles-client.tsx",

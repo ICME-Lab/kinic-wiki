@@ -1,27 +1,21 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
+import { expectedMethods, expectedTypes } from "./candid-shapes.mjs";
 import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..", "..");
-const did = readFileSync(join(root, "crates", "vfs_canister", "vfs.did"), "utf8");
 const idl = readFileSync(join(here, "..", "lib", "vfs-idl.ts"), "utf8");
 
-const didTypes = parseDidTypes(did);
-const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
-  compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
   compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], shape);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {
-  compareMethod(`vfs.did method ${name}`, didMethods[name], shape);
   compareMethod(`vfs-idl.ts method ${name}`, idlMethods[name], shape);
 }
 
@@ -32,9 +26,9 @@ for (const name of Object.keys(idlMethods)) {
 }
 
 try {
-  const generated = generateVfsIdlFromDid(did);
+  const generated = generateVfsIdlFromDid();
   if (idl !== generated) {
-    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node scripts/generate-vfs-idl.mjs");
+    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from scripts/candid-shapes.mjs; run node scripts/generate-vfs-idl.mjs");
   }
 } catch (error) {
   failures.push(error instanceof Error ? error.message : String(error));
@@ -46,44 +40,6 @@ if (failures.length > 0) {
 }
 
 console.log(`Candid subset shape OK: ${Object.keys(expectedMethods).join(", ")}`);
-
-function parseDidTypes(source) {
-  const types = {};
-  for (const match of source.matchAll(/^type\s+(\w+)\s*=\s*(record|variant)\s*\{([^]*?)\};/gm)) {
-    const [, name, kind, body] = match;
-    types[name] = kind === "record" ? { kind, fields: parseDidFields(body) } : { kind, cases: parseDidFields(body) };
-  }
-  return types;
-}
-
-function parseDidFields(body) {
-  const fields = {};
-  for (const raw of body.split(";")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const match = line.match(/^"?(\w+)"?\s*(?::\s*(.+))?$/);
-    if (!match) continue;
-    fields[match[1]] = normalizeShape(match[2] ?? "null");
-  }
-  return fields;
-}
-
-function parseDidMethods(source) {
-  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
-  const methods = {};
-  for (const raw of service.split(";")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
-    if (!match) continue;
-    methods[match[1]] = {
-      input: splitShapes(match[2]),
-      output: normalizeResultAlias(match[3]),
-      mode: match[4] ?? "update"
-    };
-  }
-  return methods;
-}
 
 function parseIdlTypes(source) {
   const types = {};
@@ -186,59 +142,10 @@ function splitIdlInputs(value) {
   return trimmed.split(",").map((part) => normalizeIdlShape(part));
 }
 
-function splitShapes(value) {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  return trimmed.split(",").map((part) => normalizeShape(part));
-}
-
-function normalizeShape(value) {
-  return normalizeBlobAlias(value.trim().replace(/\s+/g, " "));
-}
-
 function normalizeBlobAlias(value) {
   if (value === "vec nat8") return "blob";
   if (value === "opt vec nat8") return "opt blob";
   return value;
-}
-
-function normalizeResultAlias(value) {
-  const normalized = normalizeShape(value).replace(/,$/, "").trim();
-  if (normalized === "Result_10") return "ResultLinks";
-  if (normalized === "Result_11") return "ResultLinks";
-  if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultCyclesEntries";
-  if (normalized === "Result_14") return "ResultCyclesPendingPurchases";
-  if (normalized === "Result_15") return "ResultMembers";
-  if (normalized === "Result_16") return "ResultDatabases";
-  if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_4") return "ResultCreateDatabase";
-  if (normalized === "Result_5") return "ResultDeleteNode";
-  if (normalized === "Result_18") return "ResultNat64";
-  if (normalized === "Result_19") return "ResultMarketListing";
-  if (normalized === "Result_20") return "ResultMarketDeposit";
-  if (normalized === "Result_21") return "ResultKinicBalance";
-  if (normalized === "Result_22") return "ResultMarketListings";
-  if (normalized === "Result_23") return "ResultMarketEntitlementPage";
-  if (normalized === "Result_24") return "ResultMarketListingPage";
-  if (normalized === "Result_25") return "ResultMarketOrderPage";
-  if (normalized === "Result_26") return "ResultKinicPendingOperations";
-  if (normalized === "Result_27") return "ResultMarketPurchasePreview";
-  if (normalized === "Result_28") return "ResultMarketOrder";
-  if (normalized === "Result_29") return "ResultMkdirNode";
-  if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_30") return "ResultMoveNode";
-  if (normalized === "Result_31") return "ResultCyclesPurchase";
-  if (normalized === "Result_32") return "ResultQueryContext";
-  if (normalized === "Result_35") return "ResultNode";
-  if (normalized === "Result_36") return "ResultNodeContext";
-  if (normalized === "Result_37") return "ResultSearch";
-  if (normalized === "Result_38") return "ResultStorageBillingBatch";
-  if (normalized === "Result_39") return "ResultSourceEvidence";
-  if (normalized === "Result_41") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
-  if (normalized === "Result") return "ResultWriteNode";
-  return normalized;
 }
 
 function compareShape(label, actual, expected) {
@@ -274,7 +181,7 @@ function compareMethod(label, actual, expected) {
 }
 
 function canonicalTypeName(name) {
-  return didTypeAliases[name] ?? name;
+  return name;
 }
 
 function compareMap(label, actual, expected) {

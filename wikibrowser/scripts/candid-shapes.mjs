@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Active: "null", Restoring: "null", Archiving: "null", Archived: "null", Pending: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
