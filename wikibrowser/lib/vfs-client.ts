@@ -19,6 +19,18 @@ import type {
   DatabaseStatus,
   DatabaseSummary,
   LinkEdge,
+  KinicBalance,
+  KinicPendingOperation,
+  MarketCreateListingRequest,
+  MarketDepositResult,
+  MarketEntitlementPage,
+  MarketListing,
+  MarketListingPage,
+  MarketListingStatus,
+  MarketOrder,
+  MarketOrderPage,
+  MarketPurchasePreview,
+  MarketUpdateListingRequest,
   MkdirNodeRequest,
   MkdirNodeResult,
   MoveNodeRequest,
@@ -112,6 +124,120 @@ type RawDatabaseCyclesPendingPurchase = {
   ledger_block_index: [] | [bigint];
   created_at_ms: bigint;
   required_action: string;
+};
+
+type RawKinicBalance = {
+  balance_e8s: bigint;
+};
+
+type RawKinicPendingOperation = {
+  operation_id: bigint;
+  kind: string;
+  caller: string;
+  status: string;
+  amount_e8s: bigint;
+  ledger_block_index: [] | [bigint];
+  created_at_ms: bigint;
+  required_action: string;
+};
+
+type RawMarketListingStatus = Variant;
+
+type RawMarketListing = {
+  listing_id: string;
+  seller_principal: string;
+  database_id: string;
+  title: string;
+  description: string;
+  llm_summary: [] | [string];
+  summary_snapshot_revision: [] | [string];
+  sample_excerpts_json: string;
+  sample_questions_json: string;
+  tags_json: string;
+  price_e8s: bigint;
+  status: RawMarketListingStatus;
+  revision: bigint;
+  purchase_count: bigint;
+  report_count: bigint;
+  created_at_ms: bigint;
+  updated_at_ms: bigint;
+};
+
+type RawMarketListingPage = {
+  listings: RawMarketListing[];
+  next_cursor: [] | [string];
+};
+
+type RawMarketCreateListingRequest = {
+  database_id: string;
+  title: string;
+  description: string;
+  llm_summary: [] | [string];
+  summary_snapshot_revision: [] | [string];
+  sample_excerpts_json: string;
+  sample_questions_json: string;
+  tags_json: string;
+  price_e8s: bigint;
+};
+
+type RawMarketUpdateListingRequest = RawMarketCreateListingRequest & {
+  listing_id: string;
+  expected_revision: bigint;
+};
+
+type RawMarketDepositRequest = {
+  amount_e8s: bigint;
+  expected_fee_e8s: bigint;
+};
+
+type RawMarketDepositResult = {
+  block_index: bigint;
+  amount_e8s: bigint;
+  balance_e8s: bigint;
+};
+
+type RawMarketPurchasePreview = {
+  listing_id: string;
+  database_id: string;
+  price_e8s: bigint;
+  buyer_balance_e8s: bigint;
+  already_entitled: boolean;
+};
+
+type RawMarketPurchaseRequest = {
+  listing_id: string;
+  price_e8s: bigint;
+  expected_revision: bigint;
+};
+
+type RawMarketOrder = {
+  order_id: string;
+  listing_id: string;
+  database_id: string;
+  buyer_principal: string;
+  seller_principal: string;
+  price_e8s: bigint;
+  listing_revision: bigint;
+  created_at_ms: bigint;
+};
+
+type RawMarketOrderPage = {
+  orders: RawMarketOrder[];
+  next_cursor: [] | [string];
+};
+
+type RawMarketEntitlement = {
+  database_id: string;
+  buyer_principal: string;
+  listing_id: string;
+  order_id: string;
+  purchased_at_ms: bigint;
+  status: string;
+};
+
+type RawMarketEntitlementPage = {
+  entitlements: RawMarketEntitlement[];
+  next_cursor: [] | [string];
 };
 
 type RawDeleteDatabaseRequest = {
@@ -283,6 +409,21 @@ type VfsActor = {
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   list_database_cycle_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseCycleEntryPage } | { Err: string }>;
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
+  market_count_active_entitlements: (databaseId: string) => Promise<{ Ok: bigint } | { Err: string }>;
+  market_create_listing: (request: RawMarketCreateListingRequest) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
+  market_deposit_balance: (request: RawMarketDepositRequest) => Promise<{ Ok: RawMarketDepositResult } | { Err: string }>;
+  market_get_balance: () => Promise<{ Ok: RawKinicBalance } | { Err: string }>;
+  market_get_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
+  market_list_database_listings: (databaseId: string) => Promise<{ Ok: RawMarketListing[] } | { Err: string }>;
+  market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
+  market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
+  market_list_orders: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketOrderPage } | { Err: string }>;
+  market_list_pending_operations: () => Promise<{ Ok: RawKinicPendingOperation[] } | { Err: string }>;
+  market_pause_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
+  market_preview_purchase: (listingId: string) => Promise<{ Ok: RawMarketPurchasePreview } | { Err: string }>;
+  market_publish_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
+  market_purchase_access: (request: RawMarketPurchaseRequest) => Promise<{ Ok: RawMarketOrder } | { Err: string }>;
+  market_update_listing: (request: RawMarketUpdateListingRequest) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   mkdir_node: (request: RawMkdirNodeRequest) => Promise<{ Ok: RawMkdirNodeResult } | { Err: string }>;
   move_node: (request: RawMoveNodeRequest) => Promise<{ Ok: RawMoveNodeResult } | { Err: string }>;
   list_databases: () => Promise<{ Ok: RawDatabaseSummary[] } | { Err: string }>;
@@ -501,6 +642,197 @@ export async function listDatabaseCyclesPendingPurchasesAuthenticated(
       throw new Error(result.Err);
     }
     return result.Ok.map(normalizeDatabaseCyclesPendingPurchase);
+  });
+}
+
+export async function marketGetBalance(canisterId: string, identity: Identity): Promise<KinicBalance> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_get_balance();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeKinicBalance(result.Ok);
+  });
+}
+
+export async function marketDepositBalance(
+  canisterId: string,
+  identity: Identity,
+  amountE8s: string,
+  expectedFeeE8s: string
+): Promise<MarketDepositResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_deposit_balance({
+      amount_e8s: BigInt(amountE8s),
+      expected_fee_e8s: BigInt(expectedFeeE8s)
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketDepositResult(result.Ok);
+  });
+}
+
+export async function marketListPendingOperations(canisterId: string, identity: Identity): Promise<KinicPendingOperation[]> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_list_pending_operations();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok.map(normalizeKinicPendingOperation);
+  });
+}
+
+export async function marketListListings(canisterId: string, cursor: string | null, limit: number): Promise<MarketListingPage> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.market_list_listings(rawTextCursor(cursor), limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListingPage(result.Ok);
+  });
+}
+
+export async function marketGetListing(canisterId: string, listingId: string, identity?: Identity): Promise<MarketListing> {
+  return callVfs(async () => {
+    const actor = await createReadActor(canisterId, identity);
+    const result = await actor.market_get_listing(listingId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListing(result.Ok);
+  });
+}
+
+export async function marketListDatabaseListings(canisterId: string, identity: Identity, databaseId: string): Promise<MarketListing[]> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_list_database_listings(databaseId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok.map(normalizeMarketListing);
+  });
+}
+
+export async function marketPreviewPurchase(canisterId: string, identity: Identity, listingId: string): Promise<MarketPurchasePreview> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_preview_purchase(listingId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketPurchasePreview(result.Ok);
+  });
+}
+
+export async function marketPurchaseAccess(
+  canisterId: string,
+  identity: Identity,
+  listingId: string,
+  priceE8s: string,
+  expectedRevision: string
+): Promise<MarketOrder> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_purchase_access({
+      listing_id: listingId,
+      price_e8s: BigInt(priceE8s),
+      expected_revision: BigInt(expectedRevision)
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketOrder(result.Ok);
+  });
+}
+
+export async function marketListEntitlements(canisterId: string, identity: Identity, cursor: string | null, limit: number): Promise<MarketEntitlementPage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_list_entitlements(rawTextCursor(cursor), limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketEntitlementPage(result.Ok);
+  });
+}
+
+export async function marketListOrders(canisterId: string, identity: Identity, cursor: string | null, limit: number): Promise<MarketOrderPage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_list_orders(rawTextCursor(cursor), limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketOrderPage(result.Ok);
+  });
+}
+
+export async function marketCreateListing(
+  canisterId: string,
+  identity: Identity,
+  request: MarketCreateListingRequest
+): Promise<MarketListing> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_create_listing(rawMarketCreateListingRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListing(result.Ok);
+  });
+}
+
+export async function marketUpdateListing(
+  canisterId: string,
+  identity: Identity,
+  request: MarketUpdateListingRequest
+): Promise<MarketListing> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_update_listing(rawMarketUpdateListingRequest(request));
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListing(result.Ok);
+  });
+}
+
+export async function marketPublishListing(canisterId: string, identity: Identity, listingId: string): Promise<MarketListing> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_publish_listing(listingId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListing(result.Ok);
+  });
+}
+
+export async function marketPauseListing(canisterId: string, identity: Identity, listingId: string): Promise<MarketListing> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_pause_listing(listingId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListing(result.Ok);
+  });
+}
+
+export async function marketCountActiveEntitlements(canisterId: string, identity: Identity, databaseId: string): Promise<string> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_count_active_entitlements(databaseId);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok.toString();
   });
 }
 
@@ -971,6 +1303,138 @@ function normalizeDatabaseCyclesPendingPurchase(raw: RawDatabaseCyclesPendingPur
   };
 }
 
+function normalizeKinicBalance(raw: RawKinicBalance): KinicBalance {
+  return {
+    balanceE8s: raw.balance_e8s.toString()
+  };
+}
+
+function normalizeKinicPendingOperation(raw: RawKinicPendingOperation): KinicPendingOperation {
+  return {
+    operationId: raw.operation_id.toString(),
+    kind: raw.kind,
+    caller: raw.caller,
+    status: raw.status,
+    amountE8s: raw.amount_e8s.toString(),
+    ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
+    createdAtMs: raw.created_at_ms.toString(),
+    requiredAction: raw.required_action
+  };
+}
+
+function normalizeMarketListingPage(raw: RawMarketListingPage): MarketListingPage {
+  return {
+    listings: raw.listings.map(normalizeMarketListing),
+    nextCursor: raw.next_cursor[0] ?? null
+  };
+}
+
+function normalizeMarketListing(raw: RawMarketListing): MarketListing {
+  return {
+    listingId: raw.listing_id,
+    sellerPrincipal: raw.seller_principal,
+    databaseId: raw.database_id,
+    title: raw.title,
+    description: raw.description,
+    llmSummary: raw.llm_summary[0] ?? null,
+    summarySnapshotRevision: raw.summary_snapshot_revision[0] ?? null,
+    sampleExcerptsJson: raw.sample_excerpts_json,
+    sampleQuestionsJson: raw.sample_questions_json,
+    tagsJson: raw.tags_json,
+    priceE8s: raw.price_e8s.toString(),
+    status: normalizeMarketListingStatus(raw.status),
+    revision: raw.revision.toString(),
+    purchaseCount: raw.purchase_count.toString(),
+    reportCount: raw.report_count.toString(),
+    createdAtMs: raw.created_at_ms.toString(),
+    updatedAtMs: raw.updated_at_ms.toString()
+  };
+}
+
+function normalizeMarketListingStatus(status: RawMarketListingStatus): MarketListingStatus {
+  if ("Active" in status) return "Active";
+  if ("Paused" in status) return "Paused";
+  return "Draft";
+}
+
+function normalizeMarketDepositResult(raw: RawMarketDepositResult): MarketDepositResult {
+  return {
+    blockIndex: raw.block_index.toString(),
+    amountE8s: raw.amount_e8s.toString(),
+    balanceE8s: raw.balance_e8s.toString()
+  };
+}
+
+function normalizeMarketPurchasePreview(raw: RawMarketPurchasePreview): MarketPurchasePreview {
+  return {
+    listingId: raw.listing_id,
+    databaseId: raw.database_id,
+    priceE8s: raw.price_e8s.toString(),
+    buyerBalanceE8s: raw.buyer_balance_e8s.toString(),
+    alreadyEntitled: raw.already_entitled
+  };
+}
+
+function normalizeMarketOrderPage(raw: RawMarketOrderPage): MarketOrderPage {
+  return {
+    orders: raw.orders.map(normalizeMarketOrder),
+    nextCursor: raw.next_cursor[0] ?? null
+  };
+}
+
+function normalizeMarketOrder(raw: RawMarketOrder): MarketOrder {
+  return {
+    orderId: raw.order_id,
+    listingId: raw.listing_id,
+    databaseId: raw.database_id,
+    buyerPrincipal: raw.buyer_principal,
+    sellerPrincipal: raw.seller_principal,
+    priceE8s: raw.price_e8s.toString(),
+    listingRevision: raw.listing_revision.toString(),
+    createdAtMs: raw.created_at_ms.toString()
+  };
+}
+
+function normalizeMarketEntitlementPage(raw: RawMarketEntitlementPage): MarketEntitlementPage {
+  return {
+    entitlements: raw.entitlements.map(normalizeMarketEntitlement),
+    nextCursor: raw.next_cursor[0] ?? null
+  };
+}
+
+function normalizeMarketEntitlement(raw: RawMarketEntitlement) {
+  return {
+    databaseId: raw.database_id,
+    buyerPrincipal: raw.buyer_principal,
+    listingId: raw.listing_id,
+    orderId: raw.order_id,
+    purchasedAtMs: raw.purchased_at_ms.toString(),
+    status: raw.status
+  };
+}
+
+function rawMarketCreateListingRequest(request: MarketCreateListingRequest): RawMarketCreateListingRequest {
+  return {
+    database_id: request.databaseId,
+    title: request.title,
+    description: request.description,
+    llm_summary: rawOptionalText(request.llmSummary),
+    summary_snapshot_revision: rawOptionalText(request.summarySnapshotRevision),
+    sample_excerpts_json: request.sampleExcerptsJson,
+    sample_questions_json: request.sampleQuestionsJson,
+    tags_json: request.tagsJson,
+    price_e8s: BigInt(request.priceE8s)
+  };
+}
+
+function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): RawMarketUpdateListingRequest {
+  return {
+    ...rawMarketCreateListingRequest(request),
+    listing_id: request.listingId,
+    expected_revision: BigInt(request.expectedRevision)
+  };
+}
+
 function normalizeDatabaseMember(raw: RawDatabaseMember): DatabaseMember {
   return {
     databaseId: raw.database_id,
@@ -1079,6 +1543,14 @@ function rawDatabaseCycleCursor(cursor: string | null): [] | [bigint] {
     throw new ApiError("Invalid cycles history cursor.", 400);
   }
   return [BigInt(cursor)];
+}
+
+function rawTextCursor(cursor: string | null): [] | [string] {
+  return cursor ? [cursor] : [];
+}
+
+function rawOptionalText(value: string | null): [] | [string] {
+  return value === null ? [] : [value];
 }
 
 function rawUrlIngestTriggerSessionRequest(request: UrlIngestTriggerSessionRequest): RawUrlIngestTriggerSessionRequest {

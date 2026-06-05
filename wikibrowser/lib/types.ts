@@ -172,6 +172,109 @@ export type DatabaseCyclesPendingPurchase = {
   requiredAction: string;
 };
 
+export type KinicBalance = {
+  balanceE8s: string;
+};
+
+export type KinicPendingOperation = {
+  operationId: string;
+  kind: string;
+  caller: string;
+  status: string;
+  amountE8s: string;
+  ledgerBlockIndex: string | null;
+  createdAtMs: string;
+  requiredAction: string;
+};
+
+export type MarketListingStatus = "Draft" | "Active" | "Paused";
+
+export type MarketListing = {
+  listingId: string;
+  sellerPrincipal: string;
+  databaseId: string;
+  title: string;
+  description: string;
+  llmSummary: string | null;
+  summarySnapshotRevision: string | null;
+  sampleExcerptsJson: string;
+  sampleQuestionsJson: string;
+  tagsJson: string;
+  priceE8s: string;
+  status: MarketListingStatus;
+  revision: string;
+  purchaseCount: string;
+  reportCount: string;
+  createdAtMs: string;
+  updatedAtMs: string;
+};
+
+export type MarketListingPage = {
+  listings: MarketListing[];
+  nextCursor: string | null;
+};
+
+export type MarketCreateListingRequest = {
+  databaseId: string;
+  title: string;
+  description: string;
+  llmSummary: string | null;
+  summarySnapshotRevision: string | null;
+  sampleExcerptsJson: string;
+  sampleQuestionsJson: string;
+  tagsJson: string;
+  priceE8s: string;
+};
+
+export type MarketUpdateListingRequest = MarketCreateListingRequest & {
+  listingId: string;
+  expectedRevision: string;
+};
+
+export type MarketDepositResult = {
+  blockIndex: string;
+  amountE8s: string;
+  balanceE8s: string;
+};
+
+export type MarketPurchasePreview = {
+  listingId: string;
+  databaseId: string;
+  priceE8s: string;
+  buyerBalanceE8s: string;
+  alreadyEntitled: boolean;
+};
+
+export type MarketOrder = {
+  orderId: string;
+  listingId: string;
+  databaseId: string;
+  buyerPrincipal: string;
+  sellerPrincipal: string;
+  priceE8s: string;
+  listingRevision: string;
+  createdAtMs: string;
+};
+
+export type MarketOrderPage = {
+  orders: MarketOrder[];
+  nextCursor: string | null;
+};
+
+export type MarketEntitlement = {
+  databaseId: string;
+  buyerPrincipal: string;
+  listingId: string;
+  orderId: string;
+  purchasedAtMs: string;
+  status: string;
+};
+
+export type MarketEntitlementPage = {
+  entitlements: MarketEntitlement[];
+  nextCursor: string | null;
+};
+
 export type DatabaseMember = {
   databaseId: string;
   principal: string;

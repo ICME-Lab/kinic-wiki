@@ -10,7 +10,7 @@ import { AuthControls, CyclesHistoryPanel, DashboardTabs, OwnerPanel, PendingDat
 import { AdminHeader } from "@/components/admin-header";
 import { CycleBattery } from "@/components/cycle-battery";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
   getCyclesBillingConfig,
@@ -21,6 +21,12 @@ import {
   listDatabaseMembersPublic,
   listDatabasesAuthenticated,
   listDatabasesPublic,
+  marketCountActiveEntitlements,
+  marketCreateListing,
+  marketListDatabaseListings,
+  marketPauseListing,
+  marketPublishListing,
+  marketUpdateListing,
   renameDatabaseAuthenticated,
   revokeDatabaseAccessAuthenticated
 } from "@/lib/vfs-client";
@@ -57,6 +63,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [pendingPurchases, setPendingPurchases] = useState<DatabaseCyclesPendingPurchase[]>([]);
   const [pendingPurchasesError, setPendingPurchasesError] = useState<string | null>(null);
   const [pendingPurchasesLoading, setPendingPurchasesLoading] = useState(false);
+  const [marketListings, setMarketListings] = useState<MarketListing[]>([]);
+  const [marketError, setMarketError] = useState<string | null>(null);
+  const [activeEntitlementCount, setActiveEntitlementCount] = useState<string | null>(null);
+  const [marketBusy, setMarketBusy] = useState(false);
 
   const database = useMemo(() => databases.find((item) => item.databaseId === databaseId) ?? null, [databaseId, databases]);
   const isActiveDatabase = database?.status === "active";
@@ -88,6 +98,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setDatabases([]);
         setCyclesBillingConfig(null);
         setMembers([]);
+        setMarketListings([]);
+        setMarketError(null);
+        setActiveEntitlementCount(null);
         setError(null);
         setWarning(null);
         setMemberError(null);
@@ -121,6 +134,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         setDatabases(nextDatabases);
         setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
         setMembers([]);
+        setMarketListings([]);
+        setMarketError(null);
+        setActiveEntitlementCount(null);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
         }
@@ -129,13 +145,26 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         }
         if (identity && nextDatabase?.role === "owner") {
           if (nextDatabase.status === "active") {
-            try {
-              const nextMembers = await listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId);
-              if (!isCurrentRefresh()) return;
-              setMembers(nextMembers);
-            } catch (cause) {
-              if (!isCurrentRefresh()) return;
-              setMemberError(errorMessage(cause));
+            const [membersResult, listingsResult, entitlementCountResult] = await Promise.allSettled([
+              listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId),
+              marketListDatabaseListings(canisterId, identity, nextDatabaseId),
+              marketCountActiveEntitlements(canisterId, identity, nextDatabaseId)
+            ]);
+            if (!isCurrentRefresh()) return;
+            if (membersResult.status === "fulfilled") {
+              setMembers(membersResult.value);
+            } else {
+              setMemberError(errorMessage(membersResult.reason));
+            }
+            if (listingsResult.status === "fulfilled") {
+              setMarketListings(listingsResult.value);
+            } else {
+              setMarketError(errorMessage(listingsResult.reason));
+            }
+            if (entitlementCountResult.status === "fulfilled") {
+              setActiveEntitlementCount(entitlementCountResult.value);
+            } else {
+              setMarketError((current) => [current, errorMessage(entitlementCountResult.reason)].filter(Boolean).join("; "));
             }
           }
         } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
@@ -261,6 +290,9 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     setDatabases([]);
     setCyclesBillingConfig(null);
     setMembers([]);
+    setMarketListings([]);
+    setMarketError(null);
+    setActiveEntitlementCount(null);
     setError(null);
     setWarning(null);
     setMemberError(null);
@@ -364,6 +396,70 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
+  async function createMarketListing(request: MarketCreateListingRequest) {
+    if (!authClient || !databaseId) return;
+    setMarketBusy(true);
+    setActionMessage(null);
+    try {
+      await marketCreateListing(canisterId, authClient.getIdentity(), request);
+      setActionTone("info");
+      setActionMessage("Listing created.");
+      await refresh(authClient, databaseId);
+    } catch (cause) {
+      setMarketError(errorMessage(cause));
+    } finally {
+      setMarketBusy(false);
+    }
+  }
+
+  async function updateMarketListing(request: MarketUpdateListingRequest) {
+    if (!authClient || !databaseId) return;
+    setMarketBusy(true);
+    setActionMessage(null);
+    try {
+      await marketUpdateListing(canisterId, authClient.getIdentity(), request);
+      setActionTone("info");
+      setActionMessage("Listing updated.");
+      await refresh(authClient, databaseId);
+    } catch (cause) {
+      setMarketError(errorMessage(cause));
+    } finally {
+      setMarketBusy(false);
+    }
+  }
+
+  async function publishMarketListing(listingId: string) {
+    if (!authClient || !databaseId) return;
+    setMarketBusy(true);
+    setActionMessage(null);
+    try {
+      await marketPublishListing(canisterId, authClient.getIdentity(), listingId);
+      setActionTone("info");
+      setActionMessage("Listing published.");
+      await refresh(authClient, databaseId);
+    } catch (cause) {
+      setMarketError(errorMessage(cause));
+    } finally {
+      setMarketBusy(false);
+    }
+  }
+
+  async function pauseMarketListing(listingId: string) {
+    if (!authClient || !databaseId) return;
+    setMarketBusy(true);
+    setActionMessage(null);
+    try {
+      await marketPauseListing(canisterId, authClient.getIdentity(), listingId);
+      setActionTone("info");
+      setActionMessage("Listing paused.");
+      await refresh(authClient, databaseId);
+    } catch (cause) {
+      setMarketError(errorMessage(cause));
+    } finally {
+      setMarketBusy(false);
+    }
+  }
+
   return (
     <main className="min-h-screen px-6 py-8">
       <section className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -443,11 +539,19 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               busyAction={busyAction}
               databaseId={databaseId}
               databaseName={database.name}
+              activeEntitlementCount={activeEntitlementCount}
+              marketBusy={marketBusy}
+              marketError={marketError}
+              marketListings={marketListings}
               members={members}
               principal={principal ?? "anonymous"}
+              onCreateListing={createMarketListing}
               onDelete={deleteDatabase}
               onGrant={grantAccess}
+              onPauseListing={pauseMarketListing}
+              onPublishListing={publishMarketListing}
               onRevoke={revokeAccess}
+              onUpdateListing={updateMarketListing}
             />
           ) : database.publicReadable ? (
             <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />

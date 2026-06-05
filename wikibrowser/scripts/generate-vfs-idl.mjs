@@ -33,6 +33,21 @@ const typeOrder = [
   "CyclesPurchaseResult",
   "DatabaseCyclesPendingPurchase",
   "DatabaseCyclesPurchaseRequest",
+  "KinicBalance",
+  "KinicPendingOperation",
+  "MarketCreateListingRequest",
+  "MarketDepositRequest",
+  "MarketDepositResult",
+  "MarketEntitlement",
+  "MarketEntitlementPage",
+  "MarketListingStatus",
+  "MarketListing",
+  "MarketListingPage",
+  "MarketOrder",
+  "MarketOrderPage",
+  "MarketPurchasePreview",
+  "MarketPurchaseRequest",
+  "MarketUpdateListingRequest",
   "Icrc21ConsentMessageMetadata",
   "Icrc21DeviceSpec",
   "Icrc21ConsentMessageSpec",
@@ -105,8 +120,19 @@ const typeOrder = [
   "ResultCyclesPurchase",
   "ResultCyclesEntries",
   "ResultCyclesPendingPurchases",
+  "ResultKinicBalance",
+  "ResultKinicPendingOperations",
+  "ResultMarketDeposit",
+  "ResultMarketEntitlementPage",
+  "ResultMarketListing",
+  "ResultMarketListings",
+  "ResultMarketListingPage",
+  "ResultMarketOrder",
+  "ResultMarketOrderPage",
+  "ResultMarketPurchasePreview",
   "ResultDatabases",
   "ResultMembers",
+  "ResultNat64",
   "WriteNodeResult",
   "ResultWriteNode",
   "WriteSourceForGenerationResult",
@@ -143,6 +169,21 @@ const methodOrder = [
   "list_database_cycles_pending_purchases",
   "list_databases",
   "list_database_members",
+  "market_count_active_entitlements",
+  "market_create_listing",
+  "market_deposit_balance",
+  "market_get_balance",
+  "market_get_listing",
+  "market_list_database_listings",
+  "market_list_entitlements",
+  "market_list_listings",
+  "market_list_orders",
+  "market_list_pending_operations",
+  "market_pause_listing",
+  "market_preview_purchase",
+  "market_publish_listing",
+  "market_purchase_access",
+  "market_update_listing",
   "memory_manifest",
   "mkdir_node",
   "move_node",
@@ -369,17 +410,28 @@ function normalizeResultAlias(value) {
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_4") return "ResultCreateDatabase";
   if (normalized === "Result_5") return "ResultDeleteNode";
-  if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCyclesPurchase";
-  if (normalized === "Result_21") return "ResultQueryContext";
-  if (normalized === "Result_24") return "ResultNode";
-  if (normalized === "Result_25") return "ResultNodeContext";
-  if (normalized === "Result_26") return "ResultSearch";
-  if (normalized === "Result_27") return "ResultStorageBillingBatch";
-  if (normalized === "Result_28") return "ResultSourceEvidence";
+  if (normalized === "Result_18") return "ResultNat64";
+  if (normalized === "Result_19") return "ResultMarketListing";
+  if (normalized === "Result_20") return "ResultMarketDeposit";
+  if (normalized === "Result_21") return "ResultKinicBalance";
+  if (normalized === "Result_22") return "ResultMarketListings";
+  if (normalized === "Result_23") return "ResultMarketEntitlementPage";
+  if (normalized === "Result_24") return "ResultMarketListingPage";
+  if (normalized === "Result_25") return "ResultMarketOrderPage";
+  if (normalized === "Result_26") return "ResultKinicPendingOperations";
+  if (normalized === "Result_27") return "ResultMarketPurchasePreview";
+  if (normalized === "Result_28") return "ResultMarketOrder";
+  if (normalized === "Result_29") return "ResultMkdirNode";
   if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_30") return "ResultMoveNode";
+  if (normalized === "Result_31") return "ResultCyclesPurchase";
+  if (normalized === "Result_32") return "ResultQueryContext";
+  if (normalized === "Result_35") return "ResultNode";
+  if (normalized === "Result_36") return "ResultNodeContext";
+  if (normalized === "Result_37") return "ResultSearch";
+  if (normalized === "Result_38") return "ResultStorageBillingBatch";
+  if (normalized === "Result_39") return "ResultSourceEvidence";
+  if (normalized === "Result_41") return "ResultWriteSourceForGeneration";
   if (normalized === "Result_9") return "ResultCyclesBillingConfig";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;

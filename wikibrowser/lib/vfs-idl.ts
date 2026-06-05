@@ -53,6 +53,98 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     payment_amount_e8s: idl.Nat64,
     min_expected_cycles: idl.Nat64
   });
+  const KinicBalance = idl.Record({ balance_e8s: idl.Nat64 });
+  const KinicPendingOperation = idl.Record({
+    status: idl.Text,
+    kind: idl.Text,
+    operation_id: idl.Nat64,
+    created_at_ms: idl.Int64,
+    amount_e8s: idl.Nat64,
+    required_action: idl.Text,
+    ledger_block_index: idl.Opt(idl.Nat64),
+    caller: idl.Text
+  });
+  const MarketCreateListingRequest = idl.Record({
+    llm_summary: idl.Opt(idl.Text),
+    title: idl.Text,
+    summary_snapshot_revision: idl.Opt(idl.Text),
+    sample_questions_json: idl.Text,
+    description: idl.Text,
+    database_id: idl.Text,
+    price_e8s: idl.Nat64,
+    sample_excerpts_json: idl.Text,
+    tags_json: idl.Text
+  });
+  const MarketDepositRequest = idl.Record({ amount_e8s: idl.Nat64, expected_fee_e8s: idl.Nat64 });
+  const MarketDepositResult = idl.Record({ block_index: idl.Nat64, amount_e8s: idl.Nat64, balance_e8s: idl.Nat64 });
+  const MarketEntitlement = idl.Record({
+    status: idl.Text,
+    purchased_at_ms: idl.Int64,
+    database_id: idl.Text,
+    buyer_principal: idl.Text,
+    order_id: idl.Text,
+    listing_id: idl.Text
+  });
+  const MarketEntitlementPage = idl.Record({
+    next_cursor: idl.Opt(idl.Text),
+    entitlements: idl.Vec(MarketEntitlement)
+  });
+  const MarketListingStatus = idl.Variant({ Paused: idl.Null, Active: idl.Null, Draft: idl.Null });
+  const MarketListing = idl.Record({
+    status: MarketListingStatus,
+    llm_summary: idl.Opt(idl.Text),
+    title: idl.Text,
+    summary_snapshot_revision: idl.Opt(idl.Text),
+    report_count: idl.Nat64,
+    sample_questions_json: idl.Text,
+    description: idl.Text,
+    updated_at_ms: idl.Int64,
+    created_at_ms: idl.Int64,
+    seller_principal: idl.Text,
+    purchase_count: idl.Nat64,
+    database_id: idl.Text,
+    listing_id: idl.Text,
+    price_e8s: idl.Nat64,
+    revision: idl.Nat64,
+    sample_excerpts_json: idl.Text,
+    tags_json: idl.Text
+  });
+  const MarketListingPage = idl.Record({ listings: idl.Vec(MarketListing), next_cursor: idl.Opt(idl.Text) });
+  const MarketOrder = idl.Record({
+    created_at_ms: idl.Int64,
+    seller_principal: idl.Text,
+    database_id: idl.Text,
+    buyer_principal: idl.Text,
+    order_id: idl.Text,
+    listing_id: idl.Text,
+    price_e8s: idl.Nat64,
+    listing_revision: idl.Nat64
+  });
+  const MarketOrderPage = idl.Record({ orders: idl.Vec(MarketOrder), next_cursor: idl.Opt(idl.Text) });
+  const MarketPurchasePreview = idl.Record({
+    already_entitled: idl.Bool,
+    buyer_balance_e8s: idl.Nat64,
+    database_id: idl.Text,
+    listing_id: idl.Text,
+    price_e8s: idl.Nat64
+  });
+  const MarketPurchaseRequest = idl.Record({
+    listing_id: idl.Text,
+    price_e8s: idl.Nat64,
+    expected_revision: idl.Nat64
+  });
+  const MarketUpdateListingRequest = idl.Record({
+    llm_summary: idl.Opt(idl.Text),
+    title: idl.Text,
+    summary_snapshot_revision: idl.Opt(idl.Text),
+    sample_questions_json: idl.Text,
+    description: idl.Text,
+    listing_id: idl.Text,
+    price_e8s: idl.Nat64,
+    expected_revision: idl.Nat64,
+    sample_excerpts_json: idl.Text,
+    tags_json: idl.Text
+  });
   const Icrc21ConsentMessageMetadata = idl.Record({ utc_offset_minutes: idl.Opt(idl.Int16), language: idl.Text });
   const Icrc21DeviceSpec = idl.Variant({ GenericDisplay: idl.Null, FieldsDisplay: idl.Null });
   const Icrc21ConsentMessageSpec = idl.Record({
@@ -283,8 +375,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
   const ResultCyclesPendingPurchases = idl.Variant({ Ok: idl.Vec(DatabaseCyclesPendingPurchase), Err: idl.Text });
+  const ResultKinicBalance = idl.Variant({ Ok: KinicBalance, Err: idl.Text });
+  const ResultKinicPendingOperations = idl.Variant({ Ok: idl.Vec(KinicPendingOperation), Err: idl.Text });
+  const ResultMarketDeposit = idl.Variant({ Ok: MarketDepositResult, Err: idl.Text });
+  const ResultMarketEntitlementPage = idl.Variant({ Ok: MarketEntitlementPage, Err: idl.Text });
+  const ResultMarketListing = idl.Variant({ Ok: MarketListing, Err: idl.Text });
+  const ResultMarketListings = idl.Variant({ Ok: idl.Vec(MarketListing), Err: idl.Text });
+  const ResultMarketListingPage = idl.Variant({ Ok: MarketListingPage, Err: idl.Text });
+  const ResultMarketOrder = idl.Variant({ Ok: MarketOrder, Err: idl.Text });
+  const ResultMarketOrderPage = idl.Variant({ Ok: MarketOrderPage, Err: idl.Text });
+  const ResultMarketPurchasePreview = idl.Variant({ Ok: MarketPurchasePreview, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
+  const ResultNat64 = idl.Variant({ Ok: idl.Nat64, Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
   const WriteSourceForGenerationResult = idl.Record({ session_nonce: idl.Text, write: WriteNodeResult });
@@ -321,6 +424,21 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     list_database_cycles_pending_purchases: idl.Func([idl.Text], [ResultCyclesPendingPurchases], ["query"]),
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
+    market_count_active_entitlements: idl.Func([idl.Text], [ResultNat64], ["query"]),
+    market_create_listing: idl.Func([MarketCreateListingRequest], [ResultMarketListing], []),
+    market_deposit_balance: idl.Func([MarketDepositRequest], [ResultMarketDeposit], []),
+    market_get_balance: idl.Func([], [ResultKinicBalance], ["query"]),
+    market_get_listing: idl.Func([idl.Text], [ResultMarketListing], ["query"]),
+    market_list_database_listings: idl.Func([idl.Text], [ResultMarketListings], ["query"]),
+    market_list_entitlements: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
+    market_list_listings: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketListingPage], ["query"]),
+    market_list_orders: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketOrderPage], ["query"]),
+    market_list_pending_operations: idl.Func([], [ResultKinicPendingOperations], ["query"]),
+    market_pause_listing: idl.Func([idl.Text], [ResultMarketListing], []),
+    market_preview_purchase: idl.Func([idl.Text], [ResultMarketPurchasePreview], ["query"]),
+    market_publish_listing: idl.Func([idl.Text], [ResultMarketListing], []),
+    market_purchase_access: idl.Func([MarketPurchaseRequest], [ResultMarketOrder], []),
+    market_update_listing: idl.Func([MarketUpdateListingRequest], [ResultMarketListing], []),
     memory_manifest: idl.Func([], [MemoryManifest], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     move_node: idl.Func([MoveNodeRequest], [ResultMoveNode], []),

@@ -9,7 +9,7 @@ import { CreateDatabaseDialog } from "./create-database-dialog";
 import { DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
 import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
-import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/cycles-wallet";
+import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";

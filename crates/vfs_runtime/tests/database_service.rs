@@ -8,16 +8,17 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCyclesPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
-    MAX_RESTORE_CHUNK_BYTES, VfsService, cycles_for_payment_amount_e8s,
+    DatabaseCyclesPurchaseWithLedgerDetails, KinicDepositWithLedgerDetails,
+    MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES, MAX_RESTORE_CHUNK_BYTES, VfsService,
+    cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    MkdirNodeRequest, MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteSourceForGenerationRequest,
+    MarketCreateListingRequest, MarketPurchaseRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -38,6 +39,50 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     DeleteDatabaseRequest {
         database_id: database_id.to_string(),
     }
+}
+
+fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
+    MarketCreateListingRequest {
+        database_id: database_id.to_string(),
+        title: "Team database".to_string(),
+        description: "Reusable team knowledge base".to_string(),
+        llm_summary: None,
+        summary_snapshot_revision: None,
+        sample_excerpts_json: "[]".to_string(),
+        sample_questions_json: "[]".to_string(),
+        tags_json: "[]".to_string(),
+        price_e8s,
+    }
+}
+
+fn credit_market_balance(
+    service: &VfsService,
+    caller: &str,
+    amount_e8s: u64,
+    block_index: u64,
+    now: i64,
+) {
+    let start = service
+        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
+            caller,
+            amount_e8s,
+            ledger: CyclesPendingLedgerDetailsInput {
+                from_owner: caller,
+                from_subaccount: None,
+                to_owner: "canister",
+                to_subaccount: None,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                ledger_created_at_time_ns: u64::try_from(now).expect("now should fit u64"),
+            },
+            now,
+        })
+        .expect("deposit should begin");
+    service
+        .complete_kinic_deposit_ledger_transfer(start.operation_id, caller, amount_e8s, block_index)
+        .expect("ledger transfer should complete");
+    service
+        .apply_kinic_deposit(start.operation_id, caller, amount_e8s, now + 1)
+        .expect("deposit should credit balance");
 }
 
 #[test]
@@ -484,6 +529,20 @@ fn database_member_count(root: &std::path::Path, database_id: &str) -> i64 {
         |row| row.get(0),
     )
     .expect("member count should load")
+}
+
+fn market_row_count(root: &std::path::Path, table: &str, database_id: &str) -> i64 {
+    assert!(
+        ["market_listings", "market_orders", "market_entitlements"].contains(&table),
+        "test helper must only read marketplace tables"
+    );
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        &format!("SELECT COUNT(*) FROM {table} WHERE database_id = ?1"),
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("market row count should load")
 }
 
 fn database_cycles_balance(root: &std::path::Path, database_id: &str) -> i64 {
@@ -4185,4 +4244,254 @@ fn move_node_validates_source_target_path() {
             5,
         )
         .expect("canonical source target should pass");
+}
+
+#[test]
+fn market_purchase_moves_internal_balance_and_creates_entitlement() {
+    let service = service();
+    service
+        .create_database("market-db", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("market-db", 250), 2)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 3)
+        .expect("listing should publish");
+    credit_market_balance(&service, "buyer", 1_000, 10, 5);
+
+    let order = service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id.clone(),
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            6,
+        )
+        .expect("purchase should succeed");
+
+    assert_eq!(order.buyer_principal, "buyer");
+    assert_eq!(order.seller_principal, "seller");
+    assert_eq!(
+        service
+            .market_get_balance("buyer")
+            .expect("buyer balance should load")
+            .balance_e8s,
+        750
+    );
+    assert_eq!(
+        service
+            .market_get_balance("seller")
+            .expect("seller balance should load")
+            .balance_e8s,
+        250
+    );
+    assert_eq!(
+        service
+            .market_list_entitlements("buyer", None, 10)
+            .expect("entitlements should load")
+            .entitlements
+            .len(),
+        1
+    );
+    let second_listing = service
+        .market_create_listing("seller", market_listing_request("market-db", 300), 7)
+        .expect("second listing should create");
+    let second_listing = service
+        .market_publish_listing("seller", &second_listing.listing_id, 8)
+        .expect("second listing should publish");
+    assert!(
+        service
+            .market_purchase_access(
+                "buyer",
+                MarketPurchaseRequest {
+                    listing_id: second_listing.listing_id,
+                    price_e8s: second_listing.price_e8s,
+                    expected_revision: second_listing.revision,
+                },
+                9,
+            )
+            .is_err(),
+        "same buyer cannot repurchase the same database"
+    );
+}
+
+#[test]
+fn market_purchase_rejects_seller_self_purchase() {
+    let service = service();
+    service
+        .create_database("self-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("self-market", 250), 2)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 3)
+        .expect("listing should publish");
+    credit_market_balance(&service, "seller", 1_000, 10, 4);
+
+    let error = service
+        .market_purchase_access(
+            "seller",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id,
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            5,
+        )
+        .expect_err("seller must not buy their own listing");
+
+    assert!(error.contains("seller cannot purchase own listing"));
+    assert_eq!(
+        service
+            .market_get_balance("seller")
+            .expect("seller balance should load")
+            .balance_e8s,
+        1_000
+    );
+}
+
+#[test]
+fn market_listing_owner_policy_and_database_listing_query() {
+    let service = service();
+    service
+        .create_database("owner-market", "seller", 1)
+        .expect("database should create");
+    service
+        .grant_database_access("owner-market", "seller", "reader", DatabaseRole::Reader, 2)
+        .expect("reader should be granted");
+    assert!(
+        service
+            .market_create_listing("reader", market_listing_request("owner-market", 100), 3)
+            .is_err(),
+        "non-owner must not create listing"
+    );
+
+    let listing = service
+        .market_create_listing("seller", market_listing_request("owner-market", 100), 4)
+        .expect("owner should create listing");
+    assert!(
+        service
+            .market_list_database_listings("reader", "owner-market")
+            .is_err(),
+        "non-owner must not list database listings"
+    );
+    let listings = service
+        .market_list_database_listings("seller", "owner-market")
+        .expect("owner should list database listings");
+    assert_eq!(listings.len(), 1);
+    assert_eq!(listings[0].listing_id, listing.listing_id);
+}
+
+#[test]
+fn delete_database_removes_marketplace_rows() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("market-delete", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("market-delete", 100), 2)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 3)
+        .expect("listing should publish");
+    credit_market_balance(&service, "buyer", 100, 10, 4);
+    service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id,
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            5,
+        )
+        .expect("purchase should succeed");
+    assert_eq!(
+        market_row_count(&root, "market_listings", "market-delete"),
+        1
+    );
+    assert_eq!(market_row_count(&root, "market_orders", "market-delete"), 1);
+    assert_eq!(
+        market_row_count(&root, "market_entitlements", "market-delete"),
+        1
+    );
+
+    service
+        .delete_database(delete_request("market-delete"), "seller", 6)
+        .expect("delete should succeed");
+    assert_eq!(
+        market_row_count(&root, "market_listings", "market-delete"),
+        0
+    );
+    assert_eq!(market_row_count(&root, "market_orders", "market-delete"), 0);
+    assert_eq!(
+        market_row_count(&root, "market_entitlements", "market-delete"),
+        0
+    );
+}
+
+#[test]
+fn market_entitlement_allows_read_surface_but_not_export() {
+    let service = service();
+    service
+        .create_database("read-market", "seller", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "read-market".to_string(),
+                path: "/Wiki/private.md".to_string(),
+                kind: NodeKind::File,
+                content: "paid body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("owner should write");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("read-market", 100), 3)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 4)
+        .expect("listing should publish");
+    credit_market_balance(&service, "buyer", 100, 20, 6);
+    service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id,
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            7,
+        )
+        .expect("purchase should succeed");
+
+    let node = service
+        .read_node("read-market", "buyer", "/Wiki/private.md")
+        .expect("entitled buyer should read")
+        .expect("node should exist");
+    assert_eq!(node.content, "paid body");
+    assert!(
+        service
+            .export_fs_snapshot(
+                "buyer",
+                vfs_types::ExportSnapshotRequest {
+                    database_id: "read-market".to_string(),
+                    prefix: None,
+                    limit: 10,
+                    cursor: None,
+                    snapshot_session_id: None,
+                    snapshot_revision: None,
+                },
+            )
+            .is_err(),
+        "entitlement must not allow export"
+    );
 }

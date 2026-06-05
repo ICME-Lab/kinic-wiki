@@ -9,6 +9,7 @@ import type { BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 
 export function DatabaseDangerZone(props: {
+  activeEntitlementCount: string | null;
   cyclesBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
@@ -43,6 +44,7 @@ export function DatabaseDangerZone(props: {
           <p className="mt-2 break-all font-mono text-xs text-red-900">
             {props.databaseName} / {props.databaseId}
           </p>
+          <DeleteEntitlementNotice count={props.activeEntitlementCount} />
           <DeleteCyclesNotice />
         </div>
         <div>
@@ -54,6 +56,7 @@ export function DatabaseDangerZone(props: {
       {deleteDialogOpen ? (
         <ConfirmDeleteDatabaseDialog
           busy={props.busy}
+          activeEntitlementCount={props.activeEntitlementCount}
           databaseId={props.databaseId}
           databaseName={props.databaseName}
           deleting={props.busyAction?.kind === "delete"}
@@ -67,6 +70,7 @@ export function DatabaseDangerZone(props: {
 }
 
 function ConfirmDeleteDatabaseDialog(props: {
+  activeEntitlementCount: string | null;
   busy: boolean;
   databaseId: string;
   databaseName: string;
@@ -84,6 +88,7 @@ function ConfirmDeleteDatabaseDialog(props: {
         <p className="mt-3 text-sm leading-6 text-muted">
           Delete {props.databaseName}. This action is irreversible. Archive first if recovery is required.
         </p>
+        <DeleteEntitlementNotice count={props.activeEntitlementCount} />
         <p className="mt-3 break-all rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-ink">{props.databaseId}</p>
         {props.deleteError ? (
           <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-900" role="alert">
@@ -113,4 +118,9 @@ function ConfirmDeleteDatabaseDialog(props: {
 
 function DeleteCyclesNotice() {
   return <p className="mt-3 text-sm leading-6 text-red-900">Remaining cycles will be discarded.</p>;
+}
+
+function DeleteEntitlementNotice({ count }: { count: string | null }) {
+  if (!count || count === "0") return null;
+  return <p className="mt-3 text-sm leading-6 text-red-900">{count} active paid readers will lose marketplace access after deletion.</p>;
 }

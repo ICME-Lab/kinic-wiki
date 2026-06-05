@@ -15,7 +15,11 @@ let lastConfigCanister = null;
 let ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
 let approveCalls = 0;
 let purchaseCalls = 0;
+let marketDepositCalls = 0;
+let marketPurchaseCalls = 0;
 let lastApproveArgs = null;
+let lastMarketDepositRequest = null;
+let lastMarketPurchaseRequest = null;
 const ledgerActorMock = {
   icrc1_balance_of: async (account) => {
     lastBalanceAccount = account;
@@ -32,6 +36,27 @@ const vfsActorMock = {
   purchase_database_cycles: async () => {
     purchaseCalls += 1;
     return { Ok: { block_index: 7n, amount_cycles: 1000n, balance_cycles: 2000n } };
+  },
+  market_deposit_balance: async (request) => {
+    marketDepositCalls += 1;
+    lastMarketDepositRequest = request;
+    return { Ok: { block_index: 9n, amount_e8s: request.amount_e8s, balance_e8s: 300_000_000n } };
+  },
+  market_purchase_access: async (request) => {
+    marketPurchaseCalls += 1;
+    lastMarketPurchaseRequest = request;
+    return {
+      Ok: {
+        order_id: "order_1",
+        listing_id: request.listing_id,
+        database_id: "db_market",
+        buyer_principal: "plug-principal",
+        seller_principal: "seller-principal",
+        price_e8s: request.price_e8s,
+        listing_revision: request.expected_revision,
+        created_at_ms: 123n
+      }
+    };
   }
 };
 const plugMock = {
@@ -41,7 +66,7 @@ const plugMock = {
 };
 
 const walletModule = loadTsModule(
-  "../lib/cycles-wallet.ts",
+  "../lib/kinic-wallet.ts",
   {
     "@dfinity/oisy-wallet-signer/icrc-wallet": { IcrcWallet: class {} },
     "@dfinity/utils": {
@@ -80,13 +105,13 @@ const walletModule = loadTsModule(
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s }
   },
-  "Object.assign(exports, { __test: { allowanceForCyclesPurchase, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, purchaseAfterApprove, decodeOisyCyclesPurchaseResult, formatLedgerApproveError } });"
+  "Object.assign(exports, { __test: { allowanceForKinicTransfer, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, callAfterApprove, decodeOisyCyclesPurchaseResult, decodeOisyMarketDepositResult, decodeOisyMarketPurchaseResult, formatLedgerApproveError } });"
 );
 const walletTest = walletModule.__test;
 
-assert.equal(walletTest.allowanceForCyclesPurchase(100_000_000n, 100_000n), 100_100_000n);
+assert.equal(walletTest.allowanceForKinicTransfer(100_000_000n, 100_000n), 100_100_000n);
 assert.throws(() => walletTest.assertCanisterPaymentAmountE8s(9_223_372_036_854_775_808n), /KINIC amount e8s exceeds canister limit/);
-assert.throws(() => walletTest.allowanceForCyclesPurchase(18_446_744_073_709_551_615n, 1n), /approved allowance exceeds u64::MAX/);
+assert.throws(() => walletTest.allowanceForKinicTransfer(18_446_744_073_709_551_615n, 1n), /approved allowance exceeds u64::MAX/);
 assert.throws(
   () => walletTest.cyclesForPaymentAmountE8s(9_223_372_036_854_775_807n, 200_000_000n),
   /cycles purchase amount exceeds canister limit/
@@ -95,18 +120,18 @@ assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT
 walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 await assert.rejects(
-  () => walletTest.purchaseAfterApprove(async () => {
+  () => walletTest.callAfterApprove(async () => {
     throw new Error("purchase rejected");
   }, { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n }),
-  /cycles purchase failed after approval; approval remains until .*purchase rejected/
+  /KINIC canister call failed after approval; approval remains until .*purchase rejected/
 );
 await assert.rejects(
-  () => walletTest.purchaseAfterApprove(async () => {
+  () => walletTest.callAfterApprove(async () => {
     throw new Error("purchase rejected");
   }, { approveBlockIndex: null, expiresAt: null }),
-  /cycles purchase failed after approval; approval remains without expiry: purchase rejected/
+  /KINIC canister call failed after approval; approval remains without expiry: purchase rejected/
 );
-await walletTest.purchaseAfterApprove(async () => "ok", { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n });
+await walletTest.callAfterApprove(async () => "ok", { approveBlockIndex: "11", expiresAt: 1_700_000_000_000_000_000n });
 assert.equal(
   walletTest.formatLedgerApproveError({ InsufficientFunds: { balance: 100_000n } }),
   "InsufficientFunds: balance 0.001 KINIC"
@@ -191,6 +216,36 @@ await walletModule.purchaseCyclesWithPlug(
 );
 assert.equal(approveCalls, 1);
 
+ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
+approveCalls = 0;
+marketDepositCalls = 0;
+lastMarketDepositRequest = null;
+const marketDeposit = await walletModule.depositMarketBalanceWithPlug(
+  { canisterId: "aaaaa-aa", amountE8s: 200_000_000n },
+  { principal: "plug-principal" }
+);
+assert.equal(marketDeposit.approveBlockIndex, "1");
+assert.equal(marketDeposit.depositBlockIndex, "9");
+assert.equal(marketDepositCalls, 1);
+assert.equal(lastMarketDepositRequest.amount_e8s, 200_000_000n);
+assert.equal(lastMarketDepositRequest.expected_fee_e8s, 100_000n);
+
+marketPurchaseCalls = 0;
+lastMarketPurchaseRequest = null;
+const marketPurchase = await walletModule.purchaseMarketAccessWithPlug(
+  { canisterId: "aaaaa-aa", listingId: "listing_1", priceE8s: 50_000_000n, expectedRevision: 2n },
+  { principal: "plug-principal" }
+);
+assert.equal(marketPurchase.provider, "plug");
+assert.equal(marketPurchase.orderId, "order_1");
+assert.equal(marketPurchase.buyerPrincipal, "plug-principal");
+assert.equal(marketPurchase.priceE8s, "50000000");
+assert.equal(marketPurchase.listingRevision, "2");
+assert.equal(marketPurchaseCalls, 1);
+assert.equal(lastMarketPurchaseRequest.listing_id, "listing_1");
+assert.equal(lastMarketPurchaseRequest.price_e8s, 50_000_000n);
+assert.equal(lastMarketPurchaseRequest.expected_revision, 2n);
+
 cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(
   () => walletTest.decodeOisyCyclesPurchaseResult({
@@ -251,6 +306,18 @@ await assert.rejects(
   /wallet response sender mismatch/
 );
 
+cborMock.decoded = { method_name: "market_deposit_balance" };
+await assert.rejects(
+  () => walletTest.decodeOisyMarketPurchaseResult({
+    canisterId: "aaaaa-aa",
+    sender: "bytes:7",
+    method: "market_purchase_access",
+    arg: Buffer.from([1]).toString("base64"),
+    result: { contentMap: "unused", certificate: "unused" }
+  }),
+  /wallet response method mismatch/
+);
+
 const sessionModule = loadTsModule(
   "../app/app-session-provider.tsx",
   {
@@ -265,7 +332,7 @@ const sessionModule = loadTsModule(
     },
     "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
     "@/lib/auth": { AUTH_CLIENT_CREATE_OPTIONS: {}, authLoginOptions: () => ({}) },
-    "@/lib/cycles-wallet": {
+    "@/lib/kinic-wallet": {
       connectOisyWallet: async () => ({ owner: "oisy-principal" }),
       connectPlugWallet: async () => ({ principal: "plug-principal" }),
       getConnectedWalletKinicBalance: async () => "123456789"

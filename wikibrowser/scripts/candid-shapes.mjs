@@ -56,6 +56,133 @@ export const expectedTypes = {
       min_expected_cycles: "nat64"
     }
   },
+  KinicBalance: { kind: "record", fields: { balance_e8s: "nat64" } },
+  KinicPendingOperation: {
+    kind: "record",
+    fields: {
+      status: "text",
+      kind: "text",
+      operation_id: "nat64",
+      created_at_ms: "int64",
+      amount_e8s: "nat64",
+      required_action: "text",
+      ledger_block_index: "opt nat64",
+      caller: "text"
+    }
+  },
+  MarketCreateListingRequest: {
+    kind: "record",
+    fields: {
+      llm_summary: "opt text",
+      title: "text",
+      summary_snapshot_revision: "opt text",
+      sample_questions_json: "text",
+      description: "text",
+      database_id: "text",
+      price_e8s: "nat64",
+      sample_excerpts_json: "text",
+      tags_json: "text"
+    }
+  },
+  MarketDepositRequest: {
+    kind: "record",
+    fields: { amount_e8s: "nat64", expected_fee_e8s: "nat64" }
+  },
+  MarketDepositResult: {
+    kind: "record",
+    fields: { block_index: "nat64", amount_e8s: "nat64", balance_e8s: "nat64" }
+  },
+  MarketEntitlement: {
+    kind: "record",
+    fields: {
+      status: "text",
+      purchased_at_ms: "int64",
+      database_id: "text",
+      buyer_principal: "text",
+      order_id: "text",
+      listing_id: "text"
+    }
+  },
+  MarketEntitlementPage: {
+    kind: "record",
+    fields: { next_cursor: "opt text", entitlements: "vec MarketEntitlement" }
+  },
+  MarketListing: {
+    kind: "record",
+    fields: {
+      status: "MarketListingStatus",
+      llm_summary: "opt text",
+      title: "text",
+      summary_snapshot_revision: "opt text",
+      report_count: "nat64",
+      sample_questions_json: "text",
+      description: "text",
+      updated_at_ms: "int64",
+      created_at_ms: "int64",
+      seller_principal: "text",
+      purchase_count: "nat64",
+      database_id: "text",
+      listing_id: "text",
+      price_e8s: "nat64",
+      revision: "nat64",
+      sample_excerpts_json: "text",
+      tags_json: "text"
+    }
+  },
+  MarketListingPage: {
+    kind: "record",
+    fields: { listings: "vec MarketListing", next_cursor: "opt text" }
+  },
+  MarketListingStatus: {
+    kind: "variant",
+    cases: { Paused: "null", Active: "null", Draft: "null" }
+  },
+  MarketOrder: {
+    kind: "record",
+    fields: {
+      created_at_ms: "int64",
+      seller_principal: "text",
+      database_id: "text",
+      buyer_principal: "text",
+      order_id: "text",
+      listing_id: "text",
+      price_e8s: "nat64",
+      listing_revision: "nat64"
+    }
+  },
+  MarketOrderPage: {
+    kind: "record",
+    fields: { orders: "vec MarketOrder", next_cursor: "opt text" }
+  },
+  MarketPurchasePreview: {
+    kind: "record",
+    fields: {
+      already_entitled: "bool",
+      buyer_balance_e8s: "nat64",
+      database_id: "text",
+      listing_id: "text",
+      price_e8s: "nat64"
+    }
+  },
+  MarketPurchaseRequest: {
+    kind: "record",
+    fields: { listing_id: "text", price_e8s: "nat64", expected_revision: "nat64" }
+  },
+  MarketUpdateListingRequest: {
+    kind: "record",
+    fields: {
+      llm_summary: "opt text",
+      title: "text",
+      summary_snapshot_revision: "opt text",
+      sample_questions_json: "text",
+      description: "text",
+      listing_id: "text",
+      price_e8s: "nat64",
+      expected_revision: "nat64",
+      sample_excerpts_json: "text",
+      tags_json: "text"
+    }
+  },
   Icrc21ConsentMessageMetadata: {
     kind: "record",
     fields: { utc_offset_minutes: "opt int16", language: "text" }
@@ -330,9 +457,20 @@ export const expectedTypes = {
   ResultCyclesPurchase: { kind: "variant", cases: { Ok: "CyclesPurchaseResult", Err: "text" } },
   ResultCyclesEntries: { kind: "variant", cases: { Ok: "DatabaseCycleEntryPage", Err: "text" } },
   ResultCyclesPendingPurchases: { kind: "variant", cases: { Ok: "vec DatabaseCyclesPendingPurchase", Err: "text" } },
+  ResultKinicBalance: { kind: "variant", cases: { Ok: "KinicBalance", Err: "text" } },
+  ResultKinicPendingOperations: { kind: "variant", cases: { Ok: "vec KinicPendingOperation", Err: "text" } },
+  ResultMarketDeposit: { kind: "variant", cases: { Ok: "MarketDepositResult", Err: "text" } },
+  ResultMarketEntitlementPage: { kind: "variant", cases: { Ok: "MarketEntitlementPage", Err: "text" } },
+  ResultMarketListing: { kind: "variant", cases: { Ok: "MarketListing", Err: "text" } },
+  ResultMarketListings: { kind: "variant", cases: { Ok: "vec MarketListing", Err: "text" } },
+  ResultMarketListingPage: { kind: "variant", cases: { Ok: "MarketListingPage", Err: "text" } },
+  ResultMarketOrder: { kind: "variant", cases: { Ok: "MarketOrder", Err: "text" } },
+  ResultMarketOrderPage: { kind: "variant", cases: { Ok: "MarketOrderPage", Err: "text" } },
+  ResultMarketPurchasePreview: { kind: "variant", cases: { Ok: "MarketPurchasePreview", Err: "text" } },
   ResultCreateDatabase: { kind: "variant", cases: { Ok: "CreateDatabaseResult", Err: "text" } },
   ResultDatabases: { kind: "variant", cases: { Ok: "vec DatabaseSummary", Err: "text" } },
   ResultMembers: { kind: "variant", cases: { Ok: "vec DatabaseMember", Err: "text" } },
+  ResultNat64: { kind: "variant", cases: { Ok: "nat64", Err: "text" } },
   ResultUnit: { kind: "variant", cases: { Ok: "null", Err: "text" } },
   ResultWriteNode: { kind: "variant", cases: { Ok: "WriteNodeResult", Err: "text" } },
   ResultDeleteNode: { kind: "variant", cases: { Ok: "DeleteNodeResult", Err: "text" } },
@@ -434,26 +572,37 @@ export const didTypeAliases = {
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultChildren: "Result_12",
   ResultCyclesBillingConfig: "Result_9",
-  ResultCyclesPurchase: "Result_20",
+  ResultCyclesPurchase: "Result_31",
   ResultCyclesEntries: "Result_13",
   ResultCyclesPendingPurchases: "Result_14",
+  ResultKinicBalance: "Result_21",
+  ResultKinicPendingOperations: "Result_26",
+  ResultMarketDeposit: "Result_20",
+  ResultMarketEntitlementPage: "Result_23",
+  ResultMarketListing: "Result_19",
+  ResultMarketListings: "Result_22",
+  ResultMarketListingPage: "Result_24",
+  ResultMarketOrder: "Result_28",
+  ResultMarketOrderPage: "Result_25",
+  ResultMarketPurchasePreview: "Result_27",
   ResultCreateDatabase: "Result_4",
   ResultDatabases: "Result_16",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_18",
-  ResultMoveNode: "Result_19",
+  ResultMkdirNode: "Result_29",
+  ResultMoveNode: "Result_30",
   ResultMembers: "Result_15",
+  ResultNat64: "Result_18",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_24",
-  ResultNodeContext: "Result_25",
-  ResultQueryContext: "Result_21",
-  ResultSearch: "Result_26",
-  ResultStorageBillingBatch: "Result_27",
-  ResultSourceEvidence: "Result_28",
+  ResultNode: "Result_35",
+  ResultNodeContext: "Result_36",
+  ResultQueryContext: "Result_32",
+  ResultSearch: "Result_37",
+  ResultStorageBillingBatch: "Result_38",
+  ResultSourceEvidence: "Result_39",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_30"
+  ResultWriteSourceForGeneration: "Result_41"
 };
 
 export const expectedMethods = {
@@ -480,6 +629,21 @@ export const expectedMethods = {
   list_database_cycles_pending_purchases: { input: ["text"], output: "ResultCyclesPendingPurchases", mode: "query" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
+  market_count_active_entitlements: { input: ["text"], output: "ResultNat64", mode: "query" },
+  market_create_listing: { input: ["MarketCreateListingRequest"], output: "ResultMarketListing", mode: "update" },
+  market_deposit_balance: { input: ["MarketDepositRequest"], output: "ResultMarketDeposit", mode: "update" },
+  market_get_balance: { input: [], output: "ResultKinicBalance", mode: "query" },
+  market_get_listing: { input: ["text"], output: "ResultMarketListing", mode: "query" },
+  market_list_database_listings: { input: ["text"], output: "ResultMarketListings", mode: "query" },
+  market_list_entitlements: { input: ["opt text", "nat32"], output: "ResultMarketEntitlementPage", mode: "query" },
+  market_list_listings: { input: ["opt text", "nat32"], output: "ResultMarketListingPage", mode: "query" },
+  market_list_orders: { input: ["opt text", "nat32"], output: "ResultMarketOrderPage", mode: "query" },
+  market_list_pending_operations: { input: [], output: "ResultKinicPendingOperations", mode: "query" },
+  market_pause_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
+  market_preview_purchase: { input: ["text"], output: "ResultMarketPurchasePreview", mode: "query" },
+  market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
+  market_purchase_access: { input: ["MarketPurchaseRequest"], output: "ResultMarketOrder", mode: "update" },
+  market_update_listing: { input: ["MarketUpdateListingRequest"], output: "ResultMarketListing", mode: "update" },
   memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },

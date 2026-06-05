@@ -29,9 +29,10 @@ export function AppHeader() {
     walletControlsLocked
   } = useAppSession();
 
-  if (pathname !== "/" && pathname !== "/cycles") return null;
+  const isMarketplace = pathname === "/marketplace" || pathname.startsWith("/marketplace/");
+  if (pathname !== "/" && pathname !== "/cycles" && !isMarketplace) return null;
 
-  const title = pathname === "/cycles" ? "Database cycles purchase" : "Database dashboard";
+  const title = pathname === "/cycles" ? "Database cycles purchase" : isMarketplace ? "Kinic marketplace" : "Database dashboard";
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
 
@@ -40,13 +41,7 @@ export function AppHeader() {
       <section className="mx-auto max-w-6xl">
         <AdminHeader
           title={title}
-          nav={
-            pathname === "/cycles" ? (
-              <Link className="text-accent no-underline hover:underline" href="/">
-                Database dashboard
-              </Link>
-            ) : null
-          }
+          nav={<HeaderNav pathname={pathname} />}
           actions={
             <>
               <WalletControls
@@ -85,6 +80,28 @@ export function AppHeader() {
 
 function walletLabel(provider: "oisy" | "plug"): string {
   return provider === "oisy" ? "OISY" : "Plug";
+}
+
+function HeaderNav({ pathname }: { pathname: string }) {
+  return (
+    <nav className="flex flex-wrap gap-3 text-sm font-semibold">
+      {pathname !== "/" ? (
+        <Link className="text-accent no-underline hover:underline" href="/">
+          Dashboard
+        </Link>
+      ) : null}
+      {pathname !== "/marketplace" ? (
+        <Link className="text-accent no-underline hover:underline" href="/marketplace">
+          Marketplace
+        </Link>
+      ) : null}
+      {pathname !== "/marketplace/wallet" ? (
+        <Link className="text-accent no-underline hover:underline" href="/marketplace/wallet">
+          Wallet
+        </Link>
+      ) : null}
+    </nav>
+  );
 }
 
 function shortPrincipal(value: string): string {

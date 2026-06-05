@@ -125,6 +125,151 @@ pub struct DatabaseCyclesPendingPurchase {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicBalance {
+    pub balance_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicPendingOperation {
+    pub operation_id: u64,
+    pub kind: String,
+    pub caller: String,
+    pub status: String,
+    pub amount_e8s: u64,
+    pub ledger_block_index: Option<u64>,
+    pub created_at_ms: i64,
+    pub required_action: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketDepositRequest {
+    pub amount_e8s: u64,
+    pub expected_fee_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketDepositResult {
+    pub block_index: u64,
+    pub amount_e8s: u64,
+    pub balance_e8s: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketListingStatus {
+    #[serde(alias = "Draft")]
+    Draft,
+    #[serde(alias = "Active")]
+    Active,
+    #[serde(alias = "Paused")]
+    Paused,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListing {
+    pub listing_id: String,
+    pub seller_principal: String,
+    pub database_id: String,
+    pub title: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub summary_snapshot_revision: Option<String>,
+    pub sample_excerpts_json: String,
+    pub sample_questions_json: String,
+    pub tags_json: String,
+    pub price_e8s: u64,
+    pub status: MarketListingStatus,
+    pub revision: u64,
+    pub purchase_count: u64,
+    pub report_count: u64,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListingPage {
+    pub listings: Vec<MarketListing>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketCreateListingRequest {
+    pub database_id: String,
+    pub title: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub summary_snapshot_revision: Option<String>,
+    pub sample_excerpts_json: String,
+    pub sample_questions_json: String,
+    pub tags_json: String,
+    pub price_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketUpdateListingRequest {
+    pub listing_id: String,
+    pub expected_revision: u64,
+    pub title: String,
+    pub description: String,
+    pub llm_summary: Option<String>,
+    pub summary_snapshot_revision: Option<String>,
+    pub sample_excerpts_json: String,
+    pub sample_questions_json: String,
+    pub tags_json: String,
+    pub price_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketPurchaseRequest {
+    pub listing_id: String,
+    pub price_e8s: u64,
+    pub expected_revision: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketPurchasePreview {
+    pub listing_id: String,
+    pub database_id: String,
+    pub price_e8s: u64,
+    pub buyer_balance_e8s: u64,
+    pub already_entitled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketOrder {
+    pub order_id: String,
+    pub listing_id: String,
+    pub database_id: String,
+    pub buyer_principal: String,
+    pub seller_principal: String,
+    pub price_e8s: u64,
+    pub listing_revision: u64,
+    pub created_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketOrderPage {
+    pub orders: Vec<MarketOrder>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketEntitlement {
+    pub database_id: String,
+    pub buyer_principal: String,
+    pub listing_id: String,
+    pub order_id: String,
+    pub purchased_at_ms: i64,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketEntitlementPage {
+    pub entitlements: Vec<MarketEntitlement>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct StorageBillingBatchRequest {
     pub cursor_mount_id: Option<u16>,
     pub limit: Option<u32>,

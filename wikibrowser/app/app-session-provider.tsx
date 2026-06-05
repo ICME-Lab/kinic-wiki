@@ -6,7 +6,7 @@
 import { AuthClient } from "@icp-sdk/auth/client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/cycles-wallet";
+import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
 import type { HeaderWalletProvider } from "./home-ui";
 
 type AppSessionContext = {

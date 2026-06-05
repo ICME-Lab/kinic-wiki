@@ -8,7 +8,7 @@ import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
-import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/cycles-wallet";
+import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { DatabaseStatus } from "@/lib/types";
 

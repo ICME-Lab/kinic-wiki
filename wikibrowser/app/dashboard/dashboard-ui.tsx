@@ -11,7 +11,7 @@ import { MemberTable } from "./member-table";
 import { formatRawCycles } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -97,7 +97,7 @@ export function PendingDatabasePanel(props: {
         <h2 className="text-lg font-semibold text-ink">Reserved database</h2>
         <p className="text-sm leading-6 text-muted">This database is reserved until the first cycle purchase completes. VFS, skills, and member management are available after activation.</p>
       </div>
-      <DatabaseDangerZone cyclesBalance="0" busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
+      <DatabaseDangerZone activeEntitlementCount={null} cyclesBalance="0" busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
     </section>
   );
 }
@@ -108,11 +108,19 @@ export function OwnerPanel(props: {
   busyAction: BusyAction | null;
   databaseId: string;
   databaseName: string;
+  activeEntitlementCount: string | null;
+  marketBusy: boolean;
+  marketError: string | null;
+  marketListings: MarketListing[];
   members: DatabaseMember[];
   principal: string;
+  onCreateListing: (request: MarketCreateListingRequest) => void;
   onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
+  onPauseListing: (listingId: string) => void;
+  onPublishListing: (listingId: string) => void;
   onRevoke: (principalText: string) => void;
+  onUpdateListing: (request: MarketUpdateListingRequest) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAclAction | null>(null);
   const publicMember = props.members.find((member) => member.principal === ANONYMOUS_PRINCIPAL);
@@ -242,7 +250,19 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
+      <MarketListingsPanel
+        busy={props.marketBusy}
+        databaseId={props.databaseId}
+        databaseName={props.databaseName}
+        error={props.marketError}
+        listings={props.marketListings}
+        onCreate={props.onCreateListing}
+        onPause={props.onPauseListing}
+        onPublish={props.onPublishListing}
+        onUpdate={props.onUpdateListing}
+      />
       <DatabaseDangerZone
+        activeEntitlementCount={props.activeEntitlementCount}
         cyclesBalance={props.cyclesBalance}
         busy={props.busy}
         busyAction={props.busyAction}
@@ -251,6 +271,143 @@ export function OwnerPanel(props: {
         onDelete={props.onDelete}
       />
     </section>
+  );
+}
+
+function MarketListingsPanel(props: {
+  busy: boolean;
+  databaseId: string;
+  databaseName: string;
+  error: string | null;
+  listings: MarketListing[];
+  onCreate: (request: MarketCreateListingRequest) => void;
+  onPause: (listingId: string) => void;
+  onPublish: (listingId: string) => void;
+  onUpdate: (request: MarketUpdateListingRequest) => void;
+}) {
+  const [selectedListingId, setSelectedListingId] = useState("");
+  const [title, setTitle] = useState(props.databaseName);
+  const [description, setDescription] = useState("");
+  const [price, setPrice] = useState("1");
+  const [tags, setTags] = useState("");
+  const selected = props.listings.find((listing) => listing.listingId === selectedListingId) ?? null;
+  const priceE8s = parseKinicInput(price);
+  const submitDisabled = props.busy || !title.trim() || !description.trim() || !priceE8s;
+
+  function selectListing(listing: MarketListing) {
+    setSelectedListingId(listing.listingId);
+    setTitle(listing.title);
+    setDescription(listing.description);
+    setPrice(decimalFromE8s(listing.priceE8s));
+    setTags(tagsFromJson(listing.tagsJson));
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitDisabled || !priceE8s) return;
+    const base = {
+      databaseId: props.databaseId,
+      title: title.trim(),
+      description: description.trim(),
+      llmSummary: null,
+      summarySnapshotRevision: null,
+      sampleExcerptsJson: "[]",
+      sampleQuestionsJson: "[]",
+      tagsJson: tagsJsonFromInput(tags),
+      priceE8s
+    };
+    if (selected) {
+      props.onUpdate({
+        ...base,
+        listingId: selected.listingId,
+        expectedRevision: selected.revision
+      });
+    } else {
+      props.onCreate(base);
+    }
+  }
+
+  return (
+    <div className="grid gap-4 border-t border-line px-4 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">Marketplace</h3>
+          <p className="mt-1 text-sm leading-6 text-muted">DB owner can sell paid reader access.</p>
+        </div>
+        <Link className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent" href="/marketplace">
+          Marketplace
+        </Link>
+      </div>
+      {props.error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{props.error}</p> : null}
+      {props.listings.length ? (
+        <div className="grid gap-2">
+          {props.listings.map((listing) => (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm" key={listing.listingId}>
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-ink">{listing.title}</p>
+                <p className="font-mono text-xs text-muted">
+                  {listing.status} / {formatTokenAmountFromE8s(listing.priceE8s)} / {listing.purchaseCount} purchases
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <ActionButton disabled={props.busy} onClick={() => selectListing(listing)} variant="secondary">
+                  Edit
+                </ActionButton>
+                {listing.status === "Active" ? (
+                  <ActionButton disabled={props.busy} onClick={() => props.onPause(listing.listingId)} variant="secondary">
+                    Pause
+                  </ActionButton>
+                ) : (
+                  <ActionButton disabled={props.busy} onClick={() => props.onPublish(listing.listingId)} variant="primary">
+                    Publish
+                  </ActionButton>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <form className="grid gap-3" onSubmit={submit}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="grid gap-1 text-sm">
+            <span className="text-xs uppercase text-muted">Title</span>
+            <input className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={title} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="text-xs uppercase text-muted">Price KINIC</span>
+            <input className="rounded-lg border border-line bg-white px-3 py-2 font-mono outline-none focus:border-accent" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
+          </label>
+        </div>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xs uppercase text-muted">Description</span>
+          <textarea className="min-h-24 rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={description} onChange={(event) => setDescription(event.target.value)} />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xs uppercase text-muted">Tags</span>
+          <input className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={tags} onChange={(event) => setTags(event.target.value)} />
+        </label>
+        <div className="flex flex-wrap gap-2">
+          <ActionButton disabled={submitDisabled} loading={props.busy} loadingLabel="Saving..." type="submit" variant="primary">
+            {selected ? "Edit listing" : "Sell"}
+          </ActionButton>
+          {selected ? (
+            <ActionButton
+              disabled={props.busy}
+              onClick={() => {
+                setSelectedListingId("");
+                setTitle(props.databaseName);
+                setDescription("");
+                setPrice("1");
+                setTags("");
+              }}
+              variant="secondary"
+            >
+              New listing
+            </ActionButton>
+          ) : null}
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -577,6 +734,41 @@ function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): str
     restoring: "Restoring"
   };
   return labels[status];
+}
+
+function parseKinicInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d{0,8})?$/.test(trimmed)) return null;
+  const [whole, fraction = ""] = trimmed.split(".");
+  const e8s = `${whole}${fraction.padEnd(8, "0")}`.replace(/^0+(?=\d)/, "");
+  return BigInt(e8s) > 0n ? e8s : null;
+}
+
+function decimalFromE8s(value: string): string {
+  if (!/^\d+$/.test(value)) return "1";
+  const padded = value.padStart(9, "0");
+  const whole = padded.slice(0, -8).replace(/^0+(?=\d)/, "");
+  const fraction = padded.slice(-8).replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+function tagsJsonFromInput(value: string): string {
+  const tags = value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+  return JSON.stringify(tags);
+}
+
+function tagsFromJson(value: string): string {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return "";
+    const tags = parsed.filter((item): item is string => typeof item === "string");
+    return tags.join(", ");
+  } catch {
+    return "";
+  }
 }
 
 function formatBytes(value: string): string {

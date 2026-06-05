@@ -36,7 +36,7 @@ use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseWithLedgerDetails, DatabaseMeta,
-    RequiredRole, VfsService, cycles_for_payment_amount_e8s,
+    KinicDepositWithLedgerDetails, RequiredRole, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
@@ -47,14 +47,17 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, KinicBalance,
+    KinicPendingOperation, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCreateListingRequest, MarketDepositRequest, MarketDepositResult, MarketEntitlementPage,
+    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
+    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -707,6 +710,209 @@ fn list_database_cycles_pending_purchases(
     with_service(|service| {
         service.list_database_cycles_pending_purchases(&database_id, &caller_text())
     })
+}
+
+#[query]
+fn market_get_balance() -> Result<KinicBalance, String> {
+    with_service(|service| service.market_get_balance(&caller_text()))
+}
+
+#[update]
+async fn market_deposit_balance(
+    request: MarketDepositRequest,
+) -> Result<MarketDepositResult, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let now = now_millis();
+    let config = with_service(|service| service.cycles_billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let ledger_created_at_time_ns = now_nanos();
+    let canister_owner = canister_principal().to_text();
+    let deposit_start = with_service(|service| {
+        service.begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
+            caller: &caller,
+            amount_e8s: request.amount_e8s,
+            ledger: CyclesPendingLedgerDetailsInput {
+                from_owner: &caller,
+                from_subaccount: None,
+                to_owner: &canister_owner,
+                to_subaccount: None,
+                ledger_fee_e8s: request.expected_fee_e8s,
+                ledger_created_at_time_ns,
+            },
+            now,
+        })
+    })?;
+    let operation_id = deposit_start.operation_id;
+    match ledger_transfer_from_with_memo(
+        ledger,
+        IcrcAccount {
+            owner: caller_principal(),
+            subaccount: None,
+        },
+        IcrcAccount {
+            owner: canister_principal(),
+            subaccount: None,
+        },
+        request.amount_e8s,
+        request.expected_fee_e8s,
+        market_deposit_memo(operation_id),
+        ledger_created_at_time_ns,
+    )
+    .await
+    {
+        LedgerTransferFromOutcome::Completed(block_index) => {
+            if let Err(error) = with_service(|service| {
+                service.complete_kinic_deposit_ledger_transfer(
+                    operation_id,
+                    &caller,
+                    request.amount_e8s,
+                    block_index,
+                )
+            }) {
+                return Err(market_deposit_local_apply_error(
+                    operation_id,
+                    block_index,
+                    error,
+                ));
+            }
+            let balance = with_service(|service| {
+                service.apply_kinic_deposit(operation_id, &caller, request.amount_e8s, now)
+            })
+            .map_err(|error| market_deposit_local_apply_error(operation_id, block_index, error))?;
+            Ok(MarketDepositResult {
+                block_index,
+                amount_e8s: deposit_start.amount_e8s,
+                balance_e8s: balance.balance_e8s,
+            })
+        }
+        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
+            let _ = with_service(|service| {
+                service.cancel_kinic_deposit_after_ledger_error(
+                    operation_id,
+                    &caller,
+                    request.amount_e8s,
+                )
+            });
+            Err(format!(
+                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
+            ))
+        }
+        LedgerTransferFromOutcome::LedgerErr(error) => {
+            let _ = with_service(|service| {
+                service.cancel_kinic_deposit_after_ledger_error(
+                    operation_id,
+                    &caller,
+                    request.amount_e8s,
+                )
+            });
+            Err(error)
+        }
+        LedgerTransferFromOutcome::Ambiguous(error) => {
+            if let Err(mark_error) = with_service(|service| {
+                service.mark_kinic_deposit_ambiguous(operation_id, &caller, request.amount_e8s)
+            }) {
+                return Err(format!(
+                    "icrc2_transfer_from result ambiguous for market deposit operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
+                ));
+            }
+            Err(format!(
+                "icrc2_transfer_from result ambiguous for market deposit operation_id {operation_id}; billing authority review required: {error}"
+            ))
+        }
+    }
+}
+
+fn market_deposit_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+    format!(
+        "market deposit completed at ledger block {block_index} but local balance application failed; pending operation {operation_id} remains completed for billing authority review: {cause}"
+    )
+}
+
+#[query]
+fn market_list_pending_operations() -> Result<Vec<KinicPendingOperation>, String> {
+    with_service(|service| service.market_list_pending_operations(&caller_text()))
+}
+
+#[update]
+fn market_create_listing(request: MarketCreateListingRequest) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "market_create_listing",
+        Some(request.database_id.clone()),
+        |service, caller, now| service.market_create_listing(caller, request, now),
+    )
+}
+
+#[update]
+fn market_update_listing(request: MarketUpdateListingRequest) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_update_listing", None, |service, caller, now| {
+        service.market_update_listing(caller, request, now)
+    })
+}
+
+#[update]
+fn market_publish_listing(listing_id: String) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_publish_listing", None, |service, caller, now| {
+        service.market_publish_listing(caller, &listing_id, now)
+    })
+}
+
+#[update]
+fn market_pause_listing(listing_id: String) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_pause_listing", None, |service, caller, now| {
+        service.market_pause_listing(caller, &listing_id, now)
+    })
+}
+
+#[query]
+fn market_list_listings(cursor: Option<String>, limit: u32) -> Result<MarketListingPage, String> {
+    with_service(|service| service.market_list_listings(cursor, limit))
+}
+
+#[query]
+fn market_list_database_listings(database_id: String) -> Result<Vec<MarketListing>, String> {
+    with_service(|service| service.market_list_database_listings(&caller_text(), &database_id))
+}
+
+#[query]
+fn market_get_listing(listing_id: String) -> Result<MarketListing, String> {
+    with_service(|service| service.market_get_listing(&caller_text(), &listing_id))
+}
+
+#[query]
+fn market_preview_purchase(listing_id: String) -> Result<MarketPurchasePreview, String> {
+    with_service(|service| service.market_preview_purchase(&caller_text(), &listing_id))
+}
+
+#[update]
+fn market_purchase_access(request: MarketPurchaseRequest) -> Result<MarketOrder, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_purchase_access", None, |service, caller, now| {
+        service.market_purchase_access(caller, request, now)
+    })
+}
+
+#[query]
+fn market_list_entitlements(
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<MarketEntitlementPage, String> {
+    with_service(|service| service.market_list_entitlements(&caller_text(), cursor, limit))
+}
+
+#[query]
+fn market_list_orders(cursor: Option<String>, limit: u32) -> Result<MarketOrderPage, String> {
+    with_service(|service| service.market_list_orders(&caller_text(), cursor, limit))
+}
+
+#[query]
+fn market_count_active_entitlements(database_id: String) -> Result<u64, String> {
+    with_service(|service| service.market_count_active_entitlements(&caller_text(), &database_id))
 }
 
 #[update]
@@ -1495,6 +1701,27 @@ async fn ledger_transfer_from(
     created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
     let memo = cycles_purchase_memo(operation_id);
+    ledger_transfer_from_with_memo(
+        ledger,
+        from,
+        to,
+        amount_e8s,
+        ledger_fee_e8s,
+        memo,
+        created_at_time_ns,
+    )
+    .await
+}
+
+async fn ledger_transfer_from_with_memo(
+    ledger: Principal,
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    ledger_fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time_ns: u64,
+) -> LedgerTransferFromOutcome {
     #[cfg(test)]
     {
         record_test_ledger_from(&from);
@@ -1579,6 +1806,10 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
 
 fn cycles_purchase_memo(operation_id: u64) -> Vec<u8> {
     format!("kvfs:cp:{operation_id}").into_bytes()
+}
+
+fn market_deposit_memo(operation_id: u64) -> Vec<u8> {
+    format!("kvfs:md:{operation_id}").into_bytes()
 }
 
 fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>

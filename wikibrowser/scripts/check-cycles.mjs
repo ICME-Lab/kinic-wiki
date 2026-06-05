@@ -10,7 +10,7 @@ const page = readFileSync(new URL("../app/cycles/page.tsx", import.meta.url), "u
 const client = readFileSync(new URL("../app/cycles/cycles-client.tsx", import.meta.url), "utf8");
 const appHeader = readFileSync(new URL("../app/app-header.tsx", import.meta.url), "utf8");
 const appSession = readFileSync(new URL("../app/app-session-provider.tsx", import.meta.url), "utf8");
-const wallet = readFileSync(new URL("../lib/cycles-wallet.ts", import.meta.url), "utf8");
+const wallet = readFileSync(new URL("../lib/kinic-wallet.ts", import.meta.url), "utf8");
 const url = readFileSync(new URL("../lib/cycles-url.ts", import.meta.url), "utf8");
 const idl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
 const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
@@ -18,7 +18,11 @@ const connectOisy = sliceBetween(wallet, "export async function connectOisyWalle
 const connectPlug = sliceBetween(wallet, "export async function connectPlugWallet", "export async function getConnectedWalletKinicBalance");
 const walletBalance = sliceBetween(wallet, "export async function getConnectedWalletKinicBalance", "export async function purchaseCyclesWithOisy");
 const purchaseOisy = sliceBetween(wallet, "export async function purchaseCyclesWithOisy", "export async function purchaseCyclesWithPlug");
-const purchasePlug = sliceBetween(wallet, "export async function purchaseCyclesWithPlug", "function approveParams");
+const purchasePlug = sliceBetween(wallet, "export async function purchaseCyclesWithPlug", "export async function depositMarketBalanceWithOisy");
+const marketDepositOisy = sliceBetween(wallet, "export async function depositMarketBalanceWithOisy", "export async function depositMarketBalanceWithPlug");
+const marketDepositPlug = sliceBetween(wallet, "export async function depositMarketBalanceWithPlug", "export async function purchaseMarketAccessWithOisy");
+const marketPurchaseOisy = sliceBetween(wallet, "export async function purchaseMarketAccessWithOisy", "export async function purchaseMarketAccessWithPlug");
+const marketPurchasePlug = sliceBetween(wallet, "export async function purchaseMarketAccessWithPlug", "function approveParams");
 
 assert.match(page, /\/cycles/);
 assert.doesNotMatch(page, /canister_id \?\? params\.canisterId/);
@@ -64,13 +68,17 @@ assert.match(client, /KINIC/);
 assert.doesNotMatch(client, /Login with Internet Identity|Notify identity/);
 assert.match(wallet, /export async function connectOisyWallet/);
 assert.match(wallet, /export async function connectPlugWallet/);
-assert.match(wallet, /class CyclesPurchaseIcrcWallet extends IcrcWallet/);
-assert.match(wallet, /async callCyclesPurchase\(params: IcrcCallCanisterRequestParams\)/);
+assert.match(wallet, /class KinicIcrcWallet extends IcrcWallet/);
+assert.match(wallet, /async callCanister\(params: IcrcCallCanisterRequestParams\)/);
 assert.match(wallet, /export async function purchaseCyclesWithOisy\(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet\)/);
 assert.match(wallet, /export async function purchaseCyclesWithPlug\(request: CyclesPurchaseRequest, connection: ConnectedPlugWallet\)/);
+assert.match(wallet, /export async function depositMarketBalanceWithOisy\(request: MarketDepositRequest, connection: ConnectedOisyWallet\)/);
+assert.match(wallet, /export async function depositMarketBalanceWithPlug\(request: MarketDepositRequest, connection: ConnectedPlugWallet\)/);
+assert.match(wallet, /export async function purchaseMarketAccessWithOisy\(request: MarketPurchaseRequest, connection: ConnectedOisyWallet\)/);
+assert.match(wallet, /export async function purchaseMarketAccessWithPlug\(request: MarketPurchaseRequest, connection: ConnectedPlugWallet\)/);
 assert.match(connectOisy, /openOisyWallet\(\)/);
 assert.match(connectOisy, /wallet\.accounts\(\)/);
-assert.match(wallet, /async function safeDisconnectOisyWallet\(wallet: CyclesPurchaseIcrcWallet\): Promise<void>/);
+assert.match(wallet, /async function safeDisconnectOisyWallet\(wallet: KinicIcrcWallet\): Promise<void>/);
 assert.match(wallet, /Cleanup failures must not hide connect, approve, or purchase errors\./);
 assert.match(connectOisy, /safeDisconnectOisyWallet\(wallet\)/);
 assert.doesNotMatch(connectOisy, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
@@ -95,7 +103,7 @@ assert.doesNotMatch(wallet, /previewDatabaseCyclesPurchase/);
 assert.match(wallet, /KINIC_LEDGER_FEE_E8S/);
 assert.match(wallet, /MAX_CANISTER_I64/);
 assert.match(wallet, /MAX_LEDGER_U64/);
-assert.match(wallet, /function allowanceForCyclesPurchase\(amountE8s: bigint, transferFeeE8s: bigint\)/);
+assert.match(wallet, /function allowanceForKinicTransfer\(amountE8s: bigint, transferFeeE8s: bigint\)/);
 assert.match(wallet, /approved allowance exceeds u64::MAX/);
 assert.match(wallet, /cycles purchase amount exceeds canister limit/);
 assert.match(wallet, /KINIC amount e8s exceeds canister limit/);
@@ -116,23 +124,34 @@ assert.match(wallet, /expected_allowance: \[expectedAllowanceE8s\]/);
 assert.match(wallet, /expires_at: \[expiresAt\]/);
 assert.match(wallet, /approveBlockIndex: string \| null/);
 assert.match(wallet, /APPROVE_EXPIRES_IN_MS = 30 \* 60 \* 1000/);
-assert.match(wallet, /assertConfiguredCyclesCanister\(request\.canisterId\)/);
+assert.match(wallet, /assertConfiguredCyclesCanister\(canisterId\)/);
 assert.match(purchaseOisy, /openOisyWallet\(\)/);
 assert.match(purchaseOisy, /account\.owner !== connection\.owner/);
 assert.match(purchaseOisy, /safeDisconnectOisyWallet\(wallet\)/);
-assert.match(purchaseOisy, /purchaseAfterApprove/);
+assert.match(purchaseOisy, /callAfterApprove/);
+assert.match(marketDepositOisy, /callAfterApprove/);
 assert.match(wallet, /oisyCallCyclesPurchase\(wallet, connection\.owner, request\.canisterId, prepared\.purchaseRequest\)/);
+assert.match(wallet, /oisyCallMarketDeposit\(wallet, connection\.owner, request\.canisterId, prepared\.depositRequest\)/);
+assert.match(wallet, /oisyCallMarketPurchase\(wallet, connection\.owner, request\.canisterId, rawMarketPurchaseRequest\(request\)\)/);
 assert.match(wallet, /sender: owner/);
 assert.match(wallet, /wallet response sender mismatch/);
 assert.match(wallet, /contentMap|Certificate|requestIdOf/);
 assert.match(wallet, /purchase_database_cycles\(prepared\.purchaseRequest\)/);
+assert.match(marketDepositPlug, /market_deposit_balance\(prepared\.depositRequest\)/);
+assert.match(marketPurchasePlug, /market_purchase_access\(rawMarketPurchaseRequest\(request\)\)/);
 assert.match(wallet, /encodeCyclesPurchaseArgs\(request: DatabaseCyclesPurchaseRequest\)/);
+assert.match(wallet, /encodeMarketDepositArgs\(request: MarketDepositCanisterRequest\)/);
+assert.match(wallet, /encodeMarketPurchaseArgs\(request: MarketPurchaseCanisterRequest\)/);
+assert.match(wallet, /method: "market_purchase_access"/);
 assert.match(wallet, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
+assert.match(marketPurchasePlug, /whitelist: \[request\.canisterId\]/);
+assert.doesNotMatch(marketPurchaseOisy, /approve\(/);
+assert.doesNotMatch(marketPurchasePlug, /icrc2_approve/);
 assert.match(wallet, /function defaultAccount\(owner: string\): LedgerAccount/);
 assert.match(wallet, /DEFAULT_OISY_SIGNER_URL/);
-assert.match(wallet, /cycles purchase failed after approval; \$\{approvalText\}/);
+assert.match(wallet, /KINIC canister call failed after approval; \$\{approvalText\}/);
 assert.match(wallet, /approval remains without expiry/);
-assert.match(wallet, /class CyclesPurchaseAfterApproveError extends Error/);
+assert.match(wallet, /class KinicAfterApproveError extends Error/);
 assert.match(client, /purchased cycles/);
 assert.match(client, /purchasedCycles/);
 assert.match(client, /approved allowance/);
@@ -222,7 +241,7 @@ const clientModule = loadTsModule(
       parseKinicAmountE8sInput: () => 100n,
       parseCyclesTarget: () => ({ databaseId: "db_alpha" })
     },
-    "@/lib/cycles-wallet": {
+    "@/lib/kinic-wallet": {
       purchaseCyclesWithOisy: async () => ({}),
       purchaseCyclesWithPlug: async () => ({})
     },
