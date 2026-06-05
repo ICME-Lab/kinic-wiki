@@ -21,7 +21,6 @@ export function AppHeader() {
     login,
     logout,
     principal,
-    refreshAuth,
     wallet,
     walletBalance,
     walletBalanceLoading,
@@ -30,7 +29,7 @@ export function AppHeader() {
   } = useAppSession();
 
   const isMarketplace = pathname === "/marketplace" || pathname.startsWith("/marketplace/");
-  if (pathname !== "/" && pathname !== "/cycles" && !isMarketplace) return null;
+  if (pathname !== "/dashboard" && pathname !== "/cycles" && !isMarketplace) return null;
 
   const title = pathname === "/cycles" ? "Database cycles purchase" : isMarketplace ? "Kinic marketplace" : "Database dashboard";
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
@@ -66,9 +65,6 @@ export function AppHeader() {
                 onLogout={() => {
                   void logout();
                 }}
-                onRefresh={() => {
-                  void refreshAuth();
-                }}
               />
             </>
           }
@@ -85,8 +81,8 @@ function walletLabel(provider: "oisy" | "plug"): string {
 function HeaderNav({ pathname }: { pathname: string }) {
   return (
     <nav className="flex flex-wrap gap-3 text-sm font-semibold">
-      {pathname !== "/" ? (
-        <Link className="text-accent no-underline hover:underline" href="/">
+      {pathname !== "/dashboard" ? (
+        <Link className="text-accent no-underline hover:underline" href="/dashboard">
           Dashboard
         </Link>
       ) : null}

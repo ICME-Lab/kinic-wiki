@@ -91,8 +91,8 @@ assert.match(inspectorSource, /label="database"/);
 assert.match(inspectorSource, /label="database_id"/);
 assert.match(inspectorSource, /label="created_at"/);
 assert.match(inspectorSource, /label="metadata_json"/);
-assert.match(layoutSource, /title: "Kinic Wiki Database Dashboard"/);
-assert.match(layoutSource, /description: "Browse, search, edit, and manage Kinic Wiki canister databases\."/);
+assert.match(layoutSource, /title: "Kinic Wiki AI Memory"/);
+assert.match(layoutSource, /description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management\."/);
 assert.match(layoutSource, /metadataBase: new URL\("https:\/\/wiki\.kinic\.xyz"\)/);
 assert.match(layoutSource, /openGraph:/);
 assert.match(layoutSource, /twitter:/);
@@ -154,7 +154,7 @@ assert.match(wikiBrowserSource, /node\.kind === "folder"/);
 assert.match(wikiBrowserSource, /visibleChildren\(loadedChildren, node\.path\)\.length === 0/);
 assert.match(wikiBrowserSource, /: !node\.hasChildren/);
 assert.doesNotMatch(wikiBrowserSource, /DocumentBreadcrumbs/);
-assert.match(wikiBrowserSource, /readMode=\{readMode\}/);
+assert.doesNotMatch(wikiBrowserSource, /readMode/);
 assert.match(documentPaneSource, /DocumentHeaderPath/);
 assert.match(documentPaneSource, /Current wiki path/);
 assert.match(documentPaneSource, /h-10 w-fit min-w-0 max-w-full/);
@@ -169,9 +169,9 @@ assert.match(documentPaneSource, /node\.data\?\.kind === "folder"/);
 assert.match(documentPaneSource, /FolderIndexSection/);
 assert.match(documentPaneSource, /emptyFolderIndexNode/);
 assert.match(documentPaneSource, /node\.kind === "file" && node\.path\.endsWith\("\.md"\) && !node\.path\.startsWith\("\/Sources\/raw\/"\)/);
-assert.match(documentPaneSource, /readMode === "anonymous"/);
-assert.match(documentPaneSource, /Authenticated mode required/);
-assert.match(documentPaneSource, /Use authenticated mode/);
+assert.doesNotMatch(documentPaneSource, /readMode/);
+assert.doesNotMatch(documentPaneSource, /Authenticated mode required/);
+assert.doesNotMatch(documentPaneSource, /Use authenticated mode/);
 assert.match(documentPaneSource, /Writer or owner access required/);
 assert.match(documentPaneSource, /Database role unavailable/);
 assert.match(markdownEditDocumentSource, /writeNodeAuthenticated/);
@@ -257,10 +257,11 @@ assert.equal(parseModeTab("sources"), "explorer");
 assert.deepEqual(queryAnswerSearchTerms("vetkeyについて教えて"), ["vetkey"]);
 assert.deepEqual(queryAnswerSearchTerms("What does the wiki say about vetKey?"), ["vetKey"]);
 assert.equal(parseModeTab("legacy"), "explorer");
-assert.equal(readIdentityMode(null, true, true, true, true), "user");
-assert.equal(readIdentityMode(null, true, false, true, true), "anonymous");
-assert.equal(readIdentityMode("anonymous", true, true, true, true), "anonymous");
-assert.equal(readIdentityMode(null, false, false, false, true), "anonymous");
+assert.equal(readIdentityMode(true, true, true, true), "user");
+assert.equal(readIdentityMode(true, false, true, true), "anonymous");
+assert.equal(readIdentityMode(true, false, false, true), "anonymous");
+assert.equal(readIdentityMode(true, false, false, false), "user");
+assert.equal(readIdentityMode(false, false, false, true), "anonymous");
 assert.equal(classifyQueryInput("https://example.com/a", "/Wiki", "user").kind, "queue_url");
 assert.deepEqual(classifyQueryInput("topic", "/Wiki", "user"), {
   kind: "search",
@@ -361,10 +362,10 @@ assert.notEqual(
   graphRequestKey("aaaaa-aa", "alpha", "/Wiki/index.md", 1, "aaaaa-aa")
 );
 assert.notEqual(searchRequestKey("aaaaa-aa", "alpha", "path", "budget"), searchRequestKey("aaaaa-aa", "alpha", "path", "budget", "aaaaa-aa"));
-assert.equal(publicDatabasePath("alpha/db"), "/alpha%2Fdb/Wiki?read=anonymous");
-assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db_kva4v2twg6jv/Wiki?read=anonymous");
-assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/alpha%20db/Wiki?read=anonymous");
-assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/alpha%20db/Wiki?read=anonymous");
+assert.equal(publicDatabasePath("alpha/db"), "/alpha%2Fdb/Wiki");
+assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db_kva4v2twg6jv/Wiki");
+assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/alpha%20db/Wiki");
+assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/alpha%20db/Wiki");
 assert.equal(isReservedDatabaseRouteSlug("cli"), true);
 assert.equal(isReservedDatabaseRouteSlug("CLI"), true);
 assert.equal(isReservedDatabaseRouteSlug("db_cli"), false);
@@ -373,7 +374,7 @@ assert.equal(isRoutableDatabaseId("dashboard"), false);
 assert.throws(() => publicDatabasePath("cli"), /reserved database route slug: cli/);
 assert.equal(
   xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
-  "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Falpha%2520db%2FWiki%3Fread%3Danonymous"
+  "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Falpha%2520db%2FWiki"
 );
 assert.equal(
   renderWikilinksAsMarkdown("[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]"),

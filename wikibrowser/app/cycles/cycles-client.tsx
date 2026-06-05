@@ -144,7 +144,7 @@ function cyclesPurchaseSuccessHref({
   params.set("provider", provider);
   params.set("kinic", kinic);
   params.set("cycles", cycles);
-  return `/?${params.toString()}`;
+  return `/dashboard?${params.toString()}`;
 }
 
 function Field({ label, value }: { label: string; value: string }) {

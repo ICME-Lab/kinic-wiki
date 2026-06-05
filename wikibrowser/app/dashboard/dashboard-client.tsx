@@ -1,7 +1,6 @@
 "use client";
 
 import { AuthClient } from "@icp-sdk/auth/client";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil } from "lucide-react";
@@ -478,18 +477,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               </button>
             ) : null
           }
-          nav={
-            <>
-              <Link className="text-accent no-underline hover:underline" href="/">
-                Database dashboard
-              </Link>
-              {databaseId && isActiveDatabase ? (
-                <Link className="text-accent no-underline hover:underline" href={`/skills/${encodeURIComponent(databaseId)}`}>
-                  Skill Registry
-                </Link>
-              ) : null}
-            </>
-          }
           actions={
             <>
               {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
@@ -560,14 +547,6 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
           ) : (
             <StatusPanel tone="info" message="Login with Internet Identity to manage database access." />
           )
-        ) : !databaseId ? (
-          <section className="rounded-lg border border-line bg-paper p-8 shadow-sm">
-            <h2 className="text-lg font-semibold text-ink">Select a database to manage</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">Open the Database dashboard, then choose Manage on a database row.</p>
-            <Link className="mt-5 inline-flex rounded-2xl border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href="/">
-              Open Database dashboard
-            </Link>
-          </section>
         ) : principal ? (
           <StatusPanel tone="info" message={memberError ?? "Select Cycles History to inspect cycle visibility for this database."} />
         ) : (

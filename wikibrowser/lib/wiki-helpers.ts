@@ -43,13 +43,12 @@ export function parseModeTab(value: string | null): ModeTab {
 }
 
 export function readIdentityMode(
-  readMode: "anonymous" | null,
   hasReadIdentity: boolean,
   hasDatabaseRole: boolean,
   memberRolesLoaded: boolean,
   publicReadable: boolean
 ): ReadIdentityMode {
-  if (readMode === "anonymous" || !hasReadIdentity) return "anonymous";
+  if (!hasReadIdentity) return "anonymous";
   if (hasDatabaseRole) return "user";
   if (publicReadable) return "anonymous";
   return memberRolesLoaded ? "anonymous" : "user";

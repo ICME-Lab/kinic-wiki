@@ -5,7 +5,7 @@ import { hrefForPath } from "@/lib/paths";
 import { collectLintHints } from "@/lib/lint-hints";
 import type { WikiNode } from "@/lib/types";
 
-export function LintPanel({ path, node, canisterId, databaseId, readMode = null }: { path: string; node: WikiNode | null; canisterId: string; databaseId: string; readMode?: "anonymous" | null }) {
+export function LintPanel({ path, node, canisterId, databaseId }: { path: string; node: WikiNode | null; canisterId: string; databaseId: string }) {
   if (!node) {
     return <p className="min-h-0 flex-1 p-4 text-sm text-muted">Select a markdown node to inspect lightweight hints.</p>;
   }
@@ -29,7 +29,7 @@ export function LintPanel({ path, node, canisterId, databaseId, readMode = null 
           <p className="mt-2 text-xs text-yellow-900">{hint.detail}</p>
           {hint.preview ? <p className="mt-2 rounded bg-white/70 p-2 font-mono text-[11px] text-yellow-950">{hint.preview}</p> : null}
           {hint.line ? <p className="mt-2 font-mono text-[11px] text-yellow-700">line {hint.line}</p> : null}
-          <a className="mt-2 inline-block text-xs text-accent" href={hrefForPath(canisterId, databaseId, path, "raw", "lint", undefined, undefined, readMode)}>
+          <a className="mt-2 inline-block text-xs text-accent" href={hrefForPath(canisterId, databaseId, path, "raw", "lint")}>
             Open raw view
           </a>
         </div>
