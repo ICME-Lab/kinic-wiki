@@ -8,26 +8,26 @@ const viewports = [
   [390, 844]
 ];
 const browserRoutes = [
-  "/Wiki?read=anonymous",
-  "/Wiki?read=anonymous&view=raw",
-  "/Wiki?read=anonymous&view=edit",
-  "/Wiki?read=anonymous&tab=query",
-  "/Wiki?read=anonymous&tab=ingest",
-  "/search?q=Wiki&kind=path&read=anonymous",
-  "/help?read=anonymous",
-  "/graph?center=%2FWiki&depth=1&read=anonymous",
-  "/graph?read=anonymous"
+  "/Wiki",
+  "/Wiki?view=raw",
+  "/Wiki?view=edit",
+  "/Wiki?tab=query",
+  "/Wiki?tab=ingest",
+  "/search?q=Wiki&kind=path",
+  "/help",
+  "/graph?center=%2FWiki&depth=1",
+  "/graph"
 ];
 
 runOptional("close", []);
-run("open", [`${baseUrl}/${encodeURIComponent(databaseId)}/Wiki?read=anonymous`]);
+run("open", [`${baseUrl}/${encodeURIComponent(databaseId)}/Wiki`]);
 for (const [width, height] of viewports) {
   run("resize", [String(width), String(height)]);
   for (const route of browserRoutes) {
     run("goto", [`${baseUrl}/${encodeURIComponent(databaseId)}${route}`]);
     run("eval", [wikiLayoutProbe(route)]);
   }
-  run("goto", [baseUrl]);
+  run("goto", [`${baseUrl}/dashboard`]);
   run("eval", [dashboardLayoutProbe()]);
   run("goto", [`${baseUrl}/dashboard/${encodeURIComponent(databaseId)}`]);
   run("eval", [genericLayoutProbe()]);

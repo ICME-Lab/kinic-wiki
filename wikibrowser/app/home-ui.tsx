@@ -128,15 +128,13 @@ export function AuthControls({
   principal,
   loading,
   onLogin,
-  onLogout,
-  onRefresh
+  onLogout
 }: {
   authReady: boolean;
   principal: string | null;
   loading: boolean;
   onLogin: () => void;
   onLogout: () => void;
-  onRefresh: () => void;
 }) {
   if (!principal) {
     return (
@@ -154,10 +152,7 @@ export function AuthControls({
 
   return (
     <div className="flex flex-wrap gap-2">
-      <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink" disabled={loading} type="button" onClick={onRefresh}>
-        Refresh
-      </button>
-      <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink" type="button" onClick={onLogout}>
+      <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink" disabled={loading} type="button" onClick={onLogout}>
         Logout
       </button>
     </div>
@@ -183,12 +178,12 @@ export function DatabaseBody({
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} description="Readable without login." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
       <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login. These open in anonymous read mode." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -473,6 +468,5 @@ function isActiveRoutableDatabase(database: DatabaseRow): boolean {
 }
 
 function openDatabaseHref(database: DatabaseRow): string {
-  const base = `/${encodeURIComponent(database.databaseId)}/Wiki`;
-  return !database.member && database.publicReadable ? `${base}?read=anonymous` : base;
+  return `/${encodeURIComponent(database.databaseId)}/Wiki`;
 }

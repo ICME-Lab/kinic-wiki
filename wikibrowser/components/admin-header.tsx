@@ -11,7 +11,7 @@ export function AdminHeader({ actions, nav, title, titleAction }: { actions?: Re
       <div className="min-w-0">
         {nav ? <nav className="flex flex-wrap items-center gap-2 text-sm text-muted">{nav}</nav> : null}
         <div className={`flex min-w-0 items-center gap-3 ${nav ? "mt-3" : ""}`}>
-          <Link className="shrink-0 rounded-xl no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/" aria-label="Back to home">
+          <Link className="shrink-0 rounded-xl no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/dashboard" aria-label="Back to dashboard">
             <Image className="h-11 w-11 rounded-xl shadow-sm" src="/icon.png" alt="" width={44} height={44} unoptimized />
           </Link>
           <div className="min-w-0">

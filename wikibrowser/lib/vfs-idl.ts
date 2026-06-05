@@ -10,11 +10,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
     Hot: idl.Null,
-    Pending: idl.Null,
-    Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null
+    Archived: idl.Null,
+    Deleted: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -24,7 +23,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     name: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64)
+    archived_at_ms: idl.Opt(idl.Int64),
+    deleted_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesBillingConfig = idl.Record({
     cycles_per_kinic: idl.Nat64,

@@ -25,7 +25,7 @@ type GraphLoadState = LoadState<LinkEdge[]> & {
   requestKey: string | null;
 };
 
-export function GraphPanel({ canisterId, databaseId, centerPath, depth, readIdentity, readMode = null }: { canisterId: string; databaseId: string; centerPath: string | null; depth: 1 | 2; readIdentity: Identity | null; readMode?: "anonymous" | null }) {
+export function GraphPanel({ canisterId, databaseId, centerPath, depth, readIdentity }: { canisterId: string; databaseId: string; centerPath: string | null; depth: 1 | 2; readIdentity: Identity | null }) {
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const currentRequestKey = graphRequestKey(canisterId, databaseId, centerPath, depth, readPrincipal);
   const [links, setLinks] = useState<GraphLoadState>({ centerPath: null, requestKey: null, data: null, error: null, loading: false });
@@ -73,10 +73,10 @@ export function GraphPanel({ canisterId, databaseId, centerPath, depth, readIden
               <span className="font-mono text-xs text-muted">{centerPath}</span>
               <span className="rounded-lg border border-line bg-white px-2 py-1 font-mono text-xs text-muted">{nodeCount} nodes</span>
               <span className="rounded-lg border border-line bg-white px-2 py-1 font-mono text-xs text-muted">{edgeCount} edges</span>
-              <Link className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 1 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 1, readMode)}>
+              <Link className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 1 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 1)}>
                 depth 1
               </Link>
-              <Link className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 2 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 2, readMode)}>
+              <Link className={`rounded-lg border border-line px-2 py-1 no-underline ${depth === 2 ? "bg-accent text-white" : "bg-white text-ink"}`} href={hrefForGraph(canisterId, databaseId, centerPath, 2)}>
                 depth 2
               </Link>
             </div>
@@ -97,7 +97,7 @@ export function GraphPanel({ canisterId, databaseId, centerPath, depth, readIden
                 return <line key={`${edge.sourcePath}-${edge.targetPath}-${edge.rawHref}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="#e6e6e6" strokeWidth="1.2" />;
               })}
               {graph.nodes.map((node) => (
-                <Link key={node.path} href={hrefForPath(canisterId, databaseId, node.path, undefined, undefined, undefined, undefined, readMode)}>
+                <Link key={node.path} href={hrefForPath(canisterId, databaseId, node.path)}>
                   <circle cx={node.x} cy={node.y} r={node.isCenter ? "16" : "12"} fill={node.isCenter ? "#ff2686" : "#000000"} />
                   <text x={node.x + 16} y={node.y + 4} className="fill-ink text-[11px]">
                     {shortName(node.path)}

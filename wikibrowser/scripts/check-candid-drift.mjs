@@ -16,7 +16,7 @@ const idlMethods = parseIdlMethods(idl);
 const failures = [];
 const browserExpectedTypes = {
   ...expectedTypes,
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } }
+  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } }
 };
 
 for (const [name, shape] of Object.entries(expectedTypes)) {

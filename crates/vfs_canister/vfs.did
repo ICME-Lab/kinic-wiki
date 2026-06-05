@@ -88,13 +88,7 @@ type DatabaseRestoreChunkRequest = record {
   bytes : blob;
 };
 type DatabaseRole = variant { Reader; Writer; Owner };
-type DatabaseStatus = variant {
-  Active;
-  Restoring;
-  Archiving;
-  Archived;
-  Pending;
-};
+type DatabaseStatus = variant { Hot; Restoring; Archiving; Archived; Deleted };
 type DatabaseSummary = record {
   status : DatabaseStatus;
   cycles_balance : opt nat64;
@@ -104,6 +98,7 @@ type DatabaseSummary = record {
   cycles_suspended_at_ms : opt int64;
   database_id : text;
   archived_at_ms : opt int64;
+  deleted_at_ms : opt int64;
 };
 type DeleteDatabaseRequest = record { database_id : text };
 type DeleteNodeRequest = record {

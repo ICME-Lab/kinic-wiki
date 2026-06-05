@@ -1358,7 +1358,8 @@ fn canister_list_databases_returns_caller_membership_summaries() {
     assert_eq!(summaries.len(), 1);
     assert_eq!(summaries[0].database_id, "default");
     assert_eq!(summaries[0].role, DatabaseRole::Owner);
-    assert_eq!(summaries[0].status, DatabaseStatus::Active);
+    assert_eq!(summaries[0].status, super::DatabaseStatus::Hot);
+    assert_eq!(summaries[0].deleted_at_ms, None);
 }
 
 #[test]
@@ -1803,11 +1804,15 @@ fn create_database_returns_result() {
     assert_eq!(result.name, "Team skills");
 
     let summaries = list_databases().expect("database summaries should load");
-    let summary = summaries
-        .iter()
-        .find(|summary| summary.database_id == result.database_id)
-        .expect("created database summary should exist");
-    assert_eq!(summary.status, DatabaseStatus::Pending);
+    assert!(
+        summaries
+            .iter()
+            .all(|summary| summary.database_id != result.database_id)
+    );
+    assert_eq!(
+        database_status_and_mount(&result.database_id),
+        (DatabaseStatus::Pending, None)
+    );
     let pending_read = list_children(ListChildrenRequest {
         database_id: result.database_id.clone(),
         path: "/Wiki".to_string(),
@@ -1825,11 +1830,17 @@ fn create_database_returns_result() {
     assert_eq!(status.file_count, 0);
     assert_eq!(status.source_count, 0);
     let children = list_children(ListChildrenRequest {
-        database_id: result.database_id,
+        database_id: result.database_id.clone(),
         path: "/Wiki".to_string(),
     })
     .expect("activated database should list");
     assert!(children.is_empty());
+    let active_summary = list_databases()
+        .expect("database summaries should load")
+        .into_iter()
+        .find(|summary| summary.database_id == result.database_id)
+        .expect("activated database should appear in list");
+    assert_eq!(active_summary.status, super::DatabaseStatus::Hot);
 }
 
 #[test]
@@ -1851,12 +1862,18 @@ fn create_database_rejects_pending_database_limit() {
     assert!(error.contains("too many pending databases for caller"));
 
     let summaries = list_databases().expect("database summaries should load");
-    assert_eq!(summaries.len(), 3);
-    assert!(
-        summaries
-            .iter()
-            .all(|summary| summary.status == DatabaseStatus::Pending)
-    );
+    assert!(summaries.is_empty());
+    let pending_infos = SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .list_database_infos()
+            .expect("database infos should load")
+            .into_iter()
+            .filter(|info| info.status == DatabaseStatus::Pending)
+            .count()
+    });
+    assert_eq!(pending_infos, 3);
 }
 
 #[test]
@@ -2668,7 +2685,7 @@ fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Archived);
+    assert_eq!(info.status, super::DatabaseStatus::Archived);
     assert_eq!(info.role, DatabaseRole::Owner);
 }
 
@@ -2773,7 +2790,7 @@ fn database_archive_restore_entrypoints_restore_search_and_links() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
+    assert_eq!(info.status, super::DatabaseStatus::Hot);
     assert_eq!(info.role, DatabaseRole::Owner);
 }
 
@@ -2811,7 +2828,7 @@ fn begin_database_restore_rolls_back_when_mount_fails() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(rolled_back.status, DatabaseStatus::Archived);
+    assert_eq!(rolled_back.status, super::DatabaseStatus::Archived);
     assert_eq!(rolled_back.role, DatabaseRole::Owner);
 
     begin_database_restore("default".to_string(), snapshot_hash, archive.size_bytes)
@@ -2821,7 +2838,7 @@ fn begin_database_restore_rolls_back_when_mount_fails() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(restoring.status, DatabaseStatus::Restoring);
+    assert_eq!(restoring.status, super::DatabaseStatus::Restoring);
     assert_eq!(restoring.role, DatabaseRole::Owner);
 }
 
@@ -2867,7 +2884,7 @@ fn cancel_database_archive_entrypoint_returns_database_to_active() {
         .into_iter()
         .find(|info| info.database_id == "default")
         .expect("default info should exist");
-    assert_eq!(info.status, DatabaseStatus::Active);
+    assert_eq!(info.status, super::DatabaseStatus::Hot);
     assert_eq!(info.role, DatabaseRole::Owner);
 }
 

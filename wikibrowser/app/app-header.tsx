@@ -3,7 +3,6 @@
 // Where: root wikibrowser layout.
 // What: renders the shared dashboard/cycles header with wallet and II controls.
 // Why: funding pages should keep the same wallet session and management shell.
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AdminHeader } from "@/components/admin-header";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -21,7 +20,6 @@ export function AppHeader() {
     login,
     logout,
     principal,
-    refreshAuth,
     wallet,
     walletBalance,
     walletBalanceLoading,
@@ -29,7 +27,7 @@ export function AppHeader() {
     walletControlsLocked
   } = useAppSession();
 
-  if (pathname !== "/" && pathname !== "/cycles") return null;
+  if (pathname !== "/dashboard" && pathname !== "/cycles") return null;
 
   const title = pathname === "/cycles" ? "Database cycles purchase" : "Database dashboard";
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
@@ -40,13 +38,6 @@ export function AppHeader() {
       <section className="mx-auto max-w-6xl">
         <AdminHeader
           title={title}
-          nav={
-            pathname === "/cycles" ? (
-              <Link className="text-accent no-underline hover:underline" href="/">
-                Database dashboard
-              </Link>
-            ) : null
-          }
           actions={
             <>
               <WalletControls
@@ -70,9 +61,6 @@ export function AppHeader() {
                 }}
                 onLogout={() => {
                   void logout();
-                }}
-                onRefresh={() => {
-                  void refreshAuth();
                 }}
               />
             </>

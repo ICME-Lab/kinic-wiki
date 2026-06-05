@@ -4,22 +4,22 @@ import type { AuthClient } from "@icp-sdk/auth/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { useAppSession } from "./app-session-provider";
-import { CreateDatabaseDialog } from "./create-database-dialog";
-import { DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "./home-ui";
+import { useAppSession } from "../app-session-provider";
+import { CreateDatabaseDialog } from "../create-database-dialog";
+import { DatabaseBody, OfficialKinicWikiPanel, StatusPanel } from "../home-ui";
 import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/cycles-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
-import type { DatabaseRow } from "./home-ui";
+import type { DatabaseRow } from "../home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
 
 const CREATE_DATABASE_PURCHASE_KINIC = "1";
 
-export function HomePageClient() {
+export function DashboardHomeClient() {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const searchParams = useSearchParams();
   const refreshSeqRef = useRef(0);
@@ -27,7 +27,6 @@ export function HomePageClient() {
     authClient,
     authError,
     authReady,
-    authRefreshSeq,
     principal,
     refreshWalletBalance,
     setWalletControlsLocked,
@@ -100,7 +99,7 @@ export function HomePageClient() {
     return () => {
       cancelled = true;
     };
-  }, [authClient, authReady, authRefreshSeq, principal, refreshDatabases]);
+  }, [authClient, authReady, principal, refreshDatabases]);
 
   useEffect(() => {
     setWalletControlsLocked(creating);

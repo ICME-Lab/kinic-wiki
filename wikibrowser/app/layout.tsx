@@ -5,18 +5,18 @@ import { AppSessionProvider } from "./app-session-provider";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://wiki.kinic.xyz"),
-  title: "Kinic Wiki Database Dashboard",
-  description: "Browse, search, edit, and manage Kinic Wiki canister databases.",
+  title: "Kinic Wiki AI Memory",
+  description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management.",
   openGraph: {
-    title: "Kinic Wiki Database Dashboard",
-    description: "Browse, search, edit, and manage Kinic Wiki canister databases.",
+    title: "Kinic Wiki AI Memory",
+    description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management.",
     siteName: "Kinic Wiki",
     type: "website"
   },
   twitter: {
     card: "summary_large_image",
-    title: "Kinic Wiki Database Dashboard",
-    description: "Browse, search, edit, and manage Kinic Wiki canister databases."
+    title: "Kinic Wiki AI Memory",
+    description: "Use Kinic Wiki as canister-backed AI memory through kinic-vfs-cli, with browser tools for browsing and management."
   }
 };
 

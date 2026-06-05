@@ -29,8 +29,7 @@ export function SearchPanel({
   prefix = "/Wiki",
   emptyMessage = "Use the header search.",
   eyebrow = "Search",
-  title = "Wiki search",
-  readMode = null
+  title = "Wiki search"
 }: {
   canisterId: string;
   databaseId: string;
@@ -41,7 +40,6 @@ export function SearchPanel({
   emptyMessage?: string;
   eyebrow?: string;
   title?: string;
-  readMode?: "anonymous" | null;
 }) {
   const latestRequest = useRef(0);
   const lastRequestedKey = useRef<string | null>(null);
@@ -119,7 +117,7 @@ export function SearchPanel({
             return (
               <Link
                 key={`${hit.path}-${hit.score}`}
-                href={hrefForPath(canisterId, databaseId, hit.path, undefined, undefined, undefined, undefined, readMode)}
+                href={hrefForPath(canisterId, databaseId, hit.path)}
                 className="block rounded-xl border border-line bg-white p-3 text-sm no-underline hover:border-accent"
               >
                 <div className="truncate font-mono text-xs text-accent">{hit.path}</div>

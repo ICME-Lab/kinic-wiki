@@ -22,7 +22,8 @@ function idlFactory({ IDL: idl }) {
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null
+    Archived: idl.Null,
+    Deleted: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -32,7 +33,8 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64)
+    archived_at_ms: idl.Opt(idl.Int64),
+    deleted_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesBillingConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,

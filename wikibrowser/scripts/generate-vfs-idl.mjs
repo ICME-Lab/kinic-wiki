@@ -14,11 +14,10 @@ const browserExpectedTypes = {
     kind: "variant",
     cases: {
       Hot: "null",
-      Pending: "null",
-      Active: "null",
       Restoring: "null",
       Archiving: "null",
-      Archived: "null"
+      Archived: "null",
+      Deleted: "null"
     }
   }
 };

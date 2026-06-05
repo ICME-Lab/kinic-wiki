@@ -215,14 +215,9 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
         <AdminHeader
           title="Skill Registry"
           nav={
-            <>
-              <Link className="text-accent no-underline hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/">
-                Database dashboard
-              </Link>
-              <Link className="text-accent no-underline hover:underline" href={`/${encodeURIComponent(databaseId)}/Wiki`}>
-                Wiki
-              </Link>
-            </>
+            <Link className="text-accent no-underline hover:underline" href={`/${encodeURIComponent(databaseId)}/Wiki`}>
+              Wiki
+            </Link>
           }
           actions={
             <>
