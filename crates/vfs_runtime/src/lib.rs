@@ -639,11 +639,6 @@ impl VfsService {
             )
             .map_err(|error| error.to_string())?;
             tx.execute(
-                "DELETE FROM market_orders WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            tx.execute(
                 "DELETE FROM market_listings WHERE database_id = ?1",
                 params![database_id],
             )
@@ -1477,19 +1472,27 @@ impl VfsService {
         self.read_index(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT listing_id, seller_principal, database_id, title, description,
-                            llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                            sample_questions_json, tags_json, price_e8s, status, revision,
-                            purchase_count, report_count, created_at_ms, updated_at_ms
-                     FROM market_listings
-                     WHERE status = ?1 AND listing_id > ?2
-                     ORDER BY listing_id ASC
-                     LIMIT ?3",
+                    "SELECT l.listing_id, l.seller_principal, l.database_id, l.title, l.description,
+                            l.llm_summary, l.summary_snapshot_revision, l.sample_excerpts_json,
+                            l.sample_questions_json, l.tags_json, l.price_e8s, l.status, l.revision,
+                            l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
+                     FROM market_listings l
+                     JOIN databases d ON d.database_id = l.database_id
+                     WHERE l.status = ?1
+                       AND d.status = ?2
+                       AND l.listing_id > ?3
+                     ORDER BY l.listing_id ASC
+                     LIMIT ?4",
                 )
                 .map_err(|error| error.to_string())?;
             let mut listings = crate::sqlite::query_map(
                 &mut stmt,
-                params![MARKET_LISTING_STATUS_ACTIVE, after, i64::from(limit) + 1],
+                params![
+                    MARKET_LISTING_STATUS_ACTIVE,
+                    status_to_db(DatabaseStatus::Active),
+                    after,
+                    i64::from(limit) + 1
+                ],
                 map_market_listing,
             )
             .map_err(|error| error.to_string())?;
@@ -1545,7 +1548,9 @@ impl VfsService {
         self.read_index(|conn| {
             let listing = load_market_listing_by_id(conn, listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
-            if listing.status == MarketListingStatus::Active {
+            if listing.status == MarketListingStatus::Active
+                && load_database_status(conn, &listing.database_id)? == DatabaseStatus::Active
+            {
                 return Ok(listing);
             }
             require_market_listing_seller_or_admin(conn, caller, &listing)?;
@@ -4468,7 +4473,6 @@ fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<()
         "database_cycle_ledger",
         "database_cycle_accounts",
         "market_entitlements",
-        "market_orders",
         "market_listings",
         "database_members",
         "database_restore_chunks",
@@ -5257,7 +5261,13 @@ fn require_market_seller_can_list(
     seller: &str,
     database_id: &str,
 ) -> Result<(), String> {
-    load_database_status(conn, database_id)?;
+    let status = load_database_status(conn, database_id)?;
+    if status != DatabaseStatus::Active {
+        return Err(format!(
+            "database is {}: {database_id}",
+            status_to_db(status)
+        ));
+    }
     let role = load_member_role(conn, database_id, seller)?
         .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
     if role != DatabaseRole::Owner {

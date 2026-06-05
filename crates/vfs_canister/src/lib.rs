@@ -437,49 +437,79 @@ fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
 fn icrc21_canister_call_consent_message(
     request: Icrc21ConsentMessageRequest,
 ) -> Icrc21ConsentMessageResponse {
-    if request.method != "purchase_database_cycles" {
-        return icrc21_unsupported(format!("unsupported canister call: {}", request.method));
-    }
-    let purchase = match Decode!(&request.arg, DatabaseCyclesPurchaseRequest) {
-        Ok(decoded) => decoded,
-        Err(error) => {
-            return icrc21_unavailable(format!(
-                "purchase_database_cycles argument decode failed: {error}"
-            ));
-        }
-    };
-    let cycles = match with_service(|service| {
-        let config = service.cycles_billing_config()?;
-        let cycles = cycles_for_payment_amount_e8s(purchase.payment_amount_e8s, &config)?;
-        service.validate_database_cycles_purchase_with_minimum(
-            &purchase.database_id,
-            purchase.payment_amount_e8s,
-            purchase.min_expected_cycles,
-        )?;
-        Ok(cycles)
-    }) {
-        Ok(cycles) => cycles,
-        Err(error) => return icrc21_unsupported(error),
-    };
     let language = if request.user_preferences.metadata.language.trim().is_empty() {
         "en".to_string()
     } else {
         request.user_preferences.metadata.language
     };
-    Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
-        metadata: Icrc21ConsentMessageMetadata {
-            language,
-            utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
-        },
-        consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-            "# Purchase Kinic database cycles\n\nDatabase: `{database_id}`\n\nCycles: `{cycles}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
-            database_id = purchase.database_id,
-            cycles = format_cycles(cycles),
-            payment = format_e8s(purchase.payment_amount_e8s),
-            fee = format_e8s(KINIC_LEDGER_FEE_E8S),
-            spender = canister_principal().to_text()
-        )),
-    })
+    let metadata = Icrc21ConsentMessageMetadata {
+        language,
+        utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
+    };
+    match request.method.as_str() {
+        "purchase_database_cycles" => {
+            let purchase = match Decode!(&request.arg, DatabaseCyclesPurchaseRequest) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    return icrc21_unavailable(format!(
+                        "purchase_database_cycles argument decode failed: {error}"
+                    ));
+                }
+            };
+            let cycles = match with_service(|service| {
+                let config = service.cycles_billing_config()?;
+                let cycles = cycles_for_payment_amount_e8s(purchase.payment_amount_e8s, &config)?;
+                service.validate_database_cycles_purchase_with_minimum(
+                    &purchase.database_id,
+                    purchase.payment_amount_e8s,
+                    purchase.min_expected_cycles,
+                )?;
+                Ok(cycles)
+            }) {
+                Ok(cycles) => cycles,
+                Err(error) => return icrc21_unsupported(error),
+            };
+            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+                metadata,
+                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+                    "# Purchase Kinic database cycles\n\nDatabase: `{database_id}`\n\nCycles: `{cycles}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
+                    database_id = purchase.database_id,
+                    cycles = format_cycles(cycles),
+                    payment = format_e8s(purchase.payment_amount_e8s),
+                    fee = format_e8s(KINIC_LEDGER_FEE_E8S),
+                    spender = canister_principal().to_text()
+                )),
+            })
+        }
+        "market_deposit_balance" => {
+            let deposit = match Decode!(&request.arg, MarketDepositRequest) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    return icrc21_unavailable(format!(
+                        "market_deposit_balance argument decode failed: {error}"
+                    ));
+                }
+            };
+            if deposit.amount_e8s == 0 {
+                return icrc21_unsupported("market deposit amount must be positive".to_string());
+            }
+            if i64::try_from(deposit.amount_e8s).is_err()
+                || i64::try_from(deposit.expected_fee_e8s).is_err()
+            {
+                return icrc21_unsupported("market deposit amount exceeds i64".to_string());
+            }
+            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+                metadata,
+                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+                    "# Deposit KINIC to marketplace wallet\n\nAmount: `{amount}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`\n\nPurpose: internal marketplace balance for purchases",
+                    amount = format_e8s(deposit.amount_e8s),
+                    fee = format_e8s(deposit.expected_fee_e8s),
+                    spender = canister_principal().to_text()
+                )),
+            })
+        }
+        method => icrc21_unsupported(format!("unsupported canister call: {method}")),
+    }
 }
 
 #[update]
@@ -775,6 +805,14 @@ async fn market_deposit_balance(
                     operation_id,
                     block_index,
                     error,
+                ));
+            }
+            #[cfg(test)]
+            if TEST_MARKET_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
+                return Err(market_deposit_local_apply_error(
+                    operation_id,
+                    block_index,
+                    "test market deposit apply failure".to_string(),
                 ));
             }
             let balance = with_service(|service| {
@@ -1452,6 +1490,7 @@ thread_local! {
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_MARKET_DEPOSIT_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -1463,6 +1502,11 @@ fn fail_next_mount_database_file_for_test() {
 #[cfg(test)]
 fn fail_next_apply_database_cycles_purchase_apply_for_test() {
     TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
+}
+
+#[cfg(test)]
+fn fail_next_apply_kinic_deposit_for_test() {
+    TEST_MARKET_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
 }
 
 #[cfg(test)]

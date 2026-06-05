@@ -4387,18 +4387,127 @@ fn market_listing_owner_policy_and_database_listing_query() {
 }
 
 #[test]
-fn delete_database_removes_marketplace_rows() {
-    let (service, root) = service_with_root();
+fn market_listing_requires_active_database() {
+    let service = service();
+    let pending = service
+        .reserve_pending_generated_database("Pending market", "owner", 1)
+        .expect("pending database should reserve");
+    let pending_error = service
+        .market_create_listing(
+            "owner",
+            market_listing_request(&pending.database_id, 100),
+            2,
+        )
+        .expect_err("pending database listing should reject");
+    assert!(pending_error.contains("database is pending"));
+
     service
-        .create_database("market-delete", "seller", 1)
+        .create_database("archive-market", "owner", 3)
         .expect("database should create");
     let listing = service
-        .market_create_listing("seller", market_listing_request("market-delete", 100), 2)
-        .expect("listing should create");
+        .market_create_listing("owner", market_listing_request("archive-market", 100), 4)
+        .expect("active database listing should create");
     let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
-    credit_market_balance(&service, "buyer", 100, 10, 4);
+        .market_publish_listing("owner", &listing.listing_id, 5)
+        .expect("active database listing should publish");
+    assert_eq!(
+        service
+            .market_list_listings(None, 10)
+            .expect("active listings should load")
+            .listings
+            .len(),
+        1
+    );
+
+    let archive = service
+        .begin_database_archive("archive-market", "owner", 6)
+        .expect("archive should begin");
+    assert!(
+        service
+            .market_list_listings(None, 10)
+            .expect("archiving listings should load")
+            .listings
+            .is_empty(),
+        "archiving database listing must leave public marketplace"
+    );
+    assert!(
+        service
+            .market_get_listing("buyer", &listing.listing_id)
+            .expect_err("buyer should not read non-active database listing")
+            .contains("seller or admin required")
+    );
+    service
+        .market_get_listing("owner", &listing.listing_id)
+        .expect("owner should still manage archived listing");
+
+    let bytes = read_archive_in_chunks(&service, "archive-market", archive.size_bytes, 17);
+    let snapshot_hash = sha256_bytes(&bytes);
+    service
+        .finalize_database_archive("archive-market", "owner", snapshot_hash.clone(), 7)
+        .expect("archive should finalize");
+    credit_market_balance(&service, "buyer", 100, 21, 8);
+    let preview_error = service
+        .market_preview_purchase("buyer", &listing.listing_id)
+        .expect_err("archived database preview should reject");
+    assert!(preview_error.contains("database is archived"));
+    let purchase_error = service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id.clone(),
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            9,
+        )
+        .expect_err("archived database purchase should reject");
+    assert!(purchase_error.contains("database is archived"));
+    assert_eq!(
+        service
+            .market_get_balance("buyer")
+            .expect("buyer balance should remain")
+            .balance_e8s,
+        100
+    );
+    assert_eq!(
+        service
+            .market_get_balance("owner")
+            .expect("seller balance should remain")
+            .balance_e8s,
+        0
+    );
+
+    service
+        .begin_database_restore(
+            "archive-market",
+            "owner",
+            snapshot_hash,
+            archive.size_bytes,
+            10,
+        )
+        .expect("restore should begin");
+    assert!(
+        service
+            .market_list_listings(None, 10)
+            .expect("restoring listings should load")
+            .listings
+            .is_empty(),
+        "restoring database listing must stay hidden"
+    );
+    service
+        .write_database_restore_chunk("archive-market", "owner", 0, &bytes)
+        .expect("restore chunk should write");
+    service
+        .finalize_database_restore("archive-market", "owner", 11)
+        .expect("restore should finalize");
+    assert_eq!(
+        service
+            .market_list_listings(None, 10)
+            .expect("restored listings should load")
+            .listings
+            .len(),
+        1
+    );
     service
         .market_purchase_access(
             "buyer",
@@ -4407,9 +4516,52 @@ fn delete_database_removes_marketplace_rows() {
                 price_e8s: listing.price_e8s,
                 expected_revision: listing.revision,
             },
-            5,
+            12,
+        )
+        .expect("restored active database purchase should succeed");
+}
+
+#[test]
+fn delete_database_removes_marketplace_rows() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("market-delete", "seller", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "market-delete".to_string(),
+                path: "/Wiki/private.md".to_string(),
+                kind: NodeKind::File,
+                content: "paid body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("owner should write");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("market-delete", 100), 3)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 4)
+        .expect("listing should publish");
+    credit_market_balance(&service, "buyer", 100, 10, 5);
+    service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id,
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            6,
         )
         .expect("purchase should succeed");
+    service
+        .read_node("market-delete", "buyer", "/Wiki/private.md")
+        .expect("entitled buyer should read before delete");
     assert_eq!(
         market_row_count(&root, "market_listings", "market-delete"),
         1
@@ -4421,17 +4573,29 @@ fn delete_database_removes_marketplace_rows() {
     );
 
     service
-        .delete_database(delete_request("market-delete"), "seller", 6)
+        .delete_database(delete_request("market-delete"), "seller", 7)
         .expect("delete should succeed");
     assert_eq!(
         market_row_count(&root, "market_listings", "market-delete"),
         0
     );
-    assert_eq!(market_row_count(&root, "market_orders", "market-delete"), 0);
+    assert_eq!(market_row_count(&root, "market_orders", "market-delete"), 1);
     assert_eq!(
         market_row_count(&root, "market_entitlements", "market-delete"),
         0
     );
+    assert_eq!(
+        service
+            .market_list_orders("buyer", None, 10)
+            .expect("buyer order history should remain")
+            .orders
+            .len(),
+        1
+    );
+    let deleted_read = service
+        .read_node("market-delete", "buyer", "/Wiki/private.md")
+        .expect_err("deleted database should not remain readable");
+    assert!(deleted_read.contains("database not found"));
 }
 
 #[test]

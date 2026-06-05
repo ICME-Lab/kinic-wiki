@@ -14,11 +14,11 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    ListNodesRequest, MarketDepositRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
@@ -28,20 +28,21 @@ use super::{
     cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
-    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
-    finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
-    graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    last_ledger_from_for_test, last_ledger_memo_for_test, ledger_transfer_fees_for_test,
-    list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
-    list_database_members, list_databases, list_nodes, memory_manifest, mkdir_node, move_node,
-    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
-    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
-    read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
-    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
-    set_test_caller_principal_for_test, set_update_charge_units_for_test,
-    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
-    update_charge_cycles, update_cycles_billing_config, write_database_restore_chunk, write_node,
-    write_nodes,
+    fail_next_apply_kinic_deposit_for_test, fail_next_mount_database_file_for_test, fetch_updates,
+    finalize_database_archive, finalize_database_restore, get_cycles_billing_config, glob_nodes,
+    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
+    incoming_links, last_ledger_from_for_test, last_ledger_memo_for_test,
+    ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
+    list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
+    market_deposit_balance, market_get_balance, market_list_pending_operations, memory_manifest,
+    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
+    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
+    rename_database, revoke_database_access, search_node_paths, search_nodes,
+    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
+    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
+    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -131,6 +132,43 @@ fn pending_cycle_purchase_state(database_id: &str) -> String {
     })
 }
 
+fn pending_market_deposit_state() -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                "SELECT json_object('status', operation_status, 'block', external_block_index) FROM kinic_pending_operations WHERE kind = 'deposit' LIMIT 1",
+                1,
+            )
+            .expect("pending operation should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("pending operation should exist")
+    })
+}
+
+fn kinic_deposit_ledger_count(principal: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_object('count', COUNT(*)) FROM kinic_ledger WHERE principal = '{}' AND kind = 'deposit' LIMIT 1",
+                    principal
+                ),
+                1,
+            )
+            .expect("KINIC ledger should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("KINIC ledger count should exist")
+    })
+}
+
 fn cycles_for_test_payment(service: &VfsService, payment_amount_e8s: u64) -> u64 {
     super::cycles_for_payment_amount_e8s(
         payment_amount_e8s,
@@ -170,6 +208,13 @@ fn cycles_purchase_request(
         database_id: database_id.to_string(),
         payment_amount_e8s,
         min_expected_cycles: 1,
+    }
+}
+
+fn market_deposit_request(amount_e8s: u64) -> MarketDepositRequest {
+    MarketDepositRequest {
+        amount_e8s,
+        expected_fee_e8s: KINIC_LEDGER_FEE_E8S,
     }
 }
 
@@ -574,6 +619,123 @@ fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "cycles_purchase");
     assert_eq!(entries[0].ledger_block_index, Some(77));
+}
+
+#[test]
+fn market_deposit_balance_credits_wallet_after_completed_transfer() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
+
+    let result = block_on_ready(market_deposit_balance(market_deposit_request(500)))
+        .expect("completed transfer-from should credit market balance");
+
+    assert_eq!(result.block_index, 42);
+    assert_eq!(result.amount_e8s, 500);
+    assert_eq!(result.balance_e8s, 500);
+    assert_eq!(
+        market_get_balance()
+            .expect("market balance should load")
+            .balance_e8s,
+        500
+    );
+    assert!(
+        market_list_pending_operations()
+            .expect("pending operations should load")
+            .is_empty()
+    );
+}
+
+#[test]
+fn market_deposit_duplicate_transfer_is_success_without_double_credit() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(transfer_from_error_outcome(
+        TransferFromError::Duplicate {
+            duplicate_of: Nat::from(77_u64),
+        },
+    ));
+
+    let result = block_on_ready(market_deposit_balance(market_deposit_request(700)))
+        .expect("duplicate transfer-from should credit market balance");
+
+    assert_eq!(result.block_index, 77);
+    assert_eq!(result.balance_e8s, 700);
+    assert_eq!(
+        kinic_deposit_ledger_count(&Principal::management_canister().to_text()),
+        r#"{"count":1}"#
+    );
+    assert!(
+        market_list_pending_operations()
+            .expect("pending operations should load")
+            .is_empty()
+    );
+}
+
+#[test]
+fn market_deposit_completed_local_apply_failure_keeps_pending_for_review() {
+    install_empty_test_service();
+    let caller = Principal::management_canister();
+    let _caller = AuthenticatedCallerGuard::install_principal(caller);
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(44));
+    fail_next_apply_kinic_deposit_for_test();
+
+    let error = block_on_ready(market_deposit_balance(market_deposit_request(600)))
+        .expect_err("local apply failure should keep completed pending deposit");
+
+    assert!(error.contains("test market deposit apply failure"));
+    assert!(error.contains("remains completed for billing authority review"));
+    assert_eq!(
+        pending_market_deposit_state(),
+        r#"{"status":"completed","block":44}"#
+    );
+    let caller_view = market_list_pending_operations().expect("caller should view own pending");
+    assert_eq!(caller_view.len(), 1);
+    assert_eq!(caller_view[0].status, "completed");
+    assert_eq!(caller_view[0].required_action, "billing_authority_review");
+    drop(_caller);
+
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let authority_view =
+        market_list_pending_operations().expect("billing authority should view all pending");
+    assert_eq!(authority_view.len(), 1);
+    assert_eq!(authority_view[0].caller, caller.to_text());
+}
+
+#[test]
+fn market_deposit_ambiguous_transfer_keeps_pending_for_review() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+        "icrc2_transfer_from timeout".to_string(),
+    ));
+
+    let error = block_on_ready(market_deposit_balance(market_deposit_request(800)))
+        .expect_err("ambiguous transfer-from should keep pending deposit");
+
+    assert!(error.contains("result ambiguous"));
+    assert!(error.contains("billing authority review required"));
+    assert_eq!(
+        pending_market_deposit_state(),
+        r#"{"status":"ambiguous","block":null}"#
+    );
+    let pending = market_list_pending_operations().expect("caller should view own pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, "ambiguous");
+    assert_eq!(pending[0].required_action, "billing_authority_review");
+}
+
+#[test]
+fn market_wallet_queries_reject_anonymous_caller() {
+    install_empty_test_service();
+    set_test_caller_principal_for_test(Principal::anonymous());
+
+    let balance_error = market_get_balance().expect_err("anonymous balance query should reject");
+    assert!(balance_error.contains("anonymous caller not allowed"));
+    let pending_error =
+        market_list_pending_operations().expect_err("anonymous pending query should reject");
+    assert!(pending_error.contains("anonymous caller not allowed"));
 }
 
 #[test]
@@ -1124,6 +1286,62 @@ fn icrc21_purchase_database_cycles_rejects_missing_database() {
 }
 
 #[test]
+fn icrc21_market_deposit_balance_returns_consent_message() {
+    install_empty_test_service();
+    let request = market_deposit_request(150_000_000);
+    let arg = Encode!(&request).expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_deposit_balance", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market deposit consent message should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains("Deposit KINIC to marketplace wallet"));
+    assert!(message.contains("Amount: `1.5` KINIC"));
+    assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
+    assert!(message.contains("Spender canister:"));
+    assert!(message.contains("internal marketplace balance for purchases"));
+}
+
+#[test]
+fn icrc21_market_deposit_balance_rejects_zero_amount() {
+    install_empty_test_service();
+    let arg = Encode!(&market_deposit_request(0)).expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_deposit_balance", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("amount must be positive"));
+        }
+        other => panic!("zero deposit consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn icrc21_market_deposit_balance_rejects_overflow_amount() {
+    install_empty_test_service();
+    let arg = Encode!(&market_deposit_request(u64::MAX)).expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_deposit_balance", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("amount exceeds i64"));
+        }
+        other => panic!("overflow deposit consent should reject: {other:?}"),
+    }
+}
+
+#[test]
 fn icrc21_rejects_unsupported_cycle_consent_method() {
     install_empty_test_service();
     let response = icrc21_canister_call_consent_message(consent_request("write_node", Vec::new()));
@@ -1141,6 +1359,18 @@ fn icrc21_rejects_malformed_cycle_consent_arg() {
         "purchase_database_cycles",
         Vec::new(),
     ));
+
+    assert!(matches!(
+        response,
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::ConsentMessageUnavailable(_))
+    ));
+}
+
+#[test]
+fn icrc21_rejects_malformed_market_deposit_consent_arg() {
+    install_empty_test_service();
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_deposit_balance", Vec::new()));
 
     assert!(matches!(
         response,
