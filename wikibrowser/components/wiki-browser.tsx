@@ -136,47 +136,67 @@ export function WikiBrowser() {
   useEffect(() => {
     let cancelled = false;
     if (!canisterId) return;
-    Promise.resolve()
-      .then(() => {
-        if (cancelled) return null;
-        setMemberDatabasesLoaded(false);
-        setDatabaseListError(null);
-        return Promise.allSettled([
-          listDatabasesPublic(canisterId),
-          readIdentity ? listDatabasesAuthenticated(canisterId, readIdentity) : Promise.resolve<DatabaseSummary[]>([]),
-          getCyclesBillingConfig(canisterId)
-        ]);
-      })
-      .then((results) => {
-        if (cancelled || !results) return;
-        const [publicResult, memberResult, cyclesConfigResult] = results;
-        if (publicResult.status === "rejected" && memberResult.status === "rejected") {
-          setDatabases([]);
-          setMemberDatabases([]);
-          setCyclesBillingConfig(null);
-          setPublicDatabaseIds(new Set());
-          setMemberDatabasesLoaded(false);
-          setDatabaseListError(`${errorMessage(publicResult.reason)}; ${errorMessage(memberResult.reason)}`);
-          return;
-        }
-        const publicDatabases = publicResult.status === "fulfilled" ? publicResult.value : [];
-        const authenticatedDatabases = memberResult.status === "fulfilled" ? memberResult.value : [];
-        setDatabases(mergeDatabaseSummaries(authenticatedDatabases, publicDatabases));
-        setMemberDatabases(authenticatedDatabases);
-        setCyclesBillingConfig(cyclesConfigResult.status === "fulfilled" ? cyclesConfigResult.value : null);
-        setPublicDatabaseIds(new Set(publicDatabases.map((database) => database.databaseId)));
-        setMemberDatabasesLoaded(memberResult.status === "fulfilled");
-        setDatabaseListError(databaseListWarning(publicResult, memberResult, cyclesConfigResult));
+    let publicDatabases: DatabaseSummary[] = [];
+    let authenticatedDatabases: DatabaseSummary[] = [];
+    let cyclesConfigError: string | null = null;
+    let publicListError: string | null = null;
+    let memberListError: string | null = null;
+    const updateDatabaseRows = () => {
+      setDatabases(mergeDatabaseSummaries(authenticatedDatabases, publicDatabases));
+      setDatabaseListError(databaseListWarning(cyclesConfigError, publicListError, memberListError));
+    };
+
+    setMemberDatabases([]);
+    setMemberDatabasesLoaded(false);
+    setDatabaseListError(null);
+    setPublicDatabaseIds(new Set());
+
+    void listDatabasesPublic(canisterId)
+      .then((nextPublicDatabases) => {
+        if (cancelled) return;
+        publicDatabases = nextPublicDatabases;
+        publicListError = null;
+        setPublicDatabaseIds(new Set(nextPublicDatabases.map((database) => database.databaseId)));
+        updateDatabaseRows();
       })
       .catch((cause) => {
-        if (!cancelled) {
-          setDatabases([]);
-          setMemberDatabases([]);
-          setCyclesBillingConfig(null);
-          setPublicDatabaseIds(new Set());
-          setMemberDatabasesLoaded(false);
-          setDatabaseListError(errorMessage(cause));
-        }
+        if (cancelled) return;
+        publicDatabases = [];
+        publicListError = errorMessage(cause);
+        setPublicDatabaseIds(new Set());
+        updateDatabaseRows();
+      });
+
+    void (readIdentity ? listDatabasesAuthenticated(canisterId, readIdentity) : Promise.resolve<DatabaseSummary[]>([]))
+      .then((nextMemberDatabases) => {
+        if (cancelled) return;
+        authenticatedDatabases = nextMemberDatabases;
+        memberListError = null;
+        setMemberDatabases(nextMemberDatabases);
+        setMemberDatabasesLoaded(true);
+        updateDatabaseRows();
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        authenticatedDatabases = [];
+        memberListError = errorMessage(cause);
+        setMemberDatabases([]);
+        setMemberDatabasesLoaded(false);
+        updateDatabaseRows();
+      });
+
+    void getCyclesBillingConfig(canisterId)
+      .then((nextCyclesConfig) => {
+        if (cancelled) return;
+        cyclesConfigError = null;
+        setCyclesBillingConfig(nextCyclesConfig);
+        updateDatabaseRows();
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        cyclesConfigError = errorMessage(cause);
+        setCyclesBillingConfig(null);
+        updateDatabaseRows();
       });
     return () => {
       cancelled = true;
@@ -1421,10 +1441,11 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
   ];
 }
 
-function databaseListWarning(publicResult: PromiseSettledResult<DatabaseSummary[]>, memberResult: PromiseSettledResult<DatabaseSummary[]>, cyclesConfigResult: PromiseSettledResult<CyclesBillingConfig>): string | null {
-  if (cyclesConfigResult.status === "rejected") return `Cycles config unavailable: ${errorMessage(cyclesConfigResult.reason)}`;
-  if (publicResult.status === "rejected") return `Public database list unavailable: ${errorMessage(publicResult.reason)}`;
-  if (memberResult.status === "rejected") return `Member database list unavailable: ${errorMessage(memberResult.reason)}`;
+function databaseListWarning(cyclesConfigError: string | null, publicListError: string | null, memberListError: string | null): string | null {
+  if (cyclesConfigError) return `Cycles config unavailable: ${cyclesConfigError}`;
+  if (publicListError && memberListError) return `Public database list unavailable: ${publicListError}; Member database list unavailable: ${memberListError}`;
+  if (publicListError) return `Public database list unavailable: ${publicListError}`;
+  if (memberListError) return `Member database list unavailable: ${memberListError}`;
   return null;
 }
 

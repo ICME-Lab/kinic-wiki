@@ -259,6 +259,7 @@ assert.deepEqual(queryAnswerSearchTerms("What does the wiki say about vetKey?"),
 assert.equal(parseModeTab("legacy"), "explorer");
 assert.equal(readIdentityMode(true, true, true, true), "user");
 assert.equal(readIdentityMode(true, false, true, true), "anonymous");
+assert.equal(readIdentityMode(true, false, false, true), "anonymous");
 assert.equal(readIdentityMode(true, false, false, false), "user");
 assert.equal(readIdentityMode(false, false, false, true), "anonymous");
 assert.equal(classifyQueryInput("https://example.com/a", "/Wiki", "user").kind, "queue_url");
