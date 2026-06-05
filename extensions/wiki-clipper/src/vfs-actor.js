@@ -17,13 +17,11 @@ export async function createVfsActor({ canisterId, host, identity }) {
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Hot: idl.Null,
     Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null,
-    Deleted: idl.Null
+    Archived: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -33,8 +31,7 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64),
-    deleted_at_ms: idl.Opt(idl.Int64)
+    archived_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesBillingConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
@@ -172,8 +169,7 @@ function normalizeDatabaseSummary(raw) {
 }
 
 function normalizeDatabaseStatus(status) {
-  const key = variantKey(status);
-  return key === "Hot" ? "Active" : key;
+  return variantKey(status);
 }
 
 export async function getCyclesBillingConfigOrNull(actor) {

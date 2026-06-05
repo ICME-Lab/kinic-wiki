@@ -43,18 +43,18 @@ use vfs_types::{
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
     DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus as InternalDatabaseStatus,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -77,58 +77,6 @@ const STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE: u32 = 6;
 const STORAGE_BILLING_CONTINUATION_DELAY_MS: u64 = 1;
 #[cfg(target_arch = "wasm32")]
 const INDEX_DB_MEMORY_ID: u16 = 10;
-
-// Where: public canister ABI.
-// What: Legacy database status exposed by list_databases.
-// Why: Chrome extension 0.1.1 decodes only the pre-billing variant labels.
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, CandidType)]
-enum DatabaseStatus {
-    Hot,
-    Restoring,
-    Archiving,
-    Archived,
-    Deleted,
-}
-
-// Where: public canister ABI.
-// What: Database summary shape returned by list_databases.
-// Why: Keep the wire response decodable by extension 0.1.1 while preserving cycles fields for newer clients.
-#[derive(Clone, Debug, PartialEq, Eq, CandidType)]
-struct DatabaseSummary {
-    pub database_id: String,
-    pub name: String,
-    pub status: DatabaseStatus,
-    pub role: DatabaseRole,
-    pub logical_size_bytes: u64,
-    pub cycles_balance: Option<u64>,
-    pub cycles_suspended_at_ms: Option<i64>,
-    pub archived_at_ms: Option<i64>,
-    pub deleted_at_ms: Option<i64>,
-}
-
-impl DatabaseSummary {
-    fn from_internal(summary: vfs_types::DatabaseSummary) -> Option<Self> {
-        let status = match summary.status {
-            InternalDatabaseStatus::Pending => return None,
-            InternalDatabaseStatus::Active => DatabaseStatus::Hot,
-            InternalDatabaseStatus::Restoring => DatabaseStatus::Restoring,
-            InternalDatabaseStatus::Archiving => DatabaseStatus::Archiving,
-            InternalDatabaseStatus::Archived => DatabaseStatus::Archived,
-        };
-        Some(Self {
-            database_id: summary.database_id,
-            name: summary.name,
-            status,
-            role: summary.role,
-            logical_size_bytes: summary.logical_size_bytes,
-            cycles_balance: summary.cycles_balance,
-            cycles_suspended_at_ms: summary.cycles_suspended_at_ms,
-            archived_at_ms: summary.archived_at_ms,
-            deleted_at_ms: None,
-        })
-    }
-}
 
 #[derive(Clone, Debug, CandidType, Deserialize)]
 struct HttpRequest {
@@ -471,16 +419,7 @@ fn list_database_members(database_id: String) -> Result<Vec<DatabaseMember>, Str
 
 #[query]
 fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
-    with_service(|service| {
-        service
-            .list_database_summaries_for_caller(&caller_text())
-            .map(|summaries| {
-                summaries
-                    .into_iter()
-                    .filter_map(DatabaseSummary::from_internal)
-                    .collect()
-            })
-    })
+    with_service(|service| service.list_database_summaries_for_caller(&caller_text()))
 }
 
 #[query]

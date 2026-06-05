@@ -14,14 +14,10 @@ const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
-const browserExpectedTypes = {
-  ...expectedTypes,
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } }
-};
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
   compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
-  compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], browserExpectedTypes[name] ?? shape);
+  compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], shape);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {

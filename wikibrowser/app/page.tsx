@@ -19,16 +19,16 @@ export const metadata: Metadata = {
 
 const workflowSteps = [
   {
-    title: "Connect an agent",
-    body: "Install kinic-vfs-cli, link a database once, and run commands with JSON output so agents can consume durable wiki state."
+    title: "Create databases",
+    body: "Create a writable Kinic Wiki database and open the same database from browser management views."
   },
   {
-    title: "Search and read",
-    body: "Search under /Wiki, read exact paths, and request node context when links or provenance matter."
+    title: "Manage access and cycles",
+    body: "Grant writers, inspect members, and fund cycles without leaving the browser companion."
   },
   {
-    title: "Write with guards",
-    body: "Update durable memory deliberately from the CLI, with detailed safety workflows covered in the CLI guide."
+    title: "Browse and edit",
+    body: "Inspect public databases, browse wiki paths, and make manual Markdown edits when operators need a visual surface."
   }
 ];
 
@@ -40,14 +40,14 @@ const companionSurfaces = [
   },
   {
     title: "Official wiki",
-    body: "Browse the public Kinic Wiki database to inspect the memory shape before linking an agent.",
+    body: "Open the public Kinic Wiki example in the wiki browser to inspect how /Wiki and /Sources are organized.",
     href: "/db_kva4v2twg6jv/Wiki",
     label: "Open Official Wiki",
     icon: BookOpen
   },
   {
     title: "Capture tools",
-    body: "Capture web pages and ChatGPT/Claude conversations into Kinic Wiki. The extension saves raw sources and URL ingest requests; use the CLI to organize them into agent memory.",
+    body: "Save ChatGPT/Claude conversations as raw sources and queue active web pages as URL ingest requests. The extension requires Internet Identity writer access; use the CLI to turn raw chats into organized /Wiki pages.",
     details: ["Web pages -> /Sources/ingest-requests/...", "AI chats -> /Sources/raw/..."],
     href: "https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi",
     label: "Chrome Extension",
@@ -75,7 +75,7 @@ export default function HomePage() {
               <Image className="h-12 w-12 rounded-2xl shadow-sm" src="/icon.png" alt="" width={48} height={48} unoptimized />
               <span className="text-sm font-semibold text-ink">Kinic Wiki</span>
             </Link>
-            <Link className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-white" href="/dashboard">
+            <Link className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:hover:translate-y-0" href="/dashboard">
               <Database aria-hidden size={16} />
               <span>Dashboard</span>
             </Link>
@@ -88,13 +88,14 @@ export default function HomePage() {
               <code className="rounded-md bg-accentSoft px-1.5 py-0.5 font-semibold text-ink">kinic-vfs-cli</code> is the primary interface. The browser UI is a companion for inspection, editing, and database management.
             </p>
             <div className="mt-7 grid gap-3 sm:flex sm:flex-wrap">
-              <Link className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border border-action bg-action px-4 py-4 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent sm:w-auto sm:px-6 sm:text-base" href="/cli">
+              <Link className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border border-action bg-action px-4 py-4 text-sm font-bold text-white no-underline transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:w-auto sm:px-6 sm:text-base" href="/cli">
                 <TerminalSquare aria-hidden size={16} />
                 <span>Install CLI</span>
               </Link>
-              <a className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-4 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-white sm:w-auto sm:px-5 sm:text-base" href="https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi" rel="noreferrer" target="_blank">
+              <a className="inline-flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-4 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:w-auto sm:px-5 sm:text-base" href="https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi" rel="noopener noreferrer" target="_blank">
                 <Wrench aria-hidden size={16} />
                 <span>Chrome Extension</span>
+                <span className="sr-only">opens in new tab</span>
               </a>
             </div>
           </div>
@@ -105,10 +106,10 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1155px]">
           <div className="mx-auto max-w-[574px] text-center">
             <p className="text-sm font-bold text-accent">Meet Kinic Wiki</p>
-            <h2 className="mt-3 text-4xl font-semibold leading-[1.25] text-ink [text-wrap:balance]">Use the CLI first. Manage the same memory in the browser.</h2>
+            <h2 className="mt-3 text-3xl font-semibold leading-[1.18] text-ink [text-wrap:balance] sm:text-4xl lg:text-5xl">Use the CLI first. Manage the same memory in the browser.</h2>
           </div>
 
-          <div className="mt-10 grid gap-7 lg:grid-cols-2">
+          <div className="mt-10 grid gap-7 lg:grid-cols-2 lg:items-start">
             <article className="min-w-0 rounded-2xl bg-white p-5">
               <div className="flex items-center justify-between gap-3 border-b border-line pb-4">
                 <div className="flex items-center gap-2">
@@ -144,7 +145,7 @@ export default function HomePage() {
                   </div>
                 ))}
               </div>
-              <Link className="mt-6 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline hover:-translate-y-[3px] hover:border-accent hover:bg-accent" href="/dashboard">
+              <Link className="mt-6 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-action bg-action px-5 py-3 text-sm font-bold text-white no-underline transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:hover:translate-y-0" href="/dashboard">
                 <Database aria-hidden size={16} />
                 <span>Open Dashboard</span>
               </Link>
@@ -157,24 +158,24 @@ export default function HomePage() {
         <div className="mx-auto max-w-[1155px]">
           <div className="mx-auto max-w-[574px] text-center">
             <p className="text-sm font-bold text-accent">How it stays useful</p>
-            <h2 className="mt-3 text-4xl font-semibold leading-[1.25] text-ink">A durable memory surface for agents and operators.</h2>
+            <h2 className="mt-3 text-3xl font-semibold leading-[1.18] text-ink [text-wrap:balance] sm:text-4xl lg:text-5xl">A durable memory surface for agents and operators.</h2>
           </div>
 
-          <div className="mt-10 grid gap-7 lg:grid-cols-3">
+          <div className="mt-10 grid gap-7 lg:grid-cols-3 lg:items-start">
             {companionSurfaces.map((surface) => {
               const Icon = surface.icon;
               const href = surface.href;
               const label = surface.label ?? surface.title;
-              const linkClassName = "mt-6 inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-3 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-white";
+              const linkClassName = "mt-6 inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-3 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:hover:translate-y-0";
               return (
                 <article key={surface.title} className="overflow-hidden rounded-2xl bg-paper p-6">
                   <div className="flex size-12 items-center justify-center rounded-2xl bg-white text-accent">
                     <Icon aria-hidden size={20} />
                   </div>
-                  <h3 className="mt-5 text-xl font-semibold text-ink">{surface.title === "Dashboard" ? "Companion UI" : surface.title}</h3>
+                  <h3 className="mt-5 text-xl font-semibold text-ink">{surface.title}</h3>
                   <p className="mt-3 text-sm leading-6 text-muted">{surface.body}</p>
                   {surface.details ? (
-                    <ul className="mt-4 grid gap-2 text-xs font-semibold text-muted">
+                    <ul className="mt-4 grid gap-2 text-xs font-semibold text-muted [overflow-wrap:anywhere]">
                       {surface.details.map((detail) => (
                         <li key={detail} className="rounded-xl border border-line bg-white px-3 py-2">
                           {detail}
@@ -183,8 +184,9 @@ export default function HomePage() {
                     </ul>
                   ) : null}
                   {href?.startsWith("http") ? (
-                    <a className={linkClassName} href={href} rel="noreferrer" target="_blank">
+                    <a className={linkClassName} href={href} rel="noopener noreferrer" target="_blank">
                       <span>{label}</span>
+                      <span className="sr-only">opens in new tab</span>
                     </a>
                   ) : href ? (
                     <Link className={linkClassName} href={href}>

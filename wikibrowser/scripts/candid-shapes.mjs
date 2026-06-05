@@ -1,7 +1,7 @@
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", cases: { Hot: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
+  DatabaseStatus: { kind: "variant", cases: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -12,8 +12,7 @@ export const expectedTypes = {
       name: "text",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      archived_at_ms: "opt int64"
     }
   },
   CyclesBillingConfig: {
