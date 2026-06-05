@@ -43,6 +43,8 @@ const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest"];
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
+const EMPTY_DATABASE_SUMMARIES: DatabaseSummary[] = [];
+const EMPTY_PUBLIC_DATABASE_IDS: ReadonlySet<string> = new Set<string>();
 const GraphPanel = dynamic(() => import("@/components/graph-panel").then((module) => module.GraphPanel), {
   ssr: false,
   loading: () => <p className="min-h-0 flex-1 p-5 text-sm text-muted">Loading graph view...</p>
@@ -54,6 +56,16 @@ const SearchPanel = dynamic(() => import("@/components/search-panel").then((modu
 
 type BrowserLoadState<T> = PathLoadState<T> & {
   requestKey: string;
+};
+
+type DatabaseDirectoryState = {
+  requestKey: string;
+  databases: DatabaseSummary[];
+  memberDatabases: DatabaseSummary[];
+  cyclesConfig: CyclesBillingConfig | null;
+  publicDatabaseIds: ReadonlySet<string>;
+  memberDatabasesLoaded: boolean;
+  databaseListError: string | null;
 };
 
 export function WikiBrowser() {
@@ -79,20 +91,25 @@ export function WikiBrowser() {
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [readIdentity, setReadIdentity] = useState<Identity | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
-  const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
-  const [memberDatabases, setMemberDatabases] = useState<DatabaseSummary[]>([]);
-  const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
-  const [publicDatabaseIds, setPublicDatabaseIds] = useState<Set<string>>(() => new Set());
-  const [memberDatabasesLoaded, setMemberDatabasesLoaded] = useState(false);
-  const [databaseListError, setDatabaseListError] = useState<string | null>(null);
+  const [databaseDirectory, setDatabaseDirectory] = useState<DatabaseDirectoryState>(() => emptyDatabaseDirectoryState(""));
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const authPrincipal = readIdentity?.getPrincipal().toText() ?? null;
+  const databaseDirectoryRequestKey = useMemo(() => `${canisterId}\n${authPrincipal ?? ""}`, [authPrincipal, canisterId]);
+  const emptyCurrentDatabaseDirectory = useMemo(() => emptyDatabaseDirectoryState(databaseDirectoryRequestKey), [databaseDirectoryRequestKey]);
+  const {
+    databases,
+    memberDatabases,
+    cyclesConfig,
+    publicDatabaseIds,
+    memberDatabasesLoaded,
+    databaseListError
+  } = databaseDirectory.requestKey === databaseDirectoryRequestKey ? databaseDirectory : emptyCurrentDatabaseDirectory;
   const currentDatabaseRole = useMemo(
     () => readIdentity ? memberDatabases.find((database) => database.databaseId === databaseId)?.role ?? null : null,
     [databaseId, memberDatabases, readIdentity]
   );
   const currentReadIdentityMode = resolveReadIdentityMode(Boolean(readIdentity), Boolean(currentDatabaseRole), memberDatabasesLoaded, publicDatabaseIds.has(databaseId));
   const effectiveReadIdentity = currentReadIdentityMode === "user" ? readIdentity : null;
-  const authPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const readPrincipal = effectiveReadIdentity?.getPrincipal().toText() ?? null;
   const currentRequestKey = nodeRequestKey(canisterId, databaseId, selectedPath, readPrincipal);
   const folderIndexRequestKey = nodeRequestKey(canisterId, databaseId, folderIndexPath(selectedPath), readPrincipal);
@@ -136,34 +153,37 @@ export function WikiBrowser() {
   useEffect(() => {
     let cancelled = false;
     if (!canisterId) return;
+    const requestKey = databaseDirectoryRequestKey;
     let publicDatabases: DatabaseSummary[] = [];
     let authenticatedDatabases: DatabaseSummary[] = [];
+    let nextCyclesConfig: CyclesBillingConfig | null = null;
+    let nextMemberDatabasesLoaded = false;
     let cyclesConfigError: string | null = null;
     let publicListError: string | null = null;
     let memberListError: string | null = null;
     const updateDatabaseRows = () => {
-      setDatabases(mergeDatabaseSummaries(authenticatedDatabases, publicDatabases));
-      setDatabaseListError(databaseListWarning(cyclesConfigError, publicListError, memberListError));
+      setDatabaseDirectory({
+        requestKey,
+        databases: mergeDatabaseSummaries(authenticatedDatabases, publicDatabases),
+        memberDatabases: authenticatedDatabases,
+        cyclesConfig: nextCyclesConfig,
+        publicDatabaseIds: new Set(publicDatabases.map((database) => database.databaseId)),
+        memberDatabasesLoaded: nextMemberDatabasesLoaded,
+        databaseListError: databaseListWarning(cyclesConfigError, publicListError, memberListError)
+      });
     };
-
-    setMemberDatabases([]);
-    setMemberDatabasesLoaded(false);
-    setDatabaseListError(null);
-    setPublicDatabaseIds(new Set());
 
     void listDatabasesPublic(canisterId)
       .then((nextPublicDatabases) => {
         if (cancelled) return;
         publicDatabases = nextPublicDatabases;
         publicListError = null;
-        setPublicDatabaseIds(new Set(nextPublicDatabases.map((database) => database.databaseId)));
         updateDatabaseRows();
       })
       .catch((cause) => {
         if (cancelled) return;
         publicDatabases = [];
         publicListError = errorMessage(cause);
-        setPublicDatabaseIds(new Set());
         updateDatabaseRows();
       });
 
@@ -172,36 +192,34 @@ export function WikiBrowser() {
         if (cancelled) return;
         authenticatedDatabases = nextMemberDatabases;
         memberListError = null;
-        setMemberDatabases(nextMemberDatabases);
-        setMemberDatabasesLoaded(true);
+        nextMemberDatabasesLoaded = true;
         updateDatabaseRows();
       })
       .catch((cause) => {
         if (cancelled) return;
         authenticatedDatabases = [];
         memberListError = errorMessage(cause);
-        setMemberDatabases([]);
-        setMemberDatabasesLoaded(false);
+        nextMemberDatabasesLoaded = false;
         updateDatabaseRows();
       });
 
     void getCyclesBillingConfig(canisterId)
-      .then((nextCyclesConfig) => {
+      .then((loadedCyclesConfig) => {
         if (cancelled) return;
         cyclesConfigError = null;
-        setCyclesBillingConfig(nextCyclesConfig);
+        nextCyclesConfig = loadedCyclesConfig;
         updateDatabaseRows();
       })
       .catch((cause) => {
         if (cancelled) return;
         cyclesConfigError = errorMessage(cause);
-        setCyclesBillingConfig(null);
+        nextCyclesConfig = null;
         updateDatabaseRows();
       });
     return () => {
       cancelled = true;
     };
-  }, [canisterId, readIdentity, authPrincipal]);
+  }, [canisterId, databaseDirectoryRequestKey, readIdentity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1447,6 +1465,18 @@ function databaseListWarning(cyclesConfigError: string | null, publicListError: 
   if (publicListError) return `Public database list unavailable: ${publicListError}`;
   if (memberListError) return `Member database list unavailable: ${memberListError}`;
   return null;
+}
+
+function emptyDatabaseDirectoryState(requestKey: string): DatabaseDirectoryState {
+  return {
+    requestKey,
+    databases: EMPTY_DATABASE_SUMMARIES,
+    memberDatabases: EMPTY_DATABASE_SUMMARIES,
+    cyclesConfig: null,
+    publicDatabaseIds: EMPTY_PUBLIC_DATABASE_IDS,
+    memberDatabasesLoaded: false,
+    databaseListError: null
+  };
 }
 
 export function isPermissionError(message: string | null): boolean {
