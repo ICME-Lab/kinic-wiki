@@ -193,6 +193,8 @@ const cyclesStateModule = loadTsModule("../lib/cycles-state.ts", {
   "@/lib/cycles": { formatCycles: (value) => value.toString() }
 });
 assert.equal(cyclesStateModule.databaseCyclesHref({ databaseId: "db_ok-1", status: "active" }), "/cycles?database_id=db_ok-1&status=active");
+assert.equal(cyclesStateModule.databaseCyclesView({ databaseId: "db_deleted", role: "owner", status: "deleted", cyclesBalance: "0", cyclesSuspendedAtMs: null }, { minUpdateCycles: "1" }).writeCyclesAvailable, false);
+assert.equal(cyclesStateModule.databaseCyclesView({ databaseId: "db_deleted", role: "owner", status: "deleted", cyclesBalance: "0", cyclesSuspendedAtMs: null }, { minUpdateCycles: "1" }).purchaseAvailable, false);
 
 const clientModule = loadTsModule(
   "../app/cycles/cycles-client.tsx",

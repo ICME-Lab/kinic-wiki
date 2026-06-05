@@ -81,6 +81,7 @@ type RawDatabaseSummary = {
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
+  deleted_at_ms: [] | [bigint];
 };
 
 type RawDatabaseCycleEntry = {
@@ -1120,11 +1121,8 @@ function rawSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest):
 }
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
-  if ("Active" in status) {
+  if ("Hot" in status) {
     return "active";
-  }
-  if ("Pending" in status) {
-    return "pending";
   }
   if ("Restoring" in status) {
     return "restoring";
@@ -1134,6 +1132,9 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   }
   if ("Archived" in status) {
     return "archived";
+  }
+  if ("Deleted" in status) {
+    return "deleted";
   }
   throw new ApiError(`Unknown database status variant: ${Object.keys(status).join(",")}`, 502);
 }

@@ -574,7 +574,8 @@ function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): str
     archived: "Archived",
     archiving: "Archiving",
     active: "Active",
-    restoring: "Restoring"
+    restoring: "Restoring",
+    deleted: "Deleted"
   };
   return labels[status];
 }
