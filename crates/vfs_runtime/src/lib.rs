@@ -5417,56 +5417,65 @@ fn validate_market_create_listing_request(
     request: &MarketCreateListingRequest,
 ) -> Result<(), String> {
     validate_database_id(&request.database_id)?;
-    validate_market_listing_metadata(
-        &request.title,
-        &request.description,
-        request.llm_summary.as_deref(),
-        request.summary_snapshot_revision.as_deref(),
-        &request.sample_excerpts_json,
-        &request.sample_questions_json,
-        &request.tags_json,
-        request.price_e8s,
-    )
+    validate_market_listing_metadata(MarketListingMetadataValidation {
+        title: &request.title,
+        description: &request.description,
+        llm_summary: request.llm_summary.as_deref(),
+        summary_snapshot_revision: request.summary_snapshot_revision.as_deref(),
+        sample_excerpts_json: &request.sample_excerpts_json,
+        sample_questions_json: &request.sample_questions_json,
+        tags_json: &request.tags_json,
+        price_e8s: request.price_e8s,
+    })
 }
 
 fn validate_market_update_listing_request(
     request: &MarketUpdateListingRequest,
 ) -> Result<(), String> {
     validate_market_id(&request.listing_id, GENERATED_LISTING_ID_PREFIX)?;
-    validate_market_listing_metadata(
-        &request.title,
-        &request.description,
-        request.llm_summary.as_deref(),
-        request.summary_snapshot_revision.as_deref(),
-        &request.sample_excerpts_json,
-        &request.sample_questions_json,
-        &request.tags_json,
-        request.price_e8s,
-    )
+    validate_market_listing_metadata(MarketListingMetadataValidation {
+        title: &request.title,
+        description: &request.description,
+        llm_summary: request.llm_summary.as_deref(),
+        summary_snapshot_revision: request.summary_snapshot_revision.as_deref(),
+        sample_excerpts_json: &request.sample_excerpts_json,
+        sample_questions_json: &request.sample_questions_json,
+        tags_json: &request.tags_json,
+        price_e8s: request.price_e8s,
+    })
+}
+
+struct MarketListingMetadataValidation<'a> {
+    title: &'a str,
+    description: &'a str,
+    llm_summary: Option<&'a str>,
+    summary_snapshot_revision: Option<&'a str>,
+    sample_excerpts_json: &'a str,
+    sample_questions_json: &'a str,
+    tags_json: &'a str,
+    price_e8s: u64,
 }
 
 fn validate_market_listing_metadata(
-    title: &str,
-    description: &str,
-    llm_summary: Option<&str>,
-    summary_snapshot_revision: Option<&str>,
-    sample_excerpts_json: &str,
-    sample_questions_json: &str,
-    tags_json: &str,
-    price_e8s: u64,
+    input: MarketListingMetadataValidation<'_>,
 ) -> Result<(), String> {
-    if price_e8s == 0 {
+    if input.price_e8s == 0 {
         return Err("market listing price must be positive".to_string());
     }
-    amount_to_i64(price_e8s)?;
-    validate_market_text("market listing title", title, 1, MAX_MARKET_TITLE_CHARS)?;
+    amount_to_i64(input.price_e8s)?;
+    validate_market_text(
+        "market listing title",
+        input.title,
+        1,
+        MAX_MARKET_TITLE_CHARS,
+    )?;
     validate_market_text(
         "market listing description",
-        description,
+        input.description,
         1,
         MAX_MARKET_DESCRIPTION_CHARS,
     )?;
-    if let Some(summary) = llm_summary {
+    if let Some(summary) = input.llm_summary {
         validate_market_text(
             "market listing summary",
             summary,
@@ -5474,22 +5483,27 @@ fn validate_market_listing_metadata(
             MAX_MARKET_DESCRIPTION_CHARS,
         )?;
     }
-    if let Some(revision) = summary_snapshot_revision {
+    if let Some(revision) = input.summary_snapshot_revision {
         validate_market_text("market listing summary revision", revision, 0, 256)?;
     }
     validate_market_text(
         "market listing sample excerpts",
-        sample_excerpts_json,
+        input.sample_excerpts_json,
         0,
         MAX_MARKET_JSON_CHARS,
     )?;
     validate_market_text(
         "market listing sample questions",
-        sample_questions_json,
+        input.sample_questions_json,
         0,
         MAX_MARKET_JSON_CHARS,
     )?;
-    validate_market_text("market listing tags", tags_json, 0, MAX_MARKET_JSON_CHARS)
+    validate_market_text(
+        "market listing tags",
+        input.tags_json,
+        0,
+        MAX_MARKET_JSON_CHARS,
+    )
 }
 
 fn validate_market_text(

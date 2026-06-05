@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { CheckCircle2, CircleAlert, ShoppingCart } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
 import { purchaseMarketAccessWithOisy, purchaseMarketAccessWithPlug } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -27,7 +27,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   const excerpts = useMemo(() => parseJsonArray(listing?.sampleExcerptsJson ?? "[]"), [listing]);
   const tags = useMemo(() => parseJsonArray(listing?.tagsJson ?? "[]"), [listing]);
 
-  async function load() {
+  const load = useCallback(async () => {
     setState("loading");
     setMessage(null);
     try {
@@ -38,7 +38,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       setMessage(cause instanceof Error ? cause.message : String(cause));
       setState("error");
     }
-  }
+  }, [canisterId, listingId]);
 
   async function purchase() {
     if (!wallet || !listing) {
@@ -79,8 +79,11 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   }
 
   useEffect(() => {
-    void load();
-  }, [canisterId, listingId]);
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   return (
     <main className="min-h-screen bg-white px-6 pb-10 pt-6 text-ink">

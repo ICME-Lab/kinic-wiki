@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { RefreshCw, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { MarketListing } from "@/lib/types";
@@ -28,7 +28,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
     });
   }, [listings, query]);
 
-  async function load(nextCursor: string | null, append: boolean) {
+  const load = useCallback(async (nextCursor: string | null, append: boolean) => {
     if (!canisterId) {
       setError("NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured");
       setState("error");
@@ -45,11 +45,14 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setState("error");
     }
-  }
+  }, [canisterId]);
 
   useEffect(() => {
-    void load(null, false);
-  }, [canisterId]);
+    const timer = window.setTimeout(() => {
+      void load(null, false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   return (
     <main className="min-h-screen bg-white px-6 pb-10 pt-6 text-ink">
