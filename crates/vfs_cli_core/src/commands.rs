@@ -1584,6 +1584,7 @@ mod tests {
                 cycles_balance: Some(1_000_000),
                 cycles_suspended_at_ms: None,
                 archived_at_ms: None,
+                deleted_at_ms: None,
             }])
         }
         async fn begin_database_archive(&self, database_id: &str) -> Result<DatabaseArchiveInfo> {

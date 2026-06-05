@@ -367,6 +367,7 @@ test("listWritableDatabases returns active writable database summaries", async (
         logicalSizeBytes: "0",
         cyclesBalance: "20000",
         cyclesSuspendedAtMs: null,
+        deletedAtMs: null,
         writeCyclesAvailable: true,
         cyclesReason: null
       }
@@ -406,7 +407,8 @@ function writeCyclesActorMethods({ databaseId = "team-db", balanceCycles = 20_00
             logical_size_bytes: 0n,
             cycles_balance: [balanceCycles],
             cycles_suspended_at_ms: suspendedAtMs === null ? [] : [suspendedAtMs],
-            archived_at_ms: []
+            archived_at_ms: [],
+            deleted_at_ms: []
           }
         ]
       };
@@ -433,6 +435,7 @@ function rawDatabase(databaseId, name, role, status) {
     logical_size_bytes: 0n,
     cycles_balance: [20_000n],
     cycles_suspended_at_ms: [],
-    archived_at_ms: []
+    archived_at_ms: [],
+    deleted_at_ms: []
   };
 }

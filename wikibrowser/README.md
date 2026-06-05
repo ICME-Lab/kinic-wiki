@@ -143,13 +143,8 @@ pnpm smoke:errors -- --base-url http://127.0.0.1:3000 --database-id <database-id
 
 ## Candid Surface
 
-`lib/vfs-idl.ts` is a small hand-written subset for the production wiki canister `xis3j-paaaa-aaaai-axumq-cai`.
-During Chrome extension review, this surface intentionally follows the production ABI for `DatabaseStatus = Hot | Restoring | Archiving | Archived | Deleted` and `DatabaseSummary.deleted_at_ms`, not the checked-in `crates/vfs_canister/vfs.did`.
-Do not update the canister DID, Rust types, or extension IDL until extension review is complete.
-Run `pnpm test` whenever the production canister interface changes.
-
-Local Internet Identity e2e is intentionally out of scope while the checked-in canister ABI and wikibrowser production ABI are split.
-Re-enable local II e2e after the canister DID/Rust types, extension hand-written IDL, and wikibrowser IDL are unified again.
+`lib/vfs-idl.ts` is a small generated subset of the checked-in VFS canister Candid at `crates/vfs_canister/vfs.did`.
+Run `pnpm test` after canister interface changes so the drift check verifies the generated subset.
 
 Covered methods:
 
@@ -166,12 +161,6 @@ Covered methods:
 - `source_evidence`
 - `search_node_paths`
 - `search_nodes`
-
-After extension review completes:
-
-- Update `crates/vfs_canister/vfs.did` and Rust public types to the production database status ABI.
-- Update `extensions/wiki-clipper/src/vfs-actor.js` and its drift check for `Hot`, `Deleted`, and `deleted_at_ms`.
-- Point wikibrowser drift checks back at the checked-in canister DID.
 
 ## Public MVP
 

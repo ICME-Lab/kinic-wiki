@@ -392,7 +392,10 @@ proptest! {
             service
                 .finalize_database_archive(&database_id, OWNER, hash.clone(), 22)
                 .expect("archive should finalize");
-            assert_eq!(status_and_mount(service, &database_id).0, DatabaseStatus::Archived);
+            assert_eq!(
+                status_and_mount(service, &database_id).0,
+                DatabaseStatus::Archived
+            );
         }
 
         let bad_hash = vec![8_u8; 32];

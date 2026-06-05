@@ -15,7 +15,7 @@ type Variant = Record<string, null>;
 type RawNode = { path: string; kind: Variant; content: string; created_at: bigint; updated_at: bigint; etag: string; metadata_json: string };
 type RawNodeMutationAck = { path: string; kind: Variant; updated_at: bigint; etag: string };
 type RawChild = { path: string; name: string; kind: Variant; updated_at: [] | [bigint]; etag: [] | [string]; size_bytes: [] | [bigint]; is_virtual: boolean; has_children: boolean };
-type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; name: string; archived_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
+type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; name: string; archived_at_ms: [] | [bigint]; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
 type RawDatabaseMember = { database_id: string; principal: string; role: Variant; created_at_ms: bigint };
 type RawWriteNodeRequest = { database_id: string; path: string; kind: Variant; content: string; metadata_json: string; expected_etag: [] | [string] };
 type RawWriteNodeResult = { created: boolean; node: RawNodeMutationAck };
@@ -182,6 +182,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? null,
     cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
+    deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null,
   };
 }
 
@@ -191,6 +192,7 @@ function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
   if ("Restoring" in status) return "restoring";
   if ("Archiving" in status) return "archiving";
   if ("Archived" in status) return "archived";
+  if ("Deleted" in status) return "deleted";
   throw new ApiError(`Unknown database status variant: ${Object.keys(status).join(",")}`, 502);
 }
 

@@ -195,12 +195,14 @@ assert.match(dashboardHomeClient, /\$\{walletLabel\(provider\)\} purchased \$\{c
 assert.match(apiErrors, /wiki_api_version_mismatch/);
 assert.match(apiErrors, /Wiki VFS API response unavailable\./);
 assert.match(apiErrors, /CandidDecodeError\|Cannot find field hash\|subtype\|type mismatch\|variant, expected fields/);
-assert.match(vfsIdl, /Hot: idl\.Null/);
 assert.match(vfsIdl, /Deleted: idl\.Null/);
 assert.match(vfsIdl, /deleted_at_ms: idl\.Opt\(idl\.Int64\)/);
-assert.doesNotMatch(vfsIdl, /Active: idl\.Null/);
-assert.doesNotMatch(vfsIdl, /Pending: idl\.Null/);
-assert.match(vfsClient, /if \("Hot" in status\) \{\s*return "active";\s*\}/);
+assert.doesNotMatch(vfsIdl, /Hot: idl\.Null/);
+assert.match(vfsIdl, /Active: idl\.Null/);
+assert.match(vfsIdl, /Pending: idl\.Null/);
+assert.match(vfsIdl, /status: DatabaseStatus/);
+assert.match(vfsClient, /if \("Active" in status\) \{\s*return "active";\s*\}/);
+assert.match(vfsClient, /if \("Pending" in status\) \{\s*return "pending";\s*\}/);
 assert.match(vfsClient, /if \("Deleted" in status\) \{\s*return "deleted";\s*\}/);
 assert.match(dashboardHomeClient, /myDatabases = databases\.filter\(\(database\) => database\.member\)/);
 assert.match(dashboardHomeClient, /publicDatabases = databases\.filter\(\(database\) => !database\.member && database\.publicReadable\)/);

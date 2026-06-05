@@ -931,7 +931,8 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
     cyclesSuspendedAtMs: raw.cycles_suspended_at_ms[0]?.toString() ?? null,
-    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null
+    archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
+    deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null
   };
 }
 
@@ -1121,8 +1122,11 @@ function rawSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest):
 }
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {
-  if ("Hot" in status) {
+  if ("Active" in status) {
     return "active";
+  }
+  if ("Pending" in status) {
+    return "pending";
   }
   if ("Restoring" in status) {
     return "restoring";

@@ -122,6 +122,7 @@ export type DatabaseSummary = {
   cyclesBalance: string;
   cyclesSuspendedAtMs: string | null;
   archivedAtMs: string | null;
+  deletedAtMs: string | null;
 };
 
 export type DeleteDatabaseRequest = {
