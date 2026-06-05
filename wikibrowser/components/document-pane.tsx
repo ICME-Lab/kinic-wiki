@@ -37,8 +37,7 @@ export function DocumentHeader({
   isDirectory,
   canEditDirectory,
   editState,
-  rawContent,
-  readMode = null
+  rawContent
 }: {
   canisterId: string;
   databaseId: string;
@@ -49,7 +48,6 @@ export function DocumentHeader({
   canEditDirectory: boolean;
   editState: DocumentEditState;
   rawContent: string | null;
-  readMode?: "anonymous" | null;
 }) {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   async function copyText(label: string, value: string) {
@@ -63,7 +61,7 @@ export function DocumentHeader({
   return (
     <div className="flex min-h-[52px] flex-wrap items-center justify-between gap-2 border-b border-line bg-paper/80 px-5 py-3">
       <div className="flex min-w-0 max-w-full items-center gap-2">
-        <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} readMode={readMode} />
+        <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} />
         <div className="flex h-10 shrink-0 rounded-xl border border-line bg-white p-1 text-xs">
           <button
             aria-label="Copy path"
@@ -110,13 +108,11 @@ export function DocumentHeader({
 function DocumentHeaderPath({
   canisterId,
   databaseId,
-  path,
-  readMode
+  path
 }: {
   canisterId: string;
   databaseId: string;
   path: string;
-  readMode: "anonymous" | null;
 }) {
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) {
@@ -135,7 +131,7 @@ function DocumentHeaderPath({
             ) : (
               <Link
                 className="max-w-[14rem] shrink-0 truncate rounded px-1 py-0.5 text-muted no-underline hover:bg-white hover:text-ink"
-                href={hrefForPath(canisterId, databaseId, crumbPath, undefined, undefined, undefined, undefined, readMode)}
+                href={hrefForPath(canisterId, databaseId, crumbPath)}
               >
                 {segment}
               </Link>
@@ -164,8 +160,7 @@ export function DocumentPane({
   onNodeSaved,
   onFolderIndexSaved,
   onEditStateChange,
-  tab,
-  readMode = null
+  tab
 }: {
   node: PathLoadState<WikiNode>;
   folderIndexNode: PathLoadState<WikiNode>;
@@ -184,7 +179,6 @@ export function DocumentPane({
   onFolderIndexSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
   tab?: ModeTab;
-  readMode?: "anonymous" | null;
 }) {
   if (node.loading && childrenState.loading) return <PaneBody><LoadingBlock /></PaneBody>;
   if (authPrompt && onLogin) {
@@ -200,7 +194,6 @@ export function DocumentPane({
           view={view}
           canisterId={canisterId}
           databaseId={databaseId}
-          readMode={readMode}
           tab={tab}
           authReady={Boolean(authReady)}
           onLogin={onLogin}
@@ -222,7 +215,6 @@ export function DocumentPane({
           view={view}
           canisterId={canisterId}
           databaseId={databaseId}
-          readMode={readMode}
           authReady={Boolean(authReady)}
           onLogin={onLogin}
           writeIdentity={writeIdentity ?? null}
@@ -239,12 +231,12 @@ export function DocumentPane({
   if (childrenState.data) {
     return (
       <PaneBody>
-        <DirectoryDocument childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} readMode={readMode} parentPath={childrenState.path} />
+        <DirectoryDocument childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={childrenState.path} />
       </PaneBody>
     );
   }
   if (isVfsNotFound(node.error, childrenState.error)) {
-    return <PaneBody><NotFoundState path={node.path} canisterId={canisterId} databaseId={databaseId} readMode={readMode} /></PaneBody>;
+    return <PaneBody><NotFoundState path={node.path} canisterId={canisterId} databaseId={databaseId} /></PaneBody>;
   }
   return (
     <PaneBody className="p-6">
@@ -284,13 +276,11 @@ function PaneBody({ children, className = "" }: { children: ReactNode; className
 function NotFoundState({
   path,
   canisterId,
-  databaseId,
-  readMode
+  databaseId
 }: {
   path: string;
   canisterId: string;
   databaseId: string;
-  readMode: "anonymous" | null;
 }) {
   return (
     <div className="flex h-full items-center justify-center p-6">
@@ -301,17 +291,17 @@ function NotFoundState({
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
           <Link
             className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
-            href={hrefForPath(canisterId, databaseId, "/Wiki", undefined, undefined, undefined, undefined, readMode)}
+            href={hrefForPath(canisterId, databaseId, "/Wiki")}
           >
             Open /Wiki
           </Link>
           <Link
             className="rounded-lg border border-line bg-white px-3 py-2 no-underline"
-            href={hrefForPath(canisterId, databaseId, "/Sources", undefined, undefined, undefined, undefined, readMode)}
+            href={hrefForPath(canisterId, databaseId, "/Sources")}
           >
             Open /Sources
           </Link>
-          <Link className="rounded-lg border border-line bg-white px-3 py-2 no-underline" href={hrefForSearch(canisterId, databaseId, path.split("/").filter(Boolean).at(-1) ?? path, "path", readMode)}>
+          <Link className="rounded-lg border border-line bg-white px-3 py-2 no-underline" href={hrefForSearch(canisterId, databaseId, path.split("/").filter(Boolean).at(-1) ?? path, "path")}>
             Search this path
           </Link>
         </div>
@@ -325,7 +315,6 @@ function NodeDocument({
   view,
   canisterId,
   databaseId,
-  readMode,
   tab,
   authReady,
   onLogin,
@@ -340,7 +329,6 @@ function NodeDocument({
   view: ViewMode;
   canisterId: string;
   databaseId: string;
-  readMode: "anonymous" | null;
   tab?: ModeTab;
   authReady: boolean;
   onLogin?: () => void;
@@ -361,7 +349,6 @@ function NodeDocument({
         node={node}
         isLargeContent={isLargeContent}
         contentBytes={contentBytes}
-        readMode={readMode}
         tab={tab}
         authReady={authReady}
         onLogin={onLogin}
@@ -379,10 +366,10 @@ function NodeDocument({
       {view === "raw" ? (
         <RawContent key={`${node.path}-${node.etag}`} content={node.content} isLargeContent={isLargeContent} contentBytes={contentBytes} />
       ) : isLargeContent ? (
-        <LargeMarkdownPreview key={`${node.path}:${node.etag}`} content={node.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={node.path} readMode={readMode} />
+        <LargeMarkdownPreview key={`${node.path}:${node.etag}`} content={node.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={node.path} />
       ) : (
         <div className="markdown-body mx-auto max-w-3xl">
-          <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={node.path} content={node.content} readMode={readMode} />
+          <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={node.path} content={node.content} />
         </div>
       )}
     </article>
@@ -395,7 +382,6 @@ function EditDocument({
   node,
   isLargeContent,
   contentBytes,
-  readMode,
   tab,
   authReady,
   onLogin,
@@ -411,7 +397,6 @@ function EditDocument({
   node: WikiNode;
   isLargeContent: boolean;
   contentBytes: number;
-  readMode: "anonymous" | null;
   tab?: ModeTab;
   authReady: boolean;
   onLogin?: () => void;
@@ -425,16 +410,6 @@ function EditDocument({
   const editable = node.kind === "file" && node.path.endsWith(".md") && !node.path.startsWith("/Sources/raw/");
   if (!editable) {
     return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside /Sources/raw can be edited in the browser." />;
-  }
-  if (readMode === "anonymous") {
-    return (
-      <EditorUnavailable
-        title="Authenticated mode required"
-        message="This page is using anonymous read mode. Switch to authenticated mode before editing."
-        actionHref={hrefForPath(canisterId, databaseId, node.path, "edit", tab)}
-        actionLabel="Use authenticated mode"
-      />
-    );
   }
   if (!writeIdentity) {
     return (
@@ -491,20 +466,18 @@ function LargeMarkdownPreview({
   contentBytes,
   canisterId,
   databaseId,
-  nodePath,
-  readMode
+  nodePath
 }: {
   content: string;
   contentBytes: number;
   canisterId: string;
   databaseId: string;
   nodePath: string;
-  readMode: "anonymous" | null;
 }) {
   const sections = splitMarkdownPreviewSections(content);
   const [visibleSections, setVisibleSections] = useState(1);
   if (sections.length < 2) {
-    return <LargeContentState contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={nodePath} readMode={readMode} reason="No section headings found." />;
+    return <LargeContentState contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={nodePath} reason="No section headings found." />;
   }
   const cappedVisibleSections = Math.min(visibleSections, sections.length);
   const showingFullPreview = cappedVisibleSections >= sections.length;
@@ -518,7 +491,7 @@ function LargeMarkdownPreview({
         {showingFullPreview ? <p className="mt-2 font-medium">Showing full preview.</p> : null}
       </div>
       <div className="markdown-body mx-auto max-w-3xl">
-        <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={nodePath} content={previewContent} readMode={readMode} />
+        <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={nodePath} content={previewContent} />
       </div>
       {!showingFullPreview ? (
         <button
@@ -577,14 +550,12 @@ function LargeContentState({
   canisterId,
   databaseId,
   nodePath,
-  readMode,
   reason
 }: {
   contentBytes: number;
   canisterId: string;
   databaseId: string;
   nodePath: string;
-  readMode: "anonymous" | null;
   reason?: string;
 }) {
   return (
@@ -597,7 +568,7 @@ function LargeContentState({
       {reason ? <p className="mt-3 text-muted">{reason}</p> : null}
       <Link
         className="mt-5 inline-flex rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
-        href={hrefForPath(canisterId, databaseId, nodePath, "raw", undefined, undefined, undefined, readMode)}
+        href={hrefForPath(canisterId, databaseId, nodePath, "raw")}
       >
         Open raw view
       </Link>
@@ -612,7 +583,6 @@ function FolderDocument({
   view,
   canisterId,
   databaseId,
-  readMode,
   tab,
   authReady,
   onLogin,
@@ -629,7 +599,6 @@ function FolderDocument({
   view: ViewMode;
   canisterId: string;
   databaseId: string;
-  readMode: "anonymous" | null;
   tab?: ModeTab;
   authReady: boolean;
   onLogin?: () => void;
@@ -644,7 +613,7 @@ function FolderDocument({
   const contentBytes = new TextEncoder().encode(indexNode.content).length;
   const isLargeContent = contentBytes > LARGE_CONTENT_BYTES;
   if (!isWikiPath(folder.path)) {
-    return <DirectoryDocument childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} readMode={readMode} parentPath={folder.path} />;
+    return <DirectoryDocument childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={folder.path} />;
   }
   if (view === "edit") {
     return (
@@ -654,7 +623,6 @@ function FolderDocument({
         node={indexNode}
         isLargeContent={isLargeContent}
         contentBytes={contentBytes}
-        readMode={readMode}
         tab={tab}
         authReady={authReady}
         onLogin={onLogin}
@@ -678,9 +646,8 @@ function FolderDocument({
           contentBytes={contentBytes}
           canisterId={canisterId}
           databaseId={databaseId}
-          readMode={readMode}
         />
-        <DirectoryChildrenCard childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} readMode={readMode} parentPath={folder.path} />
+        <DirectoryChildrenCard childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={folder.path} />
       </div>
     </div>
   );
@@ -693,8 +660,7 @@ function FolderIndexSection({
   isLargeContent,
   contentBytes,
   canisterId,
-  databaseId,
-  readMode
+  databaseId
 }: {
   folderPath: string;
   folderIndexNode: PathLoadState<WikiNode>;
@@ -703,7 +669,6 @@ function FolderIndexSection({
   contentBytes: number;
   canisterId: string;
   databaseId: string;
-  readMode: "anonymous" | null;
 }) {
   if (folderIndexNode.loading) {
     return <p className="text-sm text-muted">Loading folder note...</p>;
@@ -722,10 +687,10 @@ function FolderIndexSection({
         {view === "raw" ? (
           <RawContent content={indexNode.content} isLargeContent={isLargeContent} contentBytes={contentBytes} />
         ) : isLargeContent ? (
-          <LargeMarkdownPreview key={`${indexNode.path}:${indexNode.etag}`} content={indexNode.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={folderPath} readMode={readMode} />
+          <LargeMarkdownPreview key={`${indexNode.path}:${indexNode.etag}`} content={indexNode.content} contentBytes={contentBytes} canisterId={canisterId} databaseId={databaseId} nodePath={folderPath} />
         ) : (
           <div className="markdown-body mx-auto max-w-3xl">
-            <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={folderPath} content={indexNode.content} readMode={readMode} />
+            <MarkdownPreview canisterId={canisterId} databaseId={databaseId} nodePath={folderPath} content={indexNode.content} />
           </div>
         )}
       </div>
@@ -737,18 +702,16 @@ function DirectoryDocument({
   childrenState,
   canisterId,
   databaseId,
-  readMode,
   parentPath
 }: {
   childrenState: LoadState<ChildNode[]>;
   canisterId: string;
   databaseId: string;
-  readMode: "anonymous" | null;
   parentPath: string;
 }) {
   return (
     <div className="h-full overflow-auto p-6">
-      <DirectoryChildrenCard childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} readMode={readMode} parentPath={parentPath} />
+      <DirectoryChildrenCard childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={parentPath} />
     </div>
   );
 }
@@ -757,13 +720,11 @@ function DirectoryChildrenCard({
   childrenState,
   canisterId,
   databaseId,
-  readMode,
   parentPath
 }: {
   childrenState: LoadState<ChildNode[]>;
   canisterId: string;
   databaseId: string;
-  readMode: "anonymous" | null;
   parentPath: string;
 }) {
   const children = childrenState.data ? visibleChildren(childrenState.data, parentPath) : null;
@@ -777,7 +738,7 @@ function DirectoryChildrenCard({
         {children?.map((child) => (
           <Link
             key={child.path}
-            href={hrefForPath(canisterId, databaseId, child.path, undefined, undefined, undefined, undefined, readMode)}
+            href={hrefForPath(canisterId, databaseId, child.path)}
             className="flex items-center justify-between rounded-xl border border-line bg-white px-4 py-3 text-sm no-underline hover:border-accent"
           >
             <span className="flex min-w-0 items-center gap-2">

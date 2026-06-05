@@ -16,7 +16,7 @@ export function isRoutableDatabaseId(databaseId: string): boolean {
 
 export function publicDatabasePath(databaseId: string): string {
   assertPublicDatabaseId(databaseId);
-  return `/${encodeURIComponent(databaseId)}/Wiki?read=anonymous`;
+  return `/${encodeURIComponent(databaseId)}/Wiki`;
 }
 
 export function publicDatabaseUrl(databaseId: string, origin = PUBLIC_WIKI_ORIGIN): string {

@@ -27,7 +27,6 @@ export function QueryPanel({
   currentNode,
   readIdentity,
   writeIdentity,
-  readMode,
   readIdentityMode,
   databaseCyclesError
 }: {
@@ -37,7 +36,6 @@ export function QueryPanel({
   currentNode: WikiNode | null;
   readIdentity: Identity | null;
   writeIdentity: Identity | null;
-  readMode: "anonymous" | null;
   readIdentityMode: ReadIdentityMode;
   databaseCyclesError: string | null;
 }) {
@@ -188,7 +186,7 @@ export function QueryPanel({
         </div>
       </form>
       {previewAction ? <ActionPreview action={previewAction} busy={busy} onConfirm={pendingAction ? () => void confirmQueueUrl(pendingAction) : null} /> : null}
-      <QueryResultView canisterId={canisterId} databaseId={databaseId} readMode={readMode} result={result} />
+      <QueryResultView canisterId={canisterId} databaseId={databaseId} result={result} />
     </div>
   );
 }
@@ -232,7 +230,7 @@ function MetaBadge({ children }: { children: ReactNode }) {
   return <span className="rounded border border-line bg-white px-1.5 py-0.5 font-mono text-[10px] uppercase text-muted">{children}</span>;
 }
 
-function QueryResultView({ canisterId, databaseId, readMode, result }: { canisterId: string; databaseId: string; readMode: "anonymous" | null; result: QueryResult | null }) {
+function QueryResultView({ canisterId, databaseId, result }: { canisterId: string; databaseId: string; result: QueryResult | null }) {
   if (!result) return null;
   if (result.kind === "message") {
     return <div className={`m-3 rounded-lg border px-3 py-2 text-xs leading-5 ${result.tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-white text-ink"}`}>{result.text}</div>;
@@ -246,7 +244,7 @@ function QueryResultView({ canisterId, databaseId, readMode, result }: { caniste
           <div className="space-y-1">
             <p className="text-xs font-semibold text-muted">Citations</p>
             {result.citations.map((path) => (
-              <a key={path} className="block truncate font-mono text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, path, undefined, "query", undefined, undefined, readMode)}>
+              <a key={path} className="block truncate font-mono text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, path, undefined, "query")}>
                 {path}
               </a>
             ))}
@@ -263,7 +261,7 @@ function QueryResultView({ canisterId, databaseId, readMode, result }: { caniste
         {result.hits.map((hit) => {
           const excerpt = resultExcerpt(hit);
           return (
-            <a key={`${hit.path}:${hit.score}`} className="block rounded border border-line bg-paper p-2 no-underline hover:border-accent" href={hrefForPath(canisterId, databaseId, hit.path, undefined, "query", undefined, undefined, readMode)}>
+            <a key={`${hit.path}:${hit.score}`} className="block rounded border border-line bg-paper p-2 no-underline hover:border-accent" href={hrefForPath(canisterId, databaseId, hit.path, undefined, "query")}>
               <span className="block truncate font-mono text-accent">{hit.path}</span>
               {excerpt ? <span className="mt-1 block text-ink">{excerpt}</span> : null}
             </a>
@@ -274,7 +272,7 @@ function QueryResultView({ canisterId, databaseId, readMode, result }: { caniste
   }
   return (
     <div className="m-3 space-y-2 rounded-lg border border-line bg-white p-3 text-xs leading-5">
-      <a className="font-mono text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, result.targetPath, "raw", "query", undefined, undefined, readMode)}>
+      <a className="font-mono text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, result.targetPath, "raw", "query")}>
         {result.targetPath}
       </a>
       {result.hints.length === 0 ? <p className="text-green-700">No lightweight warnings.</p> : null}

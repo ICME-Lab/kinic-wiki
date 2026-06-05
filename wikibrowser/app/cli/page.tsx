@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
 
 export const metadata: Metadata = {
@@ -56,11 +55,7 @@ export default function CliPage() {
     <main className="min-h-screen px-6 py-8">
       <section className="mx-auto flex max-w-5xl flex-col gap-8">
         <header className="border-b border-line pb-6">
-          <Link className="inline-flex items-center gap-2 text-sm font-medium text-accent no-underline hover:underline" href="/">
-            <ArrowLeft aria-hidden size={16} />
-            <span>Database dashboard</span>
-          </Link>
-          <div className="mt-6 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex min-w-0 items-center gap-4">
               <Image className="h-12 w-12 rounded-xl shadow-sm" src="/icon.png" alt="" width={48} height={48} unoptimized />
               <div className="min-w-0">

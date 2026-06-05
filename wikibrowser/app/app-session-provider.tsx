@@ -14,7 +14,6 @@ type AppSessionContext = {
   authError: string | null;
   authLoading: boolean;
   authReady: boolean;
-  authRefreshSeq: number;
   principal: string | null;
   wallet: ConnectedKinicWallet | null;
   walletBalance: string | null;
@@ -26,7 +25,6 @@ type AppSessionContext = {
   disconnectWallet: (provider: HeaderWalletProvider) => void;
   logout: () => Promise<void>;
   login: () => Promise<void>;
-  refreshAuth: () => Promise<void>;
   refreshWalletBalance: (wallet: ConnectedKinicWallet) => Promise<void>;
   setWalletControlsLocked: (locked: boolean) => void;
 };
@@ -41,7 +39,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
-  const [authRefreshSeq, setAuthRefreshSeq] = useState(0);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
@@ -134,21 +131,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const syncAuth = useCallback(async (client: AuthClient) => {
     const authenticated = await client.isAuthenticated();
     setPrincipal(authenticated ? client.getIdentity().getPrincipal().toText() : null);
-    setAuthRefreshSeq((current) => current + 1);
   }, []);
-
-  const refreshAuth = useCallback(async () => {
-    if (!authClient) return;
-    setAuthLoading(true);
-    setAuthError(null);
-    try {
-      await syncAuth(authClient);
-    } catch (cause) {
-      setAuthError(errorMessage(cause));
-    } finally {
-      setAuthLoading(false);
-    }
-  }, [authClient, syncAuth]);
 
   const login = useCallback(async () => {
     if (!authClient) return;
@@ -173,7 +156,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     try {
       await authClient.logout();
       setPrincipal(null);
-      setAuthRefreshSeq((current) => current + 1);
       clearWallet();
     } catch (cause) {
       setAuthError(errorMessage(cause));
@@ -225,7 +207,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         authError,
         authLoading,
         authReady,
-        authRefreshSeq,
         principal,
         wallet,
         walletBalance,
@@ -237,7 +218,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         disconnectWallet,
         login,
         logout,
-        refreshAuth,
         refreshWalletBalance,
         setWalletControlsLocked
       }}

@@ -8,21 +8,6 @@ const root = join(here, "..", "..");
 const didPath = join(root, "crates", "vfs_canister", "vfs.did");
 const idlPath = join(here, "..", "lib", "vfs-idl.ts");
 
-const browserExpectedTypes = {
-  ...expectedTypes,
-  DatabaseStatus: {
-    kind: "variant",
-    cases: {
-      Hot: "null",
-      Pending: "null",
-      Active: "null",
-      Restoring: "null",
-      Archiving: "null",
-      Archived: "null"
-    }
-  }
-};
-
 const typeOrder = [
   "CanisterHealth",
   "DatabaseRole",
@@ -197,7 +182,7 @@ function renderVfsIdl() {
   ];
 
   for (const name of typeOrder) {
-    lines.push(...renderTypeConst(name, browserExpectedTypes[name]));
+    lines.push(...renderTypeConst(name, expectedTypes[name]));
   }
 
   lines.push("");
@@ -287,9 +272,9 @@ function validateDidSubset(source) {
 }
 
 function validateRenderOrder() {
-  const missingTypes = Object.keys(browserExpectedTypes).filter((name) => !typeOrder.includes(name));
+  const missingTypes = Object.keys(expectedTypes).filter((name) => !typeOrder.includes(name));
   const missingMethods = Object.keys(expectedMethods).filter((name) => !methodOrder.includes(name));
-  const unknownTypes = typeOrder.filter((name) => !(name in browserExpectedTypes));
+  const unknownTypes = typeOrder.filter((name) => !(name in expectedTypes));
   const unknownMethods = methodOrder.filter((name) => !(name in expectedMethods));
   const failures = [
     ...missingTypes.map((name) => `typeOrder missing ${name}`),

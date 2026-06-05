@@ -30,8 +30,8 @@ assert.equal(
   "/alpha/Wiki/space%20name.md?view=edit"
 );
 assert.equal(
-  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "query", undefined, undefined, "anonymous"),
-  "/alpha/Wiki?tab=query&read=anonymous"
+  hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki", undefined, "query"),
+  "/alpha/Wiki?tab=query"
 );
 assert.equal(
   hrefForPath("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/conversations/日本語記事.md"),
@@ -50,16 +50,12 @@ assert.equal(
   "/alpha/search?q=alpha+beta&kind=full"
 );
 assert.equal(
-  hrefForSearch("t63gs-up777-77776-aaaba-cai", "alpha", "alpha beta", "path", "anonymous"),
-  "/alpha/search?q=alpha+beta&kind=path&read=anonymous"
+  hrefForGraph("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", 2),
+  "/alpha/graph?center=%2FWiki%2Findex.md&depth=2"
 );
 assert.equal(
-  hrefForGraph("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", 2, "anonymous"),
-  "/alpha/graph?center=%2FWiki%2Findex.md&depth=2&read=anonymous"
-);
-assert.equal(
-  hrefForHelp("t63gs-up777-77776-aaaba-cai", "alpha", "anonymous"),
-  "/alpha/help?read=anonymous"
+  hrefForHelp("t63gs-up777-77776-aaaba-cai", "alpha"),
+  "/alpha/help"
 );
 assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
@@ -67,8 +63,7 @@ assert.equal(
     isGraphPage: false,
     query: "ignored",
     searchKind: "full",
-    graphDepth: 2,
-    readMode: null
+    graphDepth: 2
   }),
   "/beta/Wiki"
 );
@@ -78,10 +73,9 @@ assert.equal(
     isGraphPage: false,
     query: "alpha beta",
     searchKind: "full",
-    graphDepth: 1,
-    readMode: "anonymous"
+    graphDepth: 1
   }),
-  "/beta/search?q=alpha+beta&kind=full&read=anonymous"
+  "/beta/search?q=alpha+beta&kind=full"
 );
 assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
@@ -89,10 +83,9 @@ assert.equal(
     isGraphPage: true,
     query: "",
     searchKind: "path",
-    graphDepth: 2,
-    readMode: "anonymous"
+    graphDepth: 2
   }),
-  "/beta/graph?center=%2FWiki&depth=2&read=anonymous"
+  "/beta/graph?center=%2FWiki&depth=2"
 );
 assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {
@@ -101,30 +94,25 @@ assert.equal(
     isGraphPage: false,
     query: "",
     searchKind: "path",
-    graphDepth: 1,
-    readMode: "anonymous"
+    graphDepth: 1
   }),
-  "/beta/help?read=anonymous"
+  "/beta/help"
 );
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md"),
   "/alpha/Wiki/beam-full-reset/7/facts.md"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md", "anonymous"),
-  "/alpha/Wiki/beam-full-reset/7/facts.md?read=anonymous"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md?view=raw#evidence"),
+  "/alpha/Wiki/beam-full-reset/7/facts.md?view=raw#evidence"
 );
 assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md?view=raw#evidence", "anonymous"),
-  "/alpha/Wiki/beam-full-reset/7/facts.md?view=raw&read=anonymous#evidence"
+  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "facts.md?view=raw&tab=query#evidence"),
+  "/alpha/Wiki/beam-full-reset/7/facts.md?view=raw&tab=query#evidence"
 );
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "/Wiki/demo.md#evidence"),
   "/alpha/Wiki/demo.md#evidence"
-);
-assert.equal(
-  hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/beam-full-reset/7/index.md", "/Wiki/demo.md#evidence", "anonymous"),
-  "/alpha/Wiki/demo.md?read=anonymous#evidence"
 );
 assert.equal(
   hrefForMarkdownLink("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", "/Wiki/space name.md"),

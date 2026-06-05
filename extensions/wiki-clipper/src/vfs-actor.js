@@ -17,7 +17,6 @@ export async function createVfsActor({ canisterId, host, identity }) {
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Hot: idl.Null,
     Pending: idl.Null,
     Active: idl.Null,
     Restoring: idl.Null,
@@ -170,8 +169,7 @@ function normalizeDatabaseSummary(raw) {
 }
 
 function normalizeDatabaseStatus(status) {
-  const key = variantKey(status);
-  return key === "Hot" ? "Active" : key;
+  return variantKey(status);
 }
 
 export async function getCyclesBillingConfigOrNull(actor) {

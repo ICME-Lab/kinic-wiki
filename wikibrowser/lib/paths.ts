@@ -12,8 +12,7 @@ export function hrefForPath(
   view?: string,
   tab?: string,
   searchQuery?: string,
-  searchKind?: string,
-  readMode?: string | null
+  searchKind?: string
 ): string {
   void canisterId;
   const normalized = path.startsWith("/") ? path.slice(1) : path;
@@ -35,14 +34,11 @@ export function hrefForPath(
   if (searchKind) {
     params.set("kind", searchKind);
   }
-  if (readMode === "anonymous") {
-    params.set("read", "anonymous");
-  }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `/${encodeURIComponent(databaseId)}/${suffix}${queryString}`;
 }
 
-export function hrefForSearch(canisterId: string, databaseId: string, searchQuery: string, searchKind: string, readMode?: string | null): string {
+export function hrefForSearch(canisterId: string, databaseId: string, searchQuery: string, searchKind: string): string {
   void canisterId;
   const params = new URLSearchParams();
   if (searchQuery) {
@@ -51,14 +47,11 @@ export function hrefForSearch(canisterId: string, databaseId: string, searchQuer
   if (searchKind) {
     params.set("kind", searchKind);
   }
-  if (readMode === "anonymous") {
-    params.set("read", "anonymous");
-  }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `/${encodeURIComponent(databaseId)}/search${queryString}`;
 }
 
-export function hrefForGraph(canisterId: string, databaseId: string, centerPath?: string | null, depth?: number, readMode?: string | null): string {
+export function hrefForGraph(canisterId: string, databaseId: string, centerPath?: string | null, depth?: number): string {
   void canisterId;
   const params = new URLSearchParams();
   if (centerPath) {
@@ -67,19 +60,13 @@ export function hrefForGraph(canisterId: string, databaseId: string, centerPath?
   if (depth && depth !== 1) {
     params.set("depth", String(depth));
   }
-  if (readMode === "anonymous") {
-    params.set("read", "anonymous");
-  }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `/${encodeURIComponent(databaseId)}/graph${queryString}`;
 }
 
-export function hrefForHelp(canisterId: string, databaseId: string, readMode?: string | null): string {
+export function hrefForHelp(canisterId: string, databaseId: string): string {
   void canisterId;
   const params = new URLSearchParams();
-  if (readMode === "anonymous") {
-    params.set("read", "anonymous");
-  }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `/${encodeURIComponent(databaseId)}/help${queryString}`;
 }
@@ -94,22 +81,21 @@ export function hrefForDatabaseSwitch(
     query: string;
     searchKind: string;
     graphDepth: number;
-    readMode?: string | null;
   }
 ): string {
   if (state.isHelpPage) {
-    return hrefForHelp(canisterId, databaseId, state.readMode);
+    return hrefForHelp(canisterId, databaseId);
   }
   if (state.isSearchPage) {
-    return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, state.readMode);
+    return hrefForSearch(canisterId, databaseId, state.query, state.searchKind);
   }
   if (state.isGraphPage) {
-    return hrefForGraph(canisterId, databaseId, "/Wiki", state.graphDepth, state.readMode);
+    return hrefForGraph(canisterId, databaseId, "/Wiki", state.graphDepth);
   }
-  return hrefForPath(canisterId, databaseId, "/Wiki", undefined, undefined, undefined, undefined, state.readMode);
+  return hrefForPath(canisterId, databaseId, "/Wiki");
 }
 
-export function hrefForMarkdownLink(canisterId: string, databaseId: string, currentPath: string, href: string | undefined, readMode?: string | null): string | null {
+export function hrefForMarkdownLink(canisterId: string, databaseId: string, currentPath: string, href: string | undefined): string | null {
   if (!href) {
     return null;
   }
@@ -120,12 +106,12 @@ export function hrefForMarkdownLink(canisterId: string, databaseId: string, curr
   const target = splitMarkdownHref(trimmed);
   const targetPath = decodeMarkdownHrefPath(target.path);
   if (isInternalWikiPath(targetPath)) {
-    return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, targetPath, undefined, undefined, undefined, undefined, readMode), target, readMode);
+    return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, targetPath), target);
   }
   if (targetPath.startsWith("/")) {
     return null;
   }
-  return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, resolveRelativeWikiPath(currentPath, targetPath), undefined, undefined, undefined, undefined, readMode), target, readMode);
+  return appendMarkdownSuffix(hrefForPath(canisterId, databaseId, resolveRelativeWikiPath(currentPath, targetPath)), target);
 }
 
 export function parentPath(path: string): string | null {
@@ -164,11 +150,8 @@ function isInternalWikiPath(path: string): boolean {
   return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
 }
 
-function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget, readMode?: string | null): string {
+function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget): string {
   const params = new URLSearchParams(target.query);
-  if (readMode === "anonymous") {
-    params.set("read", "anonymous");
-  }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `${baseHref.split("?")[0]}${queryString}${target.hash}`;
 }

@@ -13,7 +13,7 @@ const packages = readFileSync(new URL("../lib/skill-registry-package.ts", import
 const folders = readFileSync(new URL("../lib/vfs-folders.ts", import.meta.url), "utf8");
 const diff = readFileSync(new URL("../lib/skill-registry-diff.ts", import.meta.url), "utf8");
 const homeUi = readFileSync(new URL("../app/home-ui.tsx", import.meta.url), "utf8");
-const homePageClient = readFileSync(new URL("../app/home-page-client.tsx", import.meta.url), "utf8");
+const dashboardHomeClient = readFileSync(new URL("../app/dashboard/dashboard-home-client.tsx", import.meta.url), "utf8");
 const dashboardClient = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
 const inspector = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
 const skillManifest = readFileSync(new URL("../lib/skill-manifest.ts", import.meta.url), "utf8");
@@ -24,6 +24,8 @@ assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /SkillRegistryClient/);
 assert.match(adminHeader, /export function AdminHeader/);
 assert.match(client, /<AdminHeader/);
+assert.doesNotMatch(client, /Database dashboard/);
+assert.match(client, /href=\{`\/\$\{encodeURIComponent\(databaseId\)\}\/Wiki`\}/);
 assert.doesNotMatch(client, /unknown database/);
 assert.match(client, /loadSkillCatalog/);
 assert.match(client, /updateSkillStatus/);
@@ -152,8 +154,8 @@ assert.match(client, /const databases = await listDatabasesAuthenticated\(canist
 assert.match(client, /setCyclesConfig\(await getCyclesBillingConfig\(canisterId\)\)/);
 assert.doesNotMatch(client, /const \[databases, config\] = await Promise\.all/);
 assert.doesNotMatch(homeUi, /href=\{`\/skills\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
-assert.match(homePageClient, /DatabaseBody/);
-assert.match(dashboardClient, /href=\{`\/skills\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
+assert.match(dashboardHomeClient, /DatabaseBody/);
+assert.doesNotMatch(dashboardClient, /href=\{`\/skills\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
 assert.doesNotMatch(inspector, /skill-manifest/);
 assert.doesNotMatch(inspector, /parseSkillManifest|manifestPathForSkillRegistryFile/);
 assert.doesNotMatch(inspector, /title="Skill"/);
