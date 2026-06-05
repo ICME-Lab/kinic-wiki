@@ -6,6 +6,10 @@ import { expectedMethods, expectedTypes } from "./candid-shapes.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const idlPath = join(here, "..", "lib", "vfs-idl.ts");
 
+// The generated wikibrowser IDL intentionally comes from candid-shapes.mjs while
+// Chrome extension review freezes the checked-in canister DID on the older ABI.
+// Restore crates/vfs_canister/vfs.did as the source after all clients converge.
+
 const typeOrder = [
   "CanisterHealth",
   "DatabaseRole",

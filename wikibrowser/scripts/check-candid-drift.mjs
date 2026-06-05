@@ -6,6 +6,8 @@ import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const idl = readFileSync(join(here, "..", "lib", "vfs-idl.ts"), "utf8");
+const readme = readFileSync(join(here, "..", "README.md"), "utf8");
+const generator = readFileSync(join(here, "generate-vfs-idl.mjs"), "utf8");
 
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
@@ -32,6 +34,19 @@ try {
   }
 } catch (error) {
   failures.push(error instanceof Error ? error.message : String(error));
+}
+
+if (!readme.includes("production wiki canister `xis3j-paaaa-aaaai-axumq-cai`")) {
+  failures.push("wikibrowser README must document the temporary production canister ABI source");
+}
+if (!readme.includes("Local Internet Identity e2e is intentionally out of scope")) {
+  failures.push("wikibrowser README must document the temporary local II e2e exclusion");
+}
+if (!readme.includes("Point wikibrowser drift checks back at the checked-in canister DID")) {
+  failures.push("wikibrowser README must document the post-review Candid reintegration task");
+}
+if (!generator.includes("Chrome extension review freezes the checked-in canister DID on the older ABI")) {
+  failures.push("generate-vfs-idl.mjs must document why it does not read crates/vfs_canister/vfs.did");
 }
 
 if (failures.length > 0) {

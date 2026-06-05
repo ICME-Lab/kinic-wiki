@@ -1,3 +1,7 @@
+// Where: wikibrowser/scripts/candid-shapes.mjs
+// What: Production VFS Candid subset consumed by the Cloudflare-hosted wikibrowser.
+// Why: Until Chrome extension review completes, wikibrowser follows the production canister ABI
+//      instead of the checked-in crates/vfs_canister/vfs.did, which still feeds extension review.
 export const expectedTypes = {
   CanisterHealth: { kind: "record", fields: { cycles_balance: "nat" } },
   DatabaseRole: { kind: "variant", cases: { Reader: "null", Writer: "null", Owner: "null" } },
