@@ -26,6 +26,7 @@ import type {
   KinicDepositResult,
   MarketEntitlementPage,
   MarketListing,
+  MarketListingDetail,
   MarketListingPage,
   MarketListingStatus,
   MarketOrder,
@@ -154,7 +155,6 @@ type RawMarketListing = {
   llm_summary: [] | [string];
   summary_snapshot_revision: [] | [string];
   sample_excerpts_json: string;
-  sample_questions_json: string;
   tags_json: string;
   price_e8s: bigint;
   status: RawMarketListingStatus;
@@ -163,6 +163,53 @@ type RawMarketListing = {
   report_count: bigint;
   created_at_ms: bigint;
   updated_at_ms: bigint;
+};
+
+type RawMarketListingVerifiedStats = {
+  total_nodes: bigint;
+  wiki_nodes: bigint;
+  source_nodes: bigint;
+  folder_nodes: bigint;
+  markdown_chars: bigint;
+  source_chars: bigint;
+  link_edges: bigint;
+  logical_size_bytes: bigint;
+  last_content_updated_at_ms: [] | [bigint];
+};
+
+type RawMarketPreviewExcerpt = {
+  path: string;
+  etag: string;
+  excerpt: string;
+};
+
+type RawMarketCategoryGraphNode = {
+  category: string;
+  node_count: bigint;
+};
+
+type RawMarketCategoryGraphEdge = {
+  source_category: string;
+  target_category: string;
+  link_count: bigint;
+};
+
+type RawMarketCategoryGraph = {
+  nodes: RawMarketCategoryGraphNode[];
+  edges: RawMarketCategoryGraphEdge[];
+};
+
+type RawMarketListingPreview = {
+  top_level_paths: string[];
+  excerpts: RawMarketPreviewExcerpt[];
+  category_graph: RawMarketCategoryGraph;
+  preview_stale: boolean;
+};
+
+type RawMarketListingDetail = {
+  listing: RawMarketListing;
+  verified_stats: RawMarketListingVerifiedStats;
+  preview: RawMarketListingPreview;
 };
 
 type RawMarketListingPage = {
@@ -177,12 +224,11 @@ type RawMarketCreateListingRequest = {
   llm_summary: [] | [string];
   summary_snapshot_revision: [] | [string];
   sample_excerpts_json: string;
-  sample_questions_json: string;
   tags_json: string;
   price_e8s: bigint;
 };
 
-type RawMarketUpdateListingRequest = RawMarketCreateListingRequest & {
+type RawMarketUpdateListingRequest = Omit<RawMarketCreateListingRequest, "database_id"> & {
   listing_id: string;
   expected_revision: bigint;
 };
@@ -222,7 +268,6 @@ type RawMarketPurchasePreview = {
 type RawMarketPurchaseRequest = {
   listing_id: string;
   price_e8s: bigint;
-  expected_revision: bigint;
 };
 
 type RawMarketOrder = {
@@ -429,7 +474,7 @@ type VfsActor = {
   kinic_deposit_balance: (request: RawKinicDepositRequest) => Promise<{ Ok: RawKinicDepositResult } | { Err: string }>;
   kinic_fund_database_cycles: (request: RawKinicFundDatabaseCyclesRequest) => Promise<{ Ok: RawKinicFundDatabaseCyclesResult } | { Err: string }>;
   kinic_get_balance: () => Promise<{ Ok: RawKinicBalance } | { Err: string }>;
-  market_get_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
+  market_get_listing: (listingId: string) => Promise<{ Ok: RawMarketListingDetail } | { Err: string }>;
   market_list_database_listings: (databaseId: string) => Promise<{ Ok: RawMarketListing[] } | { Err: string }>;
   market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
@@ -734,14 +779,14 @@ export async function marketListListings(canisterId: string, cursor: string | nu
   });
 }
 
-export async function marketGetListing(canisterId: string, listingId: string, identity?: Identity): Promise<MarketListing> {
+export async function marketGetListing(canisterId: string, listingId: string, identity?: Identity): Promise<MarketListingDetail> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
     const result = await actor.market_get_listing(listingId);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return normalizeMarketListing(result.Ok);
+    return normalizeMarketListingDetail(result.Ok);
   });
 }
 
@@ -771,15 +816,13 @@ export async function marketPurchaseAccess(
   canisterId: string,
   identity: Identity,
   listingId: string,
-  priceE8s: string,
-  expectedRevision: string
+  priceE8s: string
 ): Promise<MarketOrder> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.market_purchase_access({
       listing_id: listingId,
-      price_e8s: BigInt(priceE8s),
-      expected_revision: BigInt(expectedRevision)
+      price_e8s: BigInt(priceE8s)
     });
     if ("Err" in result) {
       throwCanisterError(result.Err);
@@ -1377,7 +1420,6 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
     llmSummary: raw.llm_summary[0] ?? null,
     summarySnapshotRevision: raw.summary_snapshot_revision[0] ?? null,
     sampleExcerptsJson: raw.sample_excerpts_json,
-    sampleQuestionsJson: raw.sample_questions_json,
     tagsJson: raw.tags_json,
     priceE8s: raw.price_e8s.toString(),
     status: normalizeMarketListingStatus(raw.status),
@@ -1386,6 +1428,43 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
     reportCount: raw.report_count.toString(),
     createdAtMs: raw.created_at_ms.toString(),
     updatedAtMs: raw.updated_at_ms.toString()
+  };
+}
+
+function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListingDetail {
+  return {
+    listing: normalizeMarketListing(raw.listing),
+    verifiedStats: {
+      totalNodes: raw.verified_stats.total_nodes.toString(),
+      wikiNodes: raw.verified_stats.wiki_nodes.toString(),
+      sourceNodes: raw.verified_stats.source_nodes.toString(),
+      folderNodes: raw.verified_stats.folder_nodes.toString(),
+      markdownChars: raw.verified_stats.markdown_chars.toString(),
+      sourceChars: raw.verified_stats.source_chars.toString(),
+      linkEdges: raw.verified_stats.link_edges.toString(),
+      logicalSizeBytes: raw.verified_stats.logical_size_bytes.toString(),
+      lastContentUpdatedAtMs: raw.verified_stats.last_content_updated_at_ms[0]?.toString() ?? null
+    },
+    preview: {
+      topLevelPaths: raw.preview.top_level_paths,
+      excerpts: raw.preview.excerpts.map((excerpt) => ({
+        path: excerpt.path,
+        etag: excerpt.etag,
+        excerpt: excerpt.excerpt
+      })),
+      categoryGraph: {
+        nodes: raw.preview.category_graph.nodes.map((node) => ({
+          category: node.category,
+          nodeCount: node.node_count.toString()
+        })),
+        edges: raw.preview.category_graph.edges.map((edge) => ({
+          sourceCategory: edge.source_category,
+          targetCategory: edge.target_category,
+          linkCount: edge.link_count.toString()
+        }))
+      },
+      previewStale: raw.preview.preview_stale
+    }
   };
 }
 
@@ -1468,7 +1547,6 @@ function rawMarketCreateListingRequest(request: MarketCreateListingRequest): Raw
     llm_summary: rawOptionalText(request.llmSummary),
     summary_snapshot_revision: rawOptionalText(request.summarySnapshotRevision),
     sample_excerpts_json: request.sampleExcerptsJson,
-    sample_questions_json: request.sampleQuestionsJson,
     tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s)
   };
@@ -1476,7 +1554,13 @@ function rawMarketCreateListingRequest(request: MarketCreateListingRequest): Raw
 
 function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): RawMarketUpdateListingRequest {
   return {
-    ...rawMarketCreateListingRequest(request),
+    title: request.title,
+    description: request.description,
+    llm_summary: rawOptionalText(request.llmSummary),
+    summary_snapshot_revision: rawOptionalText(request.summarySnapshotRevision),
+    sample_excerpts_json: request.sampleExcerptsJson,
+    tags_json: request.tagsJson,
+    price_e8s: BigInt(request.priceE8s),
     listing_id: request.listingId,
     expected_revision: BigInt(request.expectedRevision)
   };

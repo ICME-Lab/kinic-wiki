@@ -50,10 +50,17 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
         llm_summary: None,
         summary_snapshot_revision: None,
         sample_excerpts_json: "[]".to_string(),
-        sample_questions_json: "[]".to_string(),
         tags_json: "[]".to_string(),
         price_e8s,
     }
+}
+
+fn excerpt_json(path: &str, etag: &str, excerpt: &str) -> String {
+    format!("[{}]", excerpt_object(path, etag, excerpt))
+}
+
+fn excerpt_object(path: &str, etag: &str, excerpt: &str) -> String {
+    format!(r#"{{"path":"{path}","etag":"{etag}","excerpt":"{excerpt}"}}"#)
 }
 
 fn credit_kinic_balance(
@@ -4571,6 +4578,7 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
     let listing = service
         .market_create_listing("seller", market_listing_request("market-db", 250), 2)
         .expect("listing should create");
+    assert!(!listing.listing_id.starts_with("listing_"));
     let listing = service
         .market_publish_listing("seller", &listing.listing_id, 3)
         .expect("listing should publish");
@@ -4582,7 +4590,6 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             6,
         )
@@ -4625,7 +4632,6 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
                 MarketPurchaseRequest {
                     listing_id: second_listing.listing_id,
                     price_e8s: second_listing.price_e8s,
-                    expected_revision: second_listing.revision,
                 },
                 9,
             )
@@ -4654,7 +4660,6 @@ fn market_purchase_rejects_seller_self_purchase() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id,
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             5,
         )
@@ -4671,7 +4676,7 @@ fn market_purchase_rejects_seller_self_purchase() {
 }
 
 #[test]
-fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_revision_mismatch() {
+fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_price_mismatch() {
     let service = service();
     service
         .create_database("reject-market", "seller", 1)
@@ -4689,7 +4694,6 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_revisio
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             4,
         )
@@ -4697,18 +4701,17 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_revisio
     assert!(insufficient.contains("insufficient KINIC balance"));
 
     credit_kinic_balance(&service, "buyer", 500, 10, 5);
-    let stale = service
+    let price_mismatch = service
         .market_purchase_access(
             "buyer",
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-                expected_revision: listing.revision + 1,
+                price_e8s: listing.price_e8s + 1,
             },
             6,
         )
-        .expect_err("revision mismatch should reject");
-    assert!(stale.contains("market listing revision mismatch"));
+        .expect_err("price mismatch should reject");
+    assert!(price_mismatch.contains("market listing price mismatch"));
     assert_eq!(
         service
             .kinic_get_balance("buyer")
@@ -4723,7 +4726,6 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_revisio
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             7,
         )
@@ -4734,7 +4736,6 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_revisio
             MarketPurchaseRequest {
                 listing_id: listing.listing_id,
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             8,
         )
@@ -4772,6 +4773,217 @@ fn market_listing_owner_policy_and_database_listing_query() {
         .expect("owner should list database listings");
     assert_eq!(listings.len(), 1);
     assert_eq!(listings[0].listing_id, listing.listing_id);
+}
+
+#[test]
+fn market_listing_detail_returns_verified_preview() {
+    let service = service();
+    service
+        .create_database("preview-market", "seller", 1)
+        .expect("database should create");
+    ensure_parent_folders(&service, "seller", "preview-market", "/Wiki/alpha/a.md", 2);
+    ensure_parent_folders(&service, "seller", "preview-market", "/Wiki/beta/b.md", 2);
+    ensure_parent_folders(
+        &service,
+        "seller",
+        "preview-market",
+        "/Sources/raw/web/source.md",
+        2,
+    );
+    let alpha = service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "preview-market".to_string(),
+                path: "/Wiki/alpha/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "Alpha paid insight links to [beta](/Wiki/beta/b.md).".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("alpha node should write");
+    service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "preview-market".to_string(),
+                path: "/Wiki/beta/b.md".to_string(),
+                kind: NodeKind::File,
+                content: "Beta paid body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("beta node should write");
+    service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "preview-market".to_string(),
+                path: "/Sources/raw/web/source.md".to_string(),
+                kind: NodeKind::Source,
+                content: "raw source body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            4,
+        )
+        .expect("source node should write");
+
+    let mut request = market_listing_request("preview-market", 100);
+    request.sample_excerpts_json =
+        excerpt_json("/Wiki/alpha/a.md", &alpha.node.etag, "paid insight links");
+    let listing = service
+        .market_create_listing("seller", request, 5)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 6)
+        .expect("listing should publish");
+    let detail = service
+        .market_get_listing("2vxsx-fae", &listing.listing_id)
+        .expect("anonymous should read public listing preview");
+
+    assert_eq!(detail.listing.listing_id, listing.listing_id);
+    assert!(detail.verified_stats.total_nodes >= 5);
+    assert!(detail.verified_stats.wiki_nodes >= 4);
+    assert_eq!(detail.verified_stats.source_nodes, 1);
+    assert!(detail.verified_stats.folder_nodes >= 3);
+    assert!(detail.verified_stats.markdown_chars >= 64);
+    assert_eq!(detail.verified_stats.source_chars, 15);
+    assert_eq!(detail.verified_stats.link_edges, 1);
+    assert_eq!(detail.preview.excerpts.len(), 1);
+    assert_eq!(detail.preview.excerpts[0].excerpt, "paid insight links");
+    assert_eq!(detail.preview.preview_stale, false);
+    assert!(
+        detail
+            .preview
+            .top_level_paths
+            .contains(&"/Wiki/alpha".to_string())
+    );
+    assert!(
+        detail
+            .preview
+            .top_level_paths
+            .contains(&"/Wiki/beta".to_string())
+    );
+    assert!(
+        detail
+            .preview
+            .category_graph
+            .nodes
+            .iter()
+            .any(|node| node.category == "/Wiki/alpha")
+    );
+    assert!(
+        detail
+            .preview
+            .category_graph
+            .edges
+            .iter()
+            .any(|edge| edge.source_category == "/Wiki/alpha"
+                && edge.target_category == "/Wiki/beta"
+                && edge.link_count == 1)
+    );
+
+    service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "preview-market".to_string(),
+                path: "/Wiki/alpha/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "Alpha body changed".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: Some(alpha.node.etag),
+            },
+            7,
+        )
+        .expect("alpha node should update");
+    let stale_detail = service
+        .market_get_listing("2vxsx-fae", &listing.listing_id)
+        .expect("anonymous should still read stale public listing preview");
+    assert!(stale_detail.preview.excerpts.is_empty());
+    assert_eq!(stale_detail.preview.preview_stale, true);
+}
+
+#[test]
+fn market_listing_sample_excerpts_must_be_verified_wiki_substrings() {
+    let service = service();
+    service
+        .create_database("verified-excerpts", "seller", 1)
+        .expect("database should create");
+    ensure_parent_folders(
+        &service,
+        "seller",
+        "verified-excerpts",
+        "/Wiki/alpha/a.md",
+        2,
+    );
+    ensure_parent_folders(
+        &service,
+        "seller",
+        "verified-excerpts",
+        "/Sources/raw/web/source.md",
+        2,
+    );
+    let node = service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "verified-excerpts".to_string(),
+                path: "/Wiki/alpha/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "Verified paid excerpt body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("wiki node should write");
+    service
+        .write_node(
+            "seller",
+            WriteNodeRequest {
+                database_id: "verified-excerpts".to_string(),
+                path: "/Sources/raw/web/source.md".to_string(),
+                kind: NodeKind::Source,
+                content: "Verified paid excerpt body".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("source node should write");
+
+    for sample_excerpts_json in [
+        excerpt_json("/Wiki/alpha/a.md", "wrong-etag", "paid excerpt"),
+        excerpt_json("/Wiki/alpha/a.md", &node.node.etag, "missing text"),
+        excerpt_json(
+            "/Sources/raw/web/source.md",
+            &node.node.etag,
+            "paid excerpt",
+        ),
+        format!(
+            "[{},{},{},{},{},{}]",
+            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
+            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
+            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
+            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
+            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
+            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt")
+        ),
+        excerpt_json("/Wiki/alpha/a.md", &node.node.etag, &"x".repeat(401)),
+    ] {
+        let mut request = market_listing_request("verified-excerpts", 100);
+        request.sample_excerpts_json = sample_excerpts_json;
+        assert!(
+            service.market_create_listing("seller", request, 4).is_err(),
+            "invalid sample excerpt must reject"
+        );
+    }
 }
 
 #[test]
@@ -4831,7 +5043,6 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
                 MarketPurchaseRequest {
                     listing_id: listing.listing_id.clone(),
                     price_e8s: listing.price_e8s,
-                    expected_revision: listing.revision,
                 },
                 6,
             )
@@ -4932,7 +5143,6 @@ fn market_listing_requires_active_database() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             9,
         )
@@ -4990,7 +5200,6 @@ fn market_listing_requires_active_database() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id,
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             12,
         )
@@ -5030,7 +5239,6 @@ fn delete_database_removes_marketplace_rows() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id,
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             6,
         )
@@ -5107,7 +5315,6 @@ fn market_entitlement_allows_read_surface_but_not_export() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id,
                 price_e8s: listing.price_e8s,
-                expected_revision: listing.revision,
             },
             7,
         )

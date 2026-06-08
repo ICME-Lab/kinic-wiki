@@ -12,9 +12,9 @@ export function PanelHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 border-b border-line px-4 py-3">
+    <div className="flex items-center justify-between gap-2 border-b border-line bg-white px-4 py-3">
       <div className="flex min-w-0 items-center gap-2">
-        <span className="shrink-0 text-accent">{icon}</span>
+        <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accentSoft text-accentText">{icon}</span>
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold">{title}</h2>
           {subtitle ? <p className="truncate text-xs text-muted">{subtitle}</p> : null}
@@ -35,7 +35,7 @@ export function InspectorCard({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-line bg-white p-4">
+    <section className="rounded-2xl border border-line bg-white p-4 shadow-[0_4px_10px_#14142b0a]">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <span className="text-accent">{icon}</span>
         {title}

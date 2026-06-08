@@ -199,7 +199,6 @@ export type MarketListing = {
   llmSummary: string | null;
   summarySnapshotRevision: string | null;
   sampleExcerptsJson: string;
-  sampleQuestionsJson: string;
   tagsJson: string;
   priceE8s: string;
   status: MarketListingStatus;
@@ -208,6 +207,53 @@ export type MarketListing = {
   reportCount: string;
   createdAtMs: string;
   updatedAtMs: string;
+};
+
+export type MarketListingVerifiedStats = {
+  totalNodes: string;
+  wikiNodes: string;
+  sourceNodes: string;
+  folderNodes: string;
+  markdownChars: string;
+  sourceChars: string;
+  linkEdges: string;
+  logicalSizeBytes: string;
+  lastContentUpdatedAtMs: string | null;
+};
+
+export type MarketPreviewExcerpt = {
+  path: string;
+  etag: string;
+  excerpt: string;
+};
+
+export type MarketCategoryGraphNode = {
+  category: string;
+  nodeCount: string;
+};
+
+export type MarketCategoryGraphEdge = {
+  sourceCategory: string;
+  targetCategory: string;
+  linkCount: string;
+};
+
+export type MarketCategoryGraph = {
+  nodes: MarketCategoryGraphNode[];
+  edges: MarketCategoryGraphEdge[];
+};
+
+export type MarketListingPreview = {
+  topLevelPaths: string[];
+  excerpts: MarketPreviewExcerpt[];
+  categoryGraph: MarketCategoryGraph;
+  previewStale: boolean;
+};
+
+export type MarketListingDetail = {
+  listing: MarketListing;
+  verifiedStats: MarketListingVerifiedStats;
+  preview: MarketListingPreview;
 };
 
 export type MarketListingPage = {
@@ -222,12 +268,11 @@ export type MarketCreateListingRequest = {
   llmSummary: string | null;
   summarySnapshotRevision: string | null;
   sampleExcerptsJson: string;
-  sampleQuestionsJson: string;
   tagsJson: string;
   priceE8s: string;
 };
 
-export type MarketUpdateListingRequest = MarketCreateListingRequest & {
+export type MarketUpdateListingRequest = Omit<MarketCreateListingRequest, "databaseId"> & {
   listingId: string;
   expectedRevision: string;
 };

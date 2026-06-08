@@ -55,7 +55,7 @@ const vfsActorMock = {
         buyer_principal: "plug-principal",
         seller_principal: "seller-principal",
         price_e8s: request.price_e8s,
-        listing_revision: request.expected_revision,
+        listing_revision: 2n,
         created_at_ms: 123n
       }
     };
@@ -260,7 +260,7 @@ assert.equal(lastIdentityKinicDeposit.expectedFeeE8s, "100000");
 marketPurchaseCalls = 0;
 lastMarketPurchaseRequest = null;
 const marketPurchase = await walletModule.purchaseMarketAccessWithPlug(
-  { canisterId: "aaaaa-aa", listingId: "listing_1", priceE8s: 50_000_000n, expectedRevision: 2n },
+  { canisterId: "aaaaa-aa", listingId: "market1", priceE8s: 50_000_000n },
   { principal: "plug-principal" }
 );
 assert.equal(marketPurchase.provider, "plug");
@@ -269,9 +269,9 @@ assert.equal(marketPurchase.buyerPrincipal, "plug-principal");
 assert.equal(marketPurchase.priceE8s, "50000000");
 assert.equal(marketPurchase.listingRevision, "2");
 assert.equal(marketPurchaseCalls, 1);
-assert.equal(lastMarketPurchaseRequest.listing_id, "listing_1");
+assert.equal(lastMarketPurchaseRequest.listing_id, "market1");
 assert.equal(lastMarketPurchaseRequest.price_e8s, 50_000_000n);
-assert.equal(lastMarketPurchaseRequest.expected_revision, 2n);
+assert.equal("expected_revision" in lastMarketPurchaseRequest, false);
 
 cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(

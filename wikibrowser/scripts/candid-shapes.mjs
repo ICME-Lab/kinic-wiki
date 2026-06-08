@@ -77,7 +77,6 @@ export const expectedTypes = {
       llm_summary: "opt text",
       title: "text",
       summary_snapshot_revision: "opt text",
-      sample_questions_json: "text",
       description: "text",
       database_id: "text",
       price_e8s: "nat64",
@@ -133,7 +132,6 @@ export const expectedTypes = {
       title: "text",
       summary_snapshot_revision: "opt text",
       report_count: "nat64",
-      sample_questions_json: "text",
       description: "text",
       updated_at_ms: "int64",
       created_at_ms: "int64",
@@ -147,13 +145,56 @@ export const expectedTypes = {
       tags_json: "text"
     }
   },
+  MarketCategoryGraph: {
+    kind: "record",
+    fields: { nodes: "vec MarketCategoryGraphNode", edges: "vec MarketCategoryGraphEdge" }
+  },
+  MarketCategoryGraphEdge: {
+    kind: "record",
+    fields: { source_category: "text", target_category: "text", link_count: "nat64" }
+  },
+  MarketCategoryGraphNode: {
+    kind: "record",
+    fields: { node_count: "nat64", category: "text" }
+  },
+  MarketListingDetail: {
+    kind: "record",
+    fields: {
+      listing: "MarketListing",
+      preview: "MarketListingPreview",
+      verified_stats: "MarketListingVerifiedStats"
+    }
+  },
   MarketListingPage: {
     kind: "record",
     fields: { listings: "vec MarketListing", next_cursor: "opt text" }
   },
+  MarketListingPreview: {
+    kind: "record",
+    fields: {
+      top_level_paths: "vec text",
+      excerpts: "vec MarketPreviewExcerpt",
+      category_graph: "MarketCategoryGraph",
+      preview_stale: "bool"
+    }
+  },
   MarketListingStatus: {
     kind: "variant",
     cases: { Paused: "null", Active: "null", Draft: "null" }
+  },
+  MarketListingVerifiedStats: {
+    kind: "record",
+    fields: {
+      source_chars: "nat64",
+      total_nodes: "nat64",
+      logical_size_bytes: "nat64",
+      link_edges: "nat64",
+      wiki_nodes: "nat64",
+      source_nodes: "nat64",
+      markdown_chars: "nat64",
+      last_content_updated_at_ms: "opt int64",
+      folder_nodes: "nat64"
+    }
   },
   MarketOrder: {
     kind: "record",
@@ -184,7 +225,11 @@ export const expectedTypes = {
   },
   MarketPurchaseRequest: {
     kind: "record",
-    fields: { listing_id: "text", price_e8s: "nat64", expected_revision: "nat64" }
+    fields: { listing_id: "text", price_e8s: "nat64" }
+  },
+  MarketPreviewExcerpt: {
+    kind: "record",
+    fields: { path: "text", etag: "text", excerpt: "text" }
   },
   MarketUpdateListingRequest: {
     kind: "record",
@@ -192,7 +237,6 @@ export const expectedTypes = {
       llm_summary: "opt text",
       title: "text",
       summary_snapshot_revision: "opt text",
-      sample_questions_json: "text",
       description: "text",
       listing_id: "text",
       price_e8s: "nat64",
@@ -481,6 +525,7 @@ export const expectedTypes = {
   ResultKinicFundDatabaseCycles: { kind: "variant", cases: { Ok: "KinicFundDatabaseCyclesResult", Err: "text" } },
   ResultMarketEntitlementPage: { kind: "variant", cases: { Ok: "MarketEntitlementPage", Err: "text" } },
   ResultMarketListing: { kind: "variant", cases: { Ok: "MarketListing", Err: "text" } },
+  ResultMarketListingDetail: { kind: "variant", cases: { Ok: "MarketListingDetail", Err: "text" } },
   ResultMarketListings: { kind: "variant", cases: { Ok: "vec MarketListing", Err: "text" } },
   ResultMarketListingPage: { kind: "variant", cases: { Ok: "MarketListingPage", Err: "text" } },
   ResultMarketOrder: { kind: "variant", cases: { Ok: "MarketOrder", Err: "text" } },
@@ -600,6 +645,7 @@ export const didTypeAliases = {
   ResultKinicFundDatabaseCycles: "Result_13",
   ResultMarketEntitlementPage: "Result_25",
   ResultMarketListing: "Result_23",
+  ResultMarketListingDetail: "Result_43",
   ResultMarketListings: "Result_24",
   ResultMarketListingPage: "Result_26",
   ResultMarketOrder: "Result_29",
@@ -654,7 +700,7 @@ export const expectedMethods = {
   kinic_deposit_balance: { input: ["KinicDepositRequest"], output: "ResultKinicDeposit", mode: "update" },
   kinic_fund_database_cycles: { input: ["KinicFundDatabaseCyclesRequest"], output: "ResultKinicFundDatabaseCycles", mode: "update" },
   kinic_get_balance: { input: [], output: "ResultKinicBalance", mode: "query" },
-  market_get_listing: { input: ["text"], output: "ResultMarketListing", mode: "query" },
+  market_get_listing: { input: ["text"], output: "ResultMarketListingDetail", mode: "query" },
   market_list_database_listings: { input: ["text"], output: "ResultMarketListings", mode: "query" },
   market_list_entitlements: { input: ["opt text", "nat32"], output: "ResultMarketEntitlementPage", mode: "query" },
   market_list_listings: { input: ["opt text", "nat32"], output: "ResultMarketListingPage", mode: "query" },

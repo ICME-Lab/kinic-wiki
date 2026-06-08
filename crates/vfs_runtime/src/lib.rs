@@ -15,6 +15,7 @@ use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
 use candid::Principal;
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{Db, DbError, DbHandle};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use vfs_store::FsStore;
 use vfs_types::{
@@ -26,16 +27,18 @@ use vfs_types::{
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, KinicBalance, KinicFundDatabaseCyclesRequest,
     KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
-    MarketListing, MarketListingPage, MarketListingStatus, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement,
+    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
+    MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats, MarketOrder,
+    MarketOrderPage, MarketPreviewExcerpt, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
@@ -77,6 +80,7 @@ const INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH: &str = "database_index:026_sto
 const INDEX_SCHEMA_VERSION_MARKETPLACE_CORE: &str = "database_index:027_marketplace_core";
 const INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES: &str =
     "database_index:028_kinic_external_block_indexes";
+const INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW: &str = "database_index:029_marketplace_preview";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -122,12 +126,14 @@ const MARKET_LISTING_STATUS_DRAFT: &str = "draft";
 const MARKET_LISTING_STATUS_ACTIVE: &str = "active";
 const MARKET_LISTING_STATUS_PAUSED: &str = "paused";
 const MARKET_ENTITLEMENT_STATUS_ACTIVE: &str = "active";
-const GENERATED_LISTING_ID_PREFIX: &str = "listing_";
+const GENERATED_LISTING_ID_PREFIX: &str = "";
 const GENERATED_ORDER_ID_PREFIX: &str = "order_";
 const GENERATED_MARKET_ID_HASH_CHARS: usize = 16;
 const MAX_MARKET_TITLE_CHARS: usize = 160;
 const MAX_MARKET_DESCRIPTION_CHARS: usize = 4_000;
 const MAX_MARKET_JSON_CHARS: usize = 20_000;
+const MAX_MARKET_PREVIEW_EXCERPTS: usize = 5;
+const MAX_MARKET_PREVIEW_EXCERPT_CHARS: usize = 400;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseMeta {
@@ -1421,6 +1427,7 @@ impl VfsService {
     ) -> Result<MarketListing, String> {
         require_authenticated_principal(caller)?;
         validate_market_create_listing_request(&request)?;
+        self.validate_market_listing_excerpts(&request.database_id, &request.sample_excerpts_json)?;
         self.write_index(|tx| {
             require_market_seller_can_list(tx, caller, &request.database_id)?;
             let listing_id = unique_market_id(
@@ -1436,9 +1443,9 @@ impl VfsService {
                 "INSERT INTO market_listings
                  (listing_id, seller_principal, database_id, title, description,
                   llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                  sample_questions_json, tags_json, price_e8s, status, revision,
+                  tags_json, price_e8s, status, revision,
                   purchase_count, report_count, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, 0, 0, ?13, ?13)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 0, 0, ?12, ?12)",
                 params![
                     listing_id,
                     caller,
@@ -1448,7 +1455,6 @@ impl VfsService {
                     crate::sqlite::nullable_text_value(request.llm_summary),
                     crate::sqlite::nullable_text_value(request.summary_snapshot_revision),
                     request.sample_excerpts_json,
-                    request.sample_questions_json,
                     request.tags_json,
                     i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
                     MARKET_LISTING_STATUS_DRAFT,
@@ -1469,6 +1475,16 @@ impl VfsService {
     ) -> Result<MarketListing, String> {
         require_authenticated_principal(caller)?;
         validate_market_update_listing_request(&request)?;
+        let listing_database_id = self.read_index(|tx| {
+            let listing = load_market_listing_by_id(tx, &request.listing_id)?
+                .ok_or_else(|| "market listing not found".to_string())?;
+            require_market_listing_seller_or_admin(tx, caller, &listing)?;
+            if listing.revision != request.expected_revision {
+                return Err("market listing revision mismatch".to_string());
+            }
+            Ok(listing.database_id)
+        })?;
+        self.validate_market_listing_excerpts(&listing_database_id, &request.sample_excerpts_json)?;
         self.write_index(|tx| {
             let listing = load_market_listing_by_id(tx, &request.listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
@@ -1490,11 +1506,10 @@ impl VfsService {
                      llm_summary = ?4,
                      summary_snapshot_revision = ?5,
                      sample_excerpts_json = ?6,
-                     sample_questions_json = ?7,
-                     tags_json = ?8,
-                     price_e8s = ?9,
+                     tags_json = ?7,
+                     price_e8s = ?8,
                      revision = revision + 1,
-                     updated_at_ms = ?10
+                     updated_at_ms = ?9
                  WHERE listing_id = ?1",
                 params![
                     request.listing_id,
@@ -1503,7 +1518,6 @@ impl VfsService {
                     crate::sqlite::nullable_text_value(request.llm_summary),
                     crate::sqlite::nullable_text_value(request.summary_snapshot_revision),
                     request.sample_excerpts_json,
-                    request.sample_questions_json,
                     request.tags_json,
                     i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
                     now
@@ -1578,7 +1592,7 @@ impl VfsService {
                 .prepare(
                     "SELECT l.listing_id, l.seller_principal, l.database_id, l.title, l.description,
                             l.llm_summary, l.summary_snapshot_revision, l.sample_excerpts_json,
-                            l.sample_questions_json, l.tags_json, l.price_e8s, l.status, l.revision,
+                            l.tags_json, l.price_e8s, l.status, l.revision,
                             l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
                      FROM market_listings l
                      JOIN databases d ON d.database_id = l.database_id
@@ -1636,7 +1650,7 @@ impl VfsService {
                 .prepare(
                     "SELECT listing_id, seller_principal, database_id, title, description,
                             llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                            sample_questions_json, tags_json, price_e8s, status, revision,
+                            tags_json, price_e8s, status, revision,
                             purchase_count, report_count, created_at_ms, updated_at_ms
                      FROM market_listings
                      WHERE database_id = ?1
@@ -1652,8 +1666,8 @@ impl VfsService {
         &self,
         caller: &str,
         listing_id: &str,
-    ) -> Result<MarketListing, String> {
-        self.read_index(|conn| {
+    ) -> Result<MarketListingDetail, String> {
+        let listing = self.read_index(|conn| {
             let listing = load_market_listing_by_id(conn, listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
             if require_market_listing_purchasable(conn, &listing).is_ok() {
@@ -1661,7 +1675,77 @@ impl VfsService {
             }
             require_market_listing_seller_or_admin(conn, caller, &listing)?;
             Ok(listing)
+        })?;
+        self.market_listing_detail(listing)
+    }
+
+    fn market_listing_detail(&self, listing: MarketListing) -> Result<MarketListingDetail, String> {
+        let Ok(meta) = self.database_meta_with_statuses(
+            &listing.database_id,
+            &[
+                DatabaseStatus::Active,
+                DatabaseStatus::Archiving,
+                DatabaseStatus::Restoring,
+            ],
+        ) else {
+            return Ok(empty_market_listing_detail(listing));
+        };
+        let store = self.database_store(&meta)?;
+        let (verified_stats, mut preview) = store.marketplace_preview()?;
+        let (excerpts, stale) = self.load_verified_market_preview_excerpts(
+            &listing.database_id,
+            &listing.sample_excerpts_json,
+        )?;
+        preview.excerpts = excerpts;
+        preview.preview_stale = stale;
+        Ok(MarketListingDetail {
+            listing,
+            verified_stats,
+            preview,
         })
+    }
+
+    fn validate_market_listing_excerpts(
+        &self,
+        database_id: &str,
+        sample_excerpts_json: &str,
+    ) -> Result<(), String> {
+        let (excerpts, stale) =
+            self.load_verified_market_preview_excerpts(database_id, sample_excerpts_json)?;
+        if stale || excerpts.len() != parse_market_preview_excerpts(sample_excerpts_json)?.len() {
+            return Err(
+                "market listing sample excerpts must match existing wiki nodes".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    fn load_verified_market_preview_excerpts(
+        &self,
+        database_id: &str,
+        sample_excerpts_json: &str,
+    ) -> Result<(Vec<MarketPreviewExcerpt>, bool), String> {
+        let excerpts = parse_market_preview_excerpts(sample_excerpts_json)?;
+        if excerpts.is_empty() {
+            return Ok((Vec::new(), false));
+        }
+        let meta = self.database_meta(database_id)?;
+        let store = self.database_store(&meta)?;
+        let mut verified = Vec::new();
+        let mut stale = false;
+        for excerpt in excerpts {
+            match store.read_node(&excerpt.path)? {
+                Some(node)
+                    if node.kind == NodeKind::File
+                        && node.etag == excerpt.etag
+                        && node.content.contains(&excerpt.excerpt) =>
+                {
+                    verified.push(excerpt);
+                }
+                _ => stale = true,
+            }
+        }
+        Ok((verified, stale))
     }
 
     pub fn market_preview_purchase(
@@ -1702,9 +1786,6 @@ impl VfsService {
             require_market_listing_purchasable(tx, &listing)?;
             if listing.price_e8s != request.price_e8s {
                 return Err("market listing price mismatch".to_string());
-            }
-            if listing.revision != request.expected_revision {
-                return Err("market listing revision mismatch".to_string());
             }
             if caller == listing.seller_principal {
                 return Err("market seller cannot purchase own listing".to_string());
@@ -3535,6 +3616,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    MarketplacePreviewUpgrade,
     KinicExternalBlockIndexesUpgrade,
     MarketplaceCoreUpgrade,
     StorageBillingBatchUpgrade,
@@ -3547,19 +3629,26 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
+        IndexSchemaState::MarketplacePreviewUpgrade => {
+            apply_marketplace_preview_index_migration(conn)?;
+            validate_index_schema(conn)
+        }
         IndexSchemaState::KinicExternalBlockIndexesUpgrade => {
             apply_kinic_external_block_indexes_migration(conn)?;
+            apply_marketplace_preview_index_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::MarketplaceCoreUpgrade => {
             apply_marketplace_core_index_migration(conn)?;
             apply_kinic_external_block_indexes_migration(conn)?;
+            apply_marketplace_preview_index_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::StorageBillingBatchUpgrade => {
             apply_storage_billing_batch_index_migration(conn)?;
             apply_marketplace_core_index_migration(conn)?;
             apply_kinic_external_block_indexes_migration(conn)?;
+            apply_marketplace_preview_index_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::Mainnet011 => {
@@ -3598,8 +3687,11 @@ fn classify_existing_index_schema_state(
             "unsupported partial billing index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW)? {
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)? {
+        return Ok(IndexSchemaState::MarketplacePreviewUpgrade);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)? {
         return Ok(IndexSchemaState::KinicExternalBlockIndexesUpgrade);
@@ -3716,7 +3808,6 @@ fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), 
           llm_summary TEXT,
           summary_snapshot_revision TEXT,
           sample_excerpts_json TEXT NOT NULL,
-          sample_questions_json TEXT NOT NULL,
           tags_json TEXT NOT NULL,
           price_e8s INTEGER NOT NULL,
           status TEXT NOT NULL,
@@ -3769,6 +3860,55 @@ fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), 
     )
     .map_err(|error| error.to_string())?;
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)?;
+    Ok(())
+}
+
+fn apply_marketplace_preview_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "
+        CREATE TABLE market_listings_next (
+          listing_id TEXT PRIMARY KEY,
+          seller_principal TEXT NOT NULL,
+          database_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          llm_summary TEXT,
+          summary_snapshot_revision TEXT,
+          sample_excerpts_json TEXT NOT NULL,
+          tags_json TEXT NOT NULL,
+          price_e8s INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          purchase_count INTEGER NOT NULL,
+          report_count INTEGER NOT NULL,
+          created_at_ms INTEGER NOT NULL,
+          updated_at_ms INTEGER NOT NULL,
+          FOREIGN KEY (database_id) REFERENCES databases(database_id)
+        );
+
+        INSERT INTO market_listings_next
+          (listing_id, seller_principal, database_id, title, description,
+           llm_summary, summary_snapshot_revision, sample_excerpts_json,
+           tags_json, price_e8s, status, revision, purchase_count, report_count,
+           created_at_ms, updated_at_ms)
+        SELECT listing_id, seller_principal, database_id, title, description,
+               llm_summary, summary_snapshot_revision, sample_excerpts_json,
+               tags_json, price_e8s, status, revision, purchase_count, report_count,
+               created_at_ms, updated_at_ms
+          FROM market_listings;
+
+        DROP TABLE market_listings;
+        ALTER TABLE market_listings_next RENAME TO market_listings;
+
+        CREATE INDEX market_listings_status_idx
+          ON market_listings(status, listing_id);
+
+        CREATE INDEX market_listings_database_idx
+          ON market_listings(database_id);
+        ",
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW)?;
     Ok(())
 }
 
@@ -3917,6 +4057,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
     INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
     INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
+    INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3959,6 +4100,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
     INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
     INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
+    INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -4098,6 +4240,12 @@ fn validate_pre_billing_index_schema(conn: &Transaction<'_>) -> Result<(), Strin
     if index_column_exists(conn, "market_entitlements", "expires_at_ms")? {
         return Err(
             "unsupported index schema: stale column market_entitlements.expires_at_ms".to_string(),
+        );
+    }
+    if index_column_exists(conn, "market_listings", "sample_questions_json")? {
+        return Err(
+            "unsupported index schema: stale column market_listings.sample_questions_json"
+                .to_string(),
         );
     }
     Ok(())
@@ -4249,7 +4397,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "llm_summary",
                 "summary_snapshot_revision",
                 "sample_excerpts_json",
-                "sample_questions_json",
                 "tags_json",
                 "price_e8s",
                 "status",
@@ -5464,7 +5611,7 @@ fn load_market_listing_by_id(
     conn.query_row(
         "SELECT listing_id, seller_principal, database_id, title, description,
                 llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                sample_questions_json, tags_json, price_e8s, status, revision,
+                tags_json, price_e8s, status, revision,
                 purchase_count, report_count, created_at_ms, updated_at_ms
          FROM market_listings
          WHERE listing_id = ?1",
@@ -5476,10 +5623,10 @@ fn load_market_listing_by_id(
 }
 
 fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketListing> {
-    let price_e8s: i64 = crate::sqlite::row_get(row, 10)?;
-    let revision: i64 = crate::sqlite::row_get(row, 12)?;
-    let purchase_count: i64 = crate::sqlite::row_get(row, 13)?;
-    let report_count: i64 = crate::sqlite::row_get(row, 14)?;
+    let price_e8s: i64 = crate::sqlite::row_get(row, 9)?;
+    let revision: i64 = crate::sqlite::row_get(row, 11)?;
+    let purchase_count: i64 = crate::sqlite::row_get(row, 12)?;
+    let report_count: i64 = crate::sqlite::row_get(row, 13)?;
     Ok(MarketListing {
         listing_id: crate::sqlite::row_get(row, 0)?,
         seller_principal: crate::sqlite::row_get(row, 1)?,
@@ -5489,19 +5636,18 @@ fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Mar
         llm_summary: crate::sqlite::row_get(row, 5)?,
         summary_snapshot_revision: crate::sqlite::row_get(row, 6)?,
         sample_excerpts_json: crate::sqlite::row_get(row, 7)?,
-        sample_questions_json: crate::sqlite::row_get(row, 8)?,
-        tags_json: crate::sqlite::row_get(row, 9)?,
+        tags_json: crate::sqlite::row_get(row, 8)?,
         price_e8s: u64::try_from(price_e8s)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(10, price_e8s))?,
-        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 11)?)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(9, price_e8s))?,
+        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 10)?)?,
         revision: u64::try_from(revision)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(12, revision))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(11, revision))?,
         purchase_count: u64::try_from(purchase_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(13, purchase_count))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(12, purchase_count))?,
         report_count: u64::try_from(report_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(14, report_count))?,
-        created_at_ms: crate::sqlite::row_get(row, 15)?,
-        updated_at_ms: crate::sqlite::row_get(row, 16)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(13, report_count))?,
+        created_at_ms: crate::sqlite::row_get(row, 14)?,
+        updated_at_ms: crate::sqlite::row_get(row, 15)?,
     })
 }
 
@@ -5560,6 +5706,32 @@ fn market_listing_status_from_db(value: &str) -> crate::sqlite::Result<MarketLis
     }
 }
 
+fn empty_market_listing_detail(listing: MarketListing) -> MarketListingDetail {
+    MarketListingDetail {
+        listing,
+        verified_stats: MarketListingVerifiedStats {
+            total_nodes: 0,
+            wiki_nodes: 0,
+            source_nodes: 0,
+            folder_nodes: 0,
+            markdown_chars: 0,
+            source_chars: 0,
+            link_edges: 0,
+            logical_size_bytes: 0,
+            last_content_updated_at_ms: None,
+        },
+        preview: MarketListingPreview {
+            top_level_paths: Vec::new(),
+            excerpts: Vec::new(),
+            category_graph: MarketCategoryGraph {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+            },
+            preview_stale: true,
+        },
+    }
+}
+
 fn validate_market_create_listing_request(
     request: &MarketCreateListingRequest,
 ) -> Result<(), String> {
@@ -5570,7 +5742,6 @@ fn validate_market_create_listing_request(
         llm_summary: request.llm_summary.as_deref(),
         summary_snapshot_revision: request.summary_snapshot_revision.as_deref(),
         sample_excerpts_json: &request.sample_excerpts_json,
-        sample_questions_json: &request.sample_questions_json,
         tags_json: &request.tags_json,
         price_e8s: request.price_e8s,
     })
@@ -5579,14 +5750,12 @@ fn validate_market_create_listing_request(
 fn validate_market_update_listing_request(
     request: &MarketUpdateListingRequest,
 ) -> Result<(), String> {
-    validate_market_id(&request.listing_id, GENERATED_LISTING_ID_PREFIX)?;
     validate_market_listing_metadata(MarketListingMetadataValidation {
         title: &request.title,
         description: &request.description,
         llm_summary: request.llm_summary.as_deref(),
         summary_snapshot_revision: request.summary_snapshot_revision.as_deref(),
         sample_excerpts_json: &request.sample_excerpts_json,
-        sample_questions_json: &request.sample_questions_json,
         tags_json: &request.tags_json,
         price_e8s: request.price_e8s,
     })
@@ -5598,7 +5767,6 @@ struct MarketListingMetadataValidation<'a> {
     llm_summary: Option<&'a str>,
     summary_snapshot_revision: Option<&'a str>,
     sample_excerpts_json: &'a str,
-    sample_questions_json: &'a str,
     tags_json: &'a str,
     price_e8s: u64,
 }
@@ -5639,18 +5807,63 @@ fn validate_market_listing_metadata(
         0,
         MAX_MARKET_JSON_CHARS,
     )?;
-    validate_market_text(
-        "market listing sample questions",
-        input.sample_questions_json,
-        0,
-        MAX_MARKET_JSON_CHARS,
-    )?;
+    parse_market_preview_excerpts(input.sample_excerpts_json)?;
     validate_market_text(
         "market listing tags",
         input.tags_json,
         0,
         MAX_MARKET_JSON_CHARS,
     )
+}
+
+fn parse_market_preview_excerpts(value: &str) -> Result<Vec<MarketPreviewExcerpt>, String> {
+    let parsed = serde_json::from_str::<Value>(value)
+        .map_err(|error| format!("market listing sample excerpts JSON is invalid: {error}"))?;
+    let Value::Array(items) = parsed else {
+        return Err("market listing sample excerpts must be a JSON array".to_string());
+    };
+    if items.len() > MAX_MARKET_PREVIEW_EXCERPTS {
+        return Err(format!(
+            "market listing sample excerpts must have at most {MAX_MARKET_PREVIEW_EXCERPTS} items"
+        ));
+    }
+    let mut excerpts = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Object(object) = item else {
+            return Err("market listing sample excerpt must be an object".to_string());
+        };
+        let path = market_preview_string_field(&object, "path")?;
+        let etag = market_preview_string_field(&object, "etag")?;
+        let excerpt = market_preview_string_field(&object, "excerpt")?;
+        validate_source_path_for_kind(&path, &NodeKind::File)?;
+        if !path.starts_with("/Wiki/") {
+            return Err("market listing sample excerpt path must be under /Wiki".to_string());
+        }
+        validate_market_text("market listing sample excerpt etag", &etag, 1, 256)?;
+        validate_market_text(
+            "market listing sample excerpt",
+            &excerpt,
+            1,
+            MAX_MARKET_PREVIEW_EXCERPT_CHARS,
+        )?;
+        excerpts.push(MarketPreviewExcerpt {
+            path,
+            etag,
+            excerpt,
+        });
+    }
+    Ok(excerpts)
+}
+
+fn market_preview_string_field(
+    object: &serde_json::Map<String, Value>,
+    field: &str,
+) -> Result<String, String> {
+    object
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| format!("market listing sample excerpt {field} is required"))
 }
 
 fn validate_market_text(
@@ -5667,21 +5880,6 @@ fn validate_market_text(
     }
     if value.chars().any(char::is_control) {
         return Err(format!("{label} may not contain control characters"));
-    }
-    Ok(())
-}
-
-fn validate_market_id(value: &str, prefix: &str) -> Result<(), String> {
-    if !value.starts_with(prefix) {
-        return Err("market id has invalid prefix".to_string());
-    }
-    let suffix = &value[prefix.len()..];
-    if suffix.is_empty()
-        || suffix
-            .chars()
-            .any(|character| !character.is_ascii_lowercase() && !character.is_ascii_digit())
-    {
-        return Err("market id has invalid characters".to_string());
     }
     Ok(())
 }

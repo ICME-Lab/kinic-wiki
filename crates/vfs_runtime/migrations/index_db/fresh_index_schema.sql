@@ -227,7 +227,6 @@ CREATE TABLE market_listings (
   llm_summary TEXT,
   summary_snapshot_revision TEXT,
   sample_excerpts_json TEXT NOT NULL,
-  sample_questions_json TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   price_e8s INTEGER NOT NULL,
   status TEXT NOT NULL,

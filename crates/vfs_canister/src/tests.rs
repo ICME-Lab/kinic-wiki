@@ -259,7 +259,6 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
         llm_summary: None,
         summary_snapshot_revision: None,
         sample_excerpts_json: "[]".to_string(),
-        sample_questions_json: "[]".to_string(),
         tags_json: "[]".to_string(),
         price_e8s,
     }
@@ -1743,7 +1742,6 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     let buyer = Principal::self_authenticating(b"market buyer");
     let database_id;
     let listing_id;
-    let listing_revision;
 
     {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
@@ -1769,9 +1767,9 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         .expect("market database content should write");
         let listing = market_create_listing(market_listing_request(&database_id, 500))
             .expect("listing should create");
+        assert!(!listing.listing_id.starts_with("listing_"));
         let active = market_publish_listing(listing.listing_id).expect("listing should publish");
         listing_id = active.listing_id;
-        listing_revision = active.revision;
     }
 
     {
@@ -1782,7 +1780,6 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         market_purchase_access(MarketPurchaseRequest {
             listing_id: listing_id.clone(),
             price_e8s: 500,
-            expected_revision: listing_revision,
         })
         .expect("buyer should purchase access");
 

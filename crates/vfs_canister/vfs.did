@@ -283,7 +283,6 @@ type MarketCreateListingRequest = record {
   llm_summary : opt text;
   title : text;
   summary_snapshot_revision : opt text;
-  sample_questions_json : text;
   description : text;
   database_id : text;
   price_e8s : nat64;
@@ -308,7 +307,6 @@ type MarketListing = record {
   title : text;
   summary_snapshot_revision : opt text;
   report_count : nat64;
-  sample_questions_json : text;
   description : text;
   updated_at_ms : int64;
   created_at_ms : int64;
@@ -321,11 +319,46 @@ type MarketListing = record {
   sample_excerpts_json : text;
   tags_json : text;
 };
+type MarketCategoryGraph = record {
+  nodes : vec MarketCategoryGraphNode;
+  edges : vec MarketCategoryGraphEdge;
+};
+type MarketCategoryGraphEdge = record {
+  source_category : text;
+  target_category : text;
+  link_count : nat64;
+};
+type MarketCategoryGraphNode = record {
+  node_count : nat64;
+  category : text;
+};
+type MarketListingDetail = record {
+  listing : MarketListing;
+  preview : MarketListingPreview;
+  verified_stats : MarketListingVerifiedStats;
+};
 type MarketListingPage = record {
   listings : vec MarketListing;
   next_cursor : opt text;
 };
+type MarketListingPreview = record {
+  top_level_paths : vec text;
+  excerpts : vec MarketPreviewExcerpt;
+  category_graph : MarketCategoryGraph;
+  preview_stale : bool;
+};
 type MarketListingStatus = variant { Paused; Active; Draft };
+type MarketListingVerifiedStats = record {
+  source_chars : nat64;
+  total_nodes : nat64;
+  logical_size_bytes : nat64;
+  link_edges : nat64;
+  wiki_nodes : nat64;
+  source_nodes : nat64;
+  markdown_chars : nat64;
+  last_content_updated_at_ms : opt int64;
+  folder_nodes : nat64;
+};
 type MarketOrder = record {
   created_at_ms : int64;
   seller_principal : text;
@@ -350,13 +383,16 @@ type MarketPurchasePreview = record {
 type MarketPurchaseRequest = record {
   listing_id : text;
   price_e8s : nat64;
-  expected_revision : nat64;
+};
+type MarketPreviewExcerpt = record {
+  path : text;
+  etag : text;
+  excerpt : text;
 };
 type MarketUpdateListingRequest = record {
   llm_summary : opt text;
   title : text;
   summary_snapshot_revision : opt text;
-  sample_questions_json : text;
   description : text;
   listing_id : text;
   price_e8s : nat64;
@@ -494,6 +530,7 @@ type Result_4 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_40 = variant { Ok : SourceEvidence; Err : text };
 type Result_41 = variant { Ok : vec WriteNodeResult; Err : text };
 type Result_42 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_43 = variant { Ok : MarketListingDetail; Err : text };
 type Result_5 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_6 = variant { Ok : EditNodeResult; Err : text };
 type Result_7 = variant { Ok : ExportSnapshotResponse; Err : text };
@@ -644,7 +681,7 @@ service : (CyclesBillingConfig) -> {
   list_nodes : (ListNodesRequest) -> (Result_21) query;
   market_count_active_entitlements : (text) -> (Result_22) query;
   market_create_listing : (MarketCreateListingRequest) -> (Result_23);
-  market_get_listing : (text) -> (Result_23) query;
+  market_get_listing : (text) -> (Result_43) query;
   market_list_database_listings : (text) -> (Result_24) query;
   market_list_entitlements : (opt text, nat32) -> (Result_25) query;
   market_list_listings : (opt text, nat32) -> (Result_26) query;

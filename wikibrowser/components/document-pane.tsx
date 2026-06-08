@@ -59,10 +59,10 @@ export function DocumentHeader({
     }
   }
   return (
-    <div className="flex min-h-[52px] flex-wrap items-center justify-between gap-2 border-b border-line bg-paper/80 px-5 py-3">
+    <div className="flex min-h-[60px] flex-wrap items-center justify-between gap-2 border-b border-line bg-white px-5 py-3">
       <div className="flex min-w-0 max-w-full items-center gap-2">
         <DocumentHeaderPath canisterId={canisterId} databaseId={databaseId} path={path} />
-        <div className="flex h-10 shrink-0 rounded-xl border border-line bg-white p-1 text-xs">
+        <div className="flex h-10 shrink-0 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a]">
           <button
             aria-label="Copy path"
             className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
@@ -75,13 +75,13 @@ export function DocumentHeader({
         </div>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <div className="flex rounded-xl border border-line bg-white p-1 text-sm">
+        <div className="flex rounded-2xl border border-line bg-white p-1 text-sm shadow-[0_4px_10px_#14142b0a]">
           <ViewButton active={view === "preview"} label="Preview" onClick={() => onViewChange("preview")} />
           <ViewButton active={view === "raw"} label="Raw" onClick={() => onViewChange("raw")} />
           {!isDirectory || canEditDirectory ? <ViewButton active={view === "edit"} label="Edit" onClick={() => onViewChange("edit")} /> : null}
         </div>
         {rawContent !== null ? (
-          <div className="flex h-10 rounded-xl border border-line bg-white p-1 text-xs">
+          <div className="flex h-10 rounded-2xl border border-line bg-white p-1 text-xs shadow-[0_4px_10px_#14142b0a]">
             <button
               aria-label="Copy raw"
               className="inline-flex size-8 items-center justify-center rounded-lg text-muted hover:bg-paper hover:text-ink"
@@ -116,10 +116,10 @@ function DocumentHeaderPath({
 }) {
   const segments = path.split("/").filter(Boolean);
   if (segments.length === 0) {
-    return <div className="flex h-10 w-fit min-w-0 max-w-full items-center rounded-xl border border-line bg-white px-3 font-mono text-xs font-medium text-ink">/</div>;
+    return <div className="flex h-10 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-3 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a]">/</div>;
   }
   return (
-    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-line bg-white px-3 font-mono text-xs" aria-label="Current wiki path">
+    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-3 font-mono text-xs shadow-[0_4px_10px_#14142b0a]" aria-label="Current wiki path">
       {segments.map((segment, index) => {
         const crumbPath = `/${segments.slice(0, index + 1).join("/")}`;
         const last = index === segments.length - 1;
@@ -784,7 +784,7 @@ function ViewButton({ active, label, onClick }: { active: boolean; label: string
   return (
     <button
       type="button"
-      className={`rounded-lg px-3 py-1.5 ${active ? "bg-accent text-white" : "text-muted"}`}
+      className={`rounded-xl px-3 py-1.5 ${active ? "bg-accent text-white" : "text-muted hover:bg-accentSoft hover:text-accentText"}`}
       onClick={onClick}
     >
       {label}

@@ -193,7 +193,6 @@ pub struct MarketListing {
     pub llm_summary: Option<String>,
     pub summary_snapshot_revision: Option<String>,
     pub sample_excerpts_json: String,
-    pub sample_questions_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
     pub status: MarketListingStatus,
@@ -202,6 +201,60 @@ pub struct MarketListing {
     pub report_count: u64,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListingVerifiedStats {
+    pub total_nodes: u64,
+    pub wiki_nodes: u64,
+    pub source_nodes: u64,
+    pub folder_nodes: u64,
+    pub markdown_chars: u64,
+    pub source_chars: u64,
+    pub link_edges: u64,
+    pub logical_size_bytes: u64,
+    pub last_content_updated_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketPreviewExcerpt {
+    pub path: String,
+    pub etag: String,
+    pub excerpt: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketCategoryGraphNode {
+    pub category: String,
+    pub node_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketCategoryGraphEdge {
+    pub source_category: String,
+    pub target_category: String,
+    pub link_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketCategoryGraph {
+    pub nodes: Vec<MarketCategoryGraphNode>,
+    pub edges: Vec<MarketCategoryGraphEdge>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListingPreview {
+    pub top_level_paths: Vec<String>,
+    pub excerpts: Vec<MarketPreviewExcerpt>,
+    pub category_graph: MarketCategoryGraph,
+    pub preview_stale: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct MarketListingDetail {
+    pub listing: MarketListing,
+    pub verified_stats: MarketListingVerifiedStats,
+    pub preview: MarketListingPreview,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -218,7 +271,6 @@ pub struct MarketCreateListingRequest {
     pub llm_summary: Option<String>,
     pub summary_snapshot_revision: Option<String>,
     pub sample_excerpts_json: String,
-    pub sample_questions_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
 }
@@ -232,7 +284,6 @@ pub struct MarketUpdateListingRequest {
     pub llm_summary: Option<String>,
     pub summary_snapshot_revision: Option<String>,
     pub sample_excerpts_json: String,
-    pub sample_questions_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
 }
@@ -241,7 +292,6 @@ pub struct MarketUpdateListingRequest {
 pub struct MarketPurchaseRequest {
     pub listing_id: String,
     pub price_e8s: u64,
-    pub expected_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

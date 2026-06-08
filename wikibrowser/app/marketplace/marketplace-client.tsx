@@ -5,6 +5,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { marketListingPath } from "@/lib/marketplace-routes";
 import type { MarketListing } from "@/lib/types";
 
 type MarketplaceClientProps = {
@@ -86,7 +87,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
           {filtered.map((listing) => (
             <Link
               className="grid min-h-48 gap-3 rounded-lg border border-line bg-white p-4 shadow-[0_8px_24px_#14142b0a] hover:border-accent"
-              href={`/marketplace/${listing.listingId}`}
+              href={marketListingPath(listing.listingId)}
               key={listing.listingId}
             >
               <div className="grid gap-1">

@@ -2,13 +2,13 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { ChangeEvent, FormEvent } from "react";
+import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
+import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, MessageSquareText, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Upload, Wallet, X } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -16,6 +16,25 @@ import { Inspector } from "@/components/inspector";
 import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar
+} from "@/components/ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
@@ -92,7 +111,6 @@ export function WikiBrowser() {
   const [readIdentity, setReadIdentity] = useState<Identity | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [databaseDirectory, setDatabaseDirectory] = useState<DatabaseDirectoryState>(() => emptyDatabaseDirectoryState(""));
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const authPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const databaseDirectoryRequestKey = useMemo(() => `${canisterId}\n${authPrincipal ?? ""}`, [authPrincipal, canisterId]);
   const emptyCurrentDatabaseDirectory = useMemo(() => emptyDatabaseDirectoryState(databaseDirectoryRequestKey), [databaseDirectoryRequestKey]);
@@ -605,201 +623,206 @@ export function WikiBrowser() {
     }
   }
 
+  const explorerActions = tab === "explorer" ? (
+    <ExplorerHeaderActions
+      fileDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
+      folderDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
+      renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
+      moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
+      deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
+      fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
+      folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
+      renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to rename")}
+      moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to move")}
+      deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Wiki Markdown file or folder without visible children to delete")}
+      onNewFile={() => {
+        setExplorerActionError(null);
+        setExplorerActionMode("file");
+        setExplorerDraftName("");
+        setExplorerMoveOpen(false);
+      }}
+      onNewFolder={() => {
+        setExplorerActionError(null);
+        setExplorerActionMode("folder");
+        setExplorerDraftName("");
+        setExplorerMoveOpen(false);
+      }}
+      onRename={() => {
+        if (!explorerMutationTarget) return;
+        setExplorerActionError(null);
+        setExplorerActionMode("rename");
+        setExplorerDraftName(explorerMutationTarget.name);
+        setExplorerMoveOpen(false);
+      }}
+      onMove={() => {
+        if (!explorerMutationTarget) return;
+        setExplorerActionError(null);
+        setExplorerActionMode(null);
+        setExplorerMoveTarget(explorerMoveTargets[0] ?? "/Wiki");
+        setExplorerMoveOpen(true);
+      }}
+      onDelete={() => void runExplorerDelete()}
+    />
+  ) : undefined;
+  const explorerActionPanel = tab === "explorer" && explorerActionMode ? (
+    <ExplorerCreateForm
+      mode={explorerActionMode}
+      directoryPath={explorerCreateDirectory}
+      draftName={explorerDraftName}
+      error={explorerActionError}
+      busy={explorerBusyAction === explorerActionMode}
+      onCancel={() => {
+        setExplorerActionMode(null);
+        setExplorerDraftName("");
+        setExplorerActionError(null);
+      }}
+      onChange={setExplorerDraftName}
+      onSubmit={submitExplorerCreate}
+    />
+  ) : tab === "explorer" && explorerMoveOpen && explorerMutationTarget ? (
+    <ExplorerMoveForm
+      target={explorerMutationTarget}
+      folders={explorerMoveTargets}
+      value={explorerMoveTarget}
+      error={explorerActionError}
+      busy={explorerBusyAction === "move"}
+      onCancel={() => {
+        setExplorerMoveOpen(false);
+        setExplorerActionError(null);
+      }}
+      onChange={setExplorerMoveTarget}
+      onSubmit={() => void runExplorerMove()}
+    />
+  ) : tab === "explorer" && explorerActionError ? (
+    <ExplorerActionError message={explorerActionError} />
+  ) : null;
+
   return (
-    <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
-      <TopBar
+    <SidebarProvider defaultOpen className="min-h-screen bg-canvas text-ink lg:h-screen lg:overflow-hidden">
+      <WikiSidebar
         canisterId={canisterId}
         databaseId={databaseId}
-        authError={authError}
-        principal={authPrincipal}
+        selectedPath={selectedPath}
+        tab={tab}
         query={query}
         searchKind={searchKind}
-        graphDepth={graphDepth}
+        graphCenter={graphCenter}
         isHelpPage={isHelpPage}
         isGraphPage={isGraphPage}
         isSearchPage={isSearchPage}
-        graphCenter={graphCenter}
-        databaseOptions={databaseOptions}
-        currentDatabase={currentDatabase}
-        currentDatabaseName={currentDatabase?.name ?? databaseId}
-        cyclesConfig={cyclesConfig}
-        publicReadable={publicDatabaseIds.has(databaseId)}
-        databaseListError={databaseListError}
-        selectedPath={selectedPath}
-        authReady={Boolean(authClient)}
-        mobileSidebarOpen={mobileSidebarOpen}
-        onLogin={login}
-        onLogout={guardedLogout}
-        onMobileSidebarToggle={() => setMobileSidebarOpen((open) => !open)}
-        canLeaveDirtyEdit={canLeaveDirtyEdit}
-      />
-      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[320px_minmax(0,1fr)]" : "lg:grid-cols-[320px_minmax(0,1fr)_320px]"}`}>
-        <aside
-          id="wiki-mobile-sidebar"
-          data-tid="wiki-explorer-panel"
-          className={`${mobileSidebarOpen ? "order-1 flex" : "hidden"} min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:order-1 lg:flex lg:overflow-hidden`}
-        >
-          <PanelHeader
-            icon={<GitBranch size={15} />}
-            title={tabTitle(tab)}
-            actions={tab === "explorer" ? (
-              <ExplorerHeaderActions
-                fileDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
-                folderDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
-                renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
-                moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
-                deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
-                fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
-                folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
-                renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to rename")}
-                moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to move")}
-                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Wiki Markdown file or folder without visible children to delete")}
-                onNewFile={() => {
-                  setExplorerActionError(null);
-                  setExplorerActionMode("file");
-                  setExplorerDraftName("");
-                  setExplorerMoveOpen(false);
-                }}
-                onNewFolder={() => {
-                  setExplorerActionError(null);
-                  setExplorerActionMode("folder");
-                  setExplorerDraftName("");
-                  setExplorerMoveOpen(false);
-                }}
-                onRename={() => {
-                  if (!explorerMutationTarget) return;
-                  setExplorerActionError(null);
-                  setExplorerActionMode("rename");
-                  setExplorerDraftName(explorerMutationTarget.name);
-                  setExplorerMoveOpen(false);
-                }}
-                onMove={() => {
-                  if (!explorerMutationTarget) return;
-                  setExplorerActionError(null);
-                  setExplorerActionMode(null);
-                  setExplorerMoveTarget(explorerMoveTargets[0] ?? "/Wiki");
-                  setExplorerMoveOpen(true);
-                }}
-                onDelete={() => void runExplorerDelete()}
-              />
-            ) : undefined}
-          />
-          <ModeTabs canisterId={canisterId} databaseId={databaseId} selectedPath={selectedPath} tab={tab} />
-          {tab === "explorer" && explorerActionMode ? (
-            <ExplorerCreateForm
-              mode={explorerActionMode}
-              directoryPath={explorerCreateDirectory}
-              draftName={explorerDraftName}
-              error={explorerActionError}
-              busy={explorerBusyAction === explorerActionMode}
-              onCancel={() => {
-                setExplorerActionMode(null);
-                setExplorerDraftName("");
-                setExplorerActionError(null);
-              }}
-              onChange={setExplorerDraftName}
-              onSubmit={submitExplorerCreate}
-            />
-          ) : tab === "explorer" && explorerMoveOpen && explorerMutationTarget ? (
-            <ExplorerMoveForm
-              target={explorerMutationTarget}
-              folders={explorerMoveTargets}
-              value={explorerMoveTarget}
-              error={explorerActionError}
-              busy={explorerBusyAction === "move"}
-              onCancel={() => {
-                setExplorerMoveOpen(false);
-                setExplorerActionError(null);
-              }}
-              onChange={setExplorerMoveTarget}
-              onSubmit={() => void runExplorerMove()}
-            />
-          ) : tab === "explorer" && explorerActionError ? (
-            <ExplorerActionError message={explorerActionError} />
-          ) : null}
-          <LeftPane
-            tab={tab}
-            canisterId={canisterId}
-            databaseId={databaseId}
-            selectedPath={selectedPath}
-            childNodesCache={childNodesCache}
-            autoExpandExplorer={!(isGraphPage && !graphCenter)}
-            readIdentity={readIdentity}
-            effectiveReadIdentity={effectiveReadIdentity}
-            currentNode={currentNode.data}
-            readIdentityMode={currentReadIdentityMode}
-            databaseCyclesError={currentDatabaseCycleReason}
-            explorerRevision={explorerRevision}
-            onSelectedExplorerNode={rememberSelectedExplorerNode}
-          />
-        </aside>
-        <section data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
-          {isHelpPage ? (
-            <HelpPanel />
-          ) : isGraphPage ? (
-            <GraphPanel canisterId={canisterId} databaseId={databaseId} centerPath={graphCenter} depth={graphDepth} readIdentity={effectiveReadIdentity} />
-          ) : isSearchPage ? (
-            <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} readIdentity={effectiveReadIdentity} />
-          ) : (
-            <>
-              <DocumentHeader
+        actions={explorerActions}
+        actionPanel={explorerActionPanel}
+      >
+        <LeftPane
+          tab={tab}
+          canisterId={canisterId}
+          databaseId={databaseId}
+          selectedPath={selectedPath}
+          childNodesCache={childNodesCache}
+          autoExpandExplorer={!(isGraphPage && !graphCenter)}
+          readIdentity={readIdentity}
+          effectiveReadIdentity={effectiveReadIdentity}
+          currentNode={currentNode.data}
+          readIdentityMode={currentReadIdentityMode}
+          databaseCyclesError={currentDatabaseCycleReason}
+          explorerRevision={explorerRevision}
+          onSelectedExplorerNode={rememberSelectedExplorerNode}
+        />
+      </WikiSidebar>
+      <SidebarInset className="min-h-screen bg-canvas lg:h-screen lg:overflow-hidden">
+        <TopBar
+          canisterId={canisterId}
+          databaseId={databaseId}
+          authError={authError}
+          principal={authPrincipal}
+          query={query}
+          searchKind={searchKind}
+          graphDepth={graphDepth}
+          isHelpPage={isHelpPage}
+          isGraphPage={isGraphPage}
+          isSearchPage={isSearchPage}
+          graphCenter={graphCenter}
+          databaseOptions={databaseOptions}
+          currentDatabase={currentDatabase}
+          currentDatabaseName={currentDatabase?.name ?? databaseId}
+          cyclesConfig={cyclesConfig}
+          publicReadable={publicDatabaseIds.has(databaseId)}
+          databaseListError={databaseListError}
+          selectedPath={selectedPath}
+          authReady={Boolean(authClient)}
+          onLogin={login}
+          onLogout={guardedLogout}
+          canLeaveDirtyEdit={canLeaveDirtyEdit}
+        />
+        <section className={`grid min-h-0 flex-1 grid-cols-1 gap-3 bg-paper p-3 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1fr)_320px]"}`}>
+          <section data-tid="wiki-document-panel" className="order-1 flex min-h-0 flex-col rounded-[20px] border border-line bg-white shadow-[0_4px_10px_#14142b0a] lg:overflow-hidden">
+            {isHelpPage ? (
+              <HelpPanel />
+            ) : isGraphPage ? (
+              <GraphPanel canisterId={canisterId} databaseId={databaseId} centerPath={graphCenter} depth={graphDepth} readIdentity={effectiveReadIdentity} />
+            ) : isSearchPage ? (
+              <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} readIdentity={effectiveReadIdentity} />
+            ) : (
+              <>
+                <DocumentHeader
+                  canisterId={canisterId}
+                  databaseId={databaseId}
+                  path={selectedPath}
+                  view={view}
+                  editState={activeEditState}
+                  rawContent={currentNode.data?.kind === "file" ? currentNode.data.content : null}
+                  onViewChange={(nextView) => {
+                    if (nextView !== "edit" && !canLeaveDirtyEdit()) {
+                      return;
+                    }
+                    router.replace(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab));
+                  }}
+                  isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
+                  canEditDirectory={currentNode.data?.kind === "folder" && isWikiPath(selectedPath)}
+                />
+                <DocumentPane
+                  node={currentNode}
+                  folderIndexNode={currentFolderIndexNode}
+                  childrenState={currentChildren}
+                  view={view}
+                  canisterId={canisterId}
+                  databaseId={databaseId}
+                  authPrompt={authPrompt}
+                  onLogin={login}
+                  authReady={Boolean(authClient)}
+                  writeIdentity={readIdentity}
+                  currentDatabaseRole={currentDatabaseRole}
+                  databaseRoleError={readIdentity && !currentDatabaseRole ? databaseListError : null}
+                  databaseCyclesError={currentDatabaseCycleReason}
+                  onNodeSaved={refreshSelectedNodeContext}
+                  onFolderIndexSaved={refreshSelectedFolderIndex}
+                  onEditStateChange={setEditState}
+                  tab={tab}
+                />
+              </>
+            )}
+          </section>
+          {!isSearchPage && !isGraphPage && !isHelpPage ? (
+            <aside data-tid="wiki-inspector-panel" className="order-2 hidden min-h-0 flex-col rounded-[20px] border border-line bg-white shadow-[0_4px_10px_#14142b0a] lg:flex lg:overflow-hidden">
+              <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
+              <Inspector
                 canisterId={canisterId}
                 databaseId={databaseId}
+                databaseName={currentDatabase?.name ?? databaseId}
                 path={selectedPath}
-                view={view}
-                editState={activeEditState}
-                rawContent={currentNode.data?.kind === "file" ? currentNode.data.content : null}
-                onViewChange={(nextView) => {
-                  if (nextView !== "edit" && !canLeaveDirtyEdit()) {
-                    return;
-                  }
-                  router.replace(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab));
-                }}
-                isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
-                canEditDirectory={currentNode.data?.kind === "folder" && isWikiPath(selectedPath)}
+                node={currentNode.data}
+                childNodes={currentChildren.data ?? []}
+                noteRole={noteRole}
+                incomingLinks={currentNodeContext.data?.incomingLinks ?? null}
+                incomingError={currentNodeContext.error}
+                outgoingLinks={currentNodeContext.data?.outgoingLinks ?? []}
+                readIdentity={effectiveReadIdentity}
               />
-              <DocumentPane
-                node={currentNode}
-                folderIndexNode={currentFolderIndexNode}
-                childrenState={currentChildren}
-                view={view}
-                canisterId={canisterId}
-                databaseId={databaseId}
-                authPrompt={authPrompt}
-                onLogin={login}
-                authReady={Boolean(authClient)}
-                writeIdentity={readIdentity}
-                currentDatabaseRole={currentDatabaseRole}
-                databaseRoleError={readIdentity && !currentDatabaseRole ? databaseListError : null}
-                databaseCyclesError={currentDatabaseCycleReason}
-                onNodeSaved={refreshSelectedNodeContext}
-                onFolderIndexSaved={refreshSelectedFolderIndex}
-                onEditStateChange={setEditState}
-                tab={tab}
-              />
-            </>
-          )}
+            </aside>
+          ) : null}
         </section>
-        {!isSearchPage && !isGraphPage && !isHelpPage ? (
-          <aside data-tid="wiki-inspector-panel" className="order-3 hidden min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:flex lg:overflow-hidden">
-            <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
-            <Inspector
-              canisterId={canisterId}
-              databaseId={databaseId}
-              databaseName={currentDatabase?.name ?? databaseId}
-              path={selectedPath}
-              node={currentNode.data}
-              childNodes={currentChildren.data ?? []}
-              noteRole={noteRole}
-              incomingLinks={currentNodeContext.data?.incomingLinks ?? null}
-              incomingError={currentNodeContext.error}
-              outgoingLinks={currentNodeContext.data?.outgoingLinks ?? []}
-              readIdentity={effectiveReadIdentity}
-            />
-          </aside>
-        ) : null}
-      </section>
-    </main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
 
@@ -870,6 +893,168 @@ function LeftPane({
   );
 }
 
+function WikiSidebar({
+  canisterId,
+  databaseId,
+  selectedPath,
+  tab,
+  query,
+  searchKind,
+  graphCenter,
+  isHelpPage,
+  isGraphPage,
+  isSearchPage,
+  actions,
+  actionPanel,
+  children
+}: {
+  canisterId: string;
+  databaseId: string;
+  selectedPath: string;
+  tab: ModeTab;
+  query: string;
+  searchKind: "path" | "full";
+  graphCenter: string | null;
+  isHelpPage: boolean;
+  isGraphPage: boolean;
+  isSearchPage: boolean;
+  actions?: ReactNode;
+  actionPanel: ReactNode;
+  children: ReactNode;
+}) {
+  const graphLinkCenter = isGraphPage ? graphCenter ?? "/Wiki" : selectedPath;
+  const items = [
+    {
+      key: "explorer",
+      href: hrefForPath(canisterId, databaseId, selectedPath, undefined, "explorer"),
+      label: "Explore",
+      icon: <GitBranch size={20} aria-hidden />,
+      active: !isSearchPage && !isGraphPage && !isHelpPage && tab === "explorer"
+    },
+    {
+      key: "search",
+      href: hrefForSearch(canisterId, databaseId, query, searchKind),
+      label: "Search",
+      icon: <Search size={20} aria-hidden />,
+      active: isSearchPage
+    },
+    {
+      key: "graph",
+      href: isGraphPage ? hrefForPath(canisterId, databaseId, graphLinkCenter) : hrefForGraph(canisterId, databaseId, graphLinkCenter),
+      label: "Graph",
+      icon: <Network size={20} aria-hidden />,
+      active: isGraphPage
+    },
+    {
+      key: "query",
+      href: hrefForPath(canisterId, databaseId, selectedPath, undefined, "query"),
+      label: "Query",
+      icon: <MessageSquareText size={20} aria-hidden />,
+      active: !isSearchPage && !isGraphPage && !isHelpPage && tab === "query"
+    },
+    {
+      key: "ingest",
+      href: hrefForPath(canisterId, databaseId, selectedPath, undefined, "ingest"),
+      label: "Ingest",
+      icon: <Upload size={20} aria-hidden />,
+      active: !isSearchPage && !isGraphPage && !isHelpPage && tab === "ingest"
+    },
+    {
+      key: "help",
+      href: isHelpPage ? hrefForPath(canisterId, databaseId, "/Wiki") : hrefForHelp(canisterId, databaseId),
+      label: "Help",
+      icon: <HelpCircle size={20} aria-hidden />,
+      active: isHelpPage
+    }
+  ];
+
+  return (
+    <Sidebar collapsible="icon" className="border-line bg-paper" data-tid="wiki-app-sidebar">
+      <SidebarHeader className="gap-3 border-b border-line bg-white/80 p-3">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild size="lg" tooltip="Dashboard" className="h-12 rounded-xl hover:bg-accentSoft hover:text-accentText data-[active=true]:bg-accent data-[active=true]:text-white">
+              <SidebarNavLink href="/dashboard" aria-label="Dashboard">
+                <Image className="h-7 w-7 rounded-lg" src="/icon.png" alt="" width={28} height={28} unoptimized />
+                <span className="font-semibold">Kinic Wiki</span>
+              </SidebarNavLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        <div className="grid gap-1 px-2 group-data-[collapsible=icon]:hidden">
+          <div className="h-0.5 rounded-full bg-accentSoft" />
+          <div className="h-0.5 w-4/5 rounded-full bg-accentLine" />
+          <div className="h-0.5 w-3/5 rounded-full bg-accent" />
+        </div>
+      </SidebarHeader>
+      <SidebarContent className="bg-paper">
+        <SidebarGroup>
+          <SidebarGroupLabel>Views</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map((item) => (
+                <SidebarMenuItem key={item.key}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={item.active}
+                    tooltip={item.label}
+                    className="rounded-xl text-muted hover:bg-accentSoft hover:text-accentText data-[active=true]:bg-accent data-[active=true]:text-white"
+                  >
+                    <SidebarNavLink href={item.href} aria-current={item.active ? "page" : undefined}>
+                      {item.icon}
+                      <span>{item.label}</span>
+                    </SidebarNavLink>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup className="min-h-0 flex-1 group-data-[collapsible=icon]:hidden">
+          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
+          <SidebarGroupContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-line bg-white shadow-[0_4px_10px_#14142b0a]" data-tid="wiki-explorer-panel">
+            <PanelHeader icon={<GitBranch size={15} />} title={tabTitle(tab)} actions={actions} />
+            <ModeTabs canisterId={canisterId} databaseId={databaseId} selectedPath={selectedPath} tab={tab} />
+            {actionPanel}
+            {children}
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter className="border-t border-line bg-white/80 p-3">
+        <Separator className="bg-line group-data-[collapsible=icon]:hidden" />
+        <p className="px-2 font-mono text-[10px] uppercase text-muted group-data-[collapsible=icon]:hidden">Canister-backed memory</p>
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
+
+function SidebarNavLink({
+  children,
+  href,
+  ...props
+}: {
+  children: ReactNode;
+  href: string;
+  "aria-current"?: "page";
+  "aria-label"?: string;
+}) {
+  const { setOpenMobile } = useSidebar();
+  return (
+    <Link
+      href={href}
+      onPointerDown={() => {
+        setOpenMobile(false);
+      }}
+      onClick={() => {
+        setOpenMobile(false);
+      }}
+      {...props}
+    >
+      {children}
+    </Link>
+  );
+}
+
 function ExplorerHeaderActions({
   fileDisabled,
   folderDisabled,
@@ -905,57 +1090,87 @@ function ExplorerHeaderActions({
 }) {
   return (
     <div className="flex items-center gap-1">
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      <ExplorerActionButton
         onClick={onNewFile}
         disabled={fileDisabled}
         title={fileTitle}
         aria-label="New Markdown file"
       >
         <FilePlus size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onNewFolder}
         disabled={folderDisabled}
         title={folderTitle}
         aria-label="New folder"
       >
         <FolderPlus size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onRename}
         disabled={renameDisabled}
         title={renameTitle}
         aria-label="Rename selected node"
       >
         <Pencil size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onMove}
         disabled={moveDisabled}
         title={moveTitle}
         aria-label="Move selected node"
       >
         <MoveRight size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onDelete}
         disabled={deleteDisabled}
         title={deleteTitle}
         aria-label="Delete selected Markdown file"
+        danger
       >
         <Trash2 size={15} />
-      </button>
+      </ExplorerActionButton>
     </div>
+  );
+}
+
+function ExplorerActionButton({
+  children,
+  danger = false,
+  disabled,
+  title,
+  onClick,
+  "aria-label": ariaLabel
+}: {
+  children: ReactNode;
+  danger?: boolean;
+  disabled: boolean;
+  title: string;
+  onClick: () => void;
+  "aria-label": string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 rounded-xl text-muted disabled:cursor-not-allowed disabled:opacity-40 ${danger ? "hover:bg-red-50 hover:text-red-700" : "hover:bg-accentSoft hover:text-accentText"}`}
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={ariaLabel}
+          >
+            {children}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        <p>{title}</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -1243,10 +1458,8 @@ function TopBar({
   databaseListError,
   selectedPath,
   authReady,
-  mobileSidebarOpen,
   onLogin,
   onLogout,
-  onMobileSidebarToggle,
   canLeaveDirtyEdit
 }: {
   canisterId: string;
@@ -1268,10 +1481,8 @@ function TopBar({
   databaseListError: string | null;
   selectedPath: string;
   authReady: boolean;
-  mobileSidebarOpen: boolean;
   onLogin: () => void;
   onLogout: () => void;
-  onMobileSidebarToggle: () => void;
   canLeaveDirtyEdit: () => boolean;
 }) {
   const router = useRouter();
@@ -1299,21 +1510,11 @@ function TopBar({
   }
 
   return (
-    <header className="grid min-h-[52px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-paper/80 px-3 py-2 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-4">
+    <header className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-white/90 px-3 py-3 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className={`inline-flex items-center justify-center rounded-lg border p-2 lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
-          aria-controls="wiki-mobile-sidebar"
-          aria-expanded={mobileSidebarOpen}
-          aria-label="Toggle Explorer tabs"
-          data-tid="mobile-sidebar-toggle"
-          onClick={onMobileSidebarToggle}
-        >
-          <Menu size={18} aria-hidden />
-        </button>
+        <SidebarTrigger className="h-10 w-10 rounded-2xl border border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white" data-tid="mobile-sidebar-toggle" />
         <Link
-          className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-semibold leading-tight text-ink no-underline hover:border-accent"
+          className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm font-semibold leading-tight text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
           href="/dashboard"
           aria-label="Back to database dashboard"
         >
@@ -1326,7 +1527,7 @@ function TopBar({
           </label>
           <select
             id="database-switcher"
-            className="w-[132px] rounded-lg border border-line bg-white px-2 py-1.5 font-mono text-xs text-ink outline-none sm:w-[180px]"
+            className="h-10 w-[132px] rounded-2xl border border-line bg-white px-3 py-2 font-mono text-xs text-ink shadow-[0_4px_10px_#14142b0a] outline-none focus:border-accent sm:w-[180px]"
             value={databaseId}
             onChange={switchDatabase}
             aria-label="Switch database"
@@ -1347,7 +1548,7 @@ function TopBar({
         {publicReadable ? (
           <a
             aria-label={`Share ${currentDatabaseName} on X`}
-            className={`${HEADER_ICON_LINK_CLASS} border-line bg-white text-ink hover:border-accent hover:bg-accentSoft`}
+            className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
             href={xShareDatabaseHref({ databaseId, databaseName: currentDatabaseName })}
             rel="noreferrer"
             target="_blank"
@@ -1358,7 +1559,7 @@ function TopBar({
           </a>
         ) : null}
         <Link
-          className={`${HEADER_ICON_LINK_CLASS} ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           href={isHelpPage ? hrefForPath(canisterId, databaseId, "/Wiki") : hrefForHelp(canisterId, databaseId)}
           aria-label="Help"
           title={isHelpPage ? "Close help" : "Help"}
@@ -1367,7 +1568,7 @@ function TopBar({
           <span className="sr-only sm:not-sr-only">Help</span>
         </Link>
         <Link
-          className={`${HEADER_ICON_LINK_CLASS} ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           href={graphHref}
           aria-label="Graph"
           title={isGraphPage ? "Close graph" : "Graph"}
@@ -1377,11 +1578,11 @@ function TopBar({
         </Link>
         <DatabaseCyclesBadge cycles={cycles} database={currentDatabase} />
         {principal ? (
-          <button className="ml-auto rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink lg:ml-0" type="button" onClick={onLogout}>
+          <Button className="ml-auto rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white lg:ml-0" variant="outline" type="button" onClick={onLogout}>
             Logout
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             className="ml-auto rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60 lg:ml-0"
             data-tid="header-login-button"
             disabled={!authReady}
@@ -1389,7 +1590,7 @@ function TopBar({
             onClick={onLogin}
           >
             Login
-          </button>
+          </Button>
         )}
       </div>
     </header>
@@ -1510,8 +1711,8 @@ function HeaderSearch({
   }
 
   return (
-    <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1.5 text-sm sm:basis-[360px] sm:gap-2 lg:max-w-[720px]" onSubmit={submitSearch}>
-      <div className="flex shrink-0 rounded-lg border border-line bg-paper p-1 text-xs">
+    <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-[20px] border border-line bg-white px-2 py-1.5 text-sm shadow-[0_4px_10px_#14142b0a] sm:basis-[360px] sm:gap-2 lg:max-w-[560px]" onSubmit={submitSearch}>
+      <div className="flex shrink-0 rounded-2xl border border-line bg-paper p-1 text-xs">
         <SearchKindButton active={kind === "path"} label="Path" onClick={() => setDraft({ key: draftKey, text, kind: "path" })} />
         <SearchKindButton active={kind === "full"} label="Full text" onClick={() => setDraft({ key: draftKey, text, kind: "full" })} />
       </div>
@@ -1523,10 +1724,10 @@ function HeaderSearch({
         placeholder="Search wiki"
         aria-label="Search wiki"
       />
-      <button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
+      <Button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
         <Search size={15} aria-hidden />
         <span className="sr-only sm:not-sr-only">Search</span>
-      </button>
+      </Button>
     </form>
   );
 }
@@ -1535,7 +1736,7 @@ function SearchKindButton({ active, label, onClick }: { active: boolean; label: 
   return (
     <button
       type="button"
-      className={`rounded-md px-2 py-1 ${active ? "bg-white text-accentText shadow-sm" : "text-muted hover:text-accentText"}`}
+      className={`rounded-xl px-2 py-1 ${active ? "bg-white text-accentText shadow-sm" : "text-muted hover:text-accentText"}`}
       onClick={onClick}
     >
       {label}
@@ -1555,13 +1756,13 @@ function ModeTabs({
   tab: ModeTab;
 }) {
   return (
-    <nav className="border-b border-line px-3 py-2" aria-label="Left sidebar mode">
-      <div className="grid grid-cols-3 gap-1 rounded-xl border border-line bg-white p-1 text-center text-xs">
+    <nav className="border-b border-line bg-white px-3 py-2" aria-label="Left sidebar mode">
+      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-xs">
         {SIDEBAR_TABS.map((value) => (
           <Link
             key={value}
             href={hrefForPath(canisterId, databaseId, selectedPath, undefined, value)}
-            className={`rounded-lg px-1.5 py-1.5 no-underline ${tab === value ? "bg-accent text-white" : "text-muted hover:bg-accentSoft hover:text-accentText"}`}
+            className={`rounded-xl px-1.5 py-1.5 no-underline ${tab === value ? "bg-accent text-white" : "text-muted hover:bg-white hover:text-accentText"}`}
           >
             {tabLabel(value)}
           </Link>

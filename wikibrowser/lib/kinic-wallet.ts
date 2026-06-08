@@ -48,7 +48,6 @@ type MarketPurchaseRequest = {
   canisterId: string;
   listingId: string;
   priceE8s: bigint;
-  expectedRevision: bigint;
 };
 
 type MarketPurchaseResult = {
@@ -71,7 +70,6 @@ type KinicDepositCanisterRequest = {
 type MarketPurchaseCanisterRequest = {
   listing_id: string;
   price_e8s: bigint;
-  expected_revision: bigint;
 };
 
 export class KinicAfterApproveError extends Error {
@@ -767,8 +765,7 @@ function encodeKinicDepositArgs(request: KinicDepositCanisterRequest): string {
 function encodeMarketPurchaseArgs(request: MarketPurchaseCanisterRequest): string {
   const PurchaseRequest = IDL.Record({
     listing_id: IDL.Text,
-    price_e8s: IDL.Nat64,
-    expected_revision: IDL.Nat64
+    price_e8s: IDL.Nat64
   });
   return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
 }
@@ -955,8 +952,7 @@ function marketPurchaseResultType() {
 function rawMarketPurchaseRequest(request: MarketPurchaseRequest): MarketPurchaseCanisterRequest {
   return {
     listing_id: request.listingId,
-    price_e8s: request.priceE8s,
-    expected_revision: request.expectedRevision
+    price_e8s: request.priceE8s
   };
 }
 

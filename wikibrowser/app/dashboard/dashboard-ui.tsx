@@ -306,13 +306,11 @@ function MarketListingsPanel(props: {
     event.preventDefault();
     if (submitDisabled || !priceE8s) return;
     const base = {
-      databaseId: props.databaseId,
       title: title.trim(),
       description: description.trim(),
       llmSummary: null,
       summarySnapshotRevision: null,
       sampleExcerptsJson: "[]",
-      sampleQuestionsJson: "[]",
       tagsJson: tagsJsonFromInput(tags),
       priceE8s
     };
@@ -323,7 +321,10 @@ function MarketListingsPanel(props: {
         expectedRevision: selected.revision
       });
     } else {
-      props.onCreate(base);
+      props.onCreate({
+        ...base,
+        databaseId: props.databaseId
+      });
     }
   }
 

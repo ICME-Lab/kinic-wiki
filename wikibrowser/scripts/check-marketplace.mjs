@@ -12,6 +12,7 @@ const appHeader = readFileSync(new URL("../app/app-header.tsx", import.meta.url)
 const listingDetail = readFileSync(new URL("../app/marketplace/[listingId]/listing-detail-client.tsx", import.meta.url), "utf8");
 const marketplace = readFileSync(new URL("../app/marketplace/marketplace-client.tsx", import.meta.url), "utf8");
 const kinicDeposit = await importTs("../lib/kinic-deposit.ts");
+const marketplaceRoutes = await importTs("../lib/marketplace-routes.ts");
 
 assert.match(appHeader, /depositKinicBalanceWithIdentity/);
 assert.match(appHeader, /authClient\.getIdentity\(\)/);
@@ -24,17 +25,29 @@ assert.doesNotMatch(appHeader, /depositKinicBalanceWithOisy|depositKinicBalanceW
 assert.doesNotMatch(appHeader, /Connect OISY or Plug first/);
 
 assert.match(listingDetail, /marketPurchaseAccess/);
+assert.match(listingDetail, /marketPurchaseAccess\(canisterId, identity, listing\.listingId, listing\.priceE8s\)/);
 assert.match(listingDetail, /refreshKinicBalance/);
 assert.match(listingDetail, /hrefForPath\(canisterId, listing\.databaseId, "\/Wiki"\)/);
 assert.match(listingDetail, /Open database/);
+assert.match(listingDetail, /Verified stats/);
+assert.match(listingDetail, /Contents sample/);
+assert.match(listingDetail, /Relationship graph/);
+assert.match(listingDetail, /Sample excerpts/);
 assert.match(listingDetail, /Login with Internet Identity first/);
+assert.doesNotMatch(listingDetail, /Questions/);
+assert.doesNotMatch(listingDetail, /sampleQuestionsJson|sample_questions_json/);
 assert.doesNotMatch(listingDetail, /kinicGetBalance/);
 assert.doesNotMatch(listingDetail, /purchaseMarketAccessWithOisy|purchaseMarketAccessWithPlug|marketPreviewPurchase/);
+assert.doesNotMatch(listingDetail, /revision \{listing\.revision\}/);
 
 assert.match(marketplace, /Filter loaded listings/);
 assert.match(marketplace, /loaded listings/);
+assert.match(marketplace, /marketListingPath\(listing\.listingId\)/);
 assert.doesNotMatch(marketplace, /\/kinic\/wallet/);
+assert.doesNotMatch(marketplace, /href=\{`\/marketplace\/\$\{listing\.listingId\}`\}/);
 assert.doesNotMatch(marketplace, /placeholder="Search"/);
+
+assert.equal(marketplaceRoutes.marketListingPath("ftjtrdothm6fauh"), "/marketplace/ftjtrdothm6fauh");
 
 assert.equal(kinicDeposit.parseDepositAmount("1"), "100000000");
 assert.equal(kinicDeposit.parseDepositAmount("0.00000001"), "1");

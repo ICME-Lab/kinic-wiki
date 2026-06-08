@@ -51,14 +51,14 @@ use vfs_types::{
     KinicDepositRequest, KinicDepositResult, KinicFundDatabaseCyclesRequest,
     KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
-    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
+    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -930,7 +930,7 @@ fn market_list_database_listings(database_id: String) -> Result<Vec<MarketListin
 }
 
 #[query]
-fn market_get_listing(listing_id: String) -> Result<MarketListing, String> {
+fn market_get_listing(listing_id: String) -> Result<MarketListingDetail, String> {
     with_service(|service| service.market_get_listing(&caller_text(), &listing_id))
 }
 
