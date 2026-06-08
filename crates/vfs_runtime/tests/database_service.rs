@@ -4856,7 +4856,7 @@ fn market_listing_detail_returns_verified_preview() {
     assert_eq!(detail.verified_stats.link_edges, 1);
     assert_eq!(detail.preview.excerpts.len(), 1);
     assert_eq!(detail.preview.excerpts[0].excerpt, "paid insight links");
-    assert_eq!(detail.preview.preview_stale, false);
+    assert!(!detail.preview.preview_stale);
     assert!(
         detail
             .preview
@@ -4906,7 +4906,7 @@ fn market_listing_detail_returns_verified_preview() {
         .market_get_listing("2vxsx-fae", &listing.listing_id)
         .expect("anonymous should still read stale public listing preview");
     assert!(stale_detail.preview.excerpts.is_empty());
-    assert_eq!(stale_detail.preview.preview_stale, true);
+    assert!(stale_detail.preview.preview_stale);
 }
 
 #[test]

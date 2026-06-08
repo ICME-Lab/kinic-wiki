@@ -167,10 +167,15 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     [clearWallet, wallet, walletBusyProvider, walletControlsLocked]
   );
 
-  const syncAuth = useCallback(async (client: AuthClient) => {
-    const authenticated = await client.isAuthenticated();
-    setPrincipal(authenticated ? client.getIdentity().getPrincipal().toText() : null);
-  }, []);
+  const syncAuth = useCallback(
+    async (client: AuthClient) => {
+      const authenticated = await client.isAuthenticated();
+      const nextPrincipal = authenticated ? client.getIdentity().getPrincipal().toText() : null;
+      setPrincipal(nextPrincipal);
+      if (!nextPrincipal) clearKinicBalance();
+    },
+    [clearKinicBalance]
+  );
 
   const login = useCallback(async () => {
     if (!authClient) return;
@@ -229,10 +234,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, [syncAuth]);
 
   useEffect(() => {
-    if (!authClient || !principal) {
-      clearKinicBalance();
-      return;
-    }
+    if (!authClient || !principal) return;
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
@@ -241,7 +243,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [authClient, clearKinicBalance, principal, refreshKinicBalance]);
+  }, [authClient, principal, refreshKinicBalance]);
 
   useEffect(() => {
     if (!wallet) return;
