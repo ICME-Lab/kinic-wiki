@@ -1453,7 +1453,8 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
       logicalSizeBytes: "0",
       cyclesBalance: "0",
       cyclesSuspendedAtMs: null,
-      archivedAtMs: null
+      archivedAtMs: null,
+      deletedAtMs: null
     },
     ...databases
   ];

@@ -143,8 +143,8 @@ pnpm smoke:errors -- --base-url http://127.0.0.1:3000 --database-id <database-id
 
 ## Candid Surface
 
-`lib/vfs-idl.ts` is a small hand-written subset of `crates/vfs_canister/vfs.did`.
-Run `pnpm test` whenever the canister interface changes.
+`lib/vfs-idl.ts` is a small generated subset of the checked-in VFS canister Candid at `crates/vfs_canister/vfs.did`.
+Run `pnpm test` after canister interface changes so the drift check verifies the generated subset.
 
 Covered methods:
 

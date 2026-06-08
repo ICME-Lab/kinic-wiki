@@ -9,7 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
-  DatabaseStatus: { kind: "variant", fields: { Pending: "null", Active: "null", Restoring: "null", Archiving: "null", Archived: "null" } },
+  DatabaseStatus: { kind: "variant", fields: { Active: "null", Pending: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
   DatabaseSummary: {
     kind: "record",
     fields: {
@@ -20,7 +20,8 @@ const expectedTypes = {
       database_id: "text",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
-      archived_at_ms: "opt int64"
+      archived_at_ms: "opt int64",
+      deleted_at_ms: "opt int64"
     }
   },
   CyclesBillingConfig: {

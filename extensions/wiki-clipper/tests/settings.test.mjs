@@ -264,6 +264,7 @@ function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSu
     logical_size_bytes: 0n,
     cycles_balance: [cyclesBalance],
     cycles_suspended_at_ms: cyclesSuspendedAtMs === null ? [] : [cyclesSuspendedAtMs],
-    archived_at_ms: []
+    archived_at_ms: [],
+    deleted_at_ms: []
   };
 }

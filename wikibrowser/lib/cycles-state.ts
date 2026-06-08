@@ -125,8 +125,10 @@ export function formatCycles(value: bigint): string {
 }
 
 function databaseStatusLabel(status: DatabaseSummary["status"]): string {
+  if (status === "active") return "Active";
   if (status === "restoring") return "Restoring";
   if (status === "archiving") return "Archiving";
   if (status === "archived") return "Archived";
+  if (status === "deleted") return "Deleted";
   return "Pending";
 }

@@ -26,16 +26,18 @@ pub struct DatabaseMember {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum DatabaseStatus {
-    #[serde(alias = "Pending")]
-    Pending,
     #[serde(alias = "Active")]
     Active,
+    #[serde(alias = "Pending")]
+    Pending,
+    #[serde(alias = "Restoring")]
+    Restoring,
     #[serde(alias = "Archiving")]
     Archiving,
     #[serde(alias = "Archived")]
     Archived,
-    #[serde(alias = "Restoring")]
-    Restoring,
+    #[serde(alias = "Deleted")]
+    Deleted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -60,6 +62,7 @@ pub struct DatabaseSummary {
     pub cycles_balance: Option<u64>,
     pub cycles_suspended_at_ms: Option<i64>,
     pub archived_at_ms: Option<i64>,
+    pub deleted_at_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

@@ -1,21 +1,27 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { expectedMethods, expectedTypes } from "./candid-shapes.mjs";
+import { didTypeAliases, expectedMethods, expectedTypes } from "./candid-shapes.mjs";
 import { generateVfsIdlFromDid } from "./generate-vfs-idl.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, "..", "..");
+const did = readFileSync(join(root, "crates", "vfs_canister", "vfs.did"), "utf8");
 const idl = readFileSync(join(here, "..", "lib", "vfs-idl.ts"), "utf8");
 
+const didTypes = parseDidTypes(did);
+const didMethods = parseDidMethods(did);
 const idlTypes = parseIdlTypes(idl);
 const idlMethods = parseIdlMethods(idl);
 const failures = [];
 
 for (const [name, shape] of Object.entries(expectedTypes)) {
+  compareShape(`vfs.did type ${name}`, didTypes[didTypeAliases[name] ?? name], shape);
   compareShape(`vfs-idl.ts type ${name}`, idlTypes[name], shape);
 }
 
 for (const [name, shape] of Object.entries(expectedMethods)) {
+  compareMethod(`vfs.did method ${name}`, didMethods[name], shape);
   compareMethod(`vfs-idl.ts method ${name}`, idlMethods[name], shape);
 }
 
@@ -26,9 +32,9 @@ for (const name of Object.keys(idlMethods)) {
 }
 
 try {
-  const generated = generateVfsIdlFromDid();
+  const generated = generateVfsIdlFromDid(did);
   if (idl !== generated) {
-    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from scripts/candid-shapes.mjs; run node scripts/generate-vfs-idl.mjs");
+    failures.push("wikibrowser/lib/vfs-idl.ts is not generated from crates/vfs_canister/vfs.did; run node scripts/generate-vfs-idl.mjs");
   }
 } catch (error) {
   failures.push(error instanceof Error ? error.message : String(error));
@@ -40,6 +46,44 @@ if (failures.length > 0) {
 }
 
 console.log(`Candid subset shape OK: ${Object.keys(expectedMethods).join(", ")}`);
+
+function parseDidTypes(source) {
+  const types = {};
+  for (const match of source.matchAll(/^type\s+(\w+)\s*=\s*(record|variant)\s*\{([^]*?)\};/gm)) {
+    const [, name, kind, body] = match;
+    types[name] = kind === "record" ? { kind, fields: parseDidFields(body) } : { kind, cases: parseDidFields(body) };
+  }
+  return types;
+}
+
+function parseDidFields(body) {
+  const fields = {};
+  for (const raw of body.split(";")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const match = line.match(/^"?(\w+)"?\s*(?::\s*(.+))?$/);
+    if (!match) continue;
+    fields[match[1]] = normalizeShape(match[2] ?? "null");
+  }
+  return fields;
+}
+
+function parseDidMethods(source) {
+  const service = source.match(/service\s*:\s*\([^)]*\)\s*->\s*\{([^]*?)\n\}/m)?.[1] ?? "";
+  const methods = {};
+  for (const raw of service.split(";")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const match = line.match(/^(\w+)\s*:\s*\(([^)]*)\)\s*->\s*\(([^)]*)\)(?:\s+(\w+))?$/);
+    if (!match) continue;
+    methods[match[1]] = {
+      input: splitShapes(match[2]),
+      output: normalizeResultAlias(match[3]),
+      mode: match[4] ?? "update"
+    };
+  }
+  return methods;
+}
 
 function parseIdlTypes(source) {
   const types = {};
@@ -136,6 +180,16 @@ function normalizeIdlShape(value) {
   return normalizeBlobAlias(normalized);
 }
 
+function splitShapes(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  return trimmed.split(",").map((part) => normalizeShape(part));
+}
+
+function normalizeShape(value) {
+  return normalizeBlobAlias(value.trim().replace(/\s+/g, " "));
+}
+
 function splitIdlInputs(value) {
   const trimmed = value.trim();
   if (!trimmed) return [];
@@ -146,6 +200,14 @@ function normalizeBlobAlias(value) {
   if (value === "vec nat8") return "blob";
   if (value === "opt vec nat8") return "opt blob";
   return value;
+}
+
+function normalizeResultAlias(value) {
+  const normalized = normalizeShape(value).replace(/,$/, "").trim();
+  const alias = Object.entries(didTypeAliases).find(([, didName]) => didName === normalized)?.[0];
+  if (alias) return alias;
+  if (normalized === "Result") return "ResultWriteNode";
+  return normalized;
 }
 
 function compareShape(label, actual, expected) {
@@ -181,7 +243,7 @@ function compareMethod(label, actual, expected) {
 }
 
 function canonicalTypeName(name) {
-  return name;
+  return didTypeAliases[name] ?? name;
 }
 
 function compareMap(label, actual, expected) {

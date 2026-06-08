@@ -93,6 +93,7 @@ type DatabaseStatus = variant {
   Restoring;
   Archiving;
   Archived;
+  Deleted;
   Pending;
 };
 type DatabaseSummary = record {
@@ -104,6 +105,7 @@ type DatabaseSummary = record {
   cycles_suspended_at_ms : opt int64;
   database_id : text;
   archived_at_ms : opt int64;
+  deleted_at_ms : opt int64;
 };
 type DeleteDatabaseRequest = record { database_id : text };
 type DeleteNodeRequest = record {
