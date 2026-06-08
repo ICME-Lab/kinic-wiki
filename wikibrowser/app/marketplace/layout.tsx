@@ -5,6 +5,7 @@
 // Why: marketplace needs the premium sidebar, while database browsing keeps its original workspace shell.
 
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArrowDownAZ, Clock3, LayoutDashboard, PanelLeft, Search, Sparkles, Terminal, TrendingUp } from "lucide-react";
@@ -67,6 +68,14 @@ const SECONDARY_LINKS = [
 ];
 
 export default function MarketplaceLayout({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<MarketplaceShellFallback>{children}</MarketplaceShellFallback>}>
+      <MarketplaceShell>{children}</MarketplaceShell>
+    </Suspense>
+  );
+}
+
+function MarketplaceShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -140,6 +149,32 @@ export default function MarketplaceLayout({ children }: { children: ReactNode })
           </div>
           {children}
         </div>
+      </main>
+    </section>
+  );
+}
+
+function MarketplaceShellFallback({ children }: { children: ReactNode }) {
+  return (
+    <section className="grid min-h-[calc(100vh-144px)] grid-cols-1 gap-0 bg-canvas text-ink lg:grid-cols-[320px_minmax(0,1fr)]">
+      <aside className="hidden border-r border-line bg-paper lg:flex lg:min-h-0 lg:flex-col" data-tid="marketplace-sidebar">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto pt-3">
+          <ControlGroup label="Browse marketplace">
+            <div className="grid gap-2 px-2">
+              <div className="h-10 rounded-xl border border-line bg-white" />
+            </div>
+          </ControlGroup>
+          <ControlGroup label="Quick filters">
+            <div className="grid gap-1 px-2">
+              <div className="h-9 rounded-xl bg-white" />
+              <div className="h-9 rounded-xl bg-white" />
+              <div className="h-9 rounded-xl bg-white" />
+            </div>
+          </ControlGroup>
+        </div>
+      </aside>
+      <main className="min-w-0 bg-canvas">
+        <div className="flex min-h-0 flex-col px-3 pb-8 pt-4 sm:px-6">{children}</div>
       </main>
     </section>
   );
