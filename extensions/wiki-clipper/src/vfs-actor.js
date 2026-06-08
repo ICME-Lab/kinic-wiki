@@ -17,11 +17,12 @@ export async function createVfsActor({ canisterId, host, identity }) {
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
   const DatabaseStatus = idl.Variant({
-    Pending: idl.Null,
     Active: idl.Null,
+    Pending: idl.Null,
     Restoring: idl.Null,
     Archiving: idl.Null,
-    Archived: idl.Null
+    Archived: idl.Null,
+    Deleted: idl.Null
   });
   const DatabaseSummary = idl.Record({
     status: DatabaseStatus,
@@ -31,7 +32,8 @@ function idlFactory({ IDL: idl }) {
     database_id: idl.Text,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
-    archived_at_ms: idl.Opt(idl.Int64)
+    archived_at_ms: idl.Opt(idl.Int64),
+    deleted_at_ms: idl.Opt(idl.Int64)
   });
   const CyclesBillingConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
@@ -164,7 +166,8 @@ function normalizeDatabaseSummary(raw) {
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
     cyclesBalance: raw.cycles_balance?.[0]?.toString?.() ?? "0",
-    cyclesSuspendedAtMs: raw.cycles_suspended_at_ms?.[0]?.toString?.() ?? null
+    cyclesSuspendedAtMs: raw.cycles_suspended_at_ms?.[0]?.toString?.() ?? null,
+    deletedAtMs: raw.deleted_at_ms?.[0]?.toString?.() ?? null
   };
 }
 
@@ -189,6 +192,7 @@ function databaseCyclesDisabledReason(database, config) {
   const minimum = parseCycles(config?.minUpdateCycles);
   if (!config) return "Cycles config unavailable.";
   if (database.status === "Pending") return "Database activation is pending until its first cycle purchase completes.";
+  if (database.status !== "Active") return "Database is not writable in its current lifecycle state.";
   if (database.cyclesSuspendedAtMs) return "Database cycles are suspended.";
   if (balance < minimum) return "Database cycles balance is below the minimum update balance.";
   return null;

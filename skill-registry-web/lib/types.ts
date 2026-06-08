@@ -97,7 +97,7 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived";
+export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
 
 export type DatabaseSummary = {
   databaseId: string;
@@ -108,6 +108,7 @@ export type DatabaseSummary = {
   cyclesBalance: string | null;
   cyclesSuspendedAtMs: string | null;
   archivedAtMs: string | null;
+  deletedAtMs: string | null;
 };
 
 export type DatabaseMember = {

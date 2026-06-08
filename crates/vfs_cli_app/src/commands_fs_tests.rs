@@ -81,6 +81,7 @@ impl VfsApi for MockClient {
             cycles_balance: Some(10),
             cycles_suspended_at_ms: None,
             archived_at_ms: None,
+            deleted_at_ms: None,
         }])
     }
 

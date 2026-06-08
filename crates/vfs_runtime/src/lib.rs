@@ -5452,7 +5452,7 @@ fn load_database_summaries_for_caller(
         .prepare(
             "SELECT d.database_id, d.name, d.status, m.role, d.logical_size_bytes,
                 COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
-                d.archived_at_ms
+                d.archived_at_ms, d.deleted_at_ms
          FROM databases d
          INNER JOIN database_members m ON m.database_id = d.database_id
          LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
@@ -5472,6 +5472,7 @@ fn load_database_summaries_for_caller(
             cycles_balance: Some(cycles_balance.max(0) as u64),
             cycles_suspended_at_ms: crate::sqlite::row_get(row, 6)?,
             archived_at_ms: crate::sqlite::row_get(row, 7)?,
+            deleted_at_ms: crate::sqlite::row_get(row, 8)?,
         })
     })
     .map_err(|error| error.to_string())
@@ -5569,6 +5570,7 @@ fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
         "archiving" => Ok(DatabaseStatus::Archiving),
         "archived" => Ok(DatabaseStatus::Archived),
         "restoring" => Ok(DatabaseStatus::Restoring),
+        "deleted" => Ok(DatabaseStatus::Deleted),
         _ => Err(crate::sqlite::invalid_query()),
     }
 }
@@ -5580,6 +5582,7 @@ fn status_to_db(status: DatabaseStatus) -> &'static str {
         DatabaseStatus::Archiving => "archiving",
         DatabaseStatus::Archived => "archived",
         DatabaseStatus::Restoring => "restoring",
+        DatabaseStatus::Deleted => "deleted",
     }
 }
 
