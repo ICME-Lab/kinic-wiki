@@ -15,10 +15,11 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    MarketCreateListingRequest, MarketPurchaseRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
+    KinicFundDatabaseCyclesRequest, MarketCreateListingRequest, MarketPurchaseRequest,
+    MkdirNodeRequest, MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -55,7 +56,7 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     }
 }
 
-fn credit_market_balance(
+fn credit_kinic_balance(
     service: &VfsService,
     caller: &str,
     amount_e8s: u64,
@@ -83,6 +84,77 @@ fn credit_market_balance(
     service
         .apply_kinic_deposit(start.operation_id, caller, amount_e8s, now + 1)
         .expect("deposit should credit balance");
+}
+
+fn kinic_fund_request(
+    database_id: &str,
+    payment_amount_e8s: u64,
+) -> KinicFundDatabaseCyclesRequest {
+    KinicFundDatabaseCyclesRequest {
+        database_id: database_id.to_string(),
+        payment_amount_e8s,
+        min_expected_cycles: 0,
+    }
+}
+
+fn database_status_text(root: &std::path::Path, database_id: &str) -> String {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT status FROM databases WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("database status should load")
+}
+
+fn database_cycle_ledger_row(
+    root: &std::path::Path,
+    database_id: &str,
+) -> (String, i64, Option<i64>, String, Option<i64>) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT kind, amount_cycles, payment_amount_e8s, method, ledger_block_index
+         FROM database_cycle_ledger
+         WHERE database_id = ?1
+         ORDER BY entry_id DESC
+         LIMIT 1",
+        params![database_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .expect("database cycle ledger row should load")
+}
+
+fn kinic_ledger_row(
+    root: &std::path::Path,
+    principal: &str,
+) -> (String, String, i64, i64, Option<String>) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT source, kind, amount_e8s, balance_after_e8s, counterparty
+         FROM kinic_ledger
+         WHERE principal = ?1
+         ORDER BY entry_id DESC
+         LIMIT 1",
+        params![principal],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )
+    .expect("KINIC ledger row should load")
 }
 
 #[test]
@@ -182,6 +254,15 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:020_cycles_billing_config_version"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:028_kinic_external_block_indexes"),
+        1
+    );
+    assert!(index_exists(&root, "kinic_ledger_external_block_idx"));
+    assert!(index_exists(
+        &root,
+        "kinic_pending_operations_external_block_kind_idx"
+    ));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
@@ -649,6 +730,32 @@ fn schema_migration_count(root: &std::path::Path, version: &str) -> i64 {
         |row| row.get(0),
     )
     .expect("migration count should load")
+}
+
+fn index_exists(root: &std::path::Path, name: &str) -> bool {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        params![name],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .expect("index existence should load")
+    .is_some()
+}
+
+#[test]
+fn fresh_index_schema_contains_kinic_external_block_unique_indexes() {
+    let (_service, root) = service_with_root();
+    assert!(index_exists(&root, "kinic_ledger_external_block_idx"));
+    assert!(index_exists(
+        &root,
+        "kinic_pending_operations_external_block_kind_idx"
+    ));
+    assert_eq!(
+        schema_migration_count(&root, "database_index:028_kinic_external_block_indexes"),
+        1
+    );
 }
 
 fn mount_history_row(root: &std::path::Path, mount_id: u16) -> (String, String) {
@@ -4247,6 +4354,215 @@ fn move_node_validates_source_target_path() {
 }
 
 #[test]
+fn kinic_fund_database_cycles_moves_internal_balance_to_database_balance() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("fund-db", "owner", 1)
+        .expect("database should create");
+    credit_kinic_balance(&service, "buyer", 1_000, 10, 2);
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles billing config should load");
+    let expected_cycles =
+        cycles_for_payment_amount_e8s(250, &config).expect("cycles quote should compute");
+
+    let result = service
+        .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-db", 250), 3)
+        .expect("internal balance funding should succeed");
+
+    assert_eq!(result.payment_amount_e8s, 250);
+    assert_eq!(result.amount_cycles, expected_cycles);
+    assert_eq!(result.database_balance_cycles, expected_cycles);
+    assert_eq!(result.kinic_balance_e8s, 750);
+    assert_eq!(
+        service
+            .kinic_get_balance("buyer")
+            .expect("buyer balance should load")
+            .balance_e8s,
+        750
+    );
+    assert_eq!(
+        database_cycles_balance(&root, "fund-db"),
+        expected_cycles as i64
+    );
+    assert_eq!(
+        kinic_ledger_row(&root, "buyer"),
+        (
+            "canister_internal".to_string(),
+            "fund_database_cycles".to_string(),
+            -250,
+            750,
+            Some("fund-db".to_string())
+        )
+    );
+    assert_eq!(
+        database_cycle_ledger_row(&root, "fund-db"),
+        (
+            "cycles_purchase".to_string(),
+            expected_cycles as i64,
+            Some(250),
+            "kinic_fund_database_cycles".to_string(),
+            None
+        )
+    );
+}
+
+#[test]
+fn kinic_deposit_external_block_indexes_reject_duplicate_pending_and_ledger_blocks() {
+    let service = service();
+    let first = service
+        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
+            caller: "alice",
+            amount_e8s: 100,
+            ledger: CyclesPendingLedgerDetailsInput {
+                from_owner: "alice",
+                from_subaccount: None,
+                to_owner: "canister",
+                to_subaccount: None,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                ledger_created_at_time_ns: 1,
+            },
+            now: 1,
+        })
+        .expect("first deposit should begin");
+    service
+        .complete_kinic_deposit_ledger_transfer(first.operation_id, "alice", 100, 77)
+        .expect("first pending transfer should complete");
+    let second = service
+        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
+            caller: "bob",
+            amount_e8s: 100,
+            ledger: CyclesPendingLedgerDetailsInput {
+                from_owner: "bob",
+                from_subaccount: None,
+                to_owner: "canister",
+                to_subaccount: None,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                ledger_created_at_time_ns: 2,
+            },
+            now: 2,
+        })
+        .expect("second deposit should begin");
+    let pending_duplicate = service
+        .complete_kinic_deposit_ledger_transfer(second.operation_id, "bob", 100, 77)
+        .expect_err("duplicate pending external block should reject");
+    assert!(pending_duplicate.contains("UNIQUE constraint failed"));
+
+    service
+        .apply_kinic_deposit(first.operation_id, "alice", 100, 3)
+        .expect("first deposit should apply");
+    let third = service
+        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
+            caller: "carol",
+            amount_e8s: 100,
+            ledger: CyclesPendingLedgerDetailsInput {
+                from_owner: "carol",
+                from_subaccount: None,
+                to_owner: "canister",
+                to_subaccount: None,
+                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                ledger_created_at_time_ns: 4,
+            },
+            now: 4,
+        })
+        .expect("third deposit should begin");
+    service
+        .complete_kinic_deposit_ledger_transfer(third.operation_id, "carol", 100, 77)
+        .expect("ledger duplicate is checked when applying after pending is deleted");
+    let ledger_duplicate = service
+        .apply_kinic_deposit(third.operation_id, "carol", 100, 5)
+        .expect_err("duplicate ledger external block should reject");
+    assert!(ledger_duplicate.contains("UNIQUE constraint failed"));
+    assert_eq!(
+        service
+            .kinic_get_balance("carol")
+            .expect("failed duplicate should not credit")
+            .balance_e8s,
+        0
+    );
+}
+
+#[test]
+fn kinic_fund_database_cycles_can_activate_pending_database_after_mount_allocation() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("Fund pending", "owner", 1)
+        .expect("pending database should reserve");
+    service
+        .activate_pending_database_for_cycles_purchase(&pending.database_id, 2)
+        .expect("pending activation should start")
+        .expect("pending activation should allocate mount");
+    credit_kinic_balance(&service, "owner", 1_000, 20, 3);
+
+    let result = service
+        .kinic_fund_database_cycles("owner", kinic_fund_request(&pending.database_id, 400), 4)
+        .expect("pending database funding should succeed");
+
+    assert!(result.amount_cycles > 0);
+    assert_eq!(result.kinic_balance_e8s, 600);
+    assert_eq!(database_status_text(&root, &pending.database_id), "active");
+}
+
+#[test]
+fn kinic_fund_database_cycles_rejects_invalid_payment_or_database_state() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("fund-active", "owner", 1)
+        .expect("active database should create");
+    credit_kinic_balance(&service, "buyer", 100, 10, 2);
+
+    let insufficient = service
+        .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-active", 101), 3)
+        .expect_err("insufficient KINIC balance should reject");
+    assert!(insufficient.contains("insufficient KINIC balance"));
+
+    let config = service
+        .cycles_billing_config()
+        .expect("cycles billing config should load");
+    let quoted = cycles_for_payment_amount_e8s(50, &config).expect("quote should compute");
+    let min_mismatch = service
+        .kinic_fund_database_cycles(
+            "buyer",
+            KinicFundDatabaseCyclesRequest {
+                database_id: "fund-active".to_string(),
+                payment_amount_e8s: 50,
+                min_expected_cycles: quoted + 1,
+            },
+            4,
+        )
+        .expect_err("quote mismatch should reject");
+    assert!(min_mismatch.contains("cycles purchase quote changed"));
+
+    let pending = service
+        .reserve_pending_generated_database("Unallocated", "owner", 5)
+        .expect("pending database should reserve");
+    let pending_error = service
+        .kinic_fund_database_cycles("buyer", kinic_fund_request(&pending.database_id, 50), 6)
+        .expect_err("unallocated pending database should reject");
+    assert!(pending_error.contains("pending database has no activation mount"));
+    assert_eq!(database_status_text(&root, &pending.database_id), "pending");
+    assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
+    assert_eq!(
+        service
+            .kinic_get_balance("buyer")
+            .expect("buyer balance should load")
+            .balance_e8s,
+        100
+    );
+
+    service
+        .create_database("fund-archive", "owner", 7)
+        .expect("archive database should create");
+    service
+        .begin_database_archive("fund-archive", "owner", 8)
+        .expect("archive should begin");
+    let archived = service
+        .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-archive", 50), 9)
+        .expect_err("archiving database should reject");
+    assert!(archived.contains("database is archiving"));
+}
+
+#[test]
 fn market_purchase_moves_internal_balance_and_creates_entitlement() {
     let service = service();
     service
@@ -4258,7 +4574,7 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
     let listing = service
         .market_publish_listing("seller", &listing.listing_id, 3)
         .expect("listing should publish");
-    credit_market_balance(&service, "buyer", 1_000, 10, 5);
+    credit_kinic_balance(&service, "buyer", 1_000, 10, 5);
 
     let order = service
         .market_purchase_access(
@@ -4276,14 +4592,14 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
     assert_eq!(order.seller_principal, "seller");
     assert_eq!(
         service
-            .market_get_balance("buyer")
+            .kinic_get_balance("buyer")
             .expect("buyer balance should load")
             .balance_e8s,
         750
     );
     assert_eq!(
         service
-            .market_get_balance("seller")
+            .kinic_get_balance("seller")
             .expect("seller balance should load")
             .balance_e8s,
         250
@@ -4330,7 +4646,7 @@ fn market_purchase_rejects_seller_self_purchase() {
     let listing = service
         .market_publish_listing("seller", &listing.listing_id, 3)
         .expect("listing should publish");
-    credit_market_balance(&service, "seller", 1_000, 10, 4);
+    credit_kinic_balance(&service, "seller", 1_000, 10, 4);
 
     let error = service
         .market_purchase_access(
@@ -4347,11 +4663,83 @@ fn market_purchase_rejects_seller_self_purchase() {
     assert!(error.contains("seller cannot purchase own listing"));
     assert_eq!(
         service
-            .market_get_balance("seller")
+            .kinic_get_balance("seller")
             .expect("seller balance should load")
             .balance_e8s,
         1_000
     );
+}
+
+#[test]
+fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_revision_mismatch() {
+    let service = service();
+    service
+        .create_database("reject-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("reject-market", 100), 2)
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 3)
+        .expect("listing should publish");
+
+    let insufficient = service
+        .market_purchase_access(
+            "low-buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id.clone(),
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            4,
+        )
+        .expect_err("insufficient balance should reject");
+    assert!(insufficient.contains("insufficient KINIC balance"));
+
+    credit_kinic_balance(&service, "buyer", 500, 10, 5);
+    let stale = service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id.clone(),
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision + 1,
+            },
+            6,
+        )
+        .expect_err("revision mismatch should reject");
+    assert!(stale.contains("market listing revision mismatch"));
+    assert_eq!(
+        service
+            .kinic_get_balance("buyer")
+            .expect("buyer balance should remain")
+            .balance_e8s,
+        500
+    );
+
+    service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id.clone(),
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            7,
+        )
+        .expect("first purchase should succeed");
+    let duplicate = service
+        .market_purchase_access(
+            "buyer",
+            MarketPurchaseRequest {
+                listing_id: listing.listing_id,
+                price_e8s: listing.price_e8s,
+                expected_revision: listing.revision,
+            },
+            8,
+        )
+        .expect_err("existing entitlement should reject");
+    assert!(duplicate.contains("active entitlement already exists"));
 }
 
 #[test]
@@ -4384,6 +4772,94 @@ fn market_listing_owner_policy_and_database_listing_query() {
         .expect("owner should list database listings");
     assert_eq!(listings.len(), 1);
     assert_eq!(listings[0].listing_id, listing.listing_id);
+}
+
+#[test]
+fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
+    let service = service();
+    service
+        .create_database("stale-owner-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("stale-owner-market", 100),
+            2,
+        )
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 3)
+        .expect("listing should publish");
+    service
+        .grant_database_access(
+            "stale-owner-market",
+            "seller",
+            "successor",
+            DatabaseRole::Owner,
+            4,
+        )
+        .expect("successor owner should be granted");
+    service
+        .revoke_database_access("stale-owner-market", "successor", "seller")
+        .expect("seller should lose owner access");
+    credit_kinic_balance(&service, "buyer", 100, 30, 5);
+
+    assert!(
+        service
+            .market_list_listings(None, 10)
+            .expect("public listings should load")
+            .listings
+            .is_empty(),
+        "seller without owner role must not stay in public marketplace"
+    );
+    assert!(
+        service
+            .market_get_listing("buyer", &listing.listing_id)
+            .expect_err("buyer should not read stale public listing")
+            .contains("seller or admin required")
+    );
+    assert!(
+        service
+            .market_preview_purchase("buyer", &listing.listing_id)
+            .expect_err("preview should reject stale seller")
+            .contains("principal has no access to database")
+    );
+    assert!(
+        service
+            .market_purchase_access(
+                "buyer",
+                MarketPurchaseRequest {
+                    listing_id: listing.listing_id.clone(),
+                    price_e8s: listing.price_e8s,
+                    expected_revision: listing.revision,
+                },
+                6,
+            )
+            .expect_err("purchase should reject stale seller")
+            .contains("principal has no access to database")
+    );
+    assert_eq!(
+        service
+            .kinic_get_balance("buyer")
+            .expect("buyer balance should remain")
+            .balance_e8s,
+        100
+    );
+    assert_eq!(
+        service
+            .kinic_get_balance("seller")
+            .expect("seller balance should remain")
+            .balance_e8s,
+        0
+    );
+
+    service
+        .market_get_listing("seller", &listing.listing_id)
+        .expect("original seller should still manage stale listing");
+    let paused = service
+        .market_pause_listing("seller", &listing.listing_id, 7)
+        .expect("original seller should pause stale listing");
+    assert_eq!(paused.listing_id, listing.listing_id);
 }
 
 #[test]
@@ -4445,7 +4921,7 @@ fn market_listing_requires_active_database() {
     service
         .finalize_database_archive("archive-market", "owner", snapshot_hash.clone(), 7)
         .expect("archive should finalize");
-    credit_market_balance(&service, "buyer", 100, 21, 8);
+    credit_kinic_balance(&service, "buyer", 100, 21, 8);
     let preview_error = service
         .market_preview_purchase("buyer", &listing.listing_id)
         .expect_err("archived database preview should reject");
@@ -4464,14 +4940,14 @@ fn market_listing_requires_active_database() {
     assert!(purchase_error.contains("database is archived"));
     assert_eq!(
         service
-            .market_get_balance("buyer")
+            .kinic_get_balance("buyer")
             .expect("buyer balance should remain")
             .balance_e8s,
         100
     );
     assert_eq!(
         service
-            .market_get_balance("owner")
+            .kinic_get_balance("owner")
             .expect("seller balance should remain")
             .balance_e8s,
         0
@@ -4547,7 +5023,7 @@ fn delete_database_removes_marketplace_rows() {
     let listing = service
         .market_publish_listing("seller", &listing.listing_id, 4)
         .expect("listing should publish");
-    credit_market_balance(&service, "buyer", 100, 10, 5);
+    credit_kinic_balance(&service, "buyer", 100, 10, 5);
     service
         .market_purchase_access(
             "buyer",
@@ -4624,7 +5100,7 @@ fn market_entitlement_allows_read_surface_but_not_export() {
     let listing = service
         .market_publish_listing("seller", &listing.listing_id, 4)
         .expect("listing should publish");
-    credit_market_balance(&service, "buyer", 100, 20, 6);
+    credit_kinic_balance(&service, "buyer", 100, 20, 6);
     service
         .market_purchase_access(
             "buyer",

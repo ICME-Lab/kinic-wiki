@@ -60,18 +60,18 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Marketplace</h1>
-            <p className="text-sm text-muted">{filtered.length} listings</p>
+            <p className="text-sm text-muted">
+              {filtered.length} loaded listings
+              {cursor ? " shown from loaded pages" : ""}
+            </p>
           </div>
-          <Link className="rounded-lg border border-line px-3 py-2 text-sm font-semibold hover:border-accent" href="/marketplace/wallet">
-            Wallet
-          </Link>
         </div>
 
         <div className="flex min-h-11 items-center gap-2 rounded-lg border border-line px-3">
           <Search aria-hidden size={18} />
           <input
             className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none"
-            placeholder="Search"
+            placeholder="Filter loaded listings"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />

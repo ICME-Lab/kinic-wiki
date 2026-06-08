@@ -48,16 +48,17 @@ use vfs_types::{
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, KinicBalance,
-    KinicPendingOperation, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketDepositRequest, MarketDepositResult, MarketEntitlementPage,
-    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
-    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    KinicDepositRequest, KinicDepositResult, KinicFundDatabaseCyclesRequest,
+    KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
+    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -68,7 +69,8 @@ const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
 #[cfg(not(target_arch = "wasm32"))]
 const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
-const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
+const II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
+const II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi","http://127.0.0.1:3100","http://localhost:3100"]}"#;
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
@@ -481,27 +483,27 @@ fn icrc21_canister_call_consent_message(
                 )),
             })
         }
-        "market_deposit_balance" => {
-            let deposit = match Decode!(&request.arg, MarketDepositRequest) {
+        "kinic_deposit_balance" => {
+            let deposit = match Decode!(&request.arg, KinicDepositRequest) {
                 Ok(decoded) => decoded,
                 Err(error) => {
                     return icrc21_unavailable(format!(
-                        "market_deposit_balance argument decode failed: {error}"
+                        "kinic_deposit_balance argument decode failed: {error}"
                     ));
                 }
             };
             if deposit.amount_e8s == 0 {
-                return icrc21_unsupported("market deposit amount must be positive".to_string());
+                return icrc21_unsupported("KINIC deposit amount must be positive".to_string());
             }
             if i64::try_from(deposit.amount_e8s).is_err()
                 || i64::try_from(deposit.expected_fee_e8s).is_err()
             {
-                return icrc21_unsupported("market deposit amount exceeds i64".to_string());
+                return icrc21_unsupported("KINIC deposit amount exceeds i64".to_string());
             }
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-                    "# Deposit KINIC to marketplace wallet\n\nAmount: `{amount}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`\n\nPurpose: internal marketplace balance for purchases",
+                    "# Deposit KINIC to KINIC balance\n\nAmount: `{amount}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`\n\nPurpose: canister-held KINIC balance",
                     amount = format_e8s(deposit.amount_e8s),
                     fee = format_e8s(deposit.expected_fee_e8s),
                     spender = canister_principal().to_text()
@@ -743,14 +745,24 @@ fn list_database_cycles_pending_purchases(
 }
 
 #[query]
-fn market_get_balance() -> Result<KinicBalance, String> {
-    with_service(|service| service.market_get_balance(&caller_text()))
+fn kinic_get_balance() -> Result<KinicBalance, String> {
+    with_service(|service| service.kinic_get_balance(&caller_text()))
 }
 
 #[update]
-async fn market_deposit_balance(
-    request: MarketDepositRequest,
-) -> Result<MarketDepositResult, String> {
+fn kinic_fund_database_cycles(
+    request: KinicFundDatabaseCyclesRequest,
+) -> Result<KinicFundDatabaseCyclesResult, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "kinic_fund_database_cycles",
+        Some(request.database_id.clone()),
+        |service, caller, now| service.kinic_fund_database_cycles(caller, request, now),
+    )
+}
+
+#[update]
+async fn kinic_deposit_balance(request: KinicDepositRequest) -> Result<KinicDepositResult, String> {
     require_authenticated_caller()?;
     let caller = caller_text();
     let now = now_millis();
@@ -787,7 +799,7 @@ async fn market_deposit_balance(
         },
         request.amount_e8s,
         request.expected_fee_e8s,
-        market_deposit_memo(operation_id),
+        kinic_deposit_memo(operation_id),
         ledger_created_at_time_ns,
     )
     .await
@@ -801,25 +813,25 @@ async fn market_deposit_balance(
                     block_index,
                 )
             }) {
-                return Err(market_deposit_local_apply_error(
+                return Err(kinic_deposit_local_apply_error(
                     operation_id,
                     block_index,
                     error,
                 ));
             }
             #[cfg(test)]
-            if TEST_MARKET_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
-                return Err(market_deposit_local_apply_error(
+            if TEST_KINIC_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
+                return Err(kinic_deposit_local_apply_error(
                     operation_id,
                     block_index,
-                    "test market deposit apply failure".to_string(),
+                    "test KINIC deposit apply failure".to_string(),
                 ));
             }
             let balance = with_service(|service| {
                 service.apply_kinic_deposit(operation_id, &caller, request.amount_e8s, now)
             })
-            .map_err(|error| market_deposit_local_apply_error(operation_id, block_index, error))?;
-            Ok(MarketDepositResult {
+            .map_err(|error| kinic_deposit_local_apply_error(operation_id, block_index, error))?;
+            Ok(KinicDepositResult {
                 block_index,
                 amount_e8s: deposit_start.amount_e8s,
                 balance_e8s: balance.balance_e8s,
@@ -852,25 +864,25 @@ async fn market_deposit_balance(
                 service.mark_kinic_deposit_ambiguous(operation_id, &caller, request.amount_e8s)
             }) {
                 return Err(format!(
-                    "icrc2_transfer_from result ambiguous for market deposit operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
+                    "icrc2_transfer_from result ambiguous for KINIC deposit operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
                 ));
             }
             Err(format!(
-                "icrc2_transfer_from result ambiguous for market deposit operation_id {operation_id}; billing authority review required: {error}"
+                "icrc2_transfer_from result ambiguous for KINIC deposit operation_id {operation_id}; billing authority review required: {error}"
             ))
         }
     }
 }
 
-fn market_deposit_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+fn kinic_deposit_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
     format!(
-        "market deposit completed at ledger block {block_index} but local balance application failed; pending operation {operation_id} remains completed for billing authority review: {cause}"
+        "KINIC deposit completed at ledger block {block_index} but local balance application failed; pending operation {operation_id} remains completed for billing authority review: {cause}"
     )
 }
 
 #[query]
-fn market_list_pending_operations() -> Result<Vec<KinicPendingOperation>, String> {
-    with_service(|service| service.market_list_pending_operations(&caller_text()))
+fn kinic_list_pending_operations() -> Result<Vec<KinicPendingOperation>, String> {
+    with_service(|service| service.kinic_list_pending_operations(&caller_text()))
 }
 
 #[update]
@@ -1490,7 +1502,7 @@ thread_local! {
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_MARKET_DEPOSIT_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
+    static TEST_KINIC_DEPOSIT_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -1506,7 +1518,7 @@ fn fail_next_apply_database_cycles_purchase_apply_for_test() {
 
 #[cfg(test)]
 fn fail_next_apply_kinic_deposit_for_test() {
-    TEST_MARKET_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
+    TEST_KINIC_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
 }
 
 #[cfg(test)]
@@ -1852,7 +1864,7 @@ fn cycles_purchase_memo(operation_id: u64) -> Vec<u8> {
     format!("kvfs:cp:{operation_id}").into_bytes()
 }
 
-fn market_deposit_memo(operation_id: u64) -> Vec<u8> {
+fn kinic_deposit_memo(operation_id: u64) -> Vec<u8> {
     format!("kvfs:md:{operation_id}").into_bytes()
 }
 
@@ -2086,7 +2098,7 @@ fn certified_static_responses() -> Vec<(
     vec![
         certified_static_response_entry(
             II_ALTERNATIVE_ORIGINS_PATH,
-            II_ALTERNATIVE_ORIGINS_BODY.as_bytes().to_vec(),
+            ii_alternative_origins_body().as_bytes().to_vec(),
             "application/json; charset=utf-8",
             true,
         ),
@@ -2103,6 +2115,13 @@ fn certified_static_responses() -> Vec<(
             false,
         ),
     ]
+}
+
+fn ii_alternative_origins_body() -> &'static str {
+    match option_env!("KINIC_VFS_LOCAL_II_ORIGINS") {
+        Some("1") => II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY,
+        _ => II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY,
+    }
 }
 
 fn certified_static_response_entry(

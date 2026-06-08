@@ -145,16 +145,31 @@ pub struct KinicPendingOperation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MarketDepositRequest {
+pub struct KinicDepositRequest {
     pub amount_e8s: u64,
     pub expected_fee_e8s: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MarketDepositResult {
+pub struct KinicDepositResult {
     pub block_index: u64,
     pub amount_e8s: u64,
     pub balance_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicFundDatabaseCyclesRequest {
+    pub database_id: String,
+    pub payment_amount_e8s: u64,
+    pub min_expected_cycles: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicFundDatabaseCyclesResult {
+    pub payment_amount_e8s: u64,
+    pub amount_cycles: u64,
+    pub database_balance_cycles: u64,
+    pub kinic_balance_e8s: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

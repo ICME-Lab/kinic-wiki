@@ -16,6 +16,7 @@ import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthe
 import type { DatabaseRow } from "../home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
+type FundingProvider = "oisy" | "plug" | "ii";
 
 const CREATE_DATABASE_PURCHASE_KINIC = "1";
 
@@ -150,13 +151,13 @@ export function DashboardHomeClient() {
       setCreateDialogOpen(false);
       setNewDatabaseName("");
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
-      setWalletMessage(`Database created pending. Requesting ${walletLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
+      setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult =
         wallet.provider === "oisy"
           ? await purchaseCyclesWithOisy({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet.connection)
           : await purchaseCyclesWithPlug({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet.connection);
       setWalletMessage(
-        `${walletLabel(wallet.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
+        `${fundingProviderLabel(wallet.provider)} purchased cycles ${purchaseResult.purchasedCycles}; paid ${formatTokenAmountFromE8s(purchaseResult.paymentAmountE8s)}; database activation can complete.`
       );
       await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
@@ -282,8 +283,10 @@ function createDatabaseRequiredBalanceE8s(): bigint {
   return createDatabasePurchaseAmountE8s() + KINIC_LEDGER_FEE_E8S * 2n;
 }
 
-function walletLabel(provider: "oisy" | "plug"): string {
-  return provider === "oisy" ? "OISY" : "Plug";
+function fundingProviderLabel(provider: FundingProvider): string {
+  if (provider === "oisy") return "OISY";
+  if (provider === "plug") return "Plug";
+  return "Internet Identity";
 }
 
 function walletCanFundCreate(balanceE8s: string | null): boolean {
@@ -319,10 +322,15 @@ function dashboardFundingSuccessMessage(params: { get(name: string): string | nu
   const kinic = params.get("kinic") ?? "";
   const cycles = params.get("cycles") ?? "";
   if (!/^[a-zA-Z0-9_-]+$/.test(databaseId)) return null;
-  if (provider !== "oisy" && provider !== "plug") return null;
+  if (!isFundingProvider(provider)) return null;
   if (!/^(?:<0\.001|[0-9]+\.[0-9]{3}) KINIC$/.test(kinic)) return null;
   if (!/^(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)$/.test(cycles)) return null;
-  return `${walletLabel(provider)} purchased ${cycles} cycles for ${databaseId}; paid ${kinic}.`;
+  const verb = provider === "ii" ? "funded" : "purchased";
+  return `${fundingProviderLabel(provider)} ${verb} ${cycles} cycles for ${databaseId}; paid ${kinic}.`;
+}
+
+function isFundingProvider(provider: string): provider is FundingProvider {
+  return provider === "oisy" || provider === "plug" || provider === "ii";
 }
 
 function errorMessage(cause: unknown): string {

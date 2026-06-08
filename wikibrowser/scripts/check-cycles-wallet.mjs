@@ -15,11 +15,13 @@ let lastConfigCanister = null;
 let ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
 let approveCalls = 0;
 let purchaseCalls = 0;
-let marketDepositCalls = 0;
+let kinicDepositCalls = 0;
 let marketPurchaseCalls = 0;
+let identityKinicDepositCalls = 0;
 let lastApproveArgs = null;
-let lastMarketDepositRequest = null;
+let lastKinicDepositRequest = null;
 let lastMarketPurchaseRequest = null;
+let lastIdentityKinicDeposit = null;
 const ledgerActorMock = {
   icrc1_balance_of: async (account) => {
     lastBalanceAccount = account;
@@ -37,9 +39,9 @@ const vfsActorMock = {
     purchaseCalls += 1;
     return { Ok: { block_index: 7n, amount_cycles: 1000n, balance_cycles: 2000n } };
   },
-  market_deposit_balance: async (request) => {
-    marketDepositCalls += 1;
-    lastMarketDepositRequest = request;
+  kinic_deposit_balance: async (request) => {
+    kinicDepositCalls += 1;
+    lastKinicDepositRequest = request;
     return { Ok: { block_index: 9n, amount_e8s: request.amount_e8s, balance_e8s: 300_000_000n } };
   },
   market_purchase_access: async (request) => {
@@ -93,29 +95,35 @@ const walletModule = loadTsModule(
       getCyclesBillingConfig: async (canisterId) => {
         lastConfigCanister = canisterId;
         return { kinicLedgerCanisterId: "ledger", cyclesPerKinic: "1000" };
+      },
+      kinicDepositBalance: async (canisterId, identity, amountE8s, expectedFeeE8s) => {
+        identityKinicDepositCalls += 1;
+        lastIdentityKinicDeposit = {
+          canisterId,
+          principal: identity.getPrincipal().toText(),
+          amountE8s,
+          expectedFeeE8s
+        };
+        return { blockIndex: "19", amountE8s, balanceE8s: "400000000" };
       }
     },
     "@/lib/vfs-idl": { idlFactory: () => ({}) },
     "@/lib/cycles": {
+      cyclesForPaymentAmountE8s: (amountE8s, cyclesPerKinic) => (amountE8s * cyclesPerKinic) / 100_000_000n,
       formatRawCycles: (value) => value.toString(),
       KINIC_LEDGER_FEE_E8S: 100_000n,
       MAX_CANISTER_I64: 9_223_372_036_854_775_807n,
       MAX_LEDGER_U64: 18_446_744_073_709_551_615n,
-      kinicBaseUnitsPerToken: () => 100_000_000n
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s }
   },
-  "Object.assign(exports, { __test: { allowanceForKinicTransfer, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, cyclesForPaymentAmountE8s, callAfterApprove, decodeOisyCyclesPurchaseResult, decodeOisyMarketDepositResult, decodeOisyMarketPurchaseResult, formatLedgerApproveError } });"
+  "Object.assign(exports, { __test: { allowanceForKinicTransfer, assertCanisterPaymentAmountE8s, assertConfiguredCyclesCanister, callAfterApprove, decodeOisyCyclesPurchaseResult, decodeOisyKinicDepositResult, decodeOisyMarketPurchaseResult, formatLedgerApproveError } });"
 );
 const walletTest = walletModule.__test;
 
 assert.equal(walletTest.allowanceForKinicTransfer(100_000_000n, 100_000n), 100_100_000n);
 assert.throws(() => walletTest.assertCanisterPaymentAmountE8s(9_223_372_036_854_775_808n), /KINIC amount e8s exceeds canister limit/);
 assert.throws(() => walletTest.allowanceForKinicTransfer(18_446_744_073_709_551_615n, 1n), /approved allowance exceeds u64::MAX/);
-assert.throws(
-  () => walletTest.cyclesForPaymentAmountE8s(9_223_372_036_854_775_807n, 200_000_000n),
-  /cycles purchase amount exceeds canister limit/
-);
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("aaaaa-aa"), /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured/);
 walletModule.__context.process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID = "aaaaa-aa";
 assert.throws(() => walletTest.assertConfiguredCyclesCanister("bbbbb-bb"), /VFS canister does not match NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
@@ -218,17 +226,36 @@ assert.equal(approveCalls, 1);
 
 ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
 approveCalls = 0;
-marketDepositCalls = 0;
-lastMarketDepositRequest = null;
-const marketDeposit = await walletModule.depositMarketBalanceWithPlug(
+kinicDepositCalls = 0;
+lastKinicDepositRequest = null;
+const kinicDeposit = await walletModule.depositKinicBalanceWithPlug(
   { canisterId: "aaaaa-aa", amountE8s: 200_000_000n },
   { principal: "plug-principal" }
 );
-assert.equal(marketDeposit.approveBlockIndex, "1");
-assert.equal(marketDeposit.depositBlockIndex, "9");
-assert.equal(marketDepositCalls, 1);
-assert.equal(lastMarketDepositRequest.amount_e8s, 200_000_000n);
-assert.equal(lastMarketDepositRequest.expected_fee_e8s, 100_000n);
+assert.equal(kinicDeposit.approveBlockIndex, "1");
+assert.equal(kinicDeposit.depositBlockIndex, "9");
+assert.equal(kinicDepositCalls, 1);
+assert.equal(lastKinicDepositRequest.amount_e8s, 200_000_000n);
+assert.equal(lastKinicDepositRequest.expected_fee_e8s, 100_000n);
+
+ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
+approveCalls = 0;
+identityKinicDepositCalls = 0;
+lastIdentityKinicDeposit = null;
+const identityDeposit = await walletModule.depositKinicBalanceWithIdentity(
+  { canisterId: "aaaaa-aa", amountE8s: 300_000_000n },
+  { getPrincipal: () => ({ toText: () => "ii-principal" }) }
+);
+assert.equal(identityDeposit.provider, "ii");
+assert.equal(identityDeposit.approveBlockIndex, "1");
+assert.equal(identityDeposit.depositBlockIndex, "19");
+assert.equal(identityDeposit.balanceE8s, "400000000");
+assert.equal(approveCalls, 1);
+assert.equal(identityKinicDepositCalls, 1);
+assert.equal(lastIdentityKinicDeposit.canisterId, "aaaaa-aa");
+assert.equal(lastIdentityKinicDeposit.principal, "ii-principal");
+assert.equal(lastIdentityKinicDeposit.amountE8s, "300000000");
+assert.equal(lastIdentityKinicDeposit.expectedFeeE8s, "100000");
 
 marketPurchaseCalls = 0;
 lastMarketPurchaseRequest = null;
@@ -306,7 +333,7 @@ await assert.rejects(
   /wallet response sender mismatch/
 );
 
-cborMock.decoded = { method_name: "market_deposit_balance" };
+cborMock.decoded = { method_name: "kinic_deposit_balance" };
 await assert.rejects(
   () => walletTest.decodeOisyMarketPurchaseResult({
     canisterId: "aaaaa-aa",
@@ -336,7 +363,8 @@ const sessionModule = loadTsModule(
       connectOisyWallet: async () => ({ owner: "oisy-principal" }),
       connectPlugWallet: async () => ({ principal: "plug-principal" }),
       getConnectedWalletKinicBalance: async () => "123456789"
-    }
+    },
+    "@/lib/vfs-client": { kinicGetBalance: async () => ({ balanceE8s: "0" }) }
   },
   "Object.assign(exports, { __test: { readStoredWallet, safeSessionStorageGet, safeSessionStorageSet, safeSessionStorageRemove } });"
 );

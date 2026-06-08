@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import vm from "node:vm";
+
+const require = createRequire(import.meta.url);
+const ts = require("typescript");
 
 const dashboardClient = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
 const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
@@ -48,12 +53,25 @@ assert.match(rootLayout, /<AppSessionProvider>/);
 assert.match(rootLayout, /<AppHeader \/>/);
 assert.match(appHeader, /usePathname/);
 assert.match(appHeader, /const isMarketplace = pathname === "\/marketplace" \|\| pathname\.startsWith\("\/marketplace\/"\)/);
+assert.doesNotMatch(appHeader, /isKinic/);
 assert.match(appHeader, /pathname !== "\/dashboard" && pathname !== "\/cycles" && !isMarketplace/);
 assert.match(appHeader, /title = pathname === "\/cycles" \? "Database cycles purchase" : isMarketplace \? "Kinic marketplace" : "Database dashboard"/);
 assert.match(appHeader, /Database dashboard/);
+assert.doesNotMatch(appHeader, /href="\/kinic\/wallet"/);
+assert.match(appHeader, /KinicDepositModal/);
+assert.match(appHeader, /depositKinicBalanceWithIdentity/);
+assert.match(appHeader, /parseDepositAmount/);
+assert.match(appHeader, /aria-label="KINIC balance"/);
+assert.match(appHeader, /: "- KINIC"/);
+assert.match(appHeader, /\? "Unavailable"/);
+assert.match(appHeader, /Deposit KINIC/);
+assert.match(appHeader, /event\.target === event\.currentTarget\) onClose\(\)/);
 assert.doesNotMatch(appHeader, /<Link[\s\S]*Database dashboard/);
 assert.match(appHeader, /<WalletControls/);
 assert.match(appHeader, /<AuthControls/);
+assert.match(appSession, /kinicGetBalance/);
+assert.match(appSession, /refreshKinicBalance/);
+assert.match(appSession, /kinicBalanceLoading/);
 assert.match(homePage, /Kinic Wiki is AI memory for agents/);
 assert.match(homePage, /<code[^>]*>kinic-vfs-cli<\/code> is the primary interface/);
 assert.match(homePage, /import heroImage from "\.\/home-hero\.png";/);
@@ -127,6 +145,7 @@ assert.match(dashboardClient, /if \(await renameDatabase\(nextName\)\) \{/);
 assert.doesNotMatch(dashboardClient, /unknown database/);
 assert.doesNotMatch(dashboardClient, /useSearchParams/);
 assert.doesNotMatch(dashboardClient, /usePathname/);
+assert.match(dashboardUi, /!props\.busy && event\.target === event\.currentTarget\) props\.onCancel\(\)/);
 
 assert.match(wikiLayout, /<WikiBrowser \/>/);
 assert.match(wikiLayout, /isReservedDatabaseRouteSlug/);
@@ -166,7 +185,7 @@ assert.equal(packageJson.scripts["e2e:ii"], "scripts/run-ii-e2e.sh");
 assert.equal(packageJson.scripts["e2e:ii:headed"], "scripts/run-ii-e2e.sh --headed");
 assert.equal(packageJson.scripts["e2e:ii:setup"], "../scripts/setup-wikibrowser-ii-e2e.sh");
 assert.match(nextConfig, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
-assert.match(nextConfig, /NEXT_PUBLIC_II_PROVIDER_URL/);
+assert.doesNotMatch(nextConfig, /NEXT_PUBLIC_II_PROVIDER_URL/);
 assert.doesNotMatch(nextConfig, /NEXT_PUBLIC_KINIC_WIKI_GENERATOR_URL/);
 assert.match(dashboardHomeClient, /NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID/);
 assert.doesNotMatch(dashboardHomeClient, /createUrlIngestRequest/);
@@ -192,7 +211,71 @@ assert.match(dashboardHomeClient, /params\.get\("database_id"\)/);
 assert.match(dashboardHomeClient, /params\.get\("provider"\)/);
 assert.match(dashboardHomeClient, /params\.get\("kinic"\)/);
 assert.match(dashboardHomeClient, /params\.get\("cycles"\)/);
-assert.match(dashboardHomeClient, /\$\{walletLabel\(provider\)\} purchased \$\{cycles\} cycles for \$\{databaseId\}; paid \$\{kinic\}\./);
+assert.match(dashboardHomeClient, /type FundingProvider = "oisy" \| "plug" \| "ii"/);
+assert.match(dashboardHomeClient, /provider === "ii" \? "funded" : "purchased"/);
+assert.match(dashboardHomeClient, /\$\{fundingProviderLabel\(provider\)\} \$\{verb\} \$\{cycles\} cycles for \$\{databaseId\}; paid \$\{kinic\}\./);
+const dashboardHomeModule = loadTsModule(
+  "../app/dashboard/dashboard-home-client.tsx",
+  {
+    "lucide-react": { Plus: () => null },
+    "next/navigation": { useSearchParams: () => new URLSearchParams() },
+    "react": {
+      useCallback: (run) => run,
+      useEffect: () => undefined,
+      useRef: (initial) => ({ current: initial }),
+      useState: (initial) => [typeof initial === "function" ? initial() : initial, () => undefined]
+    },
+    "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
+    "../app-session-provider": {
+      useAppSession: () => ({
+        authClient: null,
+        authError: null,
+        authReady: true,
+        principal: null,
+        refreshWalletBalance: async () => undefined,
+        setWalletControlsLocked: () => undefined,
+        wallet: null,
+        walletBalance: null,
+        walletBalanceError: null,
+        walletBalanceLoading: false,
+        walletBusyProvider: null
+      })
+    },
+    "../create-database-dialog": { CreateDatabaseDialog: () => null },
+    "../home-ui": { DatabaseBody: () => null, OfficialKinicWikiPanel: () => null, StatusPanel: () => null },
+    "@/lib/cycles": { KINIC_LEDGER_FEE_E8S: 100_000n },
+    "@/lib/cycles-url": { parseKinicAmountE8sInput: () => 100_000_000n },
+    "@/lib/kinic-wallet": {
+      purchaseCyclesWithOisy: async () => ({}),
+      purchaseCyclesWithPlug: async () => ({})
+    },
+    "@/lib/kinic-amount": { formatTokenAmountFromE8s: (value) => `${value} KINIC` },
+    "@/lib/vfs-client": {
+      createDatabaseAuthenticated: async () => ({ database_id: "db_ok-1" }),
+      getCyclesBillingConfig: async () => ({}),
+      listDatabasesAuthenticated: async () => [],
+      listDatabasesPublic: async () => []
+    }
+  },
+  "Object.assign(exports, { __test: { dashboardFundingSuccessMessage } });"
+);
+const dashboardFundingSuccessMessage = dashboardHomeModule.__test.dashboardFundingSuccessMessage;
+assert.equal(
+  dashboardFundingSuccessMessage(new URLSearchParams("funding=success&database_id=db_ok-1&provider=ii&kinic=1.000 KINIC&cycles=234,500,000,000")),
+  "Internet Identity funded 234,500,000,000 cycles for db_ok-1; paid 1.000 KINIC."
+);
+assert.equal(
+  dashboardFundingSuccessMessage(new URLSearchParams("funding=success&database_id=db_ok-1&provider=oisy&kinic=1.000 KINIC&cycles=234,500,000,000")),
+  "OISY purchased 234,500,000,000 cycles for db_ok-1; paid 1.000 KINIC."
+);
+assert.equal(
+  dashboardFundingSuccessMessage(new URLSearchParams("funding=success&database_id=db_ok-1&provider=plug&kinic=1.000 KINIC&cycles=234,500,000,000")),
+  "Plug purchased 234,500,000,000 cycles for db_ok-1; paid 1.000 KINIC."
+);
+assert.equal(
+  dashboardFundingSuccessMessage(new URLSearchParams("funding=success&database_id=db_ok-1&provider=bad&kinic=1.000 KINIC&cycles=234,500,000,000")),
+  null
+);
 assert.match(apiErrors, /wiki_api_version_mismatch/);
 assert.match(apiErrors, /Wiki VFS API response unavailable\./);
 assert.match(apiErrors, /CandidDecodeError\|Cannot find field hash\|subtype\|type mismatch\|variant, expected fields/);
@@ -289,6 +372,7 @@ assert.match(createDatabaseDialog, /role="dialog"/);
 assert.match(createDatabaseDialog, /aria-modal="true"/);
 assert.match(createDatabaseDialog, /id="database-name-input"/);
 assert.match(createDatabaseDialog, /disabled=\{createDisabled\}/);
+assert.match(createDatabaseDialog, /!creating && event\.target === event\.currentTarget\) onCancel\(\)/);
 assert.match(createDatabaseDialog, /requiredBalanceLabel: string/);
 assert.match(createDatabaseDialog, /Connect a wallet with at least \{requiredBalanceLabel\} before creating\./);
 assert.match(createDatabaseDialog, /New databases are created pending, not active, until the first purchase completes\./);
@@ -441,6 +525,7 @@ assert.doesNotMatch(dashboardDangerZone, /pendingOperationCount|hasPendingOperat
 assert.match(dashboardDangerZone, /typedDatabaseId === props\.databaseId/);
 assert.match(dashboardDangerZone, /const deleteDisabled = props\.busy/);
 assert.match(dashboardDangerZone, /disabled=\{props\.busy \|\| !deleteConfirmed\}/);
+assert.match(dashboardDangerZone, /!props\.deleting && event\.target === event\.currentTarget\) props\.onCancel\(\)/);
 assert.match(vfsIdl, /const DeleteDatabaseRequest = idl\.Record/);
 assert.match(vfsIdl, /delete_database: idl\.Func\(\[DeleteDatabaseRequest\], \[ResultUnit\], \[\]\)/);
 assert.doesNotMatch(dashboardHomeClient, /process\.env\.KINIC_WIKI_CANISTER_ID/);
@@ -452,6 +537,7 @@ assert.match(dashboardUi, /Disable public access/);
 assert.match(dashboardUi, /Grant owner access/);
 assert.match(dashboardUi, /Revoke owner access/);
 assert.match(dashboardUi, /ConfirmAclDialog/);
+assert.match(dashboardUi, /!props\.busy && event\.target === event\.currentTarget\) props\.onCancel\(\)/);
 assert.match(dashboardUi, /This will grant \$\{role\} access to principal/);
 assert.match(dashboardUi, /ActionButton/);
 assert.match(dashboardUi, /isRoutableDatabaseId/);
@@ -526,5 +612,32 @@ assert.match(homeUi, /<DatabaseSection action=\{createDatabaseAction\}/);
 assert.doesNotMatch(dashboardHomeClient, /setCreatedDatabase/);
 assert.doesNotMatch(dashboardHomeClient, /setDatabases\(\[\]\);\n    setCreatedDatabaseId\(null\);\n    setError\(null\);\n    setWarning\(null\);\n    setLoadState\("idle"\);/);
 assert.match(dashboardClient, /refreshSeqRef\.current \+= 1;\n    cyclesHistorySeqRef\.current \+= 1;\n    await authClient\.logout/);
+
+function loadTsModule(relativePath, mocks, append = "") {
+  const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
+  const transpiled = ts.transpileModule(`${source}\n${append}`, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+      esModuleInterop: true
+    }
+  }).outputText;
+  const commonjsModule = { exports: {} };
+  const context = {
+    Date,
+    URLSearchParams,
+    console,
+    exports: commonjsModule.exports,
+    module: commonjsModule,
+    process: { env: {} },
+    require: (id) => {
+      if (Object.prototype.hasOwnProperty.call(mocks, id)) return mocks[id];
+      throw new Error(`unexpected module import: ${id}`);
+    }
+  };
+  vm.runInNewContext(transpiled, context, { filename: relativePath });
+  return Object.assign(commonjsModule.exports, { __context: context });
+}
 
 console.log("Dashboard checks OK");

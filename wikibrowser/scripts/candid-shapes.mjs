@@ -85,13 +85,30 @@ export const expectedTypes = {
       tags_json: "text"
     }
   },
-  MarketDepositRequest: {
+  KinicDepositRequest: {
     kind: "record",
     fields: { amount_e8s: "nat64", expected_fee_e8s: "nat64" }
   },
-  MarketDepositResult: {
+  KinicDepositResult: {
     kind: "record",
     fields: { block_index: "nat64", amount_e8s: "nat64", balance_e8s: "nat64" }
+  },
+  KinicFundDatabaseCyclesRequest: {
+    kind: "record",
+    fields: {
+      payment_amount_e8s: "nat64",
+      database_id: "text",
+      min_expected_cycles: "nat64"
+    }
+  },
+  KinicFundDatabaseCyclesResult: {
+    kind: "record",
+    fields: {
+      database_balance_cycles: "nat64",
+      payment_amount_e8s: "nat64",
+      kinic_balance_e8s: "nat64",
+      amount_cycles: "nat64"
+    }
   },
   MarketEntitlement: {
     kind: "record",
@@ -460,7 +477,8 @@ export const expectedTypes = {
   ResultCyclesPendingPurchases: { kind: "variant", cases: { Ok: "vec DatabaseCyclesPendingPurchase", Err: "text" } },
   ResultKinicBalance: { kind: "variant", cases: { Ok: "KinicBalance", Err: "text" } },
   ResultKinicPendingOperations: { kind: "variant", cases: { Ok: "vec KinicPendingOperation", Err: "text" } },
-  ResultMarketDeposit: { kind: "variant", cases: { Ok: "MarketDepositResult", Err: "text" } },
+  ResultKinicDeposit: { kind: "variant", cases: { Ok: "KinicDepositResult", Err: "text" } },
+  ResultKinicFundDatabaseCycles: { kind: "variant", cases: { Ok: "KinicFundDatabaseCyclesResult", Err: "text" } },
   ResultMarketEntitlementPage: { kind: "variant", cases: { Ok: "MarketEntitlementPage", Err: "text" } },
   ResultMarketListing: { kind: "variant", cases: { Ok: "MarketListing", Err: "text" } },
   ResultMarketListings: { kind: "variant", cases: { Ok: "vec MarketListing", Err: "text" } },
@@ -571,39 +589,40 @@ export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
   RenameDatabaseRequest: "CreateDatabaseResult",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
-  ResultChildren: "Result_12",
+  ResultChildren: "Result_16",
   ResultCyclesBillingConfig: "Result_9",
-  ResultCyclesPurchase: "Result_31",
-  ResultCyclesEntries: "Result_13",
-  ResultCyclesPendingPurchases: "Result_14",
-  ResultKinicBalance: "Result_21",
-  ResultKinicPendingOperations: "Result_26",
-  ResultMarketDeposit: "Result_20",
-  ResultMarketEntitlementPage: "Result_23",
-  ResultMarketListing: "Result_19",
-  ResultMarketListings: "Result_22",
-  ResultMarketListingPage: "Result_24",
-  ResultMarketOrder: "Result_28",
-  ResultMarketOrderPage: "Result_25",
-  ResultMarketPurchasePreview: "Result_27",
+  ResultCyclesPurchase: "Result_32",
+  ResultCyclesEntries: "Result_17",
+  ResultCyclesPendingPurchases: "Result_18",
+  ResultKinicBalance: "Result_14",
+  ResultKinicPendingOperations: "Result_15",
+  ResultKinicDeposit: "Result_12",
+  ResultKinicFundDatabaseCycles: "Result_13",
+  ResultMarketEntitlementPage: "Result_25",
+  ResultMarketListing: "Result_23",
+  ResultMarketListings: "Result_24",
+  ResultMarketListingPage: "Result_26",
+  ResultMarketOrder: "Result_29",
+  ResultMarketOrderPage: "Result_27",
+  ResultMarketPurchasePreview: "Result_28",
   ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_16",
+  ResultDatabases: "Result_20",
   ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_29",
-  ResultMoveNode: "Result_30",
-  ResultMembers: "Result_15",
-  ResultNat64: "Result_18",
+  ResultMkdirNode: "Result_30",
+  ResultMoveNode: "Result_31",
+  ResultMembers: "Result_19",
+  ResultNat64: "Result_22",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultLinks: "Result_11",
-  ResultNode: "Result_35",
-  ResultNodeContext: "Result_36",
-  ResultQueryContext: "Result_32",
-  ResultSearch: "Result_37",
-  ResultStorageBillingBatch: "Result_38",
-  ResultSourceEvidence: "Result_39",
+  ResultNode: "Result_36",
+  ResultNodeContext: "Result_37",
+  ResultQueryContext: "Result_33",
+  ResultSearch: "Result_38",
+  ResultStorageBillingBatch: "Result_39",
+  ResultSourceEvidence: "Result_40",
   ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_41"
+  ResultWriteSourceForGeneration: "Result_42"
 };
 
 export const expectedMethods = {
@@ -632,14 +651,15 @@ export const expectedMethods = {
   list_database_members: { input: ["text"], output: "ResultMembers", mode: "query" },
   market_count_active_entitlements: { input: ["text"], output: "ResultNat64", mode: "query" },
   market_create_listing: { input: ["MarketCreateListingRequest"], output: "ResultMarketListing", mode: "update" },
-  market_deposit_balance: { input: ["MarketDepositRequest"], output: "ResultMarketDeposit", mode: "update" },
-  market_get_balance: { input: [], output: "ResultKinicBalance", mode: "query" },
+  kinic_deposit_balance: { input: ["KinicDepositRequest"], output: "ResultKinicDeposit", mode: "update" },
+  kinic_fund_database_cycles: { input: ["KinicFundDatabaseCyclesRequest"], output: "ResultKinicFundDatabaseCycles", mode: "update" },
+  kinic_get_balance: { input: [], output: "ResultKinicBalance", mode: "query" },
   market_get_listing: { input: ["text"], output: "ResultMarketListing", mode: "query" },
   market_list_database_listings: { input: ["text"], output: "ResultMarketListings", mode: "query" },
   market_list_entitlements: { input: ["opt text", "nat32"], output: "ResultMarketEntitlementPage", mode: "query" },
   market_list_listings: { input: ["opt text", "nat32"], output: "ResultMarketListingPage", mode: "query" },
   market_list_orders: { input: ["opt text", "nat32"], output: "ResultMarketOrderPage", mode: "query" },
-  market_list_pending_operations: { input: [], output: "ResultKinicPendingOperations", mode: "query" },
+  kinic_list_pending_operations: { input: [], output: "ResultKinicPendingOperations", mode: "query" },
   market_pause_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_preview_purchase: { input: ["text"], output: "ResultMarketPurchasePreview", mode: "query" },
   market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },

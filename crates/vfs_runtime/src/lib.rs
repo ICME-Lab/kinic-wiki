@@ -24,18 +24,18 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, KinicBalance, KinicPendingOperation, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlement,
-    MarketEntitlementPage, MarketListing, MarketListingPage, MarketListingStatus, MarketOrder,
-    MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, KinicBalance, KinicFundDatabaseCyclesRequest,
+    KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
+    MarketListing, MarketListingPage, MarketListingStatus, MarketOrder, MarketOrderPage,
+    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
@@ -75,6 +75,8 @@ const INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX: &str =
     "database_index:025_cycles_pending_ledger_block_index";
 const INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH: &str = "database_index:026_storage_billing_batch";
 const INDEX_SCHEMA_VERSION_MARKETPLACE_CORE: &str = "database_index:027_marketplace_core";
+const INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES: &str =
+    "database_index:028_kinic_external_block_indexes";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -114,7 +116,7 @@ const CYCLES_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
 const KINIC_OPERATION_STATUS_IN_FLIGHT: &str = "in_flight";
 const KINIC_OPERATION_STATUS_COMPLETED: &str = "completed";
 const KINIC_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
-const KINIC_LEDGER_SOURCE_MARKETPLACE: &str = "marketplace";
+const KINIC_LEDGER_SOURCE_INTERNAL: &str = "canister_internal";
 const KINIC_PENDING_KIND_DEPOSIT: &str = "deposit";
 const MARKET_LISTING_STATUS_DRAFT: &str = "draft";
 const MARKET_LISTING_STATUS_ACTIVE: &str = "active";
@@ -1092,11 +1094,113 @@ impl VfsService {
         })
     }
 
-    pub fn market_get_balance(&self, caller: &str) -> Result<KinicBalance, String> {
+    pub fn kinic_get_balance(&self, caller: &str) -> Result<KinicBalance, String> {
         require_authenticated_principal(caller)?;
         self.read_index(|conn| {
             Ok(KinicBalance {
                 balance_e8s: u64::try_from(load_kinic_balance(conn, caller)?)
+                    .map_err(|error| error.to_string())?,
+            })
+        })
+    }
+
+    pub fn validate_kinic_fund_database_cycles(
+        &self,
+        caller: &str,
+        request: &KinicFundDatabaseCyclesRequest,
+    ) -> Result<(), String> {
+        require_authenticated_principal(caller)?;
+        let payment_amount = amount_to_i64(request.payment_amount_e8s)?;
+        self.read_index(|conn| {
+            let config = load_cycles_billing_config(conn)?;
+            let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
+            validate_cycles_purchase_minimum(amount_cycles, request.min_expected_cycles)?;
+            validate_database_cycles_purchase_for_conn(
+                conn,
+                &request.database_id,
+                cycles_to_i64(amount_cycles)?,
+            )?;
+            let kinic_balance = load_kinic_balance(conn, caller)?;
+            if kinic_balance < payment_amount {
+                return Err("insufficient KINIC balance".to_string());
+            }
+            Ok(())
+        })
+    }
+
+    pub fn kinic_fund_database_cycles(
+        &self,
+        caller: &str,
+        request: KinicFundDatabaseCyclesRequest,
+        now: i64,
+    ) -> Result<KinicFundDatabaseCyclesResult, String> {
+        require_authenticated_principal(caller)?;
+        let payment_amount = amount_to_i64(request.payment_amount_e8s)?;
+        self.write_index(|tx| {
+            let config = load_cycles_billing_config(tx)?;
+            let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
+            validate_cycles_purchase_minimum(amount_cycles, request.min_expected_cycles)?;
+            let amount_cycles_i64 = cycles_to_i64(amount_cycles)?;
+            validate_database_cycles_purchase_for_conn(
+                tx,
+                &request.database_id,
+                amount_cycles_i64,
+            )?;
+            complete_pending_database_activation(tx, &request.database_id, now)?;
+
+            let kinic_balance = load_kinic_balance(tx, caller)?;
+            if kinic_balance < payment_amount {
+                return Err("insufficient KINIC balance".to_string());
+            }
+            let next_kinic_balance = checked_balance_add(kinic_balance, -payment_amount)?;
+            let database_balance = database_balance_for_update(tx, &request.database_id)?;
+            let next_database_balance = checked_balance_add(database_balance, amount_cycles_i64)?;
+
+            upsert_kinic_balance(tx, caller, next_kinic_balance, now)?;
+            update_database_cycles_balance(
+                tx,
+                &request.database_id,
+                next_database_balance,
+                &config,
+                now,
+            )?;
+            insert_kinic_ledger(
+                tx,
+                KinicLedgerInsert {
+                    principal: caller,
+                    source: KINIC_LEDGER_SOURCE_INTERNAL,
+                    kind: "fund_database_cycles",
+                    amount_e8s: -payment_amount,
+                    balance_after_e8s: next_kinic_balance,
+                    counterparty: Some(&request.database_id),
+                    listing_id: None,
+                    order_id: None,
+                    external_block_index: None,
+                    now,
+                },
+            )?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id: &request.database_id,
+                    kind: "cycles_purchase",
+                    amount_cycles: amount_cycles_i64,
+                    balance_after_cycles: next_database_balance,
+                    payment_amount_e8s: Some(payment_amount),
+                    caller,
+                    method: Some("kinic_fund_database_cycles"),
+                    cycles_delta: None,
+                    config: Some(&config),
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
+            Ok(KinicFundDatabaseCyclesResult {
+                payment_amount_e8s: request.payment_amount_e8s,
+                amount_cycles,
+                database_balance_cycles: u64::try_from(next_database_balance)
+                    .map_err(|error| error.to_string())?,
+                kinic_balance_e8s: u64::try_from(next_kinic_balance)
                     .map_err(|error| error.to_string())?,
             })
         })
@@ -1108,7 +1212,7 @@ impl VfsService {
     ) -> Result<KinicDepositStart, String> {
         require_authenticated_principal(request.caller)?;
         if request.amount_e8s == 0 {
-            return Err("market deposit amount must be positive".to_string());
+            return Err("KINIC deposit amount must be positive".to_string());
         }
         let amount_e8s = amount_to_i64(request.amount_e8s)?;
         let ledger_fee = amount_to_i64(request.ledger.ledger_fee_e8s)?;
@@ -1164,7 +1268,7 @@ impl VfsService {
             require_pending_kinic_operation_status(
                 &operation,
                 &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "complete market deposit ledger transfer",
+                "complete KINIC deposit ledger transfer",
             )?;
             let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
             tx.execute(
@@ -1204,11 +1308,11 @@ impl VfsService {
             require_pending_kinic_operation_status(
                 &operation,
                 &[KINIC_OPERATION_STATUS_COMPLETED],
-                "apply market deposit",
+                "apply KINIC deposit",
             )?;
             let block_index = operation
                 .external_block_index
-                .ok_or_else(|| "completed market deposit missing ledger block index".to_string())?;
+                .ok_or_else(|| "completed KINIC deposit missing ledger block index".to_string())?;
             let balance = load_kinic_balance(tx, caller)?;
             let next_balance = checked_balance_add(balance, amount_i64)?;
             upsert_kinic_balance(tx, caller, next_balance, now)?;
@@ -1216,7 +1320,7 @@ impl VfsService {
                 tx,
                 KinicLedgerInsert {
                     principal: caller,
-                    source: KINIC_LEDGER_SOURCE_MARKETPLACE,
+                    source: KINIC_LEDGER_SOURCE_INTERNAL,
                     kind: "deposit",
                     amount_e8s: amount_i64,
                     balance_after_e8s: next_balance,
@@ -1254,7 +1358,7 @@ impl VfsService {
             require_pending_kinic_operation_status(
                 &operation,
                 &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "mark market deposit ambiguous",
+                "mark KINIC deposit ambiguous",
             )?;
             let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
             tx.execute(
@@ -1288,13 +1392,13 @@ impl VfsService {
             require_pending_kinic_operation_status(
                 &operation,
                 &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "cancel market deposit",
+                "cancel KINIC deposit",
             )?;
             delete_pending_kinic_operation(tx, operation_id)
         })
     }
 
-    pub fn market_list_pending_operations(
+    pub fn kinic_list_pending_operations(
         &self,
         caller: &str,
     ) -> Result<Vec<KinicPendingOperation>, String> {
@@ -1478,6 +1582,10 @@ impl VfsService {
                             l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
                      FROM market_listings l
                      JOIN databases d ON d.database_id = l.database_id
+                     JOIN database_members m
+                       ON m.database_id = l.database_id
+                      AND m.principal = l.seller_principal
+                      AND m.role = 'owner'
                      WHERE l.status = ?1
                        AND d.status = ?2
                        AND l.listing_id > ?3
@@ -1548,9 +1656,7 @@ impl VfsService {
         self.read_index(|conn| {
             let listing = load_market_listing_by_id(conn, listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
-            if listing.status == MarketListingStatus::Active
-                && load_database_status(conn, &listing.database_id)? == DatabaseStatus::Active
-            {
+            if require_market_listing_purchasable(conn, &listing).is_ok() {
                 return Ok(listing);
             }
             require_market_listing_seller_or_admin(conn, caller, &listing)?;
@@ -1629,7 +1735,7 @@ impl VfsService {
                 tx,
                 KinicLedgerInsert {
                     principal: caller,
-                    source: KINIC_LEDGER_SOURCE_MARKETPLACE,
+                    source: KINIC_LEDGER_SOURCE_INTERNAL,
                     kind: "purchase",
                     amount_e8s: -price_i64,
                     balance_after_e8s: buyer_next,
@@ -1644,7 +1750,7 @@ impl VfsService {
                 tx,
                 KinicLedgerInsert {
                     principal: &listing.seller_principal,
-                    source: KINIC_LEDGER_SOURCE_MARKETPLACE,
+                    source: KINIC_LEDGER_SOURCE_INTERNAL,
                     kind: "sale",
                     amount_e8s: price_i64,
                     balance_after_e8s: seller_next,
@@ -3429,6 +3535,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    KinicExternalBlockIndexesUpgrade,
     MarketplaceCoreUpgrade,
     StorageBillingBatchUpgrade,
     Mainnet011,
@@ -3440,13 +3547,19 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
+        IndexSchemaState::KinicExternalBlockIndexesUpgrade => {
+            apply_kinic_external_block_indexes_migration(conn)?;
+            validate_index_schema(conn)
+        }
         IndexSchemaState::MarketplaceCoreUpgrade => {
             apply_marketplace_core_index_migration(conn)?;
+            apply_kinic_external_block_indexes_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::StorageBillingBatchUpgrade => {
             apply_storage_billing_batch_index_migration(conn)?;
             apply_marketplace_core_index_migration(conn)?;
+            apply_kinic_external_block_indexes_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::Mainnet011 => {
@@ -3485,8 +3598,11 @@ fn classify_existing_index_schema_state(
             "unsupported partial billing index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)? {
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)? {
+        return Ok(IndexSchemaState::KinicExternalBlockIndexesUpgrade);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
         return Ok(IndexSchemaState::MarketplaceCoreUpgrade);
@@ -3656,6 +3772,23 @@ fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), 
     Ok(())
 }
 
+fn apply_kinic_external_block_indexes_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "
+        CREATE UNIQUE INDEX kinic_ledger_external_block_idx
+          ON kinic_ledger(external_block_index)
+          WHERE external_block_index IS NOT NULL;
+
+        CREATE UNIQUE INDEX kinic_pending_operations_external_block_kind_idx
+          ON kinic_pending_operations(external_block_index, kind)
+          WHERE external_block_index IS NOT NULL;
+        ",
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)?;
+    Ok(())
+}
+
 fn create_schema_migrations(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
@@ -3783,6 +3916,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
     INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
     INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
+    INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3824,6 +3958,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
     INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
     INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
+    INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -4164,7 +4299,9 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_cycle_ledger_database_idx",
         "database_cycle_pending_operations_database_idx",
         "kinic_ledger_principal_idx",
+        "kinic_ledger_external_block_idx",
         "kinic_pending_operations_caller_idx",
+        "kinic_pending_operations_external_block_kind_idx",
         "market_listings_status_idx",
         "market_listings_database_idx",
         "market_orders_buyer_idx",
@@ -5135,7 +5272,7 @@ fn ensure_no_pending_kinic_deposit_for_caller(
         )
         .map_err(|error| error.to_string())?;
     if count > 0 {
-        return Err("market deposit already pending for caller".to_string());
+        return Err("KINIC deposit already pending for caller".to_string());
     }
     Ok(())
 }
@@ -7131,31 +7268,68 @@ fn load_database_summaries_for_caller(
     let mut stmt = conn
         .prepare(
             "SELECT d.database_id, d.name, d.status, m.role, d.logical_size_bytes,
-                COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
-                d.archived_at_ms, d.deleted_at_ms
-         FROM databases d
-         INNER JOIN database_members m ON m.database_id = d.database_id
-         LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
-         WHERE m.principal = ?1
-         ORDER BY d.database_id ASC",
+                    COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
+                    d.archived_at_ms, d.deleted_at_ms,
+                    0 AS access_source_rank,
+                    CASE m.role
+                      WHEN 'owner' THEN 0
+                      WHEN 'writer' THEN 1
+                      ELSE 2
+                    END AS role_rank
+             FROM databases d
+             INNER JOIN database_members m ON m.database_id = d.database_id
+             LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
+             WHERE m.principal = ?1
+             UNION ALL
+             SELECT d.database_id, d.name, d.status, 'reader' AS role, d.logical_size_bytes,
+                    COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
+                    d.archived_at_ms, d.deleted_at_ms,
+                    1 AS access_source_rank,
+                    2 AS role_rank
+             FROM databases d
+             INNER JOIN market_entitlements e ON e.database_id = d.database_id
+             LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
+             WHERE e.buyer_principal = ?2
+               AND e.status = ?3
+               AND d.status = ?4
+             ORDER BY 1 ASC, 10 ASC, 11 ASC",
         )
         .map_err(|error| error.to_string())?;
-    crate::sqlite::query_map(&mut stmt, params![caller], |row| {
-        let logical_size_bytes: i64 = crate::sqlite::row_get(row, 4)?;
-        let cycles_balance: i64 = crate::sqlite::row_get(row, 5)?;
-        Ok(DatabaseSummary {
-            database_id: crate::sqlite::row_get(row, 0)?,
-            name: crate::sqlite::row_get(row, 1)?,
-            status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
-            role: role_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
-            logical_size_bytes: logical_size_bytes.max(0) as u64,
-            cycles_balance: Some(cycles_balance.max(0) as u64),
-            cycles_suspended_at_ms: crate::sqlite::row_get(row, 6)?,
-            archived_at_ms: crate::sqlite::row_get(row, 7)?,
-            deleted_at_ms: crate::sqlite::row_get(row, 8)?,
-        })
-    })
-    .map_err(|error| error.to_string())
+    let rows = crate::sqlite::query_map(
+        &mut stmt,
+        params![
+            caller,
+            caller,
+            MARKET_ENTITLEMENT_STATUS_ACTIVE,
+            status_to_db(DatabaseStatus::Active)
+        ],
+        |row| {
+            let logical_size_bytes: i64 = crate::sqlite::row_get(row, 4)?;
+            let cycles_balance: i64 = crate::sqlite::row_get(row, 5)?;
+            Ok(DatabaseSummary {
+                database_id: crate::sqlite::row_get(row, 0)?,
+                name: crate::sqlite::row_get(row, 1)?,
+                status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
+                role: role_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
+                logical_size_bytes: logical_size_bytes.max(0) as u64,
+                cycles_balance: Some(cycles_balance.max(0) as u64),
+                cycles_suspended_at_ms: crate::sqlite::row_get(row, 6)?,
+                archived_at_ms: crate::sqlite::row_get(row, 7)?,
+                deleted_at_ms: crate::sqlite::row_get(row, 8)?,
+            })
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let mut summaries = Vec::new();
+    for row in rows {
+        if summaries
+            .last()
+            .is_none_or(|last: &DatabaseSummary| last.database_id != row.database_id)
+        {
+            summaries.push(row);
+        }
+    }
+    Ok(summaries)
 }
 
 fn map_database_meta_with_statuses(

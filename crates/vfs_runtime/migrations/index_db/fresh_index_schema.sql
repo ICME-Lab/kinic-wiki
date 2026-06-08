@@ -191,6 +191,10 @@ CREATE TABLE kinic_ledger (
 CREATE INDEX kinic_ledger_principal_idx
   ON kinic_ledger(principal, entry_id);
 
+CREATE UNIQUE INDEX kinic_ledger_external_block_idx
+  ON kinic_ledger(external_block_index)
+  WHERE external_block_index IS NOT NULL;
+
 CREATE TABLE kinic_pending_operations (
   operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL,
@@ -209,6 +213,10 @@ CREATE TABLE kinic_pending_operations (
 
 CREATE INDEX kinic_pending_operations_caller_idx
   ON kinic_pending_operations(caller, operation_id);
+
+CREATE UNIQUE INDEX kinic_pending_operations_external_block_kind_idx
+  ON kinic_pending_operations(external_block_index, kind)
+  WHERE external_block_index IS NOT NULL;
 
 CREATE TABLE market_listings (
   listing_id TEXT PRIMARY KEY,

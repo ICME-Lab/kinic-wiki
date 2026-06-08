@@ -20,9 +20,10 @@ import type {
   DatabaseSummary,
   LinkEdge,
   KinicBalance,
+  KinicFundDatabaseCyclesResult,
   KinicPendingOperation,
   MarketCreateListingRequest,
-  MarketDepositResult,
+  KinicDepositResult,
   MarketEntitlementPage,
   MarketListing,
   MarketListingPage,
@@ -186,15 +187,28 @@ type RawMarketUpdateListingRequest = RawMarketCreateListingRequest & {
   expected_revision: bigint;
 };
 
-type RawMarketDepositRequest = {
+type RawKinicDepositRequest = {
   amount_e8s: bigint;
   expected_fee_e8s: bigint;
 };
 
-type RawMarketDepositResult = {
+type RawKinicDepositResult = {
   block_index: bigint;
   amount_e8s: bigint;
   balance_e8s: bigint;
+};
+
+type RawKinicFundDatabaseCyclesRequest = {
+  database_id: string;
+  payment_amount_e8s: bigint;
+  min_expected_cycles: bigint;
+};
+
+type RawKinicFundDatabaseCyclesResult = {
+  payment_amount_e8s: bigint;
+  amount_cycles: bigint;
+  database_balance_cycles: bigint;
+  kinic_balance_e8s: bigint;
 };
 
 type RawMarketPurchasePreview = {
@@ -412,14 +426,15 @@ type VfsActor = {
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
   market_count_active_entitlements: (databaseId: string) => Promise<{ Ok: bigint } | { Err: string }>;
   market_create_listing: (request: RawMarketCreateListingRequest) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
-  market_deposit_balance: (request: RawMarketDepositRequest) => Promise<{ Ok: RawMarketDepositResult } | { Err: string }>;
-  market_get_balance: () => Promise<{ Ok: RawKinicBalance } | { Err: string }>;
+  kinic_deposit_balance: (request: RawKinicDepositRequest) => Promise<{ Ok: RawKinicDepositResult } | { Err: string }>;
+  kinic_fund_database_cycles: (request: RawKinicFundDatabaseCyclesRequest) => Promise<{ Ok: RawKinicFundDatabaseCyclesResult } | { Err: string }>;
+  kinic_get_balance: () => Promise<{ Ok: RawKinicBalance } | { Err: string }>;
   market_get_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   market_list_database_listings: (databaseId: string) => Promise<{ Ok: RawMarketListing[] } | { Err: string }>;
   market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
   market_list_orders: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketOrderPage } | { Err: string }>;
-  market_list_pending_operations: () => Promise<{ Ok: RawKinicPendingOperation[] } | { Err: string }>;
+  kinic_list_pending_operations: () => Promise<{ Ok: RawKinicPendingOperation[] } | { Err: string }>;
   market_pause_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   market_preview_purchase: (listingId: string) => Promise<{ Ok: RawMarketPurchasePreview } | { Err: string }>;
   market_publish_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
@@ -646,10 +661,10 @@ export async function listDatabaseCyclesPendingPurchasesAuthenticated(
   });
 }
 
-export async function marketGetBalance(canisterId: string, identity: Identity): Promise<KinicBalance> {
+export async function kinicGetBalance(canisterId: string, identity: Identity): Promise<KinicBalance> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.market_get_balance();
+    const result = await actor.kinic_get_balance();
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -657,29 +672,50 @@ export async function marketGetBalance(canisterId: string, identity: Identity): 
   });
 }
 
-export async function marketDepositBalance(
+export async function kinicDepositBalance(
   canisterId: string,
   identity: Identity,
   amountE8s: string,
   expectedFeeE8s: string
-): Promise<MarketDepositResult> {
+): Promise<KinicDepositResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.market_deposit_balance({
+    const result = await actor.kinic_deposit_balance({
       amount_e8s: BigInt(amountE8s),
       expected_fee_e8s: BigInt(expectedFeeE8s)
     });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return normalizeMarketDepositResult(result.Ok);
+    return normalizeKinicDepositResult(result.Ok);
   });
 }
 
-export async function marketListPendingOperations(canisterId: string, identity: Identity): Promise<KinicPendingOperation[]> {
+export async function kinicFundDatabaseCycles(
+  canisterId: string,
+  identity: Identity,
+  databaseId: string,
+  paymentAmountE8s: string,
+  minExpectedCycles: string
+): Promise<KinicFundDatabaseCyclesResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.market_list_pending_operations();
+    const result = await actor.kinic_fund_database_cycles({
+      database_id: databaseId,
+      payment_amount_e8s: BigInt(paymentAmountE8s),
+      min_expected_cycles: BigInt(minExpectedCycles)
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeKinicFundDatabaseCyclesResult(result.Ok);
+  });
+}
+
+export async function kinicListPendingOperations(canisterId: string, identity: Identity): Promise<KinicPendingOperation[]> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.kinic_list_pending_operations();
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1359,11 +1395,20 @@ function normalizeMarketListingStatus(status: RawMarketListingStatus): MarketLis
   return "Draft";
 }
 
-function normalizeMarketDepositResult(raw: RawMarketDepositResult): MarketDepositResult {
+function normalizeKinicDepositResult(raw: RawKinicDepositResult): KinicDepositResult {
   return {
     blockIndex: raw.block_index.toString(),
     amountE8s: raw.amount_e8s.toString(),
     balanceE8s: raw.balance_e8s.toString()
+  };
+}
+
+function normalizeKinicFundDatabaseCyclesResult(raw: RawKinicFundDatabaseCyclesResult): KinicFundDatabaseCyclesResult {
+  return {
+    paymentAmountE8s: raw.payment_amount_e8s.toString(),
+    amountCycles: raw.amount_cycles.toString(),
+    databaseBalanceCycles: raw.database_balance_cycles.toString(),
+    kinicBalanceE8s: raw.kinic_balance_e8s.toString()
   };
 }
 

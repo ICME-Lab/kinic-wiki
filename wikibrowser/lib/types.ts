@@ -232,10 +232,17 @@ export type MarketUpdateListingRequest = MarketCreateListingRequest & {
   expectedRevision: string;
 };
 
-export type MarketDepositResult = {
+export type KinicDepositResult = {
   blockIndex: string;
   amountE8s: string;
   balanceE8s: string;
+};
+
+export type KinicFundDatabaseCyclesResult = {
+  paymentAmountE8s: string;
+  amountCycles: string;
+  databaseBalanceCycles: string;
+  kinicBalanceE8s: string;
 };
 
 export type MarketPurchasePreview = {

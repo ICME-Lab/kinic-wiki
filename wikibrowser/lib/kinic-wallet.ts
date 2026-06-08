@@ -1,15 +1,16 @@
 import { IcrcWallet } from "@dfinity/oisy-wallet-signer/icrc-wallet";
 import { base64ToUint8Array, uint8ArrayToBase64 } from "@dfinity/utils";
 import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
-import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf } from "@icp-sdk/core/agent";
+import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf, type Identity } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
-import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
+import { getCyclesBillingConfig, kinicDepositBalance, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
-import { formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64, kinicBaseUnitsPerToken } from "@/lib/cycles";
+import { cyclesForPaymentAmountE8s, formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64 } from "@/lib/cycles";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 
 type WalletProvider = "oisy" | "plug";
+type KinicDepositProvider = WalletProvider | "ii";
 
 type CyclesPurchaseRequest = {
   canisterId: string;
@@ -28,13 +29,13 @@ type CyclesPurchaseResult = {
   balanceCycles: string | null;
 };
 
-type MarketDepositRequest = {
+type KinicDepositRequest = {
   canisterId: string;
   amountE8s: bigint;
 };
 
-type MarketDepositResult = {
-  provider: WalletProvider;
+type KinicDepositResult = {
+  provider: KinicDepositProvider;
   approveBlockIndex: string | null;
   approvedAllowanceE8s: string;
   amountE8s: string;
@@ -62,7 +63,7 @@ type MarketPurchaseResult = {
   createdAtMs: string;
 };
 
-type MarketDepositCanisterRequest = {
+type KinicDepositCanisterRequest = {
   amount_e8s: bigint;
   expected_fee_e8s: bigint;
 };
@@ -104,8 +105,8 @@ type PreparedCyclesPurchase = PreparedKinicAllowance & {
   paymentAmountE8s: bigint;
 };
 
-type PreparedMarketDeposit = PreparedKinicAllowance & {
-  depositRequest: MarketDepositCanisterRequest;
+type PreparedKinicDeposit = PreparedKinicAllowance & {
+  depositRequest: KinicDepositCanisterRequest;
   amountE8s: bigint;
 };
 
@@ -138,7 +139,7 @@ type PlugWallet = {
 
 type PlugVfsActor = {
   purchase_database_cycles: (request: DatabaseCyclesPurchaseRequest) => Promise<{ Ok: { block_index: bigint; amount_cycles: bigint; balance_cycles: bigint } } | { Err: string }>;
-  market_deposit_balance: (request: MarketDepositCanisterRequest) => Promise<{ Ok: { block_index: bigint; amount_e8s: bigint; balance_e8s: bigint } } | { Err: string }>;
+  kinic_deposit_balance: (request: KinicDepositCanisterRequest) => Promise<{ Ok: { block_index: bigint; amount_e8s: bigint; balance_e8s: bigint } } | { Err: string }>;
   market_purchase_access: (request: MarketPurchaseCanisterRequest) => Promise<{ Ok: RawMarketOrder } | { Err: string }>;
 };
 
@@ -365,8 +366,8 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
   };
 }
 
-export async function depositMarketBalanceWithOisy(request: MarketDepositRequest, connection: ConnectedOisyWallet): Promise<MarketDepositResult> {
-  const prepared = await prepareMarketDeposit(request, connection.owner);
+export async function depositKinicBalanceWithOisy(request: KinicDepositRequest, connection: ConnectedOisyWallet): Promise<KinicDepositResult> {
+  const prepared = await prepareKinicDeposit(request, connection.owner);
   const wallet = await openOisyWallet();
   try {
     const accounts = await wallet.accounts();
@@ -384,7 +385,7 @@ export async function depositMarketBalanceWithOisy(request: MarketDepositRequest
       approveBlockIndex = approvedBlockIndex.toString();
     }
     const deposit = await callAfterApprove(
-      () => oisyCallMarketDeposit(wallet, connection.owner, request.canisterId, prepared.depositRequest),
+      () => oisyCallKinicDeposit(wallet, connection.owner, request.canisterId, prepared.depositRequest),
       { approveBlockIndex, expiresAt: prepared.approvalExpiresAt }
     );
     return {
@@ -401,8 +402,8 @@ export async function depositMarketBalanceWithOisy(request: MarketDepositRequest
   }
 }
 
-export async function depositMarketBalanceWithPlug(request: MarketDepositRequest, connection: ConnectedPlugWallet): Promise<MarketDepositResult> {
-  const prepared = await prepareMarketDeposit(request, connection.principal);
+export async function depositKinicBalanceWithPlug(request: KinicDepositRequest, connection: ConnectedPlugWallet): Promise<KinicDepositResult> {
+  const prepared = await prepareKinicDeposit(request, connection.principal);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
   const connected = await plug.requestConnect({
@@ -430,7 +431,7 @@ export async function depositMarketBalanceWithPlug(request: MarketDepositRequest
     interfaceFactory: idlFactory
   });
   const deposit = await callAfterApprove(async () => {
-    const result = await vfsActor.market_deposit_balance(prepared.depositRequest);
+    const result = await vfsActor.kinic_deposit_balance(prepared.depositRequest);
     if ("Err" in result) throw new Error(result.Err);
     return result.Ok;
   }, { approveBlockIndex, expiresAt: prepared.approvalExpiresAt });
@@ -442,6 +443,39 @@ export async function depositMarketBalanceWithPlug(request: MarketDepositRequest
     transferFeeE8s: prepared.transferFeeE8s.toString(),
     depositBlockIndex: deposit.block_index.toString(),
     balanceE8s: deposit.balance_e8s.toString()
+  };
+}
+
+export async function depositKinicBalanceWithIdentity(request: KinicDepositRequest, identity: Identity): Promise<KinicDepositResult> {
+  const owner = identity.getPrincipal().toText();
+  const prepared = await prepareKinicDeposit(request, owner);
+  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const agent = HttpAgent.createSync({ identity, host });
+  if (agent.isLocal()) await agent.fetchRootKey();
+  let approveBlockIndex: string | null = null;
+  if (prepared.approvalRequired) {
+    const ledgerActor = Actor.createActor<LedgerActor>(ledgerIdlFactory, {
+      agent,
+      canisterId: Principal.fromText(prepared.kinicLedgerCanisterId)
+    });
+    const approve = await ledgerActor.icrc2_approve(
+      rawApproveArgs(request.canisterId, prepared.approvedAllowanceE8s, prepared.currentAllowance.allowance, prepared.expiresAt)
+    );
+    if ("Err" in approve) throw new Error(`ledger approve failed: ${formatLedgerApproveError(approve.Err)}`);
+    approveBlockIndex = approve.Ok.toString();
+  }
+  const deposit = await callAfterApprove(
+    () => kinicDepositBalance(request.canisterId, identity, prepared.amountE8s.toString(), prepared.transferFeeE8s.toString()),
+    { approveBlockIndex, expiresAt: prepared.approvalExpiresAt }
+  );
+  return {
+    provider: "ii",
+    approveBlockIndex,
+    approvedAllowanceE8s: prepared.approvedAllowanceE8s.toString(),
+    amountE8s: prepared.amountE8s.toString(),
+    transferFeeE8s: prepared.transferFeeE8s.toString(),
+    depositBlockIndex: deposit.blockIndex,
+    balanceE8s: deposit.balanceE8s
   };
 }
 
@@ -520,7 +554,7 @@ async function prepareCyclesPurchase(request: CyclesPurchaseRequest, payer: stri
   };
 }
 
-async function prepareMarketDeposit(request: MarketDepositRequest, payer: string): Promise<PreparedMarketDeposit> {
+async function prepareKinicDeposit(request: KinicDepositRequest, payer: string): Promise<PreparedKinicDeposit> {
   const allowance = await prepareKinicAllowance(request.canisterId, payer, request.amountE8s);
   return {
     ...allowance,
@@ -556,13 +590,6 @@ function allowanceForKinicTransfer(amountE8s: bigint, transferFeeE8s: bigint): b
   const allowance = amountE8s + transferFeeE8s;
   if (allowance > MAX_LEDGER_U64) throw new Error("approved allowance exceeds u64::MAX");
   return allowance;
-}
-
-function cyclesForPaymentAmountE8s(amountE8s: bigint, cyclesPerKinic: bigint): bigint {
-  const cycles = (amountE8s * cyclesPerKinic) / kinicBaseUnitsPerToken();
-  if (cycles <= 0n) throw new Error("KINIC amount is too small for a cycles purchase");
-  if (cycles > MAX_CANISTER_I64) throw new Error("cycles purchase amount exceeds canister limit");
-  return cycles;
 }
 
 function assertCanisterPaymentAmountE8s(amountE8s: bigint): void {
@@ -655,23 +682,23 @@ async function oisyCallCyclesPurchase(
   });
 }
 
-async function oisyCallMarketDeposit(
+async function oisyCallKinicDeposit(
   wallet: KinicIcrcWallet,
   owner: string,
   canisterId: string,
-  request: MarketDepositCanisterRequest
+  request: KinicDepositCanisterRequest
 ): Promise<{ blockIndex: string; amountE8s: string; balanceE8s: string }> {
-  const arg = encodeMarketDepositArgs(request);
+  const arg = encodeKinicDepositArgs(request);
   const result = await wallet.callCanister({
     canisterId,
     sender: owner,
-    method: "market_deposit_balance",
+    method: "kinic_deposit_balance",
     arg
   });
-  return decodeOisyMarketDepositResult({
+  return decodeOisyKinicDepositResult({
     canisterId,
     sender: owner,
-    method: "market_deposit_balance",
+    method: "kinic_deposit_balance",
     arg,
     result
   });
@@ -729,7 +756,7 @@ function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): strin
   return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
 }
 
-function encodeMarketDepositArgs(request: MarketDepositCanisterRequest): string {
+function encodeKinicDepositArgs(request: KinicDepositCanisterRequest): string {
   const DepositRequest = IDL.Record({
     amount_e8s: IDL.Nat64,
     expected_fee_e8s: IDL.Nat64
@@ -763,7 +790,7 @@ async function decodeOisyCyclesPurchaseResult({
   return decodePurchaseResult(reply);
 }
 
-async function decodeOisyMarketDepositResult({
+async function decodeOisyKinicDepositResult({
   canisterId,
   sender,
   method,
@@ -777,7 +804,7 @@ async function decodeOisyMarketDepositResult({
   result: IcrcCallCanisterResult;
 }): Promise<{ blockIndex: string; amountE8s: string; balanceE8s: string }> {
   const reply = await decodeOisyCanisterReply({ canisterId, sender, method, arg, result });
-  return decodeMarketDepositResult(reply);
+  return decodeKinicDepositResult(reply);
 }
 
 async function decodeOisyMarketPurchaseResult({
@@ -867,12 +894,12 @@ function purchaseResultType() {
   });
 }
 
-function decodeMarketDepositResult(reply: Uint8Array): { blockIndex: string; amountE8s: string; balanceE8s: string } {
-  const [decoded] = IDL.decode([marketDepositResultType()], reply);
+function decodeKinicDepositResult(reply: Uint8Array): { blockIndex: string; amountE8s: string; balanceE8s: string } {
+  const [decoded] = IDL.decode([kinicDepositResultType()], reply);
   if (!isObject(decoded)) throw new Error("wallet response result mismatch");
   if (hasOwn(decoded, "Err")) {
     const error = Reflect.get(decoded, "Err");
-    throw new Error(typeof error === "string" ? error : "market deposit failed");
+    throw new Error(typeof error === "string" ? error : "KINIC deposit failed");
   }
   const ok = Reflect.get(decoded, "Ok");
   if (!isObject(ok)) throw new Error("wallet response result mismatch");
@@ -889,7 +916,7 @@ function decodeMarketDepositResult(reply: Uint8Array): { blockIndex: string; amo
   };
 }
 
-function marketDepositResultType() {
+function kinicDepositResultType() {
   return IDL.Variant({
     Ok: IDL.Record({ block_index: IDL.Nat64, amount_e8s: IDL.Nat64, balance_e8s: IDL.Nat64 }),
     Err: IDL.Text

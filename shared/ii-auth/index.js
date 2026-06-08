@@ -22,19 +22,11 @@ export function authClientCreateOptions(idleTimeoutMs = AUTH_SESSION_TTL_MS) {
   };
 }
 
-export function identityProviderUrlForLocation(locationLike) {
-  const hostname = locationLike?.hostname ?? "";
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost")) {
-    return `http://id.ai.localhost:${locationLike?.port || "8000"}`;
-  }
+export function identityProviderUrlForLocation() {
   return MAINNET_II_PROVIDER_URL;
 }
 
-export function derivationOriginForLocation(locationLike) {
-  const hostname = locationLike?.hostname ?? "";
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost")) {
-    return locationLike.origin;
-  }
+export function derivationOriginForLocation() {
   return WIKI_CANISTER_DERIVATION_ORIGIN;
 }
 

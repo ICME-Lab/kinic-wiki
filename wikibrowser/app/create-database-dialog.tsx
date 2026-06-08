@@ -35,7 +35,12 @@ export function CreateDatabaseDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
+      onMouseDown={(event) => {
+        if (!creating && event.target === event.currentTarget) onCancel();
+      }}
+    >
       <form aria-modal="true" className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg" role="dialog" onSubmit={submit}>
         <div className="flex items-start justify-between gap-3">
           <div>

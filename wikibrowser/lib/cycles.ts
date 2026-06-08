@@ -10,6 +10,13 @@ export function kinicBaseUnitsPerToken(): bigint {
   return 10n ** BigInt(KINIC_DECIMALS);
 }
 
+export function cyclesForPaymentAmountE8s(amountE8s: bigint, cyclesPerKinic: bigint): bigint {
+  const cycles = (amountE8s * cyclesPerKinic) / kinicBaseUnitsPerToken();
+  if (cycles <= 0n) throw new Error("KINIC amount is too small for a cycles purchase");
+  if (cycles > MAX_CANISTER_I64) throw new Error("cycles purchase amount exceeds canister limit");
+  return cycles;
+}
+
 const MILLION = 1_000_000n;
 const BILLION = 1_000_000_000n;
 const TRILLION = 1_000_000_000_000n;

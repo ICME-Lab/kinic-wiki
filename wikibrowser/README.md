@@ -24,17 +24,15 @@ DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canist
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success. `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. `NEXT_PUBLIC_II_PROVIDER_URL` overrides the Internet Identity frontend URL for local II. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
+`database create <database-name>` creates a generated database ID and prints it on success. `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash
 # local icp network
 NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011
-NEXT_PUBLIC_II_PROVIDER_URL=http://id.ai.localhost:8011
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<local-wiki-canister-id>
 
 # mainnet / Cloudflare Workers
 NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io
-NEXT_PUBLIC_II_PROVIDER_URL=https://id.ai
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai
 ```
 
@@ -100,7 +98,7 @@ pnpm typecheck
 pnpm build
 ```
 
-Internet Identity E2E requires a local wiki canister and the E2E setup script. The script deploys the pinned Internet Identity backend/frontend dev canisters with dummy auth and writes `.env.e2e.local`. Override `II_RELEASE` only when intentionally updating the tested Internet Identity release.
+Internet Identity E2E requires a local wiki canister and the E2E setup script. The script deploys the pinned Internet Identity backend/frontend dev canisters with dummy auth and writes `.env.e2e.local` with `NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1`. Local II is only enabled for that explicit E2E mode. Override `II_RELEASE` only when intentionally updating the tested Internet Identity release.
 
 ```bash
 icp network start -d -e local-wiki

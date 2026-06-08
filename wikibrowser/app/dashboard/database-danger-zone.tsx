@@ -82,7 +82,12 @@ function ConfirmDeleteDatabaseDialog(props: {
   const [typedDatabaseId, setTypedDatabaseId] = useState("");
   const deleteConfirmed = typedDatabaseId === props.databaseId;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
+      onMouseDown={(event) => {
+        if (!props.deleting && event.target === event.currentTarget) props.onCancel();
+      }}
+    >
       <div className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
         <h3 className="text-lg font-semibold text-ink">Delete database</h3>
         <p className="mt-3 text-sm leading-6 text-muted">

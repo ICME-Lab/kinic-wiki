@@ -18,15 +18,16 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, KinicBalance, KinicPendingOperation, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketDepositRequest, MarketDepositResult,
-    MarketEntitlementPage, MarketListing, MarketListingPage, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    IncomingLinksRequest, KinicBalance, KinicDepositRequest, KinicDepositResult,
+    KinicFundDatabaseCyclesRequest, KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
+    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -79,22 +80,30 @@ pub trait VfsApi: Sync {
             "list_database_cycles_pending_purchases is not implemented by this client"
         ))
     }
-    async fn market_get_balance(&self) -> Result<KinicBalance> {
+    async fn kinic_get_balance(&self) -> Result<KinicBalance> {
         Err(anyhow!(
-            "market_get_balance is not implemented by this client"
+            "kinic_get_balance is not implemented by this client"
         ))
     }
-    async fn market_deposit_balance(
+    async fn kinic_deposit_balance(
         &self,
-        _request: MarketDepositRequest,
-    ) -> Result<MarketDepositResult> {
+        _request: KinicDepositRequest,
+    ) -> Result<KinicDepositResult> {
         Err(anyhow!(
-            "market_deposit_balance is not implemented by this client"
+            "kinic_deposit_balance is not implemented by this client"
         ))
     }
-    async fn market_list_pending_operations(&self) -> Result<Vec<KinicPendingOperation>> {
+    async fn kinic_fund_database_cycles(
+        &self,
+        _request: KinicFundDatabaseCyclesRequest,
+    ) -> Result<KinicFundDatabaseCyclesResult> {
         Err(anyhow!(
-            "market_list_pending_operations is not implemented by this client"
+            "kinic_fund_database_cycles is not implemented by this client"
+        ))
+    }
+    async fn kinic_list_pending_operations(&self) -> Result<Vec<KinicPendingOperation>> {
+        Err(anyhow!(
+            "kinic_list_pending_operations is not implemented by this client"
         ))
     }
     async fn market_create_listing(
@@ -595,23 +604,32 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn market_get_balance(&self) -> Result<KinicBalance> {
-        let result: Result<KinicBalance, String> = self.query("market_get_balance", &()).await?;
+    async fn kinic_get_balance(&self) -> Result<KinicBalance> {
+        let result: Result<KinicBalance, String> = self.query("kinic_get_balance", &()).await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn market_deposit_balance(
+    async fn kinic_deposit_balance(
         &self,
-        request: MarketDepositRequest,
-    ) -> Result<MarketDepositResult> {
-        let result: Result<MarketDepositResult, String> =
-            self.update("market_deposit_balance", &request).await?;
+        request: KinicDepositRequest,
+    ) -> Result<KinicDepositResult> {
+        let result: Result<KinicDepositResult, String> =
+            self.update("kinic_deposit_balance", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn market_list_pending_operations(&self) -> Result<Vec<KinicPendingOperation>> {
+    async fn kinic_fund_database_cycles(
+        &self,
+        request: KinicFundDatabaseCyclesRequest,
+    ) -> Result<KinicFundDatabaseCyclesResult> {
+        let result: Result<KinicFundDatabaseCyclesResult, String> =
+            self.update("kinic_fund_database_cycles", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn kinic_list_pending_operations(&self) -> Result<Vec<KinicPendingOperation>> {
         let result: Result<Vec<KinicPendingOperation>, String> =
-            self.query("market_list_pending_operations", &()).await?;
+            self.query("kinic_list_pending_operations", &()).await?;
         result.map_err(|error| anyhow!(error))
     }
 

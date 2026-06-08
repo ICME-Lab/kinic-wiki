@@ -4,9 +4,9 @@ import Link from "next/link";
 import { CheckCircle2, CircleAlert, ShoppingCart } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
-import { purchaseMarketAccessWithOisy, purchaseMarketAccessWithPlug } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { marketGetListing } from "@/lib/vfs-client";
+import { hrefForPath } from "@/lib/paths";
+import { marketGetListing, marketPurchaseAccess } from "@/lib/vfs-client";
 import type { MarketListing } from "@/lib/types";
 
 type ListingDetailClientProps = {
@@ -17,7 +17,7 @@ type ListingDetailClientProps = {
 type ActionState = "idle" | "loading" | "success" | "error";
 
 export function ListingDetailClient({ canisterId, listingId }: ListingDetailClientProps) {
-  const { refreshWalletBalance, wallet } = useAppSession();
+  const { authClient, principal, refreshKinicBalance } = useAppSession();
   const [listing, setListing] = useState<MarketListing | null>(null);
   const [state, setState] = useState<ActionState>("loading");
   const [purchaseState, setPurchaseState] = useState<ActionState>("idle");
@@ -41,37 +41,19 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   }, [canisterId, listingId]);
 
   async function purchase() {
-    if (!wallet || !listing) {
-      setMessage("Connect OISY or Plug first");
+    if (!authClient || !principal || !listing) {
+      setMessage("Login with Internet Identity first");
       setPurchaseState("error");
       return;
     }
     setPurchaseState("loading");
     setMessage(null);
     try {
-      const order =
-        wallet.provider === "oisy"
-          ? await purchaseMarketAccessWithOisy(
-              {
-                canisterId,
-                listingId: listing.listingId,
-                priceE8s: BigInt(listing.priceE8s),
-                expectedRevision: BigInt(listing.revision)
-              },
-              wallet.connection
-            )
-          : await purchaseMarketAccessWithPlug(
-              {
-                canisterId,
-                listingId: listing.listingId,
-                priceE8s: BigInt(listing.priceE8s),
-                expectedRevision: BigInt(listing.revision)
-              },
-              wallet.connection
-            );
-      setMessage(`Order ${order.orderId}`);
+      const identity = authClient.getIdentity();
+      const order = await marketPurchaseAccess(canisterId, identity, listing.listingId, listing.priceE8s, listing.revision);
+      await refreshKinicBalance();
+      setMessage(`Order ${order.orderId}. KINIC balance updated. Access is ready.`);
       setPurchaseState("success");
-      await refreshWalletBalance(wallet);
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : String(cause));
       setPurchaseState("error");
@@ -124,14 +106,22 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
             <section className="flex flex-wrap items-center gap-3">
               <button
                 className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-action bg-action px-4 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
-                disabled={!wallet || purchaseState === "loading" || purchaseState === "success"}
+                disabled={!principal || purchaseState === "loading" || purchaseState === "success"}
                 type="button"
                 onClick={() => void purchase()}
               >
                 <ShoppingCart aria-hidden size={17} />
                 <span>{purchaseState === "success" ? "Purchased" : "Purchase access"}</span>
               </button>
-              {!wallet ? <span className="text-sm text-muted">Connect OISY or Plug to purchase</span> : null}
+              {!principal ? <span className="text-sm text-muted">Login with Internet Identity to purchase</span> : null}
+              {purchaseState === "success" ? (
+                <Link
+                  className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 py-2 text-sm font-semibold text-accent no-underline hover:border-accent"
+                  href={hrefForPath(canisterId, listing.databaseId, "/Wiki")}
+                >
+                  Open database
+                </Link>
+              ) : null}
             </section>
           </>
         ) : null}

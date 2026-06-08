@@ -7,13 +7,17 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
+import { cyclesForPaymentAmountE8s } from "@/lib/cycles";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
 import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { getCyclesBillingConfig, kinicFundDatabaseCycles } from "@/lib/vfs-client";
 import type { DatabaseStatus } from "@/lib/types";
 
 type CyclesStatus = "idle" | "running" | "success" | "error";
 type CyclesProvider = "oisy" | "plug";
+type FundingProvider = CyclesProvider | "ii";
+type PaymentSource = "wallet" | "kinic";
 
 type CyclesClientProps = {
   canisterId: string;
@@ -23,10 +27,11 @@ type CyclesClientProps = {
 
 export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesClientProps) {
   const router = useRouter();
-  const { refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
+  const { authClient, authLoading, login, principal, refreshKinicBalance, refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [amount, setAmount] = useState("1");
+  const [paymentSource, setPaymentSource] = useState<PaymentSource>("wallet");
   const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const parsedTarget = useMemo(() => {
     const params = new URLSearchParams();
@@ -43,15 +48,48 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const amountError = typeof parsedAmount === "string" ? parsedAmount : null;
   const busy = status === "running" || walletBusyProvider !== null;
   const selectedProvider = wallet?.provider ?? null;
-  const purchaseDisabled = !selectedProvider || Boolean(error) || Boolean(amountError) || busy;
+  const kinicBalancePendingDisabled = paymentSource === "kinic" && databaseStatus === "pending";
+  const purchaseDisabled =
+    Boolean(error) ||
+    Boolean(amountError) ||
+    busy ||
+    (paymentSource === "wallet" ? !selectedProvider : authLoading || !authClient || kinicBalancePendingDisabled);
 
   async function purchase() {
-    if (!wallet || !selectedProvider) return;
     if (typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
     setStatus("running");
     setMessage(null);
     try {
       const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
+      if (paymentSource === "kinic") {
+        if (!authClient || !principal) {
+          await login();
+          setStatus("idle");
+          return;
+        }
+        const config = await getCyclesBillingConfig(canisterId);
+        const minExpectedCycles = cyclesForPaymentAmountE8s(parsedAmount, BigInt(config.cyclesPerKinic));
+        const result = await kinicFundDatabaseCycles(
+          canisterId,
+          authClient.getIdentity(),
+          parsedTarget.databaseId,
+          parsedAmount.toString(),
+          minExpectedCycles.toString()
+        );
+        setMessage(
+          `Internet Identity funded cycles ${result.amountCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} from KINIC balance; database cycles balance ${result.databaseBalanceCycles}; KINIC balance ${formatTokenAmountFromE8s(result.kinicBalanceE8s)}`
+        );
+        await refreshKinicBalance();
+        setStatus("success");
+        router.replace(cyclesPurchaseSuccessHref({
+          cycles: result.amountCycles,
+          databaseId: parsedTarget.databaseId,
+          kinic: formatTokenAmountFromE8s(result.paymentAmountE8s),
+          provider: "ii"
+        }));
+        return;
+      }
+      if (!wallet || !selectedProvider) return;
       const result =
         wallet.provider === "oisy"
           ? await purchaseCyclesWithOisy(request, wallet.connection)
@@ -91,10 +129,30 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             />
             {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
           </label>
+          <div className="grid gap-2">
+            <span className="text-xs font-semibold uppercase text-muted">Payment source</span>
+            <div className="grid grid-cols-2 rounded-lg border border-line bg-paper p-1 text-sm font-semibold">
+              <button
+                className={`min-h-10 rounded-md px-3 ${paymentSource === "wallet" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                type="button"
+                onClick={() => setPaymentSource("wallet")}
+              >
+                Wallet KINIC
+              </button>
+              <button
+                className={`min-h-10 rounded-md px-3 ${paymentSource === "kinic" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                disabled={databaseStatus === "pending"}
+                type="button"
+                onClick={() => setPaymentSource("kinic")}
+              >
+                KINIC balance
+              </button>
+            </div>
+          </div>
         </section>
 
         {databaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
-        <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable cycles for this database." />
+        <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable cycles for this database. Active databases can also use the Internet Identity KINIC balance." />
 
         <div className="grid gap-3">
           <button
@@ -104,12 +162,13 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             onClick={() => void purchase()}
           >
             {selectedProvider === "plug" ? <PlugZap aria-hidden size={18} /> : <Wallet aria-hidden size={18} />}
-            <span>{purchaseButtonLabel(selectedProvider, status)}</span>
+            <span>{purchaseButtonLabel(selectedProvider, status, paymentSource)}</span>
           </button>
         </div>
 
         {error ? <Notice tone="error" text={error} /> : null}
-        {walletBalanceError ? <Notice tone="error" text={walletBalanceError} /> : null}
+        {paymentSource === "wallet" && walletBalanceError ? <Notice tone="error" text={walletBalanceError} /> : null}
+        {paymentSource === "kinic" && !principal ? <Notice tone="info" text="Login with Internet Identity to use KINIC balance." /> : null}
         {status === "success" && message ? <Notice tone="success" text={message} /> : null}
         {status === "error" && message ? <Notice tone="error" text={message} /> : null}
       </section>
@@ -117,7 +176,10 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   );
 }
 
-function purchaseButtonLabel(selectedProvider: CyclesProvider | null, status: CyclesStatus): string {
+function purchaseButtonLabel(selectedProvider: CyclesProvider | null, status: CyclesStatus, paymentSource: PaymentSource): string {
+  if (paymentSource === "kinic") {
+    return status === "running" ? "Processing Internet Identity" : "Fund cycles from KINIC balance";
+  }
   if (status === "running") {
     if (selectedProvider === "oisy") return "Processing OISY";
     if (selectedProvider === "plug") return "Processing Plug";
@@ -136,7 +198,7 @@ function cyclesPurchaseSuccessHref({
   cycles: string;
   databaseId: string;
   kinic: string;
-  provider: CyclesProvider;
+  provider: FundingProvider;
 }): string {
   const params = new URLSearchParams();
   params.set("funding", "success");
