@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 const DEFAULT_PAYMENT_E8S = "100_000_000";
 const DEFAULT_MIN_CYCLES = "1_000_000";
+const DEFAULT_ALLOWANCE_E8S = "400_000_000";
 
 const FIXTURES = [
   {
@@ -74,6 +75,8 @@ const canister = options.canisterId ?? process.env.NEXT_PUBLIC_KINIC_WIKI_CANIST
 if (!canister) {
   throw new Error("missing --canister-id or NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
 }
+const ledgerCanister = options.ledgerCanisterId ?? process.env.KINIC_LEDGER_CANISTER_ID ?? readWikiLedgerCanisterId();
+approveCyclesAllowance(ledgerCanister);
 
 for (const fixture of FIXTURES) {
   const created = callOk("create_database", candidRecord({ name: candidText(fixture.name) }));
@@ -110,6 +113,28 @@ function fundDatabase(databaseId) {
   );
 }
 
+function readWikiLedgerCanisterId() {
+  const config = callOk("get_cycles_billing_config", "");
+  return extractTextField(config, "kinic_ledger_canister_id");
+}
+
+function approveCyclesAllowance(ledgerCanisterId) {
+  callOk(
+    "icrc2_approve",
+    candidRecord({
+      spender: `record { owner = principal ${candidText(canister)}; subaccount = null }`,
+      amount: `${options.allowanceE8s} : nat`,
+      expected_allowance: "null",
+      expires_at: "null",
+      fee: "null",
+      memo: "null",
+      from_subaccount: "null",
+      created_at_time: "null"
+    }),
+    ledgerCanisterId
+  );
+}
+
 function writeNodes(databaseId, fixture) {
   let firstNode = null;
   for (const node of fixture.nodes) {
@@ -138,8 +163,8 @@ function writeNodes(databaseId, fixture) {
   return firstNode;
 }
 
-function callOk(method, candidArgs) {
-  const response = callCanister(method, candidArgs);
+function callOk(method, candidArgs, targetCanister = canister) {
+  const response = callCanister(targetCanister, method, candidArgs);
   if (/variant\s*\{\s*Ok\s*=/.test(response.response_candid)) {
     return response.response_candid;
   }
@@ -150,14 +175,14 @@ function callOk(method, candidArgs) {
   throw new Error(`${method} returned unexpected response: ${response.response_candid}`);
 }
 
-function callCanister(method, candidArgs) {
+function callCanister(targetCanister, method, candidArgs) {
   const tempDir = mkdtempSync(join(tmpdir(), "kinic-market-seed-"));
   const argsPath = join(tempDir, `${method}.did`);
   try {
     writeFileSync(argsPath, `(${candidArgs})\n`, "utf8");
     const result = spawnSync(
       "icp",
-      ["canister", "call", canister, method, "--args-file", argsPath, "-e", options.environment, "--json"],
+      ["canister", "call", targetCanister, method, "--args-file", argsPath, "-e", options.environment, "--json"],
       { encoding: "utf8" }
     );
     if (result.status !== 0) {
@@ -173,7 +198,8 @@ function parseArgs(args) {
   const parsed = {
     environment: "local-wiki",
     paymentE8s: DEFAULT_PAYMENT_E8S,
-    minCycles: DEFAULT_MIN_CYCLES
+    minCycles: DEFAULT_MIN_CYCLES,
+    allowanceE8s: DEFAULT_ALLOWANCE_E8S
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -188,6 +214,12 @@ function parseArgs(args) {
       index += 1;
     } else if (arg === "--min-cycles") {
       parsed.minCycles = normalizeNat64(readArgValue(args, index, arg), arg);
+      index += 1;
+    } else if (arg === "--allowance-e8s") {
+      parsed.allowanceE8s = normalizeNat64(readArgValue(args, index, arg), arg);
+      index += 1;
+    } else if (arg === "--ledger-canister-id") {
+      parsed.ledgerCanisterId = readArgValue(args, index, arg);
       index += 1;
     } else {
       throw new Error(`unknown argument: ${arg}`);

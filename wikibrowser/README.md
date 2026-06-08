@@ -98,14 +98,24 @@ pnpm typecheck
 pnpm build
 ```
 
-Internet Identity E2E requires a local wiki canister and the E2E setup script. The script deploys the pinned Internet Identity backend/frontend dev canisters with dummy auth and writes `.env.e2e.local` with `NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1`. Local II is only enabled for that explicit E2E mode. Override `II_RELEASE` only when intentionally updating the tested Internet Identity release.
+Internet Identity for `localhost` uses the local II canisters prepared by the E2E setup script. The script deploys the local wiki, KINIC ledger, and pinned Internet Identity backend/frontend dev canisters with dummy auth, then writes `.env.e2e.local` with `NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1`. Copy that file to `.env.local` for manual browser testing on `localhost`; restart the dev server after copying so Next picks up the new public env values. Mainnet II (`https://id.ai`) is reserved for production or preview origins, not `localhost`. Override `II_RELEASE` only when intentionally updating the tested Internet Identity release.
 
 ```bash
+cd ..
 icp network start -d -e local-wiki
-KINIC_LEDGER_CANISTER_ID=<local-ledger-or-test-principal> scripts/local/deploy_wiki.sh
+cd wikibrowser
 pnpm e2e:ii:setup
+cp .env.e2e.local .env.local
+pnpm dev -p 3010
+```
+
+Run E2E in another terminal from `wikibrowser/` while the dev server is running:
+
+```bash
 pnpm e2e:ii
 ```
+
+For production and preview deployments, leave `NEXT_PUBLIC_ENABLE_LOCAL_II_E2E` unset so auth uses `https://id.ai` with the production derivation origin. Do not add `localhost` or `127.0.0.1` to the production `ii-alternative-origins`; Internet Identity also rejects alternative-origin lists with more than 10 entries.
 
 The wiki canister constructor requires cycles billing config; use the deploy wrapper instead of no-arg `icp deploy`.
 

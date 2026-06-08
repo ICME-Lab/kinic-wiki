@@ -13,6 +13,7 @@ const listingDetail = readFileSync(new URL("../app/marketplace/[listingId]/listi
 const marketplaceLayout = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
 const marketplace = readFileSync(new URL("../app/marketplace/marketplace-client.tsx", import.meta.url), "utf8");
 const marketplaceSeed = readFileSync(new URL("../scripts/seed-marketplace-fixtures.mjs", import.meta.url), "utf8");
+const setupIiE2e = readFileSync(new URL("../../scripts/setup-wikibrowser-ii-e2e.sh", import.meta.url), "utf8");
 const kinicDeposit = await importTs("../lib/kinic-deposit.ts");
 const marketplaceRoutes = await importTs("../lib/marketplace-routes.ts");
 
@@ -64,6 +65,13 @@ assert.match(marketplaceSeed, /market_create_listing/);
 assert.match(marketplaceSeed, /market_publish_listing/);
 assert.match(marketplaceSeed, /--canister-id/);
 assert.match(marketplaceSeed, /DEFAULT_PAYMENT_E8S/);
+assert.match(marketplaceSeed, /DEFAULT_ALLOWANCE_E8S/);
+assert.match(marketplaceSeed, /icrc2_approve/);
+
+assert.match(setupIiE2e, /scripts\/local\/setup_kinic_ledger\.sh/);
+assert.match(setupIiE2e, /scripts\/local\/deploy_wiki\.sh/);
+assert.match(setupIiE2e, /wiki ledger mismatch/);
+assert.match(setupIiE2e, /conflicts with reserved local canister/);
 
 assert.equal(marketplaceRoutes.marketListingPath("ftjtrdothm6fauh"), "/marketplace/ftjtrdothm6fauh");
 
