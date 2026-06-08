@@ -55,7 +55,7 @@ export function SummaryPanel({
 }) {
   const routable = isRoutableDatabaseId(databaseId);
   const active = database?.status === "active";
-  const openHref = active && routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
+  const openHref = active && routable ? publicDatabasePath(databaseId) : null;
   const cycles = databaseCyclesView(database, cyclesConfig);
   const purchaseHref = database ? databaseCyclesHref(database) : null;
   return (

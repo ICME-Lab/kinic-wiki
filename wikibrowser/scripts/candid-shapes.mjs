@@ -71,6 +71,17 @@ export const expectedTypes = {
       caller: "text"
     }
   },
+  KinicPendingOperationsPageRequest: {
+    kind: "record",
+    fields: { cursor_operation_id: "opt nat64", limit: "nat32" }
+  },
+  KinicPendingOperationsPage: {
+    kind: "record",
+    fields: {
+      operations: "vec KinicPendingOperation",
+      next_cursor_operation_id: "opt nat64"
+    }
+  },
   MarketCreateListingRequest: {
     kind: "record",
     fields: {
@@ -520,7 +531,7 @@ export const expectedTypes = {
   ResultCyclesEntries: { kind: "variant", cases: { Ok: "DatabaseCycleEntryPage", Err: "text" } },
   ResultCyclesPendingPurchases: { kind: "variant", cases: { Ok: "vec DatabaseCyclesPendingPurchase", Err: "text" } },
   ResultKinicBalance: { kind: "variant", cases: { Ok: "KinicBalance", Err: "text" } },
-  ResultKinicPendingOperations: { kind: "variant", cases: { Ok: "vec KinicPendingOperation", Err: "text" } },
+  ResultKinicPendingOperations: { kind: "variant", cases: { Ok: "KinicPendingOperationsPage", Err: "text" } },
   ResultKinicDeposit: { kind: "variant", cases: { Ok: "KinicDepositResult", Err: "text" } },
   ResultKinicFundDatabaseCycles: { kind: "variant", cases: { Ok: "KinicFundDatabaseCyclesResult", Err: "text" } },
   ResultMarketEntitlementPage: { kind: "variant", cases: { Ok: "MarketEntitlementPage", Err: "text" } },
@@ -705,7 +716,7 @@ export const expectedMethods = {
   market_list_entitlements: { input: ["opt text", "nat32"], output: "ResultMarketEntitlementPage", mode: "query" },
   market_list_listings: { input: ["opt text", "nat32"], output: "ResultMarketListingPage", mode: "query" },
   market_list_orders: { input: ["opt text", "nat32"], output: "ResultMarketOrderPage", mode: "query" },
-  kinic_list_pending_operations: { input: [], output: "ResultKinicPendingOperations", mode: "query" },
+  kinic_list_pending_operations: { input: ["KinicPendingOperationsPageRequest"], output: "ResultKinicPendingOperations", mode: "query" },
   market_pause_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_preview_purchase: { input: ["text"], output: "ResultMarketPurchasePreview", mode: "query" },
   market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },

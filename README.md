@@ -25,7 +25,7 @@ https://wiki.kinic.xyz
 
 The official Kinic Wiki database is:
 
-https://wiki.kinic.xyz/db_kva4v2twg6jv/Wiki
+https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Wiki
 
 Database ID:
 

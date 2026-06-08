@@ -9,7 +9,7 @@ const ts = require("typescript");
 const dashboardClient = readFileSync(new URL("../app/dashboard/dashboard-client.tsx", import.meta.url), "utf8");
 const rootReadme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
 const dashboardIndex = readFileSync(new URL("../app/dashboard/page.tsx", import.meta.url), "utf8");
-const dashboardRoute = readFileSync(new URL("../app/dashboard/[databaseId]/page.tsx", import.meta.url), "utf8");
+const dashboardRoute = readFileSync(new URL("../app/dashboard/project/[databaseId]/page.tsx", import.meta.url), "utf8");
 const dashboardUi = readFileSync(new URL("../app/dashboard/dashboard-ui.tsx", import.meta.url), "utf8");
 const dashboardActionButton = readFileSync(new URL("../app/dashboard/action-button.tsx", import.meta.url), "utf8");
 const dashboardAccessControl = readFileSync(new URL("../app/dashboard/access-control.ts", import.meta.url), "utf8");
@@ -30,7 +30,7 @@ const homeHeroSection = homePage.slice(homePage.indexOf("<section"), homePage.in
 const dashboardHomeClient = readFileSync(new URL("../app/dashboard/dashboard-home-client.tsx", import.meta.url), "utf8");
 const cyclesState = readFileSync(new URL("../lib/cycles-state.ts", import.meta.url), "utf8");
 const apiErrors = readFileSync(new URL("../lib/api-errors.ts", import.meta.url), "utf8");
-const wikiLayout = readFileSync(new URL("../app/[databaseId]/layout.tsx", import.meta.url), "utf8");
+const wikiLayout = readFileSync(new URL("../app/db/[databaseId]/layout.tsx", import.meta.url), "utf8");
 const canisterEntrypoint = readFileSync(new URL("../../crates/vfs_canister/src/lib.rs", import.meta.url), "utf8");
 const ingestPanel = readFileSync(new URL("../components/ingest-panel.tsx", import.meta.url), "utf8");
 const ingestTriggerRoute = readFileSync(new URL("../app/api/url-ingest/trigger/route.ts", import.meta.url), "utf8");
@@ -38,11 +38,11 @@ const sourceRunRoute = readFileSync(new URL("../app/api/source/run/route.ts", im
 const nextConfig = readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const urlIngest = readFileSync(new URL("../lib/url-ingest.ts", import.meta.url), "utf8");
-const wikiRoute = readFileSync(new URL("../app/[databaseId]/[[...segments]]/page.tsx", import.meta.url), "utf8");
+const wikiRoute = readFileSync(new URL("../app/db/[databaseId]/[[...segments]]/page.tsx", import.meta.url), "utf8");
 const wikiBrowser = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
 const wranglerConfig = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
 
-assert.match(homeUi, /href=\{`\/dashboard\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
+assert.match(homeUi, /href=\{`\/dashboard\/project\/\$\{encodeURIComponent\(database\.databaseId\)\}`\}/);
 assert.match(adminHeader, /export function AdminHeader/);
 assert.match(adminHeader, /titleAction\?: ReactNode/);
 assert.match(adminHeader, /titleAction \? <div className="shrink-0">/);
@@ -109,7 +109,7 @@ assert.doesNotMatch(dashboardHomeClient, /<AdminHeader/);
 assert.doesNotMatch(dashboardHomeClient, /href="\/cli"/);
 assert.match(homeUi, /href="\/cli"/);
 assert.match(rootReadme, /db_kva4v2twg6jv/);
-assert.match(rootReadme, /https:\/\/wiki\.kinic\.xyz\/db_kva4v2twg6jv\/Wiki/);
+assert.match(rootReadme, /https:\/\/wiki\.kinic\.xyz\/db\/db_kva4v2twg6jv\/Wiki/);
 assert.match(rootReadme, /Why Kinic Wiki/);
 assert.match(rootReadme, /Vector databases/);
 assert.match(rootReadme, /Chrome extension/);
@@ -148,8 +148,7 @@ assert.doesNotMatch(dashboardClient, /usePathname/);
 assert.match(dashboardUi, /!props\.busy && event\.target === event\.currentTarget\) props\.onCancel\(\)/);
 
 assert.match(wikiLayout, /<WikiBrowser \/>/);
-assert.match(wikiLayout, /isReservedDatabaseRouteSlug/);
-assert.match(wikiLayout, /notFound\(\)/);
+assert.doesNotMatch(wikiLayout, /isReservedDatabaseRouteSlug|notFound\(\)/);
 for (const origin of [
   "chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj",
   "chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci",
@@ -431,16 +430,16 @@ assert.doesNotMatch(homeUi, /formatCycleBalance\(balance\) \+ " cycles"/);
 assert.doesNotMatch(homeUi, /databaseCyclesView\(database, cyclesConfig\)\.summary/);
 assert.match(homeUi, /<Link className="font-semibold text-accent no-underline hover:underline" href=\{openDatabaseHref\(database\)\}>/);
 assert.doesNotMatch(homeUi, /<DatabaseActionLink href=\{openDatabaseHref\(database\)\} icon=\{<BookOpen aria-hidden size=\{14\} \/>} label="Open" \/>/);
-assert.match(homeUi, /\/dashboard\/\$\{encodeURIComponent\(database\.databaseId\)\}/);
+assert.match(homeUi, /\/dashboard\/project\/\$\{encodeURIComponent\(database\.databaseId\)\}/);
 assert.doesNotMatch(homeUi, /active && mode === "member" && database\.publicReadable/);
 assert.match(homeUi, /active && database\.publicReadable \? <ShareDatabaseLink database=\{database\} \/>/);
 assert.doesNotMatch(homeUi, /label="Registry"/);
 assert.match(homeUi, /label="Top up"/);
 assert.doesNotMatch(homeUi, /<DatabaseActionLink[^>\n]*label="Cycles"/);
-assert.match(homeUi, /href=\{`\/dashboard\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
+assert.match(homeUi, /href=\{`\/dashboard\/project\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
 assert.match(homeUi, /Manage reservation/);
 assert.doesNotMatch(homeUi, /read=anonymous/);
-assert.match(homeUi, /return `\/\$\{encodeURIComponent\(database\.databaseId\)\}\/Wiki`;/);
+assert.match(homeUi, /return publicDatabasePath\(database\.databaseId\);/);
 assert.match(wikiBrowser, /"ingest"/);
 assert.match(wikiBrowser, /<IngestPanel/);
 assert.match(wikiBrowser, /databaseCyclesError=\{currentDatabaseCycleReason\}/);

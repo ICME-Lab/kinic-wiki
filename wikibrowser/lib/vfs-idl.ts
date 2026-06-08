@@ -65,6 +65,11 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     ledger_block_index: idl.Opt(idl.Nat64),
     caller: idl.Text
   });
+  const KinicPendingOperationsPageRequest = idl.Record({ cursor_operation_id: idl.Opt(idl.Nat64), limit: idl.Nat32 });
+  const KinicPendingOperationsPage = idl.Record({
+    operations: idl.Vec(KinicPendingOperation),
+    next_cursor_operation_id: idl.Opt(idl.Nat64)
+  });
   const MarketCreateListingRequest = idl.Record({
     llm_summary: idl.Opt(idl.Text),
     title: idl.Text,
@@ -414,7 +419,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
   const ResultCyclesPendingPurchases = idl.Variant({ Ok: idl.Vec(DatabaseCyclesPendingPurchase), Err: idl.Text });
   const ResultKinicBalance = idl.Variant({ Ok: KinicBalance, Err: idl.Text });
-  const ResultKinicPendingOperations = idl.Variant({ Ok: idl.Vec(KinicPendingOperation), Err: idl.Text });
+  const ResultKinicPendingOperations = idl.Variant({ Ok: KinicPendingOperationsPage, Err: idl.Text });
   const ResultKinicDeposit = idl.Variant({ Ok: KinicDepositResult, Err: idl.Text });
   const ResultKinicFundDatabaseCycles = idl.Variant({ Ok: KinicFundDatabaseCyclesResult, Err: idl.Text });
   const ResultMarketEntitlementPage = idl.Variant({ Ok: MarketEntitlementPage, Err: idl.Text });
@@ -474,7 +479,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     market_list_entitlements: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
     market_list_listings: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketListingPage], ["query"]),
     market_list_orders: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketOrderPage], ["query"]),
-    kinic_list_pending_operations: idl.Func([], [ResultKinicPendingOperations], ["query"]),
+    kinic_list_pending_operations: idl.Func([KinicPendingOperationsPageRequest], [ResultKinicPendingOperations], ["query"]),
     market_pause_listing: idl.Func([idl.Text], [ResultMarketListing], []),
     market_preview_purchase: idl.Func([idl.Text], [ResultMarketPurchasePreview], ["query"]),
     market_publish_listing: idl.Func([idl.Text], [ResultMarketListing], []),

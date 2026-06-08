@@ -25,7 +25,7 @@ assert.match(client, /SkillRegistryClient/);
 assert.match(adminHeader, /export function AdminHeader/);
 assert.match(client, /<AdminHeader/);
 assert.doesNotMatch(client, /Database dashboard/);
-assert.match(client, /href=\{`\/\$\{encodeURIComponent\(databaseId\)\}\/Wiki`\}/);
+assert.match(client, /hrefForPath\(canisterId, databaseId, "\/Wiki"\)/);
 assert.doesNotMatch(client, /unknown database/);
 assert.match(client, /loadSkillCatalog/);
 assert.match(client, /updateSkillStatus/);

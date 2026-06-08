@@ -63,5 +63,6 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 cd "${REPO_ROOT}"
+export ICP_ENVIRONMENT
 export KINIC_VFS_LOCAL_II_ORIGINS=1
 icp deploy wiki -e "${ICP_ENVIRONMENT}" --args-file "${ARGS_FILE}" "$@"

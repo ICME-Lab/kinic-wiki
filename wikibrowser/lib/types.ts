@@ -188,6 +188,11 @@ export type KinicPendingOperation = {
   requiredAction: string;
 };
 
+export type KinicPendingOperationsPage = {
+  operations: KinicPendingOperation[];
+  nextCursorOperationId: string | null;
+};
+
 export type MarketListingStatus = "Draft" | "Active" | "Paused";
 
 export type MarketListing = {

@@ -15,11 +15,11 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    KinicFundDatabaseCyclesRequest, MarketCreateListingRequest, MarketPurchaseRequest,
-    MkdirNodeRequest, MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteSourceForGenerationRequest,
+    KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, MarketCreateListingRequest,
+    MarketPurchaseRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
 fn service() -> VfsService {
@@ -4487,6 +4487,54 @@ fn kinic_deposit_external_block_indexes_reject_duplicate_pending_and_ledger_bloc
             .balance_e8s,
         0
     );
+}
+
+#[test]
+fn kinic_list_pending_operations_paginates_and_clamps_limits() {
+    let service = service();
+    for index in 0..3 {
+        let caller = format!("caller-{index}");
+        service
+            .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
+                caller: &caller,
+                amount_e8s: 100 + index,
+                ledger: CyclesPendingLedgerDetailsInput {
+                    from_owner: &caller,
+                    from_subaccount: None,
+                    to_owner: "canister",
+                    to_subaccount: None,
+                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
+                    ledger_created_at_time_ns: index,
+                },
+                now: i64::try_from(index).expect("index should fit"),
+            })
+            .expect("deposit should begin");
+    }
+
+    let first = service
+        .kinic_list_pending_operations(
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            KinicPendingOperationsPageRequest {
+                cursor_operation_id: None,
+                limit: 2,
+            },
+        )
+        .expect("first page should load");
+    assert_eq!(first.operations.len(), 2);
+    assert_eq!(first.next_cursor_operation_id, Some(2));
+
+    let second = service
+        .kinic_list_pending_operations(
+            "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            KinicPendingOperationsPageRequest {
+                cursor_operation_id: first.next_cursor_operation_id,
+                limit: 0,
+            },
+        )
+        .expect("zero limit should clamp to one");
+    assert_eq!(second.operations.len(), 1);
+    assert_eq!(second.operations[0].operation_id, 3);
+    assert_eq!(second.next_cursor_operation_id, None);
 }
 
 #[test]

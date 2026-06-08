@@ -22,6 +22,7 @@ import type {
   KinicBalance,
   KinicFundDatabaseCyclesResult,
   KinicPendingOperation,
+  KinicPendingOperationsPage,
   MarketCreateListingRequest,
   KinicDepositResult,
   MarketEntitlementPage,
@@ -142,6 +143,16 @@ type RawKinicPendingOperation = {
   ledger_block_index: [] | [bigint];
   created_at_ms: bigint;
   required_action: string;
+};
+
+type RawKinicPendingOperationsPageRequest = {
+  cursor_operation_id: [] | [bigint];
+  limit: number;
+};
+
+type RawKinicPendingOperationsPage = {
+  operations: RawKinicPendingOperation[];
+  next_cursor_operation_id: [] | [bigint];
 };
 
 type RawMarketListingStatus = Variant;
@@ -479,7 +490,7 @@ type VfsActor = {
   market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
   market_list_orders: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketOrderPage } | { Err: string }>;
-  kinic_list_pending_operations: () => Promise<{ Ok: RawKinicPendingOperation[] } | { Err: string }>;
+  kinic_list_pending_operations: (request: RawKinicPendingOperationsPageRequest) => Promise<{ Ok: RawKinicPendingOperationsPage } | { Err: string }>;
   market_pause_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   market_preview_purchase: (listingId: string) => Promise<{ Ok: RawMarketPurchasePreview } | { Err: string }>;
   market_publish_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
@@ -757,14 +768,22 @@ export async function kinicFundDatabaseCycles(
   });
 }
 
-export async function kinicListPendingOperations(canisterId: string, identity: Identity): Promise<KinicPendingOperation[]> {
+export async function kinicListPendingOperations(
+  canisterId: string,
+  identity: Identity,
+  cursorOperationId: string | null,
+  limit: number
+): Promise<KinicPendingOperationsPage> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.kinic_list_pending_operations();
+    const result = await actor.kinic_list_pending_operations({
+      cursor_operation_id: rawDatabaseCycleCursor(cursorOperationId),
+      limit
+    });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return result.Ok.map(normalizeKinicPendingOperation);
+    return normalizeKinicPendingOperationsPage(result.Ok);
   });
 }
 
@@ -1400,6 +1419,13 @@ function normalizeKinicPendingOperation(raw: RawKinicPendingOperation): KinicPen
     ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
     createdAtMs: raw.created_at_ms.toString(),
     requiredAction: raw.required_action
+  };
+}
+
+function normalizeKinicPendingOperationsPage(raw: RawKinicPendingOperationsPage): KinicPendingOperationsPage {
+  return {
+    operations: raw.operations.map(normalizeKinicPendingOperation),
+    nextCursorOperationId: raw.next_cursor_operation_id[0]?.toString() ?? null
   };
 }
 

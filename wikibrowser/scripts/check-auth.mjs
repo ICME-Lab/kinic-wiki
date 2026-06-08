@@ -40,6 +40,10 @@ assert.equal(
   derivationOriginUrl({ hostname: "localhost", origin: "http://localhost:3100" }),
   "http://tz2ag-zx777-77776-aaabq-cai.localhost:8011"
 );
+assert.equal(
+  derivationOriginUrl({ hostname: "localhost", origin: "http://localhost:3010" }),
+  "http://tz2ag-zx777-77776-aaabq-cai.localhost:8011"
+);
 process.env.NEXT_PUBLIC_WIKI_IC_HOST = "https://icp0.io";
 assert.equal(
   derivationOriginUrl({ hostname: "127.0.0.1", origin: "http://127.0.0.1:3100" }),

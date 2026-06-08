@@ -54,9 +54,9 @@ async function main() {
 export function parseSmokeTargetUrl(url) {
   const targetUrl = new URL(url);
   const segments = targetUrl.pathname.split("/").filter(Boolean);
-  const databaseId = decodePathSegment(segments[0] ?? "");
+  const databaseId = segments[0] === "db" ? decodePathSegment(segments[1] ?? "") : "";
   const path = segments
-    .slice(1)
+    .slice(2)
     .filter(Boolean)
     .map(decodePathSegment)
     .join("/");

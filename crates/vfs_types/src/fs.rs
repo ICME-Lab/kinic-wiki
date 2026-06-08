@@ -145,6 +145,18 @@ pub struct KinicPendingOperation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicPendingOperationsPageRequest {
+    pub cursor_operation_id: Option<u64>,
+    pub limit: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicPendingOperationsPage {
+    pub operations: Vec<KinicPendingOperation>,
+    pub next_cursor_operation_id: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct KinicDepositRequest {
     pub amount_e8s: u64,
     pub expected_fee_e8s: u64,

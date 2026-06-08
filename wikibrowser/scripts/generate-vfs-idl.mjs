@@ -20,6 +20,8 @@ const typeOrder = [
   "DatabaseCyclesPurchaseRequest",
   "KinicBalance",
   "KinicPendingOperation",
+  "KinicPendingOperationsPageRequest",
+  "KinicPendingOperationsPage",
   "MarketCreateListingRequest",
   "KinicDepositRequest",
   "KinicDepositResult",

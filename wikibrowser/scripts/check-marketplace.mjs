@@ -10,7 +10,9 @@ const ts = require("typescript");
 
 const appHeader = readFileSync(new URL("../app/app-header.tsx", import.meta.url), "utf8");
 const listingDetail = readFileSync(new URL("../app/marketplace/[listingId]/listing-detail-client.tsx", import.meta.url), "utf8");
+const marketplaceLayout = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
 const marketplace = readFileSync(new URL("../app/marketplace/marketplace-client.tsx", import.meta.url), "utf8");
+const marketplaceSeed = readFileSync(new URL("../scripts/seed-marketplace-fixtures.mjs", import.meta.url), "utf8");
 const kinicDeposit = await importTs("../lib/kinic-deposit.ts");
 const marketplaceRoutes = await importTs("../lib/marketplace-routes.ts");
 
@@ -40,12 +42,28 @@ assert.doesNotMatch(listingDetail, /kinicGetBalance/);
 assert.doesNotMatch(listingDetail, /purchaseMarketAccessWithOisy|purchaseMarketAccessWithPlug|marketPreviewPurchase/);
 assert.doesNotMatch(listingDetail, /revision \{listing\.revision\}/);
 
-assert.match(marketplace, /Filter loaded listings/);
-assert.match(marketplace, /loaded listings/);
+assert.match(marketplaceLayout, /data-tid="marketplace-sidebar"/);
+assert.match(marketplaceLayout, /Filter loaded listings/);
+assert.match(marketplaceLayout, /Sort loaded listings/);
+assert.match(marketplaceLayout, /Max price/);
+assert.match(marketplaceLayout, /inputMode="decimal"/);
+assert.match(marketplaceLayout, /normalizeKinicDecimalInput/);
+assert.doesNotMatch(marketplaceLayout, /top-36/);
+assert.doesNotMatch(marketplaceLayout, /SidebarProvider|SidebarInset|SidebarTrigger/);
+
+assert.match(marketplace, /matching loaded listings/);
+assert.match(marketplace, /parseKinicDecimalToE8s/);
 assert.match(marketplace, /marketListingPath\(listing\.listingId\)/);
+assert.doesNotMatch(marketplace, /parseOptionalBigInt/);
 assert.doesNotMatch(marketplace, /\/kinic\/wallet/);
 assert.doesNotMatch(marketplace, /href=\{`\/marketplace\/\$\{listing\.listingId\}`\}/);
 assert.doesNotMatch(marketplace, /placeholder="Search"/);
+
+assert.match(marketplaceSeed, /purchase_database_cycles/);
+assert.match(marketplaceSeed, /market_create_listing/);
+assert.match(marketplaceSeed, /market_publish_listing/);
+assert.match(marketplaceSeed, /--canister-id/);
+assert.match(marketplaceSeed, /DEFAULT_PAYMENT_E8S/);
 
 assert.equal(marketplaceRoutes.marketListingPath("ftjtrdothm6fauh"), "/marketplace/ftjtrdothm6fauh");
 

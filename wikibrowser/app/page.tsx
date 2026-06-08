@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { BookOpen, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { publicDatabasePath } from "@/lib/share-links";
 import heroImage from "./home-hero.png";
 
 export const metadata: Metadata = {
@@ -41,7 +42,7 @@ const companionSurfaces = [
   {
     title: "Official wiki",
     body: "Open the public Kinic Wiki example in the wiki browser to inspect how /Wiki and /Sources are organized.",
-    href: "/db_kva4v2twg6jv/Wiki",
+    href: publicDatabasePath("db_kva4v2twg6jv"),
     label: "Open Official Wiki",
     icon: BookOpen
   },

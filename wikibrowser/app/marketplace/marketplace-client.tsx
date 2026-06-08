@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
@@ -15,19 +16,32 @@ type MarketplaceClientProps = {
 type LoadState = "idle" | "loading" | "error";
 
 export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
+  const searchParams = useSearchParams();
   const [listings, setListings] = useState<MarketListing[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  const query = searchParams.get("q") ?? "";
+  const sort = parseMarketSort(searchParams.get("sort"));
+  const maxPriceE8s = parseKinicDecimalToE8s(searchParams.get("max"));
+  const previewOnly = searchParams.get("preview") === "1";
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return listings;
-    return listings.filter((listing) => {
-      return `${listing.title}\n${listing.description}\n${listing.tagsJson}`.toLowerCase().includes(needle);
+    const nextListings = listings.filter((listing) => {
+      if (needle && !`${listing.title}\n${listing.description}\n${listing.tagsJson}`.toLowerCase().includes(needle)) {
+        return false;
+      }
+      if (maxPriceE8s !== null && parseBigIntOrZero(listing.priceE8s) > maxPriceE8s) {
+        return false;
+      }
+      if (previewOnly && !hasListingPreview(listing)) {
+        return false;
+      }
+      return true;
     });
-  }, [listings, query]);
+    return [...nextListings].sort((left, right) => compareListings(left, right, sort));
+  }, [listings, maxPriceE8s, previewOnly, query, sort]);
 
   const load = useCallback(async (nextCursor: string | null, append: boolean) => {
     if (!canisterId) {
@@ -56,28 +70,18 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
   }, [load]);
 
   return (
-    <main className="min-h-screen bg-white px-6 pb-10 pt-6 text-ink">
-      <section className="mx-auto flex max-w-6xl flex-col gap-5">
+    <main className="min-w-0 text-ink">
+      <section className="flex max-w-none flex-col gap-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold">Marketplace</h1>
             <p className="text-sm text-muted">
-              {filtered.length} loaded listings
+              {filtered.length} matching loaded listings from {listings.length} loaded
               {cursor ? " shown from loaded pages" : ""}
             </p>
           </div>
-        </div>
-
-        <div className="flex min-h-11 items-center gap-2 rounded-lg border border-line px-3">
-          <Search aria-hidden size={18} />
-          <input
-            className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none"
-            placeholder="Filter loaded listings"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <button className="grid size-9 place-items-center rounded-lg hover:bg-paper" type="button" onClick={() => void load(null, false)}>
-            <RefreshCw aria-label="Refresh" size={17} />
+          <button className="grid size-10 place-items-center rounded-xl border border-line bg-white hover:border-accent hover:text-accent" type="button" onClick={() => void load(null, false)}>
+            <RefreshCw aria-label="Refresh listings" size={17} />
           </button>
         </div>
 
@@ -115,4 +119,57 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
       </section>
     </main>
   );
+}
+
+type MarketSort = "recent" | "popular" | "price_low";
+
+function parseMarketSort(value: string | null): MarketSort {
+  if (value === "popular" || value === "price_low") return value;
+  return "recent";
+}
+
+function compareListings(left: MarketListing, right: MarketListing, sort: MarketSort): number {
+  if (sort === "popular") {
+    return compareBigIntDesc(parseBigIntOrZero(left.purchaseCount), parseBigIntOrZero(right.purchaseCount));
+  }
+  if (sort === "price_low") {
+    return compareBigIntAsc(parseBigIntOrZero(left.priceE8s), parseBigIntOrZero(right.priceE8s));
+  }
+  return compareBigIntDesc(parseBigIntOrZero(left.updatedAtMs || left.createdAtMs), parseBigIntOrZero(right.updatedAtMs || right.createdAtMs));
+}
+
+function compareBigIntAsc(left: bigint, right: bigint): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function compareBigIntDesc(left: bigint, right: bigint): number {
+  return compareBigIntAsc(right, left);
+}
+
+function parseKinicDecimalToE8s(value: string | null): bigint | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!/^\d+(?:\.\d{1,8})?$/.test(trimmed)) return null;
+  const [whole, fraction = ""] = trimmed.split(".");
+  return BigInt(whole) * 100_000_000n + BigInt(fraction.padEnd(8, "0"));
+}
+
+function parseBigIntOrZero(value: string): bigint {
+  try {
+    return BigInt(value);
+  } catch {
+    return 0n;
+  }
+}
+
+function hasListingPreview(listing: MarketListing): boolean {
+  if (listing.llmSummary) return true;
+  try {
+    const parsed: unknown = JSON.parse(listing.sampleExcerptsJson);
+    return Array.isArray(parsed) && parsed.length > 0;
+  } catch {
+    return false;
+  }
 }

@@ -67,13 +67,13 @@ jobs:
             fi
           }
 
-          set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/build-vfs-canister\.sh)'
+          set_output canister '^(Cargo\.lock|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_store|wiki_domain)/|docs/DB_LIFECYCLE\.md|scripts/(build-vfs-canister|check-build-vfs-canister-guard)\.(sh|mjs))'
           set_output rust_all '^(Cargo\.toml|crates/(vfs_canister|vfs_runtime|vfs_types|vfs_cli_app|vfs_cli_core|vfs_client|vfs_store|wiki_domain|ic_sqlite_vfs_probe)/|scripts/(kinic_vfs_cli_release_version|package_kinic_vfs_cli)\.sh)'
           set_output cli '^(crates/(vfs_cli_app|vfs_cli_core|vfs_client)/|docs/(CLI|PUBLIC_SMOKE)\.md|scripts/(local|smoke|mainnet|kinic_vfs_cli_release_version|package_kinic_vfs_cli))'
           set_output wikibrowser '^(wikibrowser/|crates/vfs_canister/vfs\.did)'
           set_output extension '^(extensions/wiki-clipper/|crates/vfs_canister/vfs\.did)'
-          set_output wiki_generator '^workers/wiki-generator/'
-          set_output skill_registry_web '^(skill-registry-web/|wikibrowser/app/skills/|wikibrowser/scripts/check-skill-registry\.mjs|skills/)'
+          set_output wiki_generator '^(workers/wiki-generator/|crates/vfs_canister/vfs\.did)'
+          set_output skill_registry_web '^(skill-registry-web/|wikibrowser/app/skills/|wikibrowser/scripts/check-skill-registry\.mjs|skills/|crates/vfs_canister/vfs\.did)'
 
   regression-groups-check:
     runs-on: ubuntu-latest
@@ -267,6 +267,8 @@ jobs:
         run: |
           node scripts/build-icp-cli-login.mjs
           git diff --exit-code crates/vfs_canister/src/icp_cli_login.html
+      - name: Check build environment guard
+        run: node scripts/check-build-vfs-canister-guard.mjs
       - name: Cache cargo registry
         uses: actions/cache@v5
         with:

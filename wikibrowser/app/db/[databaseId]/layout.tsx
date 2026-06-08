@@ -1,13 +1,12 @@
-// Where: wikibrowser/app/[databaseId]/layout.tsx
+// Where: wikibrowser/app/db/[databaseId]/layout.tsx
 // What: Persistent database browser shell for every node path in one database.
 // Why: App Router pages are route leaves; keeping WikiBrowser in a layout preserves Explorer state across child navigation.
 
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
 import { Suspense, type ReactNode } from "react";
 import { WikiBrowser } from "@/components/wiki-browser";
 import { databasePreviewDescription, databasePreviewTitle, loadDatabasePreview } from "@/lib/database-preview";
-import { isReservedDatabaseRouteSlug, publicDatabasePath } from "@/lib/share-links";
+import { databaseRouteBase, publicDatabasePath } from "@/lib/share-links";
 
 type WikiDatabaseLayoutProps = {
   children: ReactNode;
@@ -16,14 +15,12 @@ type WikiDatabaseLayoutProps = {
 
 export async function generateMetadata({ params }: { params: Promise<{ databaseId: string }> }): Promise<Metadata> {
   const { databaseId } = await params;
-  if (isReservedDatabaseRouteSlug(databaseId)) {
-    notFound();
-  }
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const preview = await loadDatabasePreview(canisterId, databaseId);
   const title = databasePreviewTitle(preview.databaseName);
   const description = databasePreviewDescription(preview);
   const url = publicDatabasePath(preview.databaseId);
+  const routeBase = databaseRouteBase(preview.databaseId);
   const imageAlt = `${title} link preview`;
   return {
     title,
@@ -39,7 +36,7 @@ export async function generateMetadata({ params }: { params: Promise<{ databaseI
       url,
       images: [
         {
-          url: `/${encodeURIComponent(preview.databaseId)}/opengraph-image`,
+          url: `${routeBase}/opengraph-image`,
           width: 1200,
           height: 630,
           alt: imageAlt
@@ -52,7 +49,7 @@ export async function generateMetadata({ params }: { params: Promise<{ databaseI
       description,
       images: [
         {
-          url: `/${encodeURIComponent(preview.databaseId)}/twitter-image`,
+          url: `${routeBase}/twitter-image`,
           alt: imageAlt
         }
       ]
@@ -62,10 +59,7 @@ export async function generateMetadata({ params }: { params: Promise<{ databaseI
 
 export default async function WikiDatabaseLayout({ children, params }: WikiDatabaseLayoutProps) {
   void children;
-  const { databaseId } = await params;
-  if (isReservedDatabaseRouteSlug(databaseId)) {
-    notFound();
-  }
+  void params;
   return (
     <Suspense fallback={<div className="min-h-screen bg-canvas" />}>
       <WikiBrowser />

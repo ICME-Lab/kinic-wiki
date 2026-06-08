@@ -26,14 +26,15 @@ use vfs_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, KinicBalance, KinicFundDatabaseCyclesRequest,
-    KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement,
-    MarketEntitlementPage, MarketListing, MarketListingDetail, MarketListingPage,
-    MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats, MarketOrder,
-    MarketOrderPage, MarketPreviewExcerpt, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    KinicFundDatabaseCyclesResult, KinicPendingOperation, KinicPendingOperationsPage,
+    KinicPendingOperationsPageRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
+    MarketListingStatus, MarketListingVerifiedStats, MarketOrder, MarketOrderPage,
+    MarketPreviewExcerpt, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
+    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
     Status, StorageBillingBatchRequest, StorageBillingBatchResult,
@@ -106,6 +107,7 @@ pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
 const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
 const MAX_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
 const TIMER_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
+const MAX_KINIC_PENDING_OPERATIONS_PAGE_LIMIT: u32 = 100;
 const STORAGE_BILLING_BULK_MIN_BATCH_LEN: usize = 50;
 const GIB_BYTES: u128 = 1024 * 1024 * 1024;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
@@ -1407,15 +1409,35 @@ impl VfsService {
     pub fn kinic_list_pending_operations(
         &self,
         caller: &str,
-    ) -> Result<Vec<KinicPendingOperation>, String> {
+        request: KinicPendingOperationsPageRequest,
+    ) -> Result<KinicPendingOperationsPage, String> {
         require_authenticated_principal(caller)?;
+        let limit = clamp_kinic_pending_operations_page_limit(request.limit);
         let config = self.cycles_billing_config()?;
         self.read_index(|conn| {
             let show_all = caller == config.billing_authority_id;
-            load_kinic_pending_operations(conn, caller, show_all)?
+            let raw = load_kinic_pending_operations(
+                conn,
+                caller,
+                show_all,
+                request.cursor_operation_id,
+                limit,
+            )?;
+            let has_next = raw.len() > limit as usize;
+            let operations = raw
                 .into_iter()
+                .take(limit as usize)
                 .map(PendingKinicOperationRaw::into_public)
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Result<Vec<_>, _>>()?;
+            let next_cursor_operation_id = if has_next {
+                operations.last().map(|operation| operation.operation_id)
+            } else {
+                None
+            };
+            Ok(KinicPendingOperationsPage {
+                operations,
+                next_cursor_operation_id,
+            })
         })
     }
 
@@ -5428,7 +5450,15 @@ fn load_kinic_pending_operations(
     conn: &Connection,
     caller: &str,
     show_all: bool,
+    cursor_operation_id: Option<u64>,
+    limit: u32,
 ) -> Result<Vec<PendingKinicOperationRaw>, String> {
+    let cursor = cursor_operation_id
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| "pending KINIC operation cursor is out of range".to_string())?
+        .unwrap_or(0);
+    let fetch_limit = i64::from(limit.saturating_add(1));
     if show_all {
         let mut stmt = conn
             .prepare(
@@ -5436,12 +5466,14 @@ fn load_kinic_pending_operations(
                         external_block_index, created_at_ms
                  FROM kinic_pending_operations
                  WHERE kind = ?1
-                 ORDER BY operation_id ASC",
+                   AND operation_id > ?2
+                 ORDER BY operation_id ASC
+                 LIMIT ?3",
             )
             .map_err(|error| error.to_string())?;
         crate::sqlite::query_map(
             &mut stmt,
-            params![KINIC_PENDING_KIND_DEPOSIT],
+            params![KINIC_PENDING_KIND_DEPOSIT, cursor, fetch_limit],
             map_pending_kinic_operation_raw,
         )
         .map_err(|error| error.to_string())
@@ -5452,16 +5484,22 @@ fn load_kinic_pending_operations(
                         external_block_index, created_at_ms
                  FROM kinic_pending_operations
                  WHERE kind = ?1 AND caller = ?2
-                 ORDER BY operation_id ASC",
+                   AND operation_id > ?3
+                 ORDER BY operation_id ASC
+                 LIMIT ?4",
             )
             .map_err(|error| error.to_string())?;
         crate::sqlite::query_map(
             &mut stmt,
-            params![KINIC_PENDING_KIND_DEPOSIT, caller],
+            params![KINIC_PENDING_KIND_DEPOSIT, caller, cursor, fetch_limit],
             map_pending_kinic_operation_raw,
         )
         .map_err(|error| error.to_string())
     }
+}
+
+fn clamp_kinic_pending_operations_page_limit(limit: u32) -> u32 {
+    limit.clamp(1, MAX_KINIC_PENDING_OPERATIONS_PAGE_LIMIT)
 }
 
 fn map_pending_kinic_operation_raw(

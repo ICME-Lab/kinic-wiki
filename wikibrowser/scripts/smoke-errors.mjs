@@ -6,7 +6,7 @@ const databaseId = readDatabaseId();
 const smokeWaitMs = 30_000;
 const pollMs = 500;
 
-run("open", [`${baseUrl}/${encodeURIComponent(databaseId)}/Wiki/does-not-exist.md`]);
+run("open", [`${baseUrl}/db/${encodeURIComponent(databaseId)}/Wiki/does-not-exist.md`]);
 assertSnapshotIncludes("No wiki node at this path");
 assertSnapshotIncludes("Search this path");
 

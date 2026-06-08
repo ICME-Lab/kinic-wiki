@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, MessageSquareText, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Upload, Wallet, X } from "lucide-react";
+import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -17,30 +17,13 @@ import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger,
-  useSidebar
-} from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
-import { xShareDatabaseHref } from "@/lib/share-links";
+import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
@@ -111,6 +94,7 @@ export function WikiBrowser() {
   const [readIdentity, setReadIdentity] = useState<Identity | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [databaseDirectory, setDatabaseDirectory] = useState<DatabaseDirectoryState>(() => emptyDatabaseDirectoryState(""));
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const authPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const databaseDirectoryRequestKey = useMemo(() => `${canisterId}\n${authPrincipal ?? ""}`, [authPrincipal, canisterId]);
   const emptyCurrentDatabaseDirectory = useMemo(() => emptyDatabaseDirectoryState(databaseDirectoryRequestKey), [databaseDirectoryRequestKey]);
@@ -623,206 +607,201 @@ export function WikiBrowser() {
     }
   }
 
-  const explorerActions = tab === "explorer" ? (
-    <ExplorerHeaderActions
-      fileDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
-      folderDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
-      renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
-      moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
-      deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
-      fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
-      folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
-      renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to rename")}
-      moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to move")}
-      deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Wiki Markdown file or folder without visible children to delete")}
-      onNewFile={() => {
-        setExplorerActionError(null);
-        setExplorerActionMode("file");
-        setExplorerDraftName("");
-        setExplorerMoveOpen(false);
-      }}
-      onNewFolder={() => {
-        setExplorerActionError(null);
-        setExplorerActionMode("folder");
-        setExplorerDraftName("");
-        setExplorerMoveOpen(false);
-      }}
-      onRename={() => {
-        if (!explorerMutationTarget) return;
-        setExplorerActionError(null);
-        setExplorerActionMode("rename");
-        setExplorerDraftName(explorerMutationTarget.name);
-        setExplorerMoveOpen(false);
-      }}
-      onMove={() => {
-        if (!explorerMutationTarget) return;
-        setExplorerActionError(null);
-        setExplorerActionMode(null);
-        setExplorerMoveTarget(explorerMoveTargets[0] ?? "/Wiki");
-        setExplorerMoveOpen(true);
-      }}
-      onDelete={() => void runExplorerDelete()}
-    />
-  ) : undefined;
-  const explorerActionPanel = tab === "explorer" && explorerActionMode ? (
-    <ExplorerCreateForm
-      mode={explorerActionMode}
-      directoryPath={explorerCreateDirectory}
-      draftName={explorerDraftName}
-      error={explorerActionError}
-      busy={explorerBusyAction === explorerActionMode}
-      onCancel={() => {
-        setExplorerActionMode(null);
-        setExplorerDraftName("");
-        setExplorerActionError(null);
-      }}
-      onChange={setExplorerDraftName}
-      onSubmit={submitExplorerCreate}
-    />
-  ) : tab === "explorer" && explorerMoveOpen && explorerMutationTarget ? (
-    <ExplorerMoveForm
-      target={explorerMutationTarget}
-      folders={explorerMoveTargets}
-      value={explorerMoveTarget}
-      error={explorerActionError}
-      busy={explorerBusyAction === "move"}
-      onCancel={() => {
-        setExplorerMoveOpen(false);
-        setExplorerActionError(null);
-      }}
-      onChange={setExplorerMoveTarget}
-      onSubmit={() => void runExplorerMove()}
-    />
-  ) : tab === "explorer" && explorerActionError ? (
-    <ExplorerActionError message={explorerActionError} />
-  ) : null;
-
   return (
-    <SidebarProvider defaultOpen className="min-h-screen bg-canvas text-ink lg:h-screen lg:overflow-hidden">
-      <WikiSidebar
+    <main className="flex min-h-screen flex-col bg-canvas text-ink lg:h-screen lg:overflow-hidden">
+      <TopBar
         canisterId={canisterId}
         databaseId={databaseId}
-        selectedPath={selectedPath}
-        tab={tab}
+        authError={authError}
+        principal={authPrincipal}
         query={query}
         searchKind={searchKind}
-        graphCenter={graphCenter}
+        graphDepth={graphDepth}
         isHelpPage={isHelpPage}
         isGraphPage={isGraphPage}
         isSearchPage={isSearchPage}
-        actions={explorerActions}
-        actionPanel={explorerActionPanel}
-      >
-        <LeftPane
-          tab={tab}
-          canisterId={canisterId}
-          databaseId={databaseId}
-          selectedPath={selectedPath}
-          childNodesCache={childNodesCache}
-          autoExpandExplorer={!(isGraphPage && !graphCenter)}
-          readIdentity={readIdentity}
-          effectiveReadIdentity={effectiveReadIdentity}
-          currentNode={currentNode.data}
-          readIdentityMode={currentReadIdentityMode}
-          databaseCyclesError={currentDatabaseCycleReason}
-          explorerRevision={explorerRevision}
-          onSelectedExplorerNode={rememberSelectedExplorerNode}
-        />
-      </WikiSidebar>
-      <SidebarInset className="min-h-screen bg-canvas lg:h-screen lg:overflow-hidden">
-        <TopBar
-          canisterId={canisterId}
-          databaseId={databaseId}
-          authError={authError}
-          principal={authPrincipal}
-          query={query}
-          searchKind={searchKind}
-          graphDepth={graphDepth}
-          isHelpPage={isHelpPage}
-          isGraphPage={isGraphPage}
-          isSearchPage={isSearchPage}
-          graphCenter={graphCenter}
-          databaseOptions={databaseOptions}
-          currentDatabase={currentDatabase}
-          currentDatabaseName={currentDatabase?.name ?? databaseId}
-          cyclesConfig={cyclesConfig}
-          publicReadable={publicDatabaseIds.has(databaseId)}
-          databaseListError={databaseListError}
-          selectedPath={selectedPath}
-          authReady={Boolean(authClient)}
-          onLogin={login}
-          onLogout={guardedLogout}
-          canLeaveDirtyEdit={canLeaveDirtyEdit}
-        />
-        <section className={`grid min-h-0 flex-1 grid-cols-1 gap-3 bg-paper p-3 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1fr)_320px]"}`}>
-          <section data-tid="wiki-document-panel" className="order-1 flex min-h-0 flex-col rounded-[20px] border border-line bg-white shadow-[0_4px_10px_#14142b0a] lg:overflow-hidden">
-            {isHelpPage ? (
-              <HelpPanel />
-            ) : isGraphPage ? (
-              <GraphPanel canisterId={canisterId} databaseId={databaseId} centerPath={graphCenter} depth={graphDepth} readIdentity={effectiveReadIdentity} />
-            ) : isSearchPage ? (
-              <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} readIdentity={effectiveReadIdentity} />
-            ) : (
-              <>
-                <DocumentHeader
-                  canisterId={canisterId}
-                  databaseId={databaseId}
-                  path={selectedPath}
-                  view={view}
-                  editState={activeEditState}
-                  rawContent={currentNode.data?.kind === "file" ? currentNode.data.content : null}
-                  onViewChange={(nextView) => {
-                    if (nextView !== "edit" && !canLeaveDirtyEdit()) {
-                      return;
-                    }
-                    router.replace(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab));
-                  }}
-                  isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
-                  canEditDirectory={currentNode.data?.kind === "folder" && isWikiPath(selectedPath)}
-                />
-                <DocumentPane
-                  node={currentNode}
-                  folderIndexNode={currentFolderIndexNode}
-                  childrenState={currentChildren}
-                  view={view}
-                  canisterId={canisterId}
-                  databaseId={databaseId}
-                  authPrompt={authPrompt}
-                  onLogin={login}
-                  authReady={Boolean(authClient)}
-                  writeIdentity={readIdentity}
-                  currentDatabaseRole={currentDatabaseRole}
-                  databaseRoleError={readIdentity && !currentDatabaseRole ? databaseListError : null}
-                  databaseCyclesError={currentDatabaseCycleReason}
-                  onNodeSaved={refreshSelectedNodeContext}
-                  onFolderIndexSaved={refreshSelectedFolderIndex}
-                  onEditStateChange={setEditState}
-                  tab={tab}
-                />
-              </>
-            )}
-          </section>
-          {!isSearchPage && !isGraphPage && !isHelpPage ? (
-            <aside data-tid="wiki-inspector-panel" className="order-2 hidden min-h-0 flex-col rounded-[20px] border border-line bg-white shadow-[0_4px_10px_#14142b0a] lg:flex lg:overflow-hidden">
-              <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
-              <Inspector
+        graphCenter={graphCenter}
+        databaseOptions={databaseOptions}
+        currentDatabase={currentDatabase}
+        currentDatabaseName={currentDatabase?.name ?? databaseId}
+        cyclesConfig={cyclesConfig}
+        publicReadable={publicDatabaseIds.has(databaseId)}
+        databaseListError={databaseListError}
+        selectedPath={selectedPath}
+        authReady={Boolean(authClient)}
+        mobileSidebarOpen={mobileSidebarOpen}
+        onLogin={login}
+        onLogout={guardedLogout}
+        onMobileSidebarToggle={() => setMobileSidebarOpen((open) => !open)}
+        canLeaveDirtyEdit={canLeaveDirtyEdit}
+      />
+      <section className={`grid min-h-0 grid-cols-1 gap-3 p-3 lg:flex-1 ${isSearchPage || isGraphPage || isHelpPage ? "lg:grid-cols-[320px_minmax(0,1fr)]" : "lg:grid-cols-[320px_minmax(0,1fr)_320px]"}`}>
+        <aside
+          id="wiki-mobile-sidebar"
+          data-tid="wiki-explorer-panel"
+          className={`${mobileSidebarOpen ? "order-1 flex" : "hidden"} min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:order-1 lg:flex lg:overflow-hidden`}
+        >
+          <PanelHeader
+            icon={<GitBranch size={15} />}
+            title={tabTitle(tab)}
+            actions={tab === "explorer" ? (
+              <ExplorerHeaderActions
+                fileDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
+                folderDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null}
+                renameDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget}
+                moveDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerMutationTarget || explorerMoveTargets.length === 0}
+                deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
+                fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
+                folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
+                renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to rename")}
+                moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to move")}
+                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Wiki Markdown file or folder without visible children to delete")}
+                onNewFile={() => {
+                  setExplorerActionError(null);
+                  setExplorerActionMode("file");
+                  setExplorerDraftName("");
+                  setExplorerMoveOpen(false);
+                }}
+                onNewFolder={() => {
+                  setExplorerActionError(null);
+                  setExplorerActionMode("folder");
+                  setExplorerDraftName("");
+                  setExplorerMoveOpen(false);
+                }}
+                onRename={() => {
+                  if (!explorerMutationTarget) return;
+                  setExplorerActionError(null);
+                  setExplorerActionMode("rename");
+                  setExplorerDraftName(explorerMutationTarget.name);
+                  setExplorerMoveOpen(false);
+                }}
+                onMove={() => {
+                  if (!explorerMutationTarget) return;
+                  setExplorerActionError(null);
+                  setExplorerActionMode(null);
+                  setExplorerMoveTarget(explorerMoveTargets[0] ?? "/Wiki");
+                  setExplorerMoveOpen(true);
+                }}
+                onDelete={() => void runExplorerDelete()}
+              />
+            ) : undefined}
+          />
+          <ModeTabs canisterId={canisterId} databaseId={databaseId} selectedPath={selectedPath} tab={tab} />
+          {tab === "explorer" && explorerActionMode ? (
+            <ExplorerCreateForm
+              mode={explorerActionMode}
+              directoryPath={explorerCreateDirectory}
+              draftName={explorerDraftName}
+              error={explorerActionError}
+              busy={explorerBusyAction === explorerActionMode}
+              onCancel={() => {
+                setExplorerActionMode(null);
+                setExplorerDraftName("");
+                setExplorerActionError(null);
+              }}
+              onChange={setExplorerDraftName}
+              onSubmit={submitExplorerCreate}
+            />
+          ) : tab === "explorer" && explorerMoveOpen && explorerMutationTarget ? (
+            <ExplorerMoveForm
+              target={explorerMutationTarget}
+              folders={explorerMoveTargets}
+              value={explorerMoveTarget}
+              error={explorerActionError}
+              busy={explorerBusyAction === "move"}
+              onCancel={() => {
+                setExplorerMoveOpen(false);
+                setExplorerActionError(null);
+              }}
+              onChange={setExplorerMoveTarget}
+              onSubmit={() => void runExplorerMove()}
+            />
+          ) : tab === "explorer" && explorerActionError ? (
+            <ExplorerActionError message={explorerActionError} />
+          ) : null}
+          <LeftPane
+            tab={tab}
+            canisterId={canisterId}
+            databaseId={databaseId}
+            selectedPath={selectedPath}
+            childNodesCache={childNodesCache}
+            autoExpandExplorer={!(isGraphPage && !graphCenter)}
+            readIdentity={readIdentity}
+            effectiveReadIdentity={effectiveReadIdentity}
+            currentNode={currentNode.data}
+            readIdentityMode={currentReadIdentityMode}
+            databaseCyclesError={currentDatabaseCycleReason}
+            explorerRevision={explorerRevision}
+            onSelectedExplorerNode={rememberSelectedExplorerNode}
+          />
+        </aside>
+        <section data-tid="wiki-document-panel" className={`${mobileSidebarOpen ? "order-2" : "order-1"} flex min-h-0 flex-col rounded-2xl border border-line bg-white shadow-sm lg:order-2 lg:overflow-hidden`}>
+          {isHelpPage ? (
+            <HelpPanel />
+          ) : isGraphPage ? (
+            <GraphPanel canisterId={canisterId} databaseId={databaseId} centerPath={graphCenter} depth={graphDepth} readIdentity={effectiveReadIdentity} />
+          ) : isSearchPage ? (
+            <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} readIdentity={effectiveReadIdentity} />
+          ) : (
+            <>
+              <DocumentHeader
                 canisterId={canisterId}
                 databaseId={databaseId}
-                databaseName={currentDatabase?.name ?? databaseId}
                 path={selectedPath}
-                node={currentNode.data}
-                childNodes={currentChildren.data ?? []}
-                noteRole={noteRole}
-                incomingLinks={currentNodeContext.data?.incomingLinks ?? null}
-                incomingError={currentNodeContext.error}
-                outgoingLinks={currentNodeContext.data?.outgoingLinks ?? []}
-                readIdentity={effectiveReadIdentity}
+                view={view}
+                editState={activeEditState}
+                rawContent={currentNode.data?.kind === "file" ? currentNode.data.content : null}
+                onViewChange={(nextView) => {
+                  if (nextView !== "edit" && !canLeaveDirtyEdit()) {
+                    return;
+                  }
+                  router.replace(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab));
+                }}
+                isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
+                canEditDirectory={currentNode.data?.kind === "folder" && isWikiPath(selectedPath)}
               />
-            </aside>
-          ) : null}
+              <DocumentPane
+                node={currentNode}
+                folderIndexNode={currentFolderIndexNode}
+                childrenState={currentChildren}
+                view={view}
+                canisterId={canisterId}
+                databaseId={databaseId}
+                authPrompt={authPrompt}
+                onLogin={login}
+                authReady={Boolean(authClient)}
+                writeIdentity={readIdentity}
+                currentDatabaseRole={currentDatabaseRole}
+                databaseRoleError={readIdentity && !currentDatabaseRole ? databaseListError : null}
+                databaseCyclesError={currentDatabaseCycleReason}
+                onNodeSaved={refreshSelectedNodeContext}
+                onFolderIndexSaved={refreshSelectedFolderIndex}
+                onEditStateChange={setEditState}
+                tab={tab}
+              />
+            </>
+          )}
         </section>
-      </SidebarInset>
-    </SidebarProvider>
+        {!isSearchPage && !isGraphPage && !isHelpPage ? (
+          <aside data-tid="wiki-inspector-panel" className="order-3 hidden min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:flex lg:overflow-hidden">
+            <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
+            <Inspector
+              canisterId={canisterId}
+              databaseId={databaseId}
+              databaseName={currentDatabase?.name ?? databaseId}
+              path={selectedPath}
+              node={currentNode.data}
+              childNodes={currentChildren.data ?? []}
+              noteRole={noteRole}
+              incomingLinks={currentNodeContext.data?.incomingLinks ?? null}
+              incomingError={currentNodeContext.error}
+              outgoingLinks={currentNodeContext.data?.outgoingLinks ?? []}
+              readIdentity={effectiveReadIdentity}
+            />
+          </aside>
+        ) : null}
+      </section>
+    </main>
   );
 }
 
@@ -890,168 +869,6 @@ function LeftPane({
       childNodesCache={childNodesCache}
       onSelectedNode={onSelectedExplorerNode}
     />
-  );
-}
-
-function WikiSidebar({
-  canisterId,
-  databaseId,
-  selectedPath,
-  tab,
-  query,
-  searchKind,
-  graphCenter,
-  isHelpPage,
-  isGraphPage,
-  isSearchPage,
-  actions,
-  actionPanel,
-  children
-}: {
-  canisterId: string;
-  databaseId: string;
-  selectedPath: string;
-  tab: ModeTab;
-  query: string;
-  searchKind: "path" | "full";
-  graphCenter: string | null;
-  isHelpPage: boolean;
-  isGraphPage: boolean;
-  isSearchPage: boolean;
-  actions?: ReactNode;
-  actionPanel: ReactNode;
-  children: ReactNode;
-}) {
-  const graphLinkCenter = isGraphPage ? graphCenter ?? "/Wiki" : selectedPath;
-  const items = [
-    {
-      key: "explorer",
-      href: hrefForPath(canisterId, databaseId, selectedPath, undefined, "explorer"),
-      label: "Explore",
-      icon: <GitBranch size={20} aria-hidden />,
-      active: !isSearchPage && !isGraphPage && !isHelpPage && tab === "explorer"
-    },
-    {
-      key: "search",
-      href: hrefForSearch(canisterId, databaseId, query, searchKind),
-      label: "Search",
-      icon: <Search size={20} aria-hidden />,
-      active: isSearchPage
-    },
-    {
-      key: "graph",
-      href: isGraphPage ? hrefForPath(canisterId, databaseId, graphLinkCenter) : hrefForGraph(canisterId, databaseId, graphLinkCenter),
-      label: "Graph",
-      icon: <Network size={20} aria-hidden />,
-      active: isGraphPage
-    },
-    {
-      key: "query",
-      href: hrefForPath(canisterId, databaseId, selectedPath, undefined, "query"),
-      label: "Query",
-      icon: <MessageSquareText size={20} aria-hidden />,
-      active: !isSearchPage && !isGraphPage && !isHelpPage && tab === "query"
-    },
-    {
-      key: "ingest",
-      href: hrefForPath(canisterId, databaseId, selectedPath, undefined, "ingest"),
-      label: "Ingest",
-      icon: <Upload size={20} aria-hidden />,
-      active: !isSearchPage && !isGraphPage && !isHelpPage && tab === "ingest"
-    },
-    {
-      key: "help",
-      href: isHelpPage ? hrefForPath(canisterId, databaseId, "/Wiki") : hrefForHelp(canisterId, databaseId),
-      label: "Help",
-      icon: <HelpCircle size={20} aria-hidden />,
-      active: isHelpPage
-    }
-  ];
-
-  return (
-    <Sidebar collapsible="icon" className="border-line bg-paper" data-tid="wiki-app-sidebar">
-      <SidebarHeader className="gap-3 border-b border-line bg-white/80 p-3">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton asChild size="lg" tooltip="Dashboard" className="h-12 rounded-xl hover:bg-accentSoft hover:text-accentText data-[active=true]:bg-accent data-[active=true]:text-white">
-              <SidebarNavLink href="/dashboard" aria-label="Dashboard">
-                <Image className="h-7 w-7 rounded-lg" src="/icon.png" alt="" width={28} height={28} unoptimized />
-                <span className="font-semibold">Kinic Wiki</span>
-              </SidebarNavLink>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <div className="grid gap-1 px-2 group-data-[collapsible=icon]:hidden">
-          <div className="h-0.5 rounded-full bg-accentSoft" />
-          <div className="h-0.5 w-4/5 rounded-full bg-accentLine" />
-          <div className="h-0.5 w-3/5 rounded-full bg-accent" />
-        </div>
-      </SidebarHeader>
-      <SidebarContent className="bg-paper">
-        <SidebarGroup>
-          <SidebarGroupLabel>Views</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => (
-                <SidebarMenuItem key={item.key}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={item.active}
-                    tooltip={item.label}
-                    className="rounded-xl text-muted hover:bg-accentSoft hover:text-accentText data-[active=true]:bg-accent data-[active=true]:text-white"
-                  >
-                    <SidebarNavLink href={item.href} aria-current={item.active ? "page" : undefined}>
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarNavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-        <SidebarGroup className="min-h-0 flex-1 group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-          <SidebarGroupContent className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-line bg-white shadow-[0_4px_10px_#14142b0a]" data-tid="wiki-explorer-panel">
-            <PanelHeader icon={<GitBranch size={15} />} title={tabTitle(tab)} actions={actions} />
-            <ModeTabs canisterId={canisterId} databaseId={databaseId} selectedPath={selectedPath} tab={tab} />
-            {actionPanel}
-            {children}
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-      <SidebarFooter className="border-t border-line bg-white/80 p-3">
-        <Separator className="bg-line group-data-[collapsible=icon]:hidden" />
-        <p className="px-2 font-mono text-[10px] uppercase text-muted group-data-[collapsible=icon]:hidden">Canister-backed memory</p>
-      </SidebarFooter>
-    </Sidebar>
-  );
-}
-
-function SidebarNavLink({
-  children,
-  href,
-  ...props
-}: {
-  children: ReactNode;
-  href: string;
-  "aria-current"?: "page";
-  "aria-label"?: string;
-}) {
-  const { setOpenMobile } = useSidebar();
-  return (
-    <Link
-      href={href}
-      onPointerDown={() => {
-        setOpenMobile(false);
-      }}
-      onClick={() => {
-        setOpenMobile(false);
-      }}
-      {...props}
-    >
-      {children}
-    </Link>
   );
 }
 
@@ -1458,8 +1275,10 @@ function TopBar({
   databaseListError,
   selectedPath,
   authReady,
+  mobileSidebarOpen,
   onLogin,
   onLogout,
+  onMobileSidebarToggle,
   canLeaveDirtyEdit
 }: {
   canisterId: string;
@@ -1481,8 +1300,10 @@ function TopBar({
   databaseListError: string | null;
   selectedPath: string;
   authReady: boolean;
+  mobileSidebarOpen: boolean;
   onLogin: () => void;
   onLogout: () => void;
+  onMobileSidebarToggle: () => void;
   canLeaveDirtyEdit: () => boolean;
 }) {
   const router = useRouter();
@@ -1512,7 +1333,16 @@ function TopBar({
   return (
     <header className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-white/90 px-3 py-3 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <SidebarTrigger className="h-10 w-10 rounded-2xl border border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white" data-tid="mobile-sidebar-toggle" />
+        <button
+          className={`inline-flex items-center justify-center rounded-lg border p-2 lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
+          type="button"
+          aria-expanded={mobileSidebarOpen}
+          aria-controls="wiki-mobile-sidebar"
+          aria-label="Toggle workspace panel"
+          onClick={onMobileSidebarToggle}
+        >
+          <Menu size={18} aria-hidden />
+        </button>
         <Link
           className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm font-semibold leading-tight text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
           href="/dashboard"
@@ -1868,33 +1698,36 @@ function validateCanisterText(canisterId: string): string | null {
 
 function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath: string } {
   const segments = pathname.split("/").filter(Boolean);
-  if (!segments[0]) {
+  if (segments[0] !== "db" || !segments[1]) {
     return { databaseId: null, nodePath: "/Wiki" };
   }
   const path = segments
-    .slice(1)
+    .slice(2)
     .filter(Boolean)
     .map(decodePathSegment)
     .join("/");
   return {
-    databaseId: decodePathSegment(segments[0]),
+    databaseId: decodePathSegment(segments[1]),
     nodePath: path ? `/${path}` : "/Wiki",
   };
 }
 
 function isBrowserSearchPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
-  return pathname === `/${encodeURIComponent(databaseId)}/search`;
+  if (!databaseId) return false;
+  return pathname === `${databaseRouteBase(databaseId)}/search`;
 }
 
 function isBrowserGraphPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
-  return pathname === `/${encodeURIComponent(databaseId)}/graph`;
+  if (!databaseId) return false;
+  return pathname === `${databaseRouteBase(databaseId)}/graph`;
 }
 
 function isBrowserHelpPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
-  return pathname === `/${encodeURIComponent(databaseId)}/help`;
+  if (!databaseId) return false;
+  return pathname === `${databaseRouteBase(databaseId)}/help`;
 }
 
 function decodePathSegment(segment: string): string {

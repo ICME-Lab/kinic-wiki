@@ -7,7 +7,7 @@
     "cf-typegen": "wrangler types --env-interface Env worker-configuration.d.ts",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev --test-scheduled",
-    "test": "tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
+    "test": "node scripts/check-candid-drift.mjs && tsc -p tsconfig.test.json && node --test .tmp-test/tests/*.test.js",
     "typecheck": "tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate"
   },

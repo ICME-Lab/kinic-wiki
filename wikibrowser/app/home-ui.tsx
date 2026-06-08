@@ -320,7 +320,7 @@ function DatabaseTableRow({ cyclesConfig, database, mode }: { cyclesConfig: Cycl
         </td>
       ) : null}
       <td className="px-4 py-3">
-        <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Manage" />
+        <DatabaseActionLink href={`/dashboard/project/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Manage" />
       </td>
     </tr>
   );
@@ -355,7 +355,7 @@ function DatabaseMobileCard({ cyclesConfig, database, mode }: { cyclesConfig: Cy
           <DatabaseActionLink href={databaseCyclesHref(database)} icon={<Wallet aria-hidden size={14} />} label="Top up" />
         ) : null}
         {active && database.publicReadable ? <ShareDatabaseLink database={database} /> : null}
-        <DatabaseActionLink href={`/dashboard/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Manage" />
+        <DatabaseActionLink href={`/dashboard/project/${encodeURIComponent(database.databaseId)}`} icon={<Settings aria-hidden size={14} />} label="Manage" />
       </div>
     </article>
   );
@@ -442,7 +442,7 @@ export function CreatedDatabasePanel({ databaseId, name }: { databaseId: string;
   return (
     <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-ink">
       Created <span className="font-semibold">{name}</span> <span className="font-mono text-xs text-muted">{databaseId}</span>.{" "}
-      <Link className="text-accent no-underline hover:underline" href={`/dashboard/${encodeURIComponent(databaseId)}`}>
+      <Link className="text-accent no-underline hover:underline" href={`/dashboard/project/${encodeURIComponent(databaseId)}`}>
         Manage reservation
       </Link>
     </div>
@@ -468,5 +468,5 @@ function isActiveRoutableDatabase(database: DatabaseRow): boolean {
 }
 
 function openDatabaseHref(database: DatabaseRow): string {
-  return `/${encodeURIComponent(database.databaseId)}/Wiki`;
+  return publicDatabasePath(database.databaseId);
 }

@@ -19,15 +19,16 @@ use vfs_types::{
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, KinicBalance, KinicDepositRequest, KinicDepositResult,
-    KinicFundDatabaseCyclesRequest, KinicFundDatabaseCyclesResult, KinicPendingOperation, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage,
-    MarketListing, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    KinicFundDatabaseCyclesRequest, KinicFundDatabaseCyclesResult, KinicPendingOperationsPage,
+    KinicPendingOperationsPageRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 #[async_trait]
@@ -101,7 +102,10 @@ pub trait VfsApi: Sync {
             "kinic_fund_database_cycles is not implemented by this client"
         ))
     }
-    async fn kinic_list_pending_operations(&self) -> Result<Vec<KinicPendingOperation>> {
+    async fn kinic_list_pending_operations(
+        &self,
+        _request: KinicPendingOperationsPageRequest,
+    ) -> Result<KinicPendingOperationsPage> {
         Err(anyhow!(
             "kinic_list_pending_operations is not implemented by this client"
         ))
@@ -627,9 +631,13 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn kinic_list_pending_operations(&self) -> Result<Vec<KinicPendingOperation>> {
-        let result: Result<Vec<KinicPendingOperation>, String> =
-            self.query("kinic_list_pending_operations", &()).await?;
+    async fn kinic_list_pending_operations(
+        &self,
+        request: KinicPendingOperationsPageRequest,
+    ) -> Result<KinicPendingOperationsPage> {
+        let result: Result<KinicPendingOperationsPage, String> = self
+            .query("kinic_list_pending_operations", &request)
+            .await?;
         result.map_err(|error| anyhow!(error))
     }
 

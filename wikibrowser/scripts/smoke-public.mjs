@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 const baseUrl = readRequiredArg("--base-url", "WIKI_BROWSER_PUBLIC_BASE_URL").replace(/\/$/, "");
 const databaseId = readRequiredArg("--database-id", "WIKI_BROWSER_PUBLIC_DATABASE_ID");
 const path = normalizePath(readRequiredArg("--path", "WIKI_BROWSER_PUBLIC_PATH"));
-const nodeUrl = `${baseUrl}/${encodeURIComponent(databaseId)}${path}`;
+const nodeUrl = `${baseUrl}/db/${encodeURIComponent(databaseId)}${path}`;
 
 runNodeScript("scripts/smoke-ui.mjs", ["--url", nodeUrl]);
 runNodeScript("scripts/smoke-errors.mjs", ["--base-url", baseUrl, "--database-id", databaseId]);

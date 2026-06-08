@@ -264,6 +264,14 @@ type KinicPendingOperation = record {
   ledger_block_index : opt nat64;
   caller : text;
 };
+type KinicPendingOperationsPage = record {
+  operations : vec KinicPendingOperation;
+  next_cursor_operation_id : opt nat64;
+};
+type KinicPendingOperationsPageRequest = record {
+  limit : nat32;
+  cursor_operation_id : opt nat64;
+};
 type OutgoingLinksRequest = record { path : text; limit : nat32; database_id : text };
 type LinkEdge = record {
   updated_at : int64;
@@ -489,7 +497,7 @@ type Result_11 = variant { Ok : vec LinkEdge; Err : text };
 type Result_12 = variant { Ok : KinicDepositResult; Err : text };
 type Result_13 = variant { Ok : KinicFundDatabaseCyclesResult; Err : text };
 type Result_14 = variant { Ok : KinicBalance; Err : text };
-type Result_15 = variant { Ok : vec KinicPendingOperation; Err : text };
+type Result_15 = variant { Ok : KinicPendingOperationsPage; Err : text };
 type Result_16 = variant { Ok : vec ChildNode; Err : text };
 type Result_17 = variant { Ok : DatabaseCycleEntryPage; Err : text };
 type Result_18 = variant { Ok : vec DatabaseCyclesPendingPurchase; Err : text };
@@ -662,7 +670,9 @@ service : (CyclesBillingConfig) -> {
   kinic_deposit_balance : (KinicDepositRequest) -> (Result_12);
   kinic_fund_database_cycles : (KinicFundDatabaseCyclesRequest) -> (Result_13);
   kinic_get_balance : () -> (Result_14) query;
-  kinic_list_pending_operations : () -> (Result_15) query;
+  kinic_list_pending_operations : (KinicPendingOperationsPageRequest) -> (
+      Result_15,
+    ) query;
   list_children : (ListChildrenRequest) -> (Result_16) query;
   list_database_cycle_entries : (text, opt nat64, nat32) -> (Result_17) query;
   list_database_cycles_pending_purchases : (text) -> (Result_18) query;

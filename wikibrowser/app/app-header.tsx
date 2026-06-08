@@ -53,7 +53,7 @@ export function AppHeader() {
 
   return (
     <div className="px-6 pt-8">
-      <section className="mx-auto max-w-6xl">
+      <section className={isMarketplace ? "max-w-none" : "mx-auto max-w-6xl"}>
         <AdminHeader
           title={title}
           nav={<HeaderNav pathname={pathname} />}

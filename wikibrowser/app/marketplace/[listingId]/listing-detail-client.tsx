@@ -67,8 +67,8 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   }, [load]);
 
   return (
-    <main className="min-h-screen bg-white px-6 pb-10 pt-6 text-ink">
-      <section className="mx-auto grid max-w-4xl gap-5">
+    <main className="min-w-0 text-ink">
+      <section className="grid max-w-5xl gap-5">
         <Link className="text-sm font-semibold text-accent hover:underline" href="/marketplace">
           Marketplace
         </Link>

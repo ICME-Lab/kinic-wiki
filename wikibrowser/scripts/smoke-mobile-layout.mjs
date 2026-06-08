@@ -20,16 +20,16 @@ const browserRoutes = [
 ];
 
 runOptional("close", []);
-run("open", [`${baseUrl}/${encodeURIComponent(databaseId)}/Wiki`]);
+run("open", [`${baseUrl}/db/${encodeURIComponent(databaseId)}/Wiki`]);
 for (const [width, height] of viewports) {
   run("resize", [String(width), String(height)]);
   for (const route of browserRoutes) {
-    run("goto", [`${baseUrl}/${encodeURIComponent(databaseId)}${route}`]);
+    run("goto", [`${baseUrl}/db/${encodeURIComponent(databaseId)}${route}`]);
     run("eval", [wikiLayoutProbe(route)]);
   }
   run("goto", [`${baseUrl}/dashboard`]);
   run("eval", [dashboardLayoutProbe()]);
-  run("goto", [`${baseUrl}/dashboard/${encodeURIComponent(databaseId)}`]);
+  run("goto", [`${baseUrl}/dashboard/project/${encodeURIComponent(databaseId)}`]);
   run("eval", [genericLayoutProbe()]);
   run("goto", [`${baseUrl}/skills/${encodeURIComponent(databaseId)}`]);
   run("eval", [genericLayoutProbe()]);

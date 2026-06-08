@@ -14,9 +14,9 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KinicDepositRequest,
-    KinicFundDatabaseCyclesRequest, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketPurchaseRequest, MkdirNodeRequest, MoveNodeRequest,
-    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketPurchaseRequest, MkdirNodeRequest,
+    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
     OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
     SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
     WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
@@ -483,6 +483,16 @@ fn test_billing_authority_principal() -> Principal {
         .expect("billing authority principal should parse")
 }
 
+fn pending_operations_request(
+    cursor_operation_id: Option<u64>,
+    limit: u32,
+) -> KinicPendingOperationsPageRequest {
+    KinicPendingOperationsPageRequest {
+        cursor_operation_id,
+        limit,
+    }
+}
+
 struct AuthenticatedCallerGuard;
 
 impl AuthenticatedCallerGuard {
@@ -774,8 +784,9 @@ fn kinic_deposit_balance_credits_wallet_after_completed_transfer() {
         500
     );
     assert!(
-        kinic_list_pending_operations()
+        kinic_list_pending_operations(pending_operations_request(None, 100))
             .expect("pending operations should load")
+            .operations
             .is_empty()
     );
 }
@@ -800,8 +811,9 @@ fn kinic_deposit_duplicate_transfer_is_success_without_double_credit() {
         r#"{"count":1}"#
     );
     assert!(
-        kinic_list_pending_operations()
+        kinic_list_pending_operations(pending_operations_request(None, 100))
             .expect("pending operations should load")
+            .operations
             .is_empty()
     );
 }
@@ -823,18 +835,22 @@ fn kinic_deposit_completed_local_apply_failure_keeps_pending_for_review() {
         pending_kinic_deposit_state(),
         r#"{"status":"completed","block":44}"#
     );
-    let caller_view = kinic_list_pending_operations().expect("caller should view own pending");
-    assert_eq!(caller_view.len(), 1);
-    assert_eq!(caller_view[0].status, "completed");
-    assert_eq!(caller_view[0].required_action, "billing_authority_review");
+    let caller_view = kinic_list_pending_operations(pending_operations_request(None, 100))
+        .expect("caller should view own pending");
+    assert_eq!(caller_view.operations.len(), 1);
+    assert_eq!(caller_view.operations[0].status, "completed");
+    assert_eq!(
+        caller_view.operations[0].required_action,
+        "billing_authority_review"
+    );
     drop(_caller);
 
     let _authority =
         AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
-    let authority_view =
-        kinic_list_pending_operations().expect("billing authority should view all pending");
-    assert_eq!(authority_view.len(), 1);
-    assert_eq!(authority_view[0].caller, caller.to_text());
+    let authority_view = kinic_list_pending_operations(pending_operations_request(None, 100))
+        .expect("billing authority should view all pending");
+    assert_eq!(authority_view.operations.len(), 1);
+    assert_eq!(authority_view.operations[0].caller, caller.to_text());
 }
 
 #[test]
@@ -854,10 +870,44 @@ fn kinic_deposit_ambiguous_transfer_keeps_pending_for_review() {
         pending_kinic_deposit_state(),
         r#"{"status":"ambiguous","block":null}"#
     );
-    let pending = kinic_list_pending_operations().expect("caller should view own pending");
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].status, "ambiguous");
-    assert_eq!(pending[0].required_action, "billing_authority_review");
+    let pending = kinic_list_pending_operations(pending_operations_request(None, 100))
+        .expect("caller should view own pending");
+    assert_eq!(pending.operations.len(), 1);
+    assert_eq!(pending.operations[0].status, "ambiguous");
+    assert_eq!(
+        pending.operations[0].required_action,
+        "billing_authority_review"
+    );
+}
+
+#[test]
+fn kinic_list_pending_operations_paginates_authority_view() {
+    install_empty_test_service();
+    for index in 0..3 {
+        let caller = Principal::self_authenticating([index as u8]);
+        let _caller = AuthenticatedCallerGuard::install_principal(caller);
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
+            format!("ambiguous deposit {index}"),
+        ));
+        block_on_ready(kinic_deposit_balance(kinic_deposit_request(800 + index)))
+            .expect_err("ambiguous transfer should keep pending operation");
+    }
+
+    let _authority =
+        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
+    let first = kinic_list_pending_operations(pending_operations_request(None, 2))
+        .expect("first pending page should load");
+    assert_eq!(first.operations.len(), 2);
+    assert_eq!(first.next_cursor_operation_id, Some(2));
+
+    let second = kinic_list_pending_operations(pending_operations_request(
+        first.next_cursor_operation_id,
+        2,
+    ))
+    .expect("second pending page should load");
+    assert_eq!(second.operations.len(), 1);
+    assert_eq!(second.operations[0].operation_id, 3);
+    assert_eq!(second.next_cursor_operation_id, None);
 }
 
 #[test]
@@ -867,8 +917,8 @@ fn kinic_balance_queries_reject_anonymous_caller() {
 
     let balance_error = kinic_get_balance().expect_err("anonymous balance query should reject");
     assert!(balance_error.contains("anonymous caller not allowed"));
-    let pending_error =
-        kinic_list_pending_operations().expect_err("anonymous pending query should reject");
+    let pending_error = kinic_list_pending_operations(pending_operations_request(None, 100))
+        .expect_err("anonymous pending query should reject");
     assert!(pending_error.contains("anonymous caller not allowed"));
 }
 
