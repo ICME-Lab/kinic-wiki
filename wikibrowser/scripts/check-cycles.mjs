@@ -38,6 +38,16 @@ assert.match(client, /purchaseCyclesWithPlug/);
 assert.match(client, /kinicFundDatabaseCycles/);
 assert.doesNotMatch(client, /fundDatabaseCyclesWithKinicBalanceAndOisy|fundDatabaseCyclesWithKinicBalanceAndPlug/);
 assert.match(client, /Payment source/);
+assert.match(client, /listDatabasesAuthenticated/);
+assert.match(client, /databaseCyclesHref/);
+assert.match(client, /databaseCyclesView/);
+assert.match(client, /Select a database/);
+assert.match(client, /router\.replace\(databaseCyclesHref\(nextDatabase\)\)/);
+assert.match(client, /Login with Internet Identity to select a database\./);
+assert.match(client, /No fundable databases linked to this principal\./);
+assert.match(client, /const hasNoFundableDatabases = principal !== null && databaseLoadState === "ready" && fundableDatabases\.length === 0;/);
+assert.match(client, /const targetError = typeof parsedTarget === "string" && !hasNoFundableDatabases \? parsedTarget : null;/);
+assert.match(client, /typeof parsedTarget === "string" \|\|/);
 assert.match(client, /Wallet KINIC/);
 assert.match(client, /KINIC balance/);
 assert.match(client, /useAppSession/);
@@ -53,16 +63,16 @@ assert.match(dashboardHome, /type FundingProvider = "oisy" \| "plug" \| "ii"/);
 assert.match(dashboardHome, /provider === "ii" \? "funded" : "purchased"/);
 assert.match(dashboardHome, /Internet Identity/);
 assert.match(dashboardHome, /isFundingProvider/);
-assert.match(appHeader, /pathname !== "\/dashboard" && pathname !== "\/cycles"/);
-assert.match(appHeader, /Database cycles purchase/);
+assert.match(appHeader, /const isCycles = pathname === "\/cycles"/);
+assert.match(appHeader, /title="Console"/);
 assert.doesNotMatch(appHeader, /<Link[\s\S]*Database dashboard/);
 assert.match(appHeader, /<WalletControls/);
-assert.match(appHeader, /<AuthControls/);
+assert.doesNotMatch(appHeader, /<AuthControls/);
 assert.match(appSession, /function safeSessionStorageGet\(key: string\): string \| null/);
 assert.match(appSession, /function safeSessionStorageSet\(key: string, value: string\): void/);
 assert.match(appSession, /function safeSessionStorageRemove\(key: string\): void/);
 assert.match(appSession, /safeSessionStorageSet\(\s*WALLET_SESSION_KEY,/);
-assert.match(appSession, /useState<ConnectedKinicWallet \| null>\(\(\) => readStoredWallet\(\)\)/);
+assert.match(appSession, /const \[wallet, setWallet\] = useState<ConnectedKinicWallet \| null>\(null\)/);
 assert.match(appSession, /readStoredWallet\(\)/);
 assert.doesNotMatch(client, /AuthClient|AUTH_CLIENT_CREATE_OPTIONS|authLoginOptions|notifyPrincipal|notifyIdentity/);
 assert.doesNotMatch(client, /connectOisyWallet|connectPlugWallet/);
@@ -79,8 +89,10 @@ assert.match(client, /params\.set\("database_id", databaseId\)/);
 assert.match(client, /params\.set\("provider", provider\)/);
 assert.match(client, /params\.set\("kinic", kinic\)/);
 assert.match(client, /params\.set\("cycles", cycles\)/);
-assert.match(client, /paymentSource === "wallet" \? !selectedProvider : authLoading \|\| !authClient \|\| kinicBalancePendingDisabled/);
-assert.match(client, /disabled=\{databaseStatus === "pending"\}/);
+assert.match(client, /paymentSource === "wallet" \? !selectedProvider \|\| oisyLocalUnavailable : authLoading \|\| !authClient \|\| kinicBalancePendingDisabled/);
+assert.match(client, /LOCAL_OISY_UNAVAILABLE_MESSAGE/);
+assert.match(client, /Wallet KINIC uses ledger wallet approval\. KINIC balance uses App balance; direct ledger transfers are not credited to App balance\./);
+assert.match(client, /disabled=\{resolvedDatabaseStatus === "pending"\}/);
 assert.doesNotMatch(client, /function WalletConnect/);
 assert.match(client, /onClick=\{\(\) => void purchase\(\)\}/);
 assert.doesNotMatch(client, /onCycles/);
@@ -108,13 +120,16 @@ assert.match(wallet, /async function safeDisconnectOisyWallet\(wallet: KinicIcrc
 assert.match(wallet, /Cleanup failures must not hide connect, approve, or purchase errors\./);
 assert.match(connectOisy, /safeDisconnectOisyWallet\(wallet\)/);
 assert.doesNotMatch(connectOisy, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
-assert.match(connectPlug, /plug\.requestConnect\(\{\s*host:/);
+assert.match(connectPlug, /connectPlug\(plug\)/);
 assert.doesNotMatch(connectPlug, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
+assert.match(wallet, /async function connectPlug\(plug: PlugWallet, whitelist\?: string\[\]\): Promise<boolean>/);
+assert.match(wallet, /await plug\.disconnect\?\.\(\)/);
+assert.match(wallet, /return plug\.requestConnect\(\{ whitelist, host \}\)/);
 assert.match(walletBalance, /getCyclesBillingConfig\(canisterId\)/);
 assert.match(walletBalance, /getLedgerBalance\(config\.kinicLedgerCanisterId, connectedWalletPrincipal\(wallet\)\)/);
 assert.match(purchaseOisy, /prepareCyclesPurchase\(request, connection\.owner\)/);
 assert.match(purchasePlug, /prepareCyclesPurchase\(request, connection\.principal\)/);
-assert.match(purchasePlug, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
+assert.match(purchasePlug, /connectPlug\(plug, \[request\.canisterId, prepared\.kinicLedgerCanisterId\]\)/);
 assert.match(wallet, /icrc2_approve/);
 assert.match(wallet, /icrc1_balance_of/);
 assert.doesNotMatch(purchasePlug, /JSON\.stringify\(approve\.Err\)/);
@@ -172,8 +187,8 @@ assert.doesNotMatch(wallet, /encodeKinicFundDatabaseCyclesArgs/);
 assert.match(wallet, /encodeMarketPurchaseArgs\(request: MarketPurchaseCanisterRequest\)/);
 assert.match(wallet, /method: "market_purchase_access"/);
 assert.doesNotMatch(wallet, /method: "kinic_fund_database_cycles"/);
-assert.match(wallet, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
-assert.match(marketPurchasePlug, /whitelist: \[request\.canisterId\]/);
+assert.match(wallet, /connectPlug\(plug, \[request\.canisterId, prepared\.kinicLedgerCanisterId\]\)/);
+assert.match(marketPurchasePlug, /connectPlug\(plug, \[request\.canisterId\]\)/);
 assert.doesNotMatch(marketPurchaseOisy, /approve\(/);
 assert.doesNotMatch(marketPurchasePlug, /icrc2_approve/);
 assert.match(wallet, /function defaultAccount\(owner: string\): LedgerAccount/);
@@ -188,8 +203,8 @@ assert.doesNotMatch(client, /formatTokenAmountFromE8s\(result\.paymentAmountE8s\
 assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the ledger transfer fee/);
 assert.match(client, /transfer fee/);
 assert.match(client, /A newly created database is pending, not active, until this first cycles purchase completes\./);
-assert.match(client, /databaseStatus === "pending"/);
-assert.match(client, /Any authenticated wallet can purchase non-refundable cycles/);
+assert.match(client, /resolvedDatabaseStatus === "pending"/);
+assert.match(client, /OISY hosted signer is unavailable for local replica|LOCAL_OISY_UNAVAILABLE_MESSAGE/);
 assert.doesNotMatch(client, new RegExp("extractCycles" + "RepairTarget"));
 assert.doesNotMatch(client, new RegExp("saveCycles" + "Repair" + "Record"));
 assert.doesNotMatch(
@@ -279,9 +294,25 @@ const clientModule = loadTsModule(
         walletBusyProvider: null
       })
     },
+    "@/components/admin-shell": { AdminContent: ({ children }) => children },
+    "@/components/admin-ui": {
+      AdminField: () => null,
+      AdminNotice: () => null,
+      AdminPanel: ({ children }) => children,
+      AdminPageHeader: () => null
+    },
     "@/lib/cycles-url": {
       parseKinicAmountE8sInput: () => 100n,
       parseCyclesTarget: () => ({ databaseId: "db_alpha" })
+    },
+    "@/lib/cycles-state": {
+      databaseCyclesHref: (database) => `/cycles?database_id=${database.databaseId}&status=${database.status}`,
+      databaseCyclesView: (database) => ({ purchaseAvailable: database.status === "active" || database.status === "pending", summary: database.status })
+    },
+    "@/lib/ic-host": {
+      configuredIcHost: () => "https://icp0.io",
+      isLocalIcHost: () => false,
+      LOCAL_OISY_UNAVAILABLE_MESSAGE: "OISY hosted signer is unavailable for local replica"
     },
     "@/lib/kinic-wallet": {
       purchaseCyclesWithOisy: async () => ({}),
@@ -300,7 +331,8 @@ const clientModule = loadTsModule(
         databaseBalanceCycles: "1000",
         kinicBalanceE8s: "0",
         paymentAmountE8s: "100"
-      })
+      }),
+      listDatabasesAuthenticated: async () => []
     }
   }
 );

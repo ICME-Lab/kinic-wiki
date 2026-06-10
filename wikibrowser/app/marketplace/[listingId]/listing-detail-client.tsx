@@ -1,13 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, CircleAlert, ShoppingCart } from "lucide-react";
+import { ShoppingCart } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
+import { AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { hrefForPath } from "@/lib/paths";
+import { marketSellerPath } from "@/lib/marketplace-routes";
 import { marketGetListing, marketPurchaseAccess } from "@/lib/vfs-client";
-import type { MarketCategoryGraph, MarketListingDetail, MarketListingVerifiedStats, MarketPreviewExcerpt } from "@/lib/types";
+import type { LinkEdge, MarketListingDetail, MarketListingVerifiedStats } from "@/lib/types";
+
+const GRAPH_LIMIT = 100;
 
 type ListingDetailClientProps = {
   canisterId: string;
@@ -15,6 +19,11 @@ type ListingDetailClientProps = {
 };
 
 type ActionState = "idle" | "loading" | "success" | "error";
+type PageGraphNode = {
+  path: string;
+  x: number;
+  y: number;
+};
 
 export function ListingDetailClient({ canisterId, listingId }: ListingDetailClientProps) {
   const { authClient, principal, refreshKinicBalance } = useAppSession();
@@ -67,12 +76,8 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   }, [load]);
 
   return (
-    <main className="min-w-0 text-ink">
-      <section className="grid max-w-5xl gap-5">
-        <Link className="text-sm font-semibold text-accent hover:underline" href="/marketplace">
-          Marketplace
-        </Link>
-
+    <div className="min-w-0 text-ink">
+      <section className="grid gap-5">
         {listing && detail ? (
           <>
             <section className="grid gap-3">
@@ -80,11 +85,32 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                 <div className="grid gap-2">
                   <h1 className="text-2xl font-semibold">{listing.title}</h1>
                   <p className="text-sm text-muted">{listing.description}</p>
+                  <Link className="break-all font-mono text-xs text-muted underline-offset-4 hover:text-accent hover:underline" href={marketSellerPath(listing.sellerPrincipal)}>
+                    Seller {listing.sellerPrincipal}
+                  </Link>
                 </div>
-                <div className="rounded-lg border border-line px-3 py-2 text-right">
+                <div className="flex flex-wrap items-center justify-end gap-3 rounded-lg border border-line px-3 py-2 text-right">
                   <p className="font-mono text-lg font-semibold">{formatTokenAmountFromE8s(listing.priceE8s)}</p>
+                  <button
+                    className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
+                    disabled={!principal || purchaseState === "loading" || purchaseState === "success"}
+                    type="button"
+                    onClick={() => void purchase()}
+                  >
+                    <ShoppingCart aria-hidden size={17} />
+                    <span>{purchaseState === "success" ? "Purchased" : "Purchase access"}</span>
+                  </button>
+                  {purchaseState === "success" ? (
+                    <Link
+                      className="inline-flex min-h-10 items-center rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent"
+                      href={hrefForPath(canisterId, listing.databaseId, "/Wiki")}
+                    >
+                      Open database
+                    </Link>
+                  ) : null}
                 </div>
               </div>
+              {!principal ? <span className="text-sm text-muted">Login with Internet Identity to purchase</span> : null}
               <div className="flex flex-wrap gap-2">
                 {tags.map((tag) => (
                   <span className="rounded border border-line px-2 py-1 text-xs text-muted" key={tag}>
@@ -94,40 +120,18 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
               </div>
             </section>
 
-            {listing.llmSummary ? <p className="rounded-lg border border-line bg-paper p-3 text-sm">{listing.llmSummary}</p> : null}
+            {listing.llmSummary ? <AdminPanel padding="sm"><p className="text-sm">{listing.llmSummary}</p></AdminPanel> : null}
 
             <VerifiedStats stats={detail.verifiedStats} />
             <ContentsSample paths={detail.preview.topLevelPaths} />
-            <RelationshipGraph graph={detail.preview.categoryGraph} />
-            <SampleExcerpts excerpts={detail.preview.excerpts} stale={detail.preview.previewStale} />
-
-            <section className="flex flex-wrap items-center gap-3">
-              <button
-                className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-action bg-action px-4 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
-                disabled={!principal || purchaseState === "loading" || purchaseState === "success"}
-                type="button"
-                onClick={() => void purchase()}
-              >
-                <ShoppingCart aria-hidden size={17} />
-                <span>{purchaseState === "success" ? "Purchased" : "Purchase access"}</span>
-              </button>
-              {!principal ? <span className="text-sm text-muted">Login with Internet Identity to purchase</span> : null}
-              {purchaseState === "success" ? (
-                <Link
-                  className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 py-2 text-sm font-semibold text-accent no-underline hover:border-accent"
-                  href={hrefForPath(canisterId, listing.databaseId, "/Wiki")}
-                >
-                  Open database
-                </Link>
-              ) : null}
-            </section>
+            <RelationshipGraph links={detail.preview.graphLinks} />
           </>
         ) : null}
 
-        {state === "loading" ? <p className="rounded-lg border border-line bg-paper px-3 py-2 text-sm">Loading</p> : null}
+        {state === "loading" ? <AdminNotice tone="info" message="Loading" /> : null}
         {message ? <Notice tone={state === "error" || purchaseState === "error" ? "error" : "success"} text={message} /> : null}
       </section>
-    </main>
+    </div>
   );
 }
 
@@ -143,7 +147,7 @@ function VerifiedStats({ stats }: { stats: MarketListingVerifiedStats }) {
     ["Last updated", formatDate(stats.lastContentUpdatedAtMs)]
   ];
   return (
-    <section className="grid gap-3 rounded-lg border border-line p-3">
+    <AdminPanel className="grid gap-3" padding="sm">
       <h2 className="text-sm font-semibold">Verified stats</h2>
       <dl className="grid gap-2 sm:grid-cols-2">
         {items.map(([label, value]) => (
@@ -153,13 +157,13 @@ function VerifiedStats({ stats }: { stats: MarketListingVerifiedStats }) {
           </div>
         ))}
       </dl>
-    </section>
+    </AdminPanel>
   );
 }
 
 function ContentsSample({ paths }: { paths: string[] }) {
   return (
-    <section className="grid gap-2 rounded-lg border border-line p-3">
+    <AdminPanel className="grid gap-2" padding="sm">
       <h2 className="text-sm font-semibold">Contents sample</h2>
       {paths.length ? (
         <ul className="grid gap-2 text-sm text-muted">
@@ -172,44 +176,37 @@ function ContentsSample({ paths }: { paths: string[] }) {
       ) : (
         <p className="text-sm text-muted">No public contents sample.</p>
       )}
-    </section>
+    </AdminPanel>
   );
 }
 
-function RelationshipGraph({ graph }: { graph: MarketCategoryGraph }) {
-  const positioned = useMemo(() => {
-    const centerX = 300;
-    const centerY = 170;
-    const radius = 115;
-    return graph.nodes.map((node, index) => {
-      const angle = graph.nodes.length <= 1 ? 0 : (Math.PI * 2 * index) / graph.nodes.length;
-      return {
-        ...node,
-        x: centerX + Math.cos(angle) * radius,
-        y: centerY + Math.sin(angle) * radius
-      };
-    });
-  }, [graph.nodes]);
-  const byCategory = useMemo(() => new Map(positioned.map((node) => [node.category, node])), [positioned]);
+function RelationshipGraph({ links }: { links: LinkEdge[] }) {
+  const graph = useMemo(() => buildPageGraph(links), [links]);
+  const truncated = links.length >= GRAPH_LIMIT;
+
   return (
-    <section className="grid gap-2 rounded-lg border border-line p-3">
+    <AdminPanel className="grid gap-2" padding="sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Relationship graph</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-sm font-semibold">Relationship graph</h2>
+          <span className="rounded border border-line bg-paper px-2 py-1 font-mono text-xs text-muted">Database-wide page graph</span>
+        </div>
         <span className="font-mono text-xs text-muted">
-          {graph.nodes.length} categories / {graph.edges.length} edges
+          {graph.nodes.length} pages / {links.length} links
         </span>
       </div>
+      {truncated ? <p className="text-sm text-muted">Showing first {GRAPH_LIMIT} links only.</p> : null}
       {graph.nodes.length ? (
         <svg className="h-80 w-full rounded border border-line bg-paper" viewBox="0 0 600 340" role="img" aria-label="Marketplace relationship graph">
-          {graph.edges.map((edge) => {
-            const source = byCategory.get(edge.sourceCategory);
-            const target = byCategory.get(edge.targetCategory);
+          {links.map((edge) => {
+            const source = graph.byPath.get(edge.sourcePath);
+            const target = graph.byPath.get(edge.targetPath);
             if (!source || !target) return null;
             return (
               <line
-                key={`${edge.sourceCategory}-${edge.targetCategory}`}
+                key={`${edge.sourcePath}-${edge.targetPath}-${edge.rawHref}`}
                 stroke="#b7b7b7"
-                strokeWidth={Math.min(5, 1 + Number(edge.linkCount))}
+                strokeWidth="1.2"
                 x1={source.x}
                 x2={target.x}
                 y1={source.y}
@@ -217,54 +214,41 @@ function RelationshipGraph({ graph }: { graph: MarketCategoryGraph }) {
               />
             );
           })}
-          {positioned.map((node) => (
-            <g key={node.category}>
+          {graph.nodes.map((node) => (
+            <g key={node.path}>
               <circle cx={node.x} cy={node.y} fill="#111111" r="12" />
               <text className="fill-ink text-[11px]" x={node.x + 16} y={node.y + 4}>
-                {shortCategory(node.category)}
+                {shortPath(node.path)}
               </text>
             </g>
           ))}
         </svg>
-      ) : (
-        <p className="text-sm text-muted">No public relationship graph.</p>
-      )}
-    </section>
+      ) : null}
+      {!graph.nodes.length ? (
+        <p className="text-sm text-muted">No indexed links found in this database.</p>
+      ) : null}
+    </AdminPanel>
   );
 }
 
-function SampleExcerpts({ excerpts, stale }: { excerpts: MarketPreviewExcerpt[]; stale: boolean }) {
-  return (
-    <section className="grid gap-2 rounded-lg border border-line p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Sample excerpts</h2>
-        {stale ? <span className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">stale preview</span> : null}
-      </div>
-      {excerpts.length ? (
-        <ul className="grid gap-3">
-          {excerpts.map((item) => (
-            <li className="grid gap-1 border-b border-line pb-3 last:border-b-0 last:pb-0" key={`${item.path}-${item.etag}`}>
-              <p className="font-mono text-xs text-muted">{item.path}</p>
-              <p className="text-sm leading-6 text-ink">{item.excerpt}</p>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted">No public excerpts.</p>
-      )}
-    </section>
-  );
+function buildPageGraph(links: LinkEdge[]): { nodes: PageGraphNode[]; byPath: Map<string, PageGraphNode> } {
+  const paths = [...new Set(links.flatMap((edge) => [edge.sourcePath, edge.targetPath]))].sort((left, right) => left.localeCompare(right));
+  const centerX = 300;
+  const centerY = 170;
+  const radius = 115;
+  const nodes = paths.map((path, index) => {
+    const angle = paths.length <= 1 ? 0 : (Math.PI * 2 * index) / paths.length;
+    return {
+      path,
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius
+    };
+  });
+  return { nodes, byPath: new Map(nodes.map((node) => [node.path, node])) };
 }
 
 function Notice({ tone, text }: { tone: "success" | "error"; text: string }) {
-  const Icon = tone === "success" ? CheckCircle2 : CircleAlert;
-  const className = tone === "success" ? "border-green-200 bg-green-50 text-green-800" : "border-red-200 bg-red-50 text-red-800";
-  return (
-    <p className={`inline-flex items-start gap-2 rounded-lg border px-3 py-2 text-sm ${className}`}>
-      <Icon aria-hidden className="mt-0.5 shrink-0" size={16} />
-      <span>{text}</span>
-    </p>
-  );
+  return <AdminNotice tone={tone} message={text} />;
 }
 
 function parseJsonArray(value: string): string[] {
@@ -290,6 +274,6 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString();
 }
 
-function shortCategory(path: string): string {
+function shortPath(path: string): string {
   return path.split("/").filter(Boolean).slice(-1)[0] ?? path;
 }

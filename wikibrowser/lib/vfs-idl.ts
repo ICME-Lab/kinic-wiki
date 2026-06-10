@@ -73,15 +73,25 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const MarketCreateListingRequest = idl.Record({
     llm_summary: idl.Opt(idl.Text),
     title: idl.Text,
-    summary_snapshot_revision: idl.Opt(idl.Text),
     description: idl.Text,
     database_id: idl.Text,
     price_e8s: idl.Nat64,
-    sample_excerpts_json: idl.Text,
     tags_json: idl.Text
   });
   const KinicDepositRequest = idl.Record({ amount_e8s: idl.Nat64, expected_fee_e8s: idl.Nat64 });
   const KinicDepositResult = idl.Record({ block_index: idl.Nat64, amount_e8s: idl.Nat64, balance_e8s: idl.Nat64 });
+  const KinicWithdrawRequest = idl.Record({
+    to_owner: idl.Text,
+    amount_e8s: idl.Nat64,
+    to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
+    expected_fee_e8s: idl.Nat64
+  });
+  const KinicWithdrawResult = idl.Record({
+    block_index: idl.Nat64,
+    amount_e8s: idl.Nat64,
+    fee_e8s: idl.Nat64,
+    balance_e8s: idl.Nat64
+  });
   const KinicFundDatabaseCyclesRequest = idl.Record({
     payment_amount_e8s: idl.Nat64,
     database_id: idl.Text,
@@ -110,7 +120,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     status: MarketListingStatus,
     llm_summary: idl.Opt(idl.Text),
     title: idl.Text,
-    summary_snapshot_revision: idl.Opt(idl.Text),
     report_count: idl.Nat64,
     description: idl.Text,
     updated_at_ms: idl.Int64,
@@ -119,9 +128,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     purchase_count: idl.Nat64,
     database_id: idl.Text,
     listing_id: idl.Text,
-    price_e8s: idl.Nat64,
     revision: idl.Nat64,
-    sample_excerpts_json: idl.Text,
+    price_e8s: idl.Nat64,
     tags_json: idl.Text
   });
   const MarketCategoryGraphEdge = idl.Record({
@@ -134,6 +142,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     nodes: idl.Vec(MarketCategoryGraphNode),
     edges: idl.Vec(MarketCategoryGraphEdge)
   });
+  const LinkEdge = idl.Record({
+    updated_at: idl.Int64,
+    link_kind: idl.Text,
+    link_text: idl.Text,
+    source_path: idl.Text,
+    raw_href: idl.Text,
+    target_path: idl.Text
+  });
   const MarketListingPage = idl.Record({ listings: idl.Vec(MarketListing), next_cursor: idl.Opt(idl.Text) });
   const MarketOrder = idl.Record({
     created_at_ms: idl.Int64,
@@ -142,8 +158,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     buyer_principal: idl.Text,
     order_id: idl.Text,
     listing_id: idl.Text,
-    price_e8s: idl.Nat64,
-    listing_revision: idl.Nat64
+    price_e8s: idl.Nat64
   });
   const MarketOrderPage = idl.Record({ orders: idl.Vec(MarketOrder), next_cursor: idl.Opt(idl.Text) });
   const MarketPreviewExcerpt = idl.Record({ path: idl.Text, etag: idl.Text, excerpt: idl.Text });
@@ -151,6 +166,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     top_level_paths: idl.Vec(idl.Text),
     excerpts: idl.Vec(MarketPreviewExcerpt),
     category_graph: MarketCategoryGraph,
+    graph_links: idl.Vec(LinkEdge),
     preview_stale: idl.Bool
   });
   const MarketListingVerifiedStats = idl.Record({
@@ -180,12 +196,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const MarketUpdateListingRequest = idl.Record({
     llm_summary: idl.Opt(idl.Text),
     title: idl.Text,
-    summary_snapshot_revision: idl.Opt(idl.Text),
     description: idl.Text,
     listing_id: idl.Text,
-    price_e8s: idl.Nat64,
     expected_revision: idl.Nat64,
-    sample_excerpts_json: idl.Text,
+    price_e8s: idl.Nat64,
     tags_json: idl.Text
   });
   const Icrc21ConsentMessageMetadata = idl.Record({ utc_offset_minutes: idl.Opt(idl.Int16), language: idl.Text });
@@ -261,14 +275,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     is_virtual: idl.Bool
   });
   const NodeMutationAck = idl.Record({ updated_at: idl.Int64, etag: idl.Text, kind: NodeKind, path: idl.Text });
-  const LinkEdge = idl.Record({
-    updated_at: idl.Int64,
-    link_kind: idl.Text,
-    link_text: idl.Text,
-    source_path: idl.Text,
-    raw_href: idl.Text,
-    target_path: idl.Text
-  });
   const NodeContext = idl.Record({ incoming_links: idl.Vec(LinkEdge), node: Node, outgoing_links: idl.Vec(LinkEdge) });
   const SearchPreviewField = idl.Variant({ Path: idl.Null, Content: idl.Null });
   const SearchPreviewMode = idl.Variant({ Light: idl.Null, ContentStart: idl.Null, None: idl.Null });
@@ -421,6 +427,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultKinicBalance = idl.Variant({ Ok: KinicBalance, Err: idl.Text });
   const ResultKinicPendingOperations = idl.Variant({ Ok: KinicPendingOperationsPage, Err: idl.Text });
   const ResultKinicDeposit = idl.Variant({ Ok: KinicDepositResult, Err: idl.Text });
+  const ResultKinicWithdraw = idl.Variant({ Ok: KinicWithdrawResult, Err: idl.Text });
   const ResultKinicFundDatabaseCycles = idl.Variant({ Ok: KinicFundDatabaseCyclesResult, Err: idl.Text });
   const ResultMarketEntitlementPage = idl.Variant({ Ok: MarketEntitlementPage, Err: idl.Text });
   const ResultMarketListing = idl.Variant({ Ok: MarketListing, Err: idl.Text });
@@ -474,7 +481,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     kinic_deposit_balance: idl.Func([KinicDepositRequest], [ResultKinicDeposit], []),
     kinic_fund_database_cycles: idl.Func([KinicFundDatabaseCyclesRequest], [ResultKinicFundDatabaseCycles], []),
     kinic_get_balance: idl.Func([], [ResultKinicBalance], ["query"]),
+    kinic_withdraw_balance: idl.Func([KinicWithdrawRequest], [ResultKinicWithdraw], []),
     market_get_listing: idl.Func([idl.Text], [ResultMarketListingDetail], ["query"]),
+    market_list_database_entitlements: idl.Func([idl.Text, idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
     market_list_database_listings: idl.Func([idl.Text], [ResultMarketListings], ["query"]),
     market_list_entitlements: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
     market_list_listings: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketListingPage], ["query"]),

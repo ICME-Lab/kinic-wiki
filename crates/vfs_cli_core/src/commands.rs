@@ -16,13 +16,14 @@ use vfs_types::{
     DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
+    MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
+    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    kinic_base_units_per_token,
 };
 use wiki_domain::validate_source_path_for_kind;
 
-use crate::cli::{CyclesCommand, DatabaseCommand, VfsCommand};
+use crate::cli::{CyclesCommand, DatabaseCommand, MarketCommand, VfsCommand};
 use crate::connection::{
     ResolvedConnection, ResolvedConnectionPreview, link_workspace_database,
     unlink_workspace_database, workspace_config_path,
@@ -45,6 +46,10 @@ pub async fn run_vfs_command(
             run_database_command(client, connection, command).await?;
             return Ok(());
         }
+        VfsCommand::Market { command } => {
+            run_market_command(client, command).await?;
+            return Ok(());
+        }
         command => command,
     };
     let database_id = require_database_id(database_id)?;
@@ -57,6 +62,9 @@ pub async fn run_vfs_command(
         }
         VfsCommand::Database { .. } => {
             unreachable!("database command handled before db requirement")
+        }
+        VfsCommand::Market { .. } => {
+            unreachable!("market command handled before db requirement")
         }
         VfsCommand::ReadNode {
             path,
@@ -600,6 +608,42 @@ fn node_field_view(
         output.insert(field, next_value.clone());
     }
     Ok(serde_json::Value::Object(output))
+}
+
+async fn run_market_command(client: &impl VfsApi, command: MarketCommand) -> Result<()> {
+    match command {
+        MarketCommand::Entitlements {
+            cursor,
+            limit,
+            json,
+        } => {
+            let page = client.market_list_entitlements(cursor, limit).await?;
+            print_market_entitlement_page(page, json)?;
+        }
+    }
+    Ok(())
+}
+
+fn print_market_entitlement_page(page: MarketEntitlementPage, json: bool) -> Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&page)?);
+        return Ok(());
+    }
+
+    for entitlement in page.entitlements {
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            entitlement.database_id,
+            entitlement.listing_id,
+            entitlement.order_id,
+            entitlement.status,
+            entitlement.purchased_at_ms
+        );
+    }
+    if let Some(next_cursor) = page.next_cursor {
+        println!("next_cursor\t{next_cursor}");
+    }
+    Ok(())
 }
 
 async fn run_database_command(
@@ -1401,6 +1445,7 @@ mod tests {
         database_cycle_purchases: Mutex<Vec<DatabaseCyclesPurchaseRequest>>,
         database_cycles_history: Mutex<Vec<String>>,
         database_cycles_pending: Mutex<Vec<String>>,
+        market_entitlements: Mutex<Vec<(Option<String>, u32)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
@@ -1541,6 +1586,27 @@ mod tests {
                 created_at_ms: 3,
                 required_action: "billing_authority_review".to_string(),
             }])
+        }
+        async fn market_list_entitlements(
+            &self,
+            cursor: Option<String>,
+            limit: u32,
+        ) -> Result<MarketEntitlementPage> {
+            self.market_entitlements
+                .lock()
+                .unwrap()
+                .push((cursor, limit));
+            Ok(MarketEntitlementPage {
+                entitlements: vec![MarketEntitlement {
+                    database_id: "db_market".to_string(),
+                    buyer_principal: "buyer".to_string(),
+                    listing_id: "listing-1".to_string(),
+                    order_id: "order-1".to_string(),
+                    purchased_at_ms: 123,
+                    status: "active".to_string(),
+                }],
+                next_cursor: Some("next".to_string()),
+            })
         }
         async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
             let mut configs = self.cycles_configs.lock().unwrap();
@@ -2331,6 +2397,32 @@ mod tests {
         assert_eq!(
             *client.database_cycles_pending.lock().unwrap(),
             vec!["db_alpha".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn market_entitlements_calls_client_without_database_id() {
+        let client = MockClient::default();
+        let mut connection = test_connection();
+        connection.database_id = None;
+
+        run_vfs_command(
+            &client,
+            &connection,
+            VfsCommand::Market {
+                command: super::MarketCommand::Entitlements {
+                    cursor: Some("cursor-1".to_string()),
+                    limit: 50,
+                    json: false,
+                },
+            },
+        )
+        .await
+        .expect("market entitlements should not require selected database");
+
+        assert_eq!(
+            *client.market_entitlements.lock().unwrap(),
+            vec![(Some("cursor-1".to_string()), 50)]
         );
     }
 

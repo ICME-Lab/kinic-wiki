@@ -6,10 +6,13 @@ export function nodeRequestKey(canisterId: string, databaseId: string, path: str
   return `${canisterId}\n${databaseId}\n${path}\n${authRequestKey(principal)}`;
 }
 
-export function graphRequestKey(canisterId: string, databaseId: string, centerPath: string | null, depth: 1 | 2, principal: string | null = null): string | null {
-  if (!centerPath) {
-    return null;
-  }
+export function graphRequestKey(
+  canisterId: string,
+  databaseId: string,
+  centerPath: string | null,
+  depth: 1 | 2,
+  principal: string | null = null
+): string {
   return `${canisterId}\n${databaseId}\n${centerPath}\n${depth}\n${authRequestKey(principal)}`;
 }
 

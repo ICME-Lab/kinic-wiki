@@ -23,6 +23,7 @@ import type {
   KinicFundDatabaseCyclesResult,
   KinicPendingOperation,
   KinicPendingOperationsPage,
+  KinicWithdrawResult,
   MarketCreateListingRequest,
   KinicDepositResult,
   MarketEntitlementPage,
@@ -164,8 +165,6 @@ type RawMarketListing = {
   title: string;
   description: string;
   llm_summary: [] | [string];
-  summary_snapshot_revision: [] | [string];
-  sample_excerpts_json: string;
   tags_json: string;
   price_e8s: bigint;
   status: RawMarketListingStatus;
@@ -214,6 +213,7 @@ type RawMarketListingPreview = {
   top_level_paths: string[];
   excerpts: RawMarketPreviewExcerpt[];
   category_graph: RawMarketCategoryGraph;
+  graph_links: RawLinkEdge[];
   preview_stale: boolean;
 };
 
@@ -233,8 +233,6 @@ type RawMarketCreateListingRequest = {
   title: string;
   description: string;
   llm_summary: [] | [string];
-  summary_snapshot_revision: [] | [string];
-  sample_excerpts_json: string;
   tags_json: string;
   price_e8s: bigint;
 };
@@ -252,6 +250,20 @@ type RawKinicDepositRequest = {
 type RawKinicDepositResult = {
   block_index: bigint;
   amount_e8s: bigint;
+  balance_e8s: bigint;
+};
+
+type RawKinicWithdrawRequest = {
+  amount_e8s: bigint;
+  expected_fee_e8s: bigint;
+  to_owner: string;
+  to_subaccount: [] | [number[]];
+};
+
+type RawKinicWithdrawResult = {
+  block_index: bigint;
+  amount_e8s: bigint;
+  fee_e8s: bigint;
   balance_e8s: bigint;
 };
 
@@ -288,7 +300,6 @@ type RawMarketOrder = {
   buyer_principal: string;
   seller_principal: string;
   price_e8s: bigint;
-  listing_revision: bigint;
   created_at_ms: bigint;
 };
 
@@ -485,7 +496,9 @@ type VfsActor = {
   kinic_deposit_balance: (request: RawKinicDepositRequest) => Promise<{ Ok: RawKinicDepositResult } | { Err: string }>;
   kinic_fund_database_cycles: (request: RawKinicFundDatabaseCyclesRequest) => Promise<{ Ok: RawKinicFundDatabaseCyclesResult } | { Err: string }>;
   kinic_get_balance: () => Promise<{ Ok: RawKinicBalance } | { Err: string }>;
+  kinic_withdraw_balance: (request: RawKinicWithdrawRequest) => Promise<{ Ok: RawKinicWithdrawResult } | { Err: string }>;
   market_get_listing: (listingId: string) => Promise<{ Ok: RawMarketListingDetail } | { Err: string }>;
+  market_list_database_entitlements: (databaseId: string, cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_database_listings: (databaseId: string) => Promise<{ Ok: RawMarketListing[] } | { Err: string }>;
   market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
@@ -668,7 +681,7 @@ export async function listDatabasesAuthenticated(canisterId: string, identity: I
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.list_databases();
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return result.Ok.map((raw) => normalizeDatabaseSummary(raw));
   });
@@ -679,7 +692,7 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
     const actor = await createVfsActor(canisterId);
     const result = await actor.list_databases();
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return result.Ok.map((raw) => normalizeDatabaseSummary(raw));
   });
@@ -696,7 +709,7 @@ export async function listDatabaseCycleEntries(
     const actor = await createReadActor(canisterId, identity);
     const result = await actor.list_database_cycle_entries(databaseId, rawDatabaseCycleCursor(cursor), limit);
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return normalizeDatabaseCycleEntryPage(result.Ok);
   });
@@ -711,7 +724,7 @@ export async function listDatabaseCyclesPendingPurchasesAuthenticated(
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.list_database_cycles_pending_purchases(databaseId);
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return result.Ok.map(normalizeDatabaseCyclesPendingPurchase);
   });
@@ -744,6 +757,33 @@ export async function kinicDepositBalance(
       throwCanisterError(result.Err);
     }
     return normalizeKinicDepositResult(result.Ok);
+  });
+}
+
+export async function kinicWithdrawBalance(
+  canisterId: string,
+  identity: Identity,
+  amountE8s: string,
+  expectedFeeE8s: string,
+  toOwner: string,
+  toSubaccount: number[] | null
+): Promise<KinicWithdrawResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const recipient = validateCanisterId(toOwner);
+    if (typeof recipient === "string") {
+      throw new ApiError(`Invalid recipient principal: ${recipient}`, 400);
+    }
+    const result = await actor.kinic_withdraw_balance({
+      amount_e8s: BigInt(amountE8s),
+      expected_fee_e8s: BigInt(expectedFeeE8s),
+      to_owner: recipient.toText(),
+      to_subaccount: toSubaccount ? [toSubaccount] : []
+    });
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeKinicWithdrawResult(result.Ok);
   });
 }
 
@@ -817,6 +857,17 @@ export async function marketListDatabaseListings(canisterId: string, identity: I
       throwCanisterError(result.Err);
     }
     return result.Ok.map(normalizeMarketListing);
+  });
+}
+
+export async function marketListDatabaseEntitlements(canisterId: string, identity: Identity, databaseId: string, cursor: string | null, limit: number): Promise<MarketEntitlementPage> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.market_list_database_entitlements(databaseId, rawTextCursor(cursor), limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketEntitlementPage(result.Ok);
   });
 }
 
@@ -940,7 +991,7 @@ export async function createDatabaseAuthenticated(canisterId: string, identity: 
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.create_database({ name });
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return result.Ok;
   });
@@ -953,7 +1004,7 @@ export async function deleteDatabaseAuthenticated(canisterId: string, identity: 
       database_id: request.databaseId
     });
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
   });
 }
@@ -963,7 +1014,7 @@ export async function renameDatabaseAuthenticated(canisterId: string, identity: 
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.rename_database({ database_id: databaseId, name });
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
   });
 }
@@ -1136,7 +1187,7 @@ export async function listDatabaseMembersAuthenticated(canisterId: string, ident
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.list_database_members(databaseId);
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return result.Ok.map(normalizeDatabaseMember);
   });
@@ -1147,7 +1198,7 @@ export async function listDatabaseMembersPublic(canisterId: string, databaseId: 
     const actor = await createVfsActor(canisterId);
     const result = await actor.list_database_members(databaseId);
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
     return result.Ok.map(normalizeDatabaseMember);
   });
@@ -1164,7 +1215,7 @@ export async function grantDatabaseAccessAuthenticated(
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.grant_database_access(databaseId, principal, databaseRoleVariant(role));
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
   });
 }
@@ -1179,7 +1230,7 @@ export async function revokeDatabaseAccessAuthenticated(
     const actor = await createAuthenticatedActor(canisterId, identity);
     const result = await actor.revoke_database_access(databaseId, principal);
     if ("Err" in result) {
-      throw new Error(result.Err);
+      throwCanisterError(result.Err);
     }
   });
 }
@@ -1444,8 +1495,6 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
     title: raw.title,
     description: raw.description,
     llmSummary: raw.llm_summary[0] ?? null,
-    summarySnapshotRevision: raw.summary_snapshot_revision[0] ?? null,
-    sampleExcerptsJson: raw.sample_excerpts_json,
     tagsJson: raw.tags_json,
     priceE8s: raw.price_e8s.toString(),
     status: normalizeMarketListingStatus(raw.status),
@@ -1489,6 +1538,7 @@ function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListin
           linkCount: edge.link_count.toString()
         }))
       },
+      graphLinks: raw.preview.graph_links.map(normalizeLinkEdge),
       previewStale: raw.preview.preview_stale
     }
   };
@@ -1504,6 +1554,15 @@ function normalizeKinicDepositResult(raw: RawKinicDepositResult): KinicDepositRe
   return {
     blockIndex: raw.block_index.toString(),
     amountE8s: raw.amount_e8s.toString(),
+    balanceE8s: raw.balance_e8s.toString()
+  };
+}
+
+function normalizeKinicWithdrawResult(raw: RawKinicWithdrawResult): KinicWithdrawResult {
+  return {
+    blockIndex: raw.block_index.toString(),
+    amountE8s: raw.amount_e8s.toString(),
+    feeE8s: raw.fee_e8s.toString(),
     balanceE8s: raw.balance_e8s.toString()
   };
 }
@@ -1542,7 +1601,6 @@ function normalizeMarketOrder(raw: RawMarketOrder): MarketOrder {
     buyerPrincipal: raw.buyer_principal,
     sellerPrincipal: raw.seller_principal,
     priceE8s: raw.price_e8s.toString(),
-    listingRevision: raw.listing_revision.toString(),
     createdAtMs: raw.created_at_ms.toString()
   };
 }
@@ -1571,8 +1629,6 @@ function rawMarketCreateListingRequest(request: MarketCreateListingRequest): Raw
     title: request.title,
     description: request.description,
     llm_summary: rawOptionalText(request.llmSummary),
-    summary_snapshot_revision: rawOptionalText(request.summarySnapshotRevision),
-    sample_excerpts_json: request.sampleExcerptsJson,
     tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s)
   };
@@ -1583,8 +1639,6 @@ function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): Raw
     title: request.title,
     description: request.description,
     llm_summary: rawOptionalText(request.llmSummary),
-    summary_snapshot_revision: rawOptionalText(request.summarySnapshotRevision),
-    sample_excerpts_json: request.sampleExcerptsJson,
     tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s),
     listing_id: request.listingId,

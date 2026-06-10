@@ -1,6 +1,7 @@
 // Where: extensions/wiki-clipper/src/claude-response.js
 // What: Read Claude sidebar/API data and convert it into raw-source captures.
 // Why: Claude does not expose a public history export API, so export uses the signed-in claude.ai session.
+import { appendLimitedMessage } from "./conversation-limits.js";
 
 const CLAUDE_API_ORIGIN = "https://claude.ai/api";
 const ORG_ID_PATTERN = /^[a-f0-9-]{36}$/i;
@@ -89,12 +90,14 @@ export function captureFromClaudeResponse(payload, url, fallbackTitle = "Untitle
 
 export function messagesFromClaudePayload(payload) {
   const messages = [];
+  const state = { chars: 0, done: false };
   for (const item of claudeMessages(payload)) {
+    if (state.done) break;
     const role = normalizeClaudeRole(item?.sender ?? item?.role ?? item?.author?.role);
     if (!role) continue;
     const content = claudeMessageContent(item);
     if (!content) continue;
-    messages.push({ role, content });
+    appendLimitedMessage(messages, state, role, content);
   }
   return messages;
 }

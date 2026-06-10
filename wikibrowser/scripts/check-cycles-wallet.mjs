@@ -22,6 +22,8 @@ let lastApproveArgs = null;
 let lastKinicDepositRequest = null;
 let lastMarketPurchaseRequest = null;
 let lastIdentityKinicDeposit = null;
+let lastPlugConnectInput = null;
+let plugDisconnectCalls = 0;
 const ledgerActorMock = {
   icrc1_balance_of: async (account) => {
     lastBalanceAccount = account;
@@ -55,14 +57,19 @@ const vfsActorMock = {
         buyer_principal: "plug-principal",
         seller_principal: "seller-principal",
         price_e8s: request.price_e8s,
-        listing_revision: 2n,
         created_at_ms: 123n
       }
     };
   }
 };
 const plugMock = {
-  requestConnect: async () => true,
+  requestConnect: async (input) => {
+    lastPlugConnectInput = input;
+    return true;
+  },
+  disconnect: async () => {
+    plugDisconnectCalls += 1;
+  },
   agent: { getPrincipal: async () => ({ toText: () => "plug-principal" }) },
   createActor: async ({ canisterId }) => (canisterId === "ledger" ? ledgerActorMock : vfsActorMock)
 };
@@ -114,6 +121,13 @@ const walletModule = loadTsModule(
       KINIC_LEDGER_FEE_E8S: 100_000n,
       MAX_CANISTER_I64: 9_223_372_036_854_775_807n,
       MAX_LEDGER_U64: 18_446_744_073_709_551_615n,
+    },
+    "@/lib/ic-host": {
+      configuredIcHost: () => walletModule.__context.process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io",
+      isLocalIcHost: (host) => {
+        const { hostname } = new URL(host);
+        return hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
+      }
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s }
   },
@@ -171,6 +185,16 @@ assert.equal(lastBalanceAccount.owner.toText(), "plug-principal");
 assert.equal(Array.isArray(lastBalanceAccount.subaccount), true);
 assert.equal(lastBalanceAccount.subaccount.length, 0);
 
+walletModule.__context.process.env.NEXT_PUBLIC_WIKI_IC_HOST = "http://127.0.0.1:8011";
+plugDisconnectCalls = 0;
+lastPlugConnectInput = null;
+const connectedPlug = await walletModule.connectPlugWallet();
+assert.equal(connectedPlug.principal, "plug-principal");
+assert.equal(plugDisconnectCalls, 1);
+assert.equal(lastPlugConnectInput.host, "http://127.0.0.1:8011");
+assert.equal(lastPlugConnectInput.whitelist, undefined);
+walletModule.__context.process.env.NEXT_PUBLIC_WIKI_IC_HOST = "https://icp0.io";
+
 ledgerAllowanceMock = { allowance: 0n, expires_at: [] };
 approveCalls = 0;
 purchaseCalls = 0;
@@ -187,6 +211,7 @@ assert.equal(
 assert.equal(approveCalls, 1);
 assert.equal(lastApproveArgs.expected_allowance[0], 0n);
 assert.equal(purchaseCalls, 1);
+assert.equal(JSON.stringify(lastPlugConnectInput.whitelist), JSON.stringify(["aaaaa-aa", "ledger"]));
 
 ledgerAllowanceMock = { allowance: 100_100_000n, expires_at: [] };
 approveCalls = 0;
@@ -267,11 +292,9 @@ assert.equal(marketPurchase.provider, "plug");
 assert.equal(marketPurchase.orderId, "order_1");
 assert.equal(marketPurchase.buyerPrincipal, "plug-principal");
 assert.equal(marketPurchase.priceE8s, "50000000");
-assert.equal(marketPurchase.listingRevision, "2");
 assert.equal(marketPurchaseCalls, 1);
 assert.equal(lastMarketPurchaseRequest.listing_id, "market1");
 assert.equal(lastMarketPurchaseRequest.price_e8s, 50_000_000n);
-assert.equal("expected_revision" in lastMarketPurchaseRequest, false);
 
 cborMock.decoded = { method_name: "write_node" };
 await assert.rejects(
@@ -359,6 +382,11 @@ const sessionModule = loadTsModule(
     },
     "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
     "@/lib/auth": { AUTH_CLIENT_CREATE_OPTIONS: {}, authLoginOptions: () => ({}) },
+    "@/lib/ic-host": {
+      configuredIcHost: () => "https://icp0.io",
+      isLocalIcHost: () => false,
+      LOCAL_OISY_UNAVAILABLE_MESSAGE: "OISY hosted signer is unavailable for local replica"
+    },
     "@/lib/kinic-wallet": {
       connectOisyWallet: async () => ({ owner: "oisy-principal" }),
       connectPlugWallet: async () => ({ principal: "plug-principal" }),
@@ -420,6 +448,7 @@ function loadTsModule(relativePath, mocks, append = "") {
     Date,
     TextEncoder,
     Uint8Array,
+    URL,
     URLSearchParams,
     console,
     exports: commonjsModule.exports,

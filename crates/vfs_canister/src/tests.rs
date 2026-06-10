@@ -14,37 +14,41 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KinicDepositRequest,
-    KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketPurchaseRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, KinicWithdrawRequest,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketPurchaseRequest,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest,
+    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest,
+    StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
     Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
-    SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
-    cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
+    LedgerTransferOutcome, SERVICE, TransferError, TransferFromError, append_node,
+    begin_database_archive, begin_database_restore, cancel_database_archive,
+    check_database_write_cycles, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
-    fail_next_apply_kinic_deposit_for_test, fail_next_mount_database_file_for_test, fetch_updates,
-    finalize_database_archive, finalize_database_restore, get_cycles_billing_config, glob_nodes,
-    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
-    incoming_links, kinic_deposit_balance, kinic_fund_database_cycles, kinic_get_balance,
-    kinic_list_pending_operations, last_ledger_from_for_test, last_ledger_memo_for_test,
-    ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
-    list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
-    market_create_listing, market_publish_listing, market_purchase_access, memory_manifest,
-    mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, revoke_database_access, search_node_paths, search_nodes,
-    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
+    fail_next_apply_kinic_deposit_for_test, fail_next_apply_kinic_withdraw_for_test,
+    fail_next_database_migration_for_test, fail_next_mount_database_file_for_test,
+    fail_next_refund_kinic_withdraw_for_test, fetch_updates, finalize_database_archive,
+    finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
+    graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
+    kinic_deposit_balance, kinic_fund_database_cycles, kinic_get_balance,
+    kinic_list_pending_operations, kinic_withdraw_balance, last_ledger_from_for_test,
+    last_ledger_memo_for_test, last_ledger_to_for_test, ledger_transfer_fees_for_test,
+    list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
+    list_database_members, list_databases, list_nodes, market_create_listing,
+    market_publish_listing, market_purchase_access, memory_manifest, mkdir_node, move_node,
+    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
+    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
+    read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test,
     set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
-    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    write_database_restore_chunk, write_node, write_nodes,
+    status, transfer_error_outcome, transfer_from_error_outcome, update_charge_cycles,
+    update_cycles_billing_config, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -151,6 +155,43 @@ fn pending_kinic_deposit_state() -> String {
     })
 }
 
+fn pending_kinic_withdraw_state() -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                "SELECT json_object('status', operation_status, 'block', external_block_index) FROM kinic_pending_operations WHERE kind = 'withdraw' LIMIT 1",
+                1,
+            )
+            .expect("pending operation should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("pending operation should exist")
+    })
+}
+
+fn kinic_balance_json(principal: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_object('balance', balance_e8s) FROM kinic_accounts WHERE principal = '{}' LIMIT 1",
+                    principal
+                ),
+                1,
+            )
+            .expect("KINIC balance should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("KINIC balance should exist")
+    })
+}
+
 fn kinic_deposit_ledger_count(principal: &str) -> String {
     SERVICE.with(|slot| {
         slot.borrow()
@@ -240,6 +281,15 @@ fn kinic_deposit_request(amount_e8s: u64) -> KinicDepositRequest {
     }
 }
 
+fn kinic_withdraw_request(amount_e8s: u64) -> KinicWithdrawRequest {
+    KinicWithdrawRequest {
+        amount_e8s,
+        expected_fee_e8s: KINIC_LEDGER_FEE_E8S,
+        to_owner: "bkyz2-fmaaa-aaaaa-qaaaq-cai".to_string(),
+        to_subaccount: None,
+    }
+}
+
 fn kinic_fund_request(
     database_id: &str,
     payment_amount_e8s: u64,
@@ -257,8 +307,6 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
         title: "Private market DB".to_string(),
         description: "Paid reader access".to_string(),
         llm_summary: None,
-        summary_snapshot_revision: None,
-        sample_excerpts_json: "[]".to_string(),
         tags_json: "[]".to_string(),
         price_e8s,
     }
@@ -440,15 +488,9 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
                 1_700_000_000_000,
             )
             .expect("database cycle purchase should begin");
-        if service
-            .activate_pending_database_for_cycles_purchase(database_id, 1_700_000_000_000)
-            .expect("pending database activation should prepare")
-            .is_some()
-        {
-            service
-                .run_pending_database_migrations(database_id)
-                .expect("pending database migrations should run");
-        }
+        service
+            .prepare_pending_database_activation(database_id, 1_700_000_000_000)
+            .expect("pending database activation should prepare");
         let cycles = super::cycles_for_payment_amount_e8s(
             payment_amount_e8s,
             &service
@@ -715,7 +757,7 @@ fn kinic_fund_database_cycles_uses_internal_balance_without_ledger_call() {
 }
 
 #[test]
-fn kinic_fund_database_cycles_rejects_unallocated_pending_without_state_change() {
+fn kinic_fund_database_cycles_activates_unallocated_pending_without_ledger_call() {
     install_empty_test_service();
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
@@ -734,17 +776,66 @@ fn kinic_fund_database_cycles_rejects_unallocated_pending_without_state_change()
         database_cycles_balance_json(&database.database_id),
         "{\"balance\":0}"
     );
-    let balance_before = kinic_get_balance()
-        .expect("KINIC balance should load")
-        .balance_e8s;
+    let result = kinic_fund_database_cycles(kinic_fund_request(&database.database_id, 500))
+        .expect("unallocated pending database should activate");
+
+    assert_eq!(
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Active
+    );
+    assert!(database_status_and_mount(&database.database_id).1.is_some());
+    assert_eq!(
+        database_cycles_balance_json(&database.database_id),
+        format!("{{\"balance\":{}}}", result.database_balance_cycles)
+    );
+    assert_eq!(
+        kinic_get_balance()
+            .expect("KINIC balance should load")
+            .balance_e8s,
+        500
+    );
+    assert!(
+        list_children(ListChildrenRequest {
+            database_id: database.database_id.clone(),
+            path: "/Sources".to_string(),
+        })
+        .expect("/Sources should load after internal funding activation")
+        .is_empty()
+    );
+    assert_eq!(last_ledger_memo_for_test(), None);
+    let entries = list_database_cycle_entries(database.database_id, None, 10)
+        .expect("database ledger should load")
+        .entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0].method.as_deref(),
+        Some("kinic_fund_database_cycles")
+    );
+}
+
+#[test]
+fn kinic_fund_database_cycles_migration_failure_keeps_pending_without_debit() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install_principal(
+        Principal::from_text("bkyz2-fmaaa-aaaaa-qaaaq-cai").expect("caller should parse"),
+    );
+    let database = create_database(CreateDatabaseRequest {
+        name: "Pending migration failure".to_string(),
+    })
+    .expect("pending database should create");
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(92));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000)))
+        .expect("deposit should credit internal KINIC balance");
+    clear_last_ledger_memo_for_test();
+    fail_next_database_migration_for_test(&database.database_id);
 
     let error = kinic_fund_database_cycles(kinic_fund_request(&database.database_id, 500))
-        .expect_err("unallocated pending database should reject");
+        .expect_err("migration failure should reject internal funding");
 
-    assert!(error.contains("pending database has no activation mount"));
+    assert!(error.contains("test database migration failure"));
     assert_eq!(
-        database_status_and_mount(&database.database_id),
-        (DatabaseStatus::Pending, None)
+        database_status_and_mount(&database.database_id).0,
+        DatabaseStatus::Pending
     );
     assert_eq!(
         database_cycles_balance_json(&database.database_id),
@@ -754,7 +845,7 @@ fn kinic_fund_database_cycles_rejects_unallocated_pending_without_state_change()
         kinic_get_balance()
             .expect("KINIC balance should load")
             .balance_e8s,
-        balance_before
+        1_000
     );
     assert_eq!(last_ledger_memo_for_test(), None);
     assert!(
@@ -878,6 +969,216 @@ fn kinic_deposit_ambiguous_transfer_keeps_pending_for_review() {
         pending.operations[0].required_action,
         "billing_authority_review"
     );
+}
+
+#[test]
+fn kinic_withdraw_balance_transfers_to_recipient_and_debits_fee() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(41));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000_000)))
+        .expect("deposit should credit internal KINIC balance");
+    clear_ledger_transactions_for_test();
+    clear_last_ledger_memo_for_test();
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Completed(42));
+
+    let result = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect("withdraw should transfer ledger funds");
+
+    assert_eq!(result.block_index, 42);
+    assert_eq!(result.amount_e8s, 500_000);
+    assert_eq!(result.fee_e8s, KINIC_LEDGER_FEE_E8S);
+    assert_eq!(result.balance_e8s, 400_000);
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":400000}"#
+    );
+    assert_eq!(
+        last_ledger_to_for_test(),
+        Some(IcrcAccount {
+            owner: Principal::from_text("bkyz2-fmaaa-aaaaa-qaaaq-cai")
+                .expect("recipient should parse"),
+            subaccount: None,
+        })
+    );
+    assert_eq!(ledger_transfer_fees_for_test(), vec![KINIC_LEDGER_FEE_E8S]);
+    assert!(
+        kinic_list_pending_operations(pending_operations_request(None, 100))
+            .expect("pending operations should load")
+            .operations
+            .is_empty()
+    );
+}
+
+#[test]
+fn kinic_withdraw_balance_rejects_anonymous_caller() {
+    install_empty_test_service();
+    set_test_caller_principal_for_test(Principal::anonymous());
+
+    let error = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(1)))
+        .expect_err("anonymous withdraw should reject");
+
+    assert!(error.contains("anonymous caller not allowed"));
+}
+
+#[test]
+fn kinic_withdraw_balance_validates_recipient_and_balance() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+
+    let invalid_owner = block_on_ready(kinic_withdraw_balance(KinicWithdrawRequest {
+        to_owner: "not-a-principal".to_string(),
+        ..kinic_withdraw_request(1)
+    }))
+    .expect_err("invalid recipient principal should reject");
+    assert!(invalid_owner.contains("invalid KINIC withdraw recipient principal"));
+
+    let invalid_subaccount = block_on_ready(kinic_withdraw_balance(KinicWithdrawRequest {
+        to_subaccount: Some(vec![1, 2, 3]),
+        ..kinic_withdraw_request(1)
+    }))
+    .expect_err("invalid recipient subaccount should reject");
+    assert!(invalid_subaccount.contains("subaccount must be 32 bytes"));
+
+    let insufficient = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(1)))
+        .expect_err("empty internal balance should reject");
+    assert!(insufficient.contains("insufficient KINIC balance"));
+}
+
+#[test]
+fn kinic_withdraw_balance_refunds_on_bad_fee_and_ledger_error() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(41));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000_000)))
+        .expect("deposit should credit internal KINIC balance");
+
+    set_next_ledger_transfer_outcome_for_test(transfer_error_outcome(TransferError::BadFee {
+        expected_fee: Nat::from(200_000_u64),
+    }));
+    let bad_fee = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect_err("bad fee should reject");
+    assert!(bad_fee.contains("BadFee expected fee 200000"));
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":1000000}"#
+    );
+
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::LedgerErr(
+        "icrc1_transfer failed: InsufficientFunds".to_string(),
+    ));
+    let ledger_error = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect_err("ledger error should reject");
+    assert!(ledger_error.contains("InsufficientFunds"));
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":1000000}"#
+    );
+}
+
+#[test]
+fn kinic_withdraw_refund_failure_requires_review_and_keeps_locked_debit() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(41));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000_000)))
+        .expect("deposit should credit internal KINIC balance");
+
+    set_next_ledger_transfer_outcome_for_test(transfer_error_outcome(TransferError::BadFee {
+        expected_fee: Nat::from(200_000_u64),
+    }));
+    fail_next_refund_kinic_withdraw_for_test();
+    let bad_fee = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect_err("refund failure should require review");
+    assert!(bad_fee.contains("BadFee expected fee 200000"));
+    assert!(bad_fee.contains("failed to refund KINIC withdraw"));
+    assert!(bad_fee.contains("billing authority review required"));
+    assert_eq!(
+        pending_kinic_withdraw_state(),
+        r#"{"status":"in_flight","block":null}"#
+    );
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":400000}"#
+    );
+}
+
+#[test]
+fn kinic_withdraw_ledger_error_refund_failure_requires_review() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(41));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000_000)))
+        .expect("deposit should credit internal KINIC balance");
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::LedgerErr(
+        "icrc1_transfer failed: TemporarilyUnavailable".to_string(),
+    ));
+    fail_next_refund_kinic_withdraw_for_test();
+
+    let error = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect_err("refund failure should require review");
+
+    assert!(error.contains("TemporarilyUnavailable"));
+    assert!(error.contains("failed to refund KINIC withdraw"));
+    assert!(error.contains("billing authority review required"));
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":400000}"#
+    );
+}
+
+#[test]
+fn kinic_withdraw_completed_local_apply_failure_keeps_block_for_review() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(41));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000_000)))
+        .expect("deposit should credit internal KINIC balance");
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Completed(42));
+    fail_next_apply_kinic_withdraw_for_test();
+
+    let error = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect_err("local apply failure should keep completed pending withdraw");
+
+    assert!(error.contains("test KINIC withdraw apply failure"));
+    assert!(error.contains("billing authority review"));
+    assert_eq!(
+        pending_kinic_withdraw_state(),
+        r#"{"status":"completed","block":42}"#
+    );
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":400000}"#
+    );
+}
+
+#[test]
+fn kinic_withdraw_balance_ambiguous_keeps_locked_debit_and_blocks_duplicate() {
+    install_empty_test_service();
+    let _caller = AuthenticatedCallerGuard::install();
+    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(41));
+    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000_000)))
+        .expect("deposit should credit internal KINIC balance");
+    set_next_ledger_transfer_outcome_for_test(LedgerTransferOutcome::Ambiguous(
+        "icrc1_transfer decode failed".to_string(),
+    ));
+
+    let error = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(500_000)))
+        .expect_err("ambiguous transfer should keep pending withdraw");
+
+    assert!(error.contains("result ambiguous"));
+    assert!(error.contains("billing authority review required"));
+    assert_eq!(
+        pending_kinic_withdraw_state(),
+        r#"{"status":"ambiguous","block":null}"#
+    );
+    assert_eq!(
+        kinic_balance_json(&Principal::management_canister().to_text()),
+        r#"{"balance":400000}"#
+    );
+    let duplicate = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(100_000)))
+        .expect_err("ambiguous withdraw should block duplicate");
+    assert!(duplicate.contains("KINIC withdraw already pending for caller"));
 }
 
 #[test]

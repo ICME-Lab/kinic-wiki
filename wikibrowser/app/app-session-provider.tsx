@@ -6,6 +6,7 @@
 import { AuthClient } from "@icp-sdk/auth/client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
+import { configuredIcHost, isLocalIcHost, LOCAL_OISY_UNAVAILABLE_MESSAGE } from "@/lib/ic-host";
 import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
 import { kinicGetBalance } from "@/lib/vfs-client";
 import type { HeaderWalletProvider } from "./home-ui";
@@ -49,7 +50,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [kinicBalance, setKinicBalance] = useState<string | null>(null);
   const [kinicBalanceError, setKinicBalanceError] = useState<string | null>(null);
   const [kinicBalanceLoading, setKinicBalanceLoading] = useState(false);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
+  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -140,6 +141,11 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const connectWallet = useCallback(
     async (provider: HeaderWalletProvider) => {
       if (walletControlsLocked || walletBusyProvider) return;
+      if (provider === "oisy" && isLocalIcHost(configuredIcHost())) {
+        setWalletBalance(null);
+        setWalletBalanceError(LOCAL_OISY_UNAVAILABLE_MESSAGE);
+        return;
+      }
       setWalletBusyProvider(provider);
       setWalletBalanceError(null);
       try {
@@ -256,6 +262,17 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [refreshWalletBalance, wallet]);
+
+  useEffect(() => {
+    const stored = readStoredWallet();
+    if (stored?.provider === "oisy" && isLocalIcHost(configuredIcHost())) {
+      clearStoredWallet();
+      return;
+    }
+    if (stored) {
+      setWallet(stored);
+    }
+  }, [clearStoredWallet]);
 
   return (
     <AppSession.Provider

@@ -5,8 +5,8 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg, NodeKindArg,
-    SearchPreviewModeArg,
+    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg,
+    MarketCommand, NodeKindArg, SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
@@ -33,6 +33,11 @@ pub enum Command {
     Database {
         #[command(subcommand)]
         command: DatabaseCommand,
+    },
+    #[command(about = "Inspect marketplace access for the current identity")]
+    Market {
+        #[command(subcommand)]
+        command: MarketCommand,
     },
     #[command(about = "Show the current authenticated canister identity")]
     Identity {
@@ -661,6 +666,7 @@ impl Command {
                     | DatabaseCommand::ArchiveCancel { .. }
                     | DatabaseCommand::RestoreCancel { .. }
             ),
+            Self::Market { command: _ } => true,
             Self::Skill { command } => !matches!(
                 command,
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
@@ -721,6 +727,7 @@ impl Command {
             | Self::SearchPathRemote { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
+            | Self::Market { .. }
             | Self::Cycles { .. }
             | Self::Identity { .. }
             | Self::Hermes { .. }
@@ -761,6 +768,9 @@ impl Command {
                 command: command.clone(),
             }),
             Self::Database { command } => Some(VfsCommand::Database {
+                command: command.clone(),
+            }),
+            Self::Market { command } => Some(VfsCommand::Market {
                 command: command.clone(),
             }),
             Self::ReadNode {
@@ -967,8 +977,8 @@ impl Command {
 mod tests {
     use super::{
         ClaudeCommand, Cli, CodexCommand, Command, CyclesCommand, DatabaseCommand, HermesCommand,
-        IdentityModeArg, NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg,
-        SkillStatusArg,
+        IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand, SkillImportCommand,
+        SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
@@ -979,6 +989,7 @@ mod tests {
         let help = command.render_long_help().to_string();
 
         assert!(help.contains("Manage database creation"));
+        assert!(help.contains("Inspect marketplace access"));
         assert!(help.contains("Manage Skill Registry packages"));
         assert!(help.contains("Read one node by path"));
         assert!(help.contains("Search node content"));
@@ -1204,6 +1215,49 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_parses_market_entitlements_commands() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "market",
+            "entitlements",
+            "--cursor",
+            "cursor-1",
+            "--limit",
+            "50",
+            "--json",
+        ]);
+        let Command::Market {
+            command:
+                MarketCommand::Entitlements {
+                    cursor,
+                    limit,
+                    json,
+                },
+        } = &cli.command
+        else {
+            panic!("expected market entitlements command");
+        };
+        assert_eq!(cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(*limit, 50);
+        assert!(*json);
+
+        let Some(VfsCommand::Market {
+            command:
+                MarketCommand::Entitlements {
+                    cursor,
+                    limit,
+                    json,
+                },
+        }) = cli.command.as_vfs_command()
+        else {
+            panic!("expected VFS market entitlements command");
+        };
+        assert_eq!(cursor.as_deref(), Some("cursor-1"));
+        assert_eq!(limit, 50);
+        assert!(json);
+    }
+
+    #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
         let read = Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
         assert!(!read.command.requires_identity());
@@ -1281,6 +1335,10 @@ mod tests {
 
         let database_cycles = Cli::parse_from(["kinic-vfs-cli", "database", "cycles", "db_alpha"]);
         assert!(!database_cycles.command.requires_identity());
+
+        let market_entitlements = Cli::parse_from(["kinic-vfs-cli", "market", "entitlements"]);
+        assert!(market_entitlements.command.requires_identity());
+        assert!(!market_entitlements.command.probes_anonymous_database_read());
     }
 
     #[test]

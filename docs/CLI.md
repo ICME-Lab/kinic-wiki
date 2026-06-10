@@ -103,6 +103,26 @@ Successful DB updates consume DB cycles balance. CLI write commands use the cani
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
 
+## Marketplace Entitlements
+
+Use `market entitlements` to list databases purchased through the marketplace by the current identity. The command is authenticated and does not require `--database-id` because it discovers database IDs.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- market entitlements
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- market entitlements --limit 50 --json
+```
+
+Text output is tab-separated: `database_id`, `listing_id`, `order_id`, `status`, and `purchased_at_ms`. If more results are available, the final line prints `next_cursor	<cursor>`; pass it back with `--cursor`.
+
+After selecting a purchased database ID, use the existing database-scoped read commands:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> list-nodes --prefix /Wiki
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> read-node --path /Wiki/index.md
+```
+
+The CLI v1 marketplace surface is intentionally read-only. Marketplace purchase, listing creation, listing publication, and deposit flows are not CLI commands.
+
 For public browser reads, grant anonymous reader access explicitly:
 
 ```bash

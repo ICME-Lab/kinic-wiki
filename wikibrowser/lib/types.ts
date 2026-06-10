@@ -202,8 +202,6 @@ export type MarketListing = {
   title: string;
   description: string;
   llmSummary: string | null;
-  summarySnapshotRevision: string | null;
-  sampleExcerptsJson: string;
   tagsJson: string;
   priceE8s: string;
   status: MarketListingStatus;
@@ -252,6 +250,7 @@ export type MarketListingPreview = {
   topLevelPaths: string[];
   excerpts: MarketPreviewExcerpt[];
   categoryGraph: MarketCategoryGraph;
+  graphLinks: LinkEdge[];
   previewStale: boolean;
 };
 
@@ -271,8 +270,6 @@ export type MarketCreateListingRequest = {
   title: string;
   description: string;
   llmSummary: string | null;
-  summarySnapshotRevision: string | null;
-  sampleExcerptsJson: string;
   tagsJson: string;
   priceE8s: string;
 };
@@ -285,6 +282,13 @@ export type MarketUpdateListingRequest = Omit<MarketCreateListingRequest, "datab
 export type KinicDepositResult = {
   blockIndex: string;
   amountE8s: string;
+  balanceE8s: string;
+};
+
+export type KinicWithdrawResult = {
+  blockIndex: string;
+  amountE8s: string;
+  feeE8s: string;
   balanceE8s: string;
 };
 
@@ -310,7 +314,6 @@ export type MarketOrder = {
   buyerPrincipal: string;
   sellerPrincipal: string;
   priceE8s: string;
-  listingRevision: string;
   createdAtMs: string;
 };
 

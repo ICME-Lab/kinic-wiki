@@ -19,11 +19,16 @@ const vfsIdl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8
 const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
 const createDatabaseDialog = readFileSync(new URL("../app/create-database-dialog.tsx", import.meta.url), "utf8");
 const adminHeader = readFileSync(new URL("../components/admin-header.tsx", import.meta.url), "utf8");
+const adminShell = readFileSync(new URL("../components/admin-shell.tsx", import.meta.url), "utf8");
 const appHeader = readFileSync(new URL("../app/app-header.tsx", import.meta.url), "utf8");
 const appSession = readFileSync(new URL("../app/app-session-provider.tsx", import.meta.url), "utf8");
+const profilePage = readFileSync(new URL("../app/profile/page.tsx", import.meta.url), "utf8");
+const profileClient = readFileSync(new URL("../app/profile/profile-client.tsx", import.meta.url), "utf8");
 const rootLayout = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
 const cliPage = readFileSync(new URL("../app/cli/page.tsx", import.meta.url), "utf8");
 const cliGuideBlock = readFileSync(new URL("../app/cli/cli-guide-block.tsx", import.meta.url), "utf8");
+const marketplaceClient = readFileSync(new URL("../app/marketplace/marketplace-client.tsx", import.meta.url), "utf8");
+const cyclesClient = readFileSync(new URL("../app/cycles/cycles-client.tsx", import.meta.url), "utf8");
 const homeUi = readFileSync(new URL("../app/home-ui.tsx", import.meta.url), "utf8");
 const homePage = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
 const homeHeroSection = homePage.slice(homePage.indexOf("<section"), homePage.indexOf("</section>") + "</section>".length);
@@ -49,26 +54,47 @@ assert.match(adminHeader, /titleAction \? <div className="shrink-0">/);
 assert.match(adminHeader, /import Link from "next\/link";/);
 assert.match(adminHeader, /href="\/dashboard" aria-label="Back to dashboard"/);
 assert.match(adminHeader, /Kinic Wiki/);
+assert.match(adminShell, /<section className="grid flex-1 grid-cols-1 bg-canvas text-ink lg:grid-cols-\[240px_minmax\(0,1fr\)\]">/);
+assert.doesNotMatch(adminShell, /min-h-\[calc\(100vh-/);
+assert.match(adminShell, /export function AdminContent/);
+assert.match(adminShell, /<main className="min-h-0 px-4 pb-8 pt-4 sm:px-6">/);
+assert.doesNotMatch(adminShell, /<main className="min-h-screen/);
+assert.match(adminShell, /max-w-6xl/);
+assert.match(adminShell, /href: "\/profile", label: "My Profile"/);
+assert.match(adminShell, /pathname === "\/profile"/);
 assert.match(rootLayout, /<AppSessionProvider>/);
+assert.match(rootLayout, /<div className="flex min-h-screen flex-col">/);
 assert.match(rootLayout, /<AppHeader \/>/);
 assert.match(appHeader, /usePathname/);
+assert.match(appHeader, /const isDashboard = pathname === "\/dashboard" \|\| pathname\.startsWith\("\/dashboard\/"\)/);
 assert.match(appHeader, /const isMarketplace = pathname === "\/marketplace" \|\| pathname\.startsWith\("\/marketplace\/"\)/);
+assert.match(appHeader, /const isCycles = pathname === "\/cycles"/);
+assert.match(appHeader, /const isProfile = pathname === "\/profile"/);
+assert.match(appHeader, /const isCli = pathname === "\/cli"/);
 assert.doesNotMatch(appHeader, /isKinic/);
-assert.match(appHeader, /pathname !== "\/dashboard" && pathname !== "\/cycles" && !isMarketplace/);
-assert.match(appHeader, /title = pathname === "\/cycles" \? "Database cycles purchase" : isMarketplace \? "Kinic marketplace" : "Database dashboard"/);
-assert.match(appHeader, /Database dashboard/);
+assert.match(appHeader, /if \(!isDashboard && !isCycles && !isMarketplace && !isProfile && !isCli\) return null/);
+assert.match(appHeader, /title="Console"/);
+assert.doesNotMatch(appHeader, /Database dashboard/);
+assert.doesNotMatch(appHeader, /Kinic marketplace/);
 assert.doesNotMatch(appHeader, /href="\/kinic\/wallet"/);
-assert.match(appHeader, /KinicDepositModal/);
-assert.match(appHeader, /depositKinicBalanceWithIdentity/);
-assert.match(appHeader, /parseDepositAmount/);
-assert.match(appHeader, /aria-label="KINIC balance"/);
-assert.match(appHeader, /: "- KINIC"/);
-assert.match(appHeader, /\? "Unavailable"/);
-assert.match(appHeader, /Deposit KINIC/);
-assert.match(appHeader, /event\.target === event\.currentTarget\) onClose\(\)/);
+assert.doesNotMatch(appHeader, /Deposit KINIC/);
+assert.doesNotMatch(appHeader, /depositKinicBalanceWithIdentity/);
+assert.doesNotMatch(appHeader, /parseKinicAmount/);
+assert.doesNotMatch(appHeader, /parseDepositAmount/);
+assert.doesNotMatch(appHeader, /aria-label="App KINIC balance"/);
+assert.doesNotMatch(appHeader, /<span>Deposit<\/span>/);
 assert.doesNotMatch(appHeader, /<Link[\s\S]*Database dashboard/);
 assert.match(appHeader, /<WalletControls/);
-assert.match(appHeader, /<AuthControls/);
+assert.doesNotMatch(appHeader, /<AuthControls/);
+assert.match(adminShell, /AdminAccountControls/);
+assert.match(adminShell, /aria-label="Account"/);
+assert.match(adminShell, /aria-label="App KINIC balance"[\s\S]*onClick=\{\(\) => setDepositOpen\(true\)\}/);
+assert.match(adminShell, /aria-label="Log out"/);
+assert.match(adminShell, /<PowerOff aria-hidden size=\{16\} \/>/);
+assert.match(adminShell, /Deposit KINIC/);
+assert.match(adminShell, /event\.target === event\.currentTarget\) setDepositOpen\(false\)/);
+assert.match(adminShell, /depositKinicBalanceWithIdentity/);
+assert.match(adminShell, /parseKinicAmount/);
 assert.match(appSession, /kinicGetBalance/);
 assert.match(appSession, /refreshKinicBalance/);
 assert.match(appSession, /kinicBalanceLoading/);
@@ -125,6 +151,7 @@ assert.doesNotMatch(cliPage, /Database dashboard/);
 assert.doesNotMatch(cliPage, /ArrowLeft/);
 assert.match(cliPage, /const checkCommands = \["kinic-vfs-cli --version", "kinic-vfs-cli --help"\]/);
 assert.match(cliPage, /title="First Check"/);
+assert.doesNotMatch(cliPage, /AdminPageHeader|title="CLI Guide"|Open npm|npm-distributed operator CLI/);
 assert.match(cliGuideBlock, /navigator\.clipboard\.writeText\(copyValue \?\? commandText\)/);
 assert.match(cliGuideBlock, /Copy .* commands/);
 assert.match(cliGuideBlock, /absolute right-2 top-2/);
@@ -132,7 +159,10 @@ assert.doesNotMatch(dashboardIndex, /<DashboardDatabaseClient databaseId="" \/>/
 assert.match(dashboardRoute, /params: Promise<\{ databaseId: string \}>/);
 assert.match(dashboardRoute, /<DashboardDatabaseClient databaseId=\{databaseId\} \/>/);
 assert.match(dashboardClient, /export function DashboardDatabaseClient\(\{ databaseId \}/);
-assert.match(dashboardClient, /<AdminHeader/);
+assert.doesNotMatch(dashboardClient, /import \{ AdminHeader \}/);
+assert.match(dashboardClient, /<DatabaseDetailHeader/);
+assert.match(dashboardClient, /function DatabaseDetailHeader/);
+assert.match(dashboardClient, /title=\{database\?\.name \?\? "Database access"\}/);
 assert.match(dashboardClient, /Pencil/);
 assert.doesNotMatch(dashboardClient, /href=\{`\/skills\/\$\{encodeURIComponent\(databaseId\)\}`\}/);
 assert.match(dashboardClient, /const \[renameOpen, setRenameOpen\] = useState\(false\);/);
@@ -230,7 +260,11 @@ const dashboardHomeModule = loadTsModule(
         authClient: null,
         authError: null,
         authReady: true,
+        kinicBalance: null,
+        kinicBalanceError: null,
+        kinicBalanceLoading: false,
         principal: null,
+        refreshKinicBalance: async () => undefined,
         refreshWalletBalance: async () => undefined,
         setWalletControlsLocked: () => undefined,
         wallet: null,
@@ -242,7 +276,8 @@ const dashboardHomeModule = loadTsModule(
     },
     "../create-database-dialog": { CreateDatabaseDialog: () => null },
     "../home-ui": { DatabaseBody: () => null, OfficialKinicWikiPanel: () => null, StatusPanel: () => null },
-    "@/lib/cycles": { KINIC_LEDGER_FEE_E8S: 100_000n },
+    "@/components/admin-shell": { AdminContent: ({ children }) => children },
+    "@/lib/cycles": { cyclesForPaymentAmountE8s: () => 234_500_000_000n, KINIC_LEDGER_FEE_E8S: 100_000n },
     "@/lib/cycles-url": { parseKinicAmountE8sInput: () => 100_000_000n },
     "@/lib/kinic-wallet": {
       purchaseCyclesWithOisy: async () => ({}),
@@ -252,6 +287,7 @@ const dashboardHomeModule = loadTsModule(
     "@/lib/vfs-client": {
       createDatabaseAuthenticated: async () => ({ database_id: "db_ok-1" }),
       getCyclesBillingConfig: async () => ({}),
+      kinicFundDatabaseCycles: async () => ({}),
       listDatabasesAuthenticated: async () => [],
       listDatabasesPublic: async () => []
     }
@@ -287,10 +323,12 @@ assert.match(vfsIdl, /status: DatabaseStatus/);
 assert.match(vfsClient, /if \("Active" in status\) \{\s*return "active";\s*\}/);
 assert.match(vfsClient, /if \("Pending" in status\) \{\s*return "pending";\s*\}/);
 assert.match(vfsClient, /if \("Deleted" in status\) \{\s*return "deleted";\s*\}/);
+assert.doesNotMatch(vfsClient, /throw new Error\(result\.Err\)/);
+assert.match(vfsClient, /create_database\(\{ name \}\)[\s\S]*throwCanisterError\(result\.Err\)/);
 assert.match(dashboardHomeClient, /myDatabases = databases\.filter\(\(database\) => database\.member\)/);
 assert.match(dashboardHomeClient, /publicDatabases = databases\.filter\(\(database\) => !database\.member && database\.publicReadable\)/);
 assert.doesNotMatch(dashboardHomeClient, /Database dashboard/);
-assert.match(dashboardHomeClient, /<OfficialKinicWikiPanel \/>/);
+assert.doesNotMatch(dashboardHomeClient, /<OfficialKinicWikiPanel \/>/);
 assert.match(dashboardHomeClient, /const \[createDialogOpen, setCreateDialogOpen\] = useState\(false\);/);
 assert.match(dashboardHomeClient, /const \[newDatabaseName, setNewDatabaseName\] = useState\(""\);/);
 assert.match(dashboardHomeClient, /const databaseNameInput = newDatabaseName\.trim\(\);/);
@@ -308,35 +346,55 @@ assert.match(appSession, /safeSessionStorageSet\(\s*WALLET_SESSION_KEY,/);
 assert.match(appSession, /safeSessionStorageRemove\(WALLET_SESSION_KEY\)/);
 assert.match(appSession, /provider: nextWallet\.provider/);
 assert.match(appSession, /principal: connectedWalletPrincipal\(nextWallet\)/);
-assert.match(appSession, /useState<ConnectedKinicWallet \| null>\(\(\) => readStoredWallet\(\)\)/);
+assert.match(appSession, /const \[wallet, setWallet\] = useState<ConnectedKinicWallet \| null>\(null\)/);
+assert.match(appSession, /const stored = readStoredWallet\(\);/);
+assert.match(profilePage, /ProfileClient/);
+assert.doesNotMatch(profileClient, /AdminPageHeader|title="My Profile"|Manage App KINIC for marketplace purchases/);
+assert.match(profileClient, /kinicGetBalance/);
+assert.match(profileClient, /depositKinicBalanceWithIdentity/);
+assert.match(profileClient, /kinicWithdrawBalance/);
+assert.match(profileClient, /Withdraw KINIC/);
+assert.doesNotMatch(profileClient, /kinicListPendingOperations|Pending operations|No pending operations|OperationRow/);
+assert.match(profileClient, /Direct ledger transfers are not credited to App balance\./);
+assert.doesNotMatch(profileClient, /break-all.*principal|caller.*principal/i);
 assert.match(dashboardHomeClient, /await refreshWalletBalance\(wallet\);/);
+assert.doesNotMatch(marketplaceClient, /AdminPageHeader|matching loaded listings|title="Marketplace"/);
+assert.doesNotMatch(cyclesClient, /AdminPageHeader|title="Cycles"|Fund a Kinic Wiki database cycles balance/);
+assert.match(dashboardHomeClient, /await refreshKinicBalance\(\);/);
 assert.match(dashboardHomeClient, /purchaseCyclesWithOisy/);
 assert.match(dashboardHomeClient, /purchaseCyclesWithPlug/);
+assert.match(dashboardHomeClient, /kinicFundDatabaseCycles/);
+assert.match(dashboardHomeClient, /cyclesForPaymentAmountE8s\(paymentAmountE8s, BigInt\(config\.cyclesPerKinic\)\)/);
 assert.match(dashboardHomeClient, /CREATE_DATABASE_PURCHASE_KINIC = "1"/);
-assert.match(dashboardHomeClient, /import \{ KINIC_LEDGER_FEE_E8S \} from "@\/lib\/cycles";/);
+assert.match(dashboardHomeClient, /import \{ cyclesForPaymentAmountE8s, KINIC_LEDGER_FEE_E8S \} from "@\/lib\/cycles";/);
 assert.match(dashboardHomeClient, /const paymentAmountE8s = createDatabasePurchaseAmountE8s\(\);/);
-assert.match(dashboardHomeClient, /function createDatabaseRequiredBalanceE8s\(\): bigint/);
+assert.match(dashboardHomeClient, /function createDatabaseWalletRequiredBalanceE8s\(\): bigint/);
 assert.match(dashboardHomeClient, /return createDatabasePurchaseAmountE8s\(\) \+ KINIC_LEDGER_FEE_E8S \* 2n;/);
 assert.match(dashboardHomeClient, /Database created pending\. Requesting/);
-assert.match(dashboardHomeClient, /Database created pending, but initial cycles purchase failed/);
+assert.match(dashboardHomeClient, /Database created pending\. Initial cycles purchase did not complete\. Fund cycles later from Cycles\./);
 assert.doesNotMatch(dashboardHomeClient, /purchaseQueryString\(\{ databaseId: result\.database_id \}\)/);
 assert.doesNotMatch(dashboardHomeClient, /useRouter|router\.push/);
-assert.match(dashboardHomeClient, /Connect OISY or Plug with at least \$\{formatTokenAmountFromE8s\(createDatabaseRequiredBalanceE8s\(\)\)\} before creating a database\./);
-assert.match(dashboardHomeClient, /Create database requires at least \$\{formatTokenAmountFromE8s\(createDatabaseRequiredBalanceE8s\(\)\)\} in the connected wallet\./);
+assert.match(dashboardHomeClient, /const \[createPaymentSource, setCreatePaymentSource\] = useState<CreateDatabasePaymentSource>\("app-balance"\);/);
+assert.match(dashboardHomeClient, /if \(appBalanceReadyToFundCreate\) \{\s*setCreatePaymentSource\("app-balance"\);/);
+assert.match(dashboardHomeClient, /if \(walletReadyToFundCreate\) \{\s*setCreatePaymentSource\("wallet"\);/);
+assert.match(dashboardHomeClient, /if \(createPaymentSource === "app-balance" && !appBalanceReadyToFundCreate\) return;/);
+assert.match(dashboardHomeClient, /if \(createPaymentSource === "wallet" && \(!wallet \|\| !walletReadyToFundCreate\)\) return;/);
+assert.match(dashboardHomeClient, /createLabel=\{createPaymentSource === "app-balance" \? "Create with App balance" : "Create with wallet"\}/);
+assert.match(dashboardHomeClient, /paymentSource=\{createPaymentSource\}/);
+assert.match(dashboardHomeClient, /paymentSources=\{createDialogPaymentSources\}/);
 assert.doesNotMatch(dashboardHomeClient, /Checking KINIC balance|Create database will request the first cycles purchase|walletFundingMessage/);
 assert.match(dashboardHomeClient, /await purchaseCyclesWithOisy\(\{ canisterId, databaseId: result\.database_id, paymentAmountE8s \}, wallet\.connection\)/);
 assert.match(dashboardHomeClient, /await purchaseCyclesWithPlug\(\{ canisterId, databaseId: result\.database_id, paymentAmountE8s \}, wallet\.connection\)/);
-assert.match(dashboardHomeClient, /const walletReadyToFundCreate = walletCanFundCreate\(walletBalance\);/);
-assert.match(dashboardHomeClient, /const createUnavailable = !principal \|\| loadState === "loading" \|\| walletBusyProvider !== null \|\| walletBalanceLoading \|\| !walletReadyToFundCreate;/);
-assert.match(dashboardHomeClient, /function walletCanFundCreate\(balanceE8s: string \| null\): boolean/);
-assert.match(dashboardHomeClient, /return BigInt\(balanceE8s\) >= createDatabaseRequiredBalanceE8s\(\);/);
+assert.match(dashboardHomeClient, /const appBalanceReadyToFundCreate = balanceCanFundCreate\(kinicBalance, createDatabasePurchaseAmountE8s\(\)\);/);
+assert.match(dashboardHomeClient, /const walletReadyToFundCreate = balanceCanFundCreate\(walletBalance, createDatabaseWalletRequiredBalanceE8s\(\)\);/);
+assert.match(dashboardHomeClient, /const createUnavailable = !principal \|\| loadState === "loading" \|\| walletBusyProvider !== null;/);
+assert.match(dashboardHomeClient, /function balanceCanFundCreate\(balanceE8s: string \| null, requiredE8s: bigint\): boolean/);
+assert.match(dashboardHomeClient, /return BigInt\(balanceE8s\) >= requiredE8s;/);
 assert.match(dashboardHomeClient, /function databaseCreateButtonLabel/);
 assert.match(dashboardHomeClient, /iiConnected: boolean;/);
 assert.match(dashboardHomeClient, /return "Connect Internet Identity"/);
-assert.match(dashboardHomeClient, /return "Connect OISY or Plug"/);
-assert.match(dashboardHomeClient, /return "Checking balance\.\.\."/);
-assert.match(dashboardHomeClient, /return "Insufficient KINIC"/);
-assert.match(dashboardHomeClient, /return "Create and fund database"/);
+assert.match(dashboardHomeClient, /return "Loading databases\.\.\."/);
+assert.match(dashboardHomeClient, /return "Create database"/);
 assert.match(dashboardHomeClient, /disabled=\{creating \|\| createUnavailable\}/);
 assert.doesNotMatch(dashboardHomeClient, /<WalletControls/);
 assert.match(appHeader, /connectedBalanceLabel=\{connectedWalletBalanceLabel\}/);
@@ -364,7 +422,7 @@ assert.match(homeUi, /\/ \{secondaryLabel\}/);
 assert.match(homeUi, /PlugZap/);
 assert.match(homeUi, /disabled=\{disabled \|\| busyProvider !== null\}/);
 assert.match(dashboardHomeClient, /<CreateDatabaseDialog/);
-assert.match(dashboardHomeClient, /requiredBalanceLabel=\{formatTokenAmountFromE8s\(createDatabaseRequiredBalanceE8s\(\)\)\}/);
+assert.match(dashboardHomeClient, /requiredBalanceLabel=\{formatTokenAmountFromE8s\(createDatabasePurchaseAmountE8s\(\)\)\}/);
 assert.match(dashboardHomeClient, /setCreateDialogOpen\(false\);/);
 assert.match(dashboardHomeClient, /function databaseNameError\(databaseName: string\): string \| null/);
 assert.match(createDatabaseDialog, /role="dialog"/);
@@ -373,8 +431,13 @@ assert.match(createDatabaseDialog, /id="database-name-input"/);
 assert.match(createDatabaseDialog, /disabled=\{createDisabled\}/);
 assert.match(createDatabaseDialog, /!creating && event\.target === event\.currentTarget\) onCancel\(\)/);
 assert.match(createDatabaseDialog, /requiredBalanceLabel: string/);
-assert.match(createDatabaseDialog, /Connect a wallet with at least \{requiredBalanceLabel\} before creating\./);
-assert.match(createDatabaseDialog, /New databases are created pending, not active, until the first purchase completes\./);
+assert.match(createDatabaseDialog, /export type CreateDatabasePaymentSource = "app-balance" \| "wallet";/);
+assert.match(createDatabaseDialog, /Payment source/);
+assert.match(createDatabaseDialog, /Create requires \{requiredBalanceLabel\}\. App balance pays from the canister account; External wallet approves from ledger wallet balance\./);
+assert.match(createDatabaseDialog, /Direct ledger transfers are wallet balance only\. Use Deposit to credit App balance\./);
+assert.match(createDatabaseDialog, /createLabel: string/);
+assert.match(createDatabaseDialog, /onPaymentSourceChange: \(source: CreateDatabasePaymentSource\) => void/);
+assert.match(createDatabaseDialog, /<span>\{creating \? "Creating\.\.\." : createLabel\}<\/span>/);
 assert.match(dashboardHomeClient, /member: false, publicReadable: true/);
 assert.match(dashboardHomeClient, /member: true, publicReadable: publicIds\.has\(database\.databaseId\)/);
 assert.match(homeUi, /member: boolean/);
@@ -486,15 +549,24 @@ assert.doesNotMatch(dashboardClient, /listDatabasesAuthenticatedWithWarning/);
 assert.match(dashboardClient, /mergeDatabaseRows/);
 assert.match(dashboardClient, /Promise\.allSettled/);
 assert.match(dashboardClient, /Public database list unavailable/);
-assert.match(dashboardClient, /await refresh\(null, databaseId\);/);
+assert.match(dashboardClient, /useAppSession/);
+assert.match(dashboardClient, /principal && authClient \? authClient : null/);
+assert.doesNotMatch(dashboardClient, /AuthClient\.create/);
 assert.doesNotMatch(dashboardClient, /Select a database to manage/);
 assert.doesNotMatch(dashboardClient, /Open Database dashboard/);
 assert.doesNotMatch(dashboardClient, /Database id is missing\./);
-assert.match(dashboardClient, /databaseId && \(database \|\| principal\) \? <SummaryPanel cyclesConfig=\{cyclesConfig\} database=\{database\} databaseId=\{databaseId\} principal=\{principal \?\? "anonymous"\} publicReadable=\{database\?\.publicReadable \?\? false\} \/>/);
+assert.match(dashboardClient, /databaseId && \(database \|\| principal\) \? <SummaryPanel cyclesConfig=\{cyclesConfig\} database=\{database\} databaseId=\{databaseId\} publicReadable=\{database\?\.publicReadable \?\? false\} \/>/);
 assert.match(dashboardClient, /deleteDatabaseAuthenticated/);
 assert.doesNotMatch(dashboardClient, /listDatabaseCyclePendingOperationsAuthenticated/);
 assert.match(dashboardClient, /CyclesHistoryPanel/);
 assert.match(dashboardClient, /DashboardTabs/);
+assert.match(dashboardClient, /MarketListingsPanel/);
+assert.match(dashboardClient, /BuyersPanel/);
+assert.match(dashboardClient, /marketListDatabaseEntitlements/);
+assert.match(dashboardClient, /activeTab === "list" && showDashboardTabs && canManage && database/);
+assert.match(dashboardClient, /activeTab === "buyers" && showDashboardTabs && canManage/);
+assert.match(dashboardClient, /canManageListings=\{canManage\}/);
+assert.doesNotMatch(dashboardClient, /onCreateListing=\{createMarketListing\}/);
 assert.match(dashboardClient, /listDatabaseCycleEntries/);
 assert.match(dashboardClient, /listDatabaseCyclesPendingPurchasesAuthenticated/);
 assert.match(dashboardClient, /CYCLES_HISTORY_LIMIT = 100/);
@@ -558,12 +630,20 @@ assert.doesNotMatch(dashboardUi, /sm:flex-row sm:items-end/);
 assert.match(dashboardUi, /role or cycles state changes/);
 assert.match(dashboardUi, /databaseCyclesView/);
 assert.match(dashboardUi, /databaseCyclesHref/);
+assert.match(dashboardUi, /export type DashboardTab = "access" \| "list" \| "buyers" \| "cycles-history"/);
+assert.match(dashboardUi, /export function MarketListingsPanel/);
+assert.match(dashboardUi, /export function BuyersPanel/);
+assert.match(dashboardUi, /canManageListings/);
+assert.match(dashboardUi, /label="List"/);
+assert.match(dashboardUi, /label="Buyers"/);
+assert.match(dashboardUi, /Readonly list of marketplace reader access/);
 assert.match(dashboardUi, /Cycles History/);
 assert.match(dashboardUi, /Pending purchases/);
 assert.match(dashboardUi, /Ledger entries/);
 assert.match(dashboardUi, /RequiredActionBadge/);
 assert.match(dashboardUi, /formatRawCycles/);
 assert.match(dashboardUi, /Your Role/);
+assert.doesNotMatch(dashboardUi, /label="Principal"/);
 assert.match(dashboardUi, /databaseStatusLabel/);
 assert.match(dashboardUi, /active: "Active"/);
 assert.match(dashboardUi, /deleted: "Deleted"/);
@@ -587,6 +667,7 @@ assert.match(dashboardMemberTable, /loadingLabel="Revoking\.\.\."/);
 assert.match(dashboardMemberTable, /onRoleChange/);
 assert.match(dashboardMemberTable, /loadingLabel="Saving\.\.\."/);
 assert.match(dashboardMemberTable, /principalDisplayName\(props\.member\.principal\)/);
+assert.match(dashboardMemberTable, /ownMember \? " \(you\)" : ""/);
 assert.match(dashboardAccessControl, /DATABASE_ROLES/);
 assert.match(dashboardAccessControl, /LLM_WRITER_PRINCIPAL = "ckurn-x74ln-nemlm-42vfv-gej7r-4cc3e-v22e5-otcod-jndlh-pbst4-3qe"/);
 assert.match(dashboardAccessControl, /LLM_WRITER_LABEL = "LLM writer"/);
@@ -610,7 +691,8 @@ assert.match(dashboardHomeClient, /\{createDatabaseAction\}\s*<\/div>\s*<Databas
 assert.match(homeUi, /<DatabaseSection action=\{createDatabaseAction\}/);
 assert.doesNotMatch(dashboardHomeClient, /setCreatedDatabase/);
 assert.doesNotMatch(dashboardHomeClient, /setDatabases\(\[\]\);\n    setCreatedDatabaseId\(null\);\n    setError\(null\);\n    setWarning\(null\);\n    setLoadState\("idle"\);/);
-assert.match(dashboardClient, /refreshSeqRef\.current \+= 1;\n    cyclesHistorySeqRef\.current \+= 1;\n    await authClient\.logout/);
+assert.doesNotMatch(dashboardClient, /await authClient\.logout/);
+assert.match(adminShell, /onClick=\{\(\) => void logout\(\)\}/);
 
 function loadTsModule(relativePath, mocks, append = "") {
   const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");

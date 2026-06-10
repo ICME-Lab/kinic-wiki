@@ -31,7 +31,7 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: `NEXT_PUBLIC_WIKI_IC_HOST=${process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "http://127.0.0.1:8011"} NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1 NEXT_PUBLIC_II_PROVIDER_URL=${localIiProviderURL} NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=${process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? ""} pnpm dev --hostname 127.0.0.1 --port ${port}`,
+    command: `NEXT_PUBLIC_WIKI_IC_HOST=${process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "http://127.0.0.1:8011"} NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1 NEXT_PUBLIC_II_PROVIDER_URL=${localIiProviderURL} NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=${process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? ""} pnpm exec next dev --hostname 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000

@@ -8,12 +8,13 @@ const MAX_WEB_SOURCE_CHARS = 300_000;
 export async function buildWebRawSource(snapshot, now = new Date()) {
   const finalUrl = normalizedHttpUrl(snapshot?.url);
   const sourceId = await webSourceId(finalUrl);
+  const sourceHash = sourceId.slice("web-".length);
   const text = String(snapshot?.text || "").trim();
   if (!text) {
     throw new Error("page text is empty");
   }
   const sourceText = limitSourceText(text, MAX_WEB_SOURCE_CHARS);
-  const title = String(snapshot?.title || new URL(finalUrl).hostname).trim() || finalUrl;
+  const title = webSourceTitle(snapshot?.title, finalUrl);
   const capturedAt = now.toISOString();
   const content = [
     "---",
@@ -38,7 +39,7 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
     ""
   ].join("\n");
   return {
-    path: `/Sources/raw/web/${sourceId.slice("web-".length)}.md`,
+    path: `/Sources/raw/web/${webSourceFileStem(title, sourceHash)}.md`,
     sourceId,
     content,
     metadataJson: JSON.stringify({
@@ -57,6 +58,8 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
 }
 
 export function collectWebPageSnapshot() {
+  const maxSnapshotChars = 320_000;
+
   function normalizeExtractedText(value) {
     const ignoredLines = new Set([
       "Article",
@@ -77,10 +80,11 @@ export function collectWebPageSnapshot() {
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n[ \t]+/g, "\n")
       .replace(/[ \t]{2,}/g, " ")
-      .split(/\n+/)
+      .replace(/\n{3,}/g, "\n\n")
+      .split("\n")
       .map((line) => line.trim())
-      .filter((line) => line && !ignoredLines.has(line));
-    return lines.join("\n").trim();
+      .filter((line) => !ignoredLines.has(line));
+    return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 
   const excludedSelector = [
@@ -134,11 +138,55 @@ export function collectWebPageSnapshot() {
     "tr",
     "ul"
   ].join(",");
+
+  function appendChunk(parts, state, value) {
+    if (state.done || !value) return;
+    const remaining = maxSnapshotChars - state.length;
+    if (remaining <= 0) {
+      state.done = true;
+      return;
+    }
+    const chunk = String(value).slice(0, remaining);
+    parts.push(chunk);
+    state.length += chunk.length;
+    state.done = state.length >= maxSnapshotChars;
+  }
+
+  function isElementNode(node) {
+    return node?.nodeType === 1 || typeof node?.matches === "function" || typeof node?.textContent === "string";
+  }
+
+  function isTextNode(node) {
+    return node?.nodeType === 3;
+  }
+
+  function textFromNode(node, parts, state) {
+    if (!node || state.done) return;
+    if (isTextNode(node)) {
+      appendChunk(parts, state, node.nodeValue || "");
+      return;
+    }
+    if (!isElementNode(node)) return;
+    if (typeof node.matches === "function" && node.matches(excludedSelector)) return;
+    const children = node.childNodes ? Array.from(node.childNodes) : [];
+    if (!children.length) {
+      appendChunk(parts, state, node.textContent || "");
+    } else {
+      for (const child of children) {
+        textFromNode(child, parts, state);
+        if (state.done) break;
+      }
+    }
+    if (!state.done && typeof node.matches === "function" && node.matches(breakAfterSelector)) {
+      appendChunk(parts, state, "\n\n");
+    }
+  }
+
   function textFrom(element) {
-    const clone = element.cloneNode(true);
-    clone.querySelectorAll(excludedSelector).forEach((node) => node.remove());
-    clone.querySelectorAll(breakAfterSelector).forEach((node) => node.append("\n"));
-    return normalizeExtractedText(clone.textContent || "");
+    const parts = [];
+    const state = { length: 0, done: false };
+    textFromNode(element, parts, state);
+    return normalizeExtractedText(parts.join(""));
   }
   const candidates = [...document.querySelectorAll("article,main,[role='main']")];
   let text = candidates.map(textFrom).sort((left, right) => right.length - left.length)[0] || "";
@@ -153,7 +201,35 @@ export function collectWebPageSnapshot() {
 }
 
 async function webSourceId(finalUrl) {
-  return `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
+  return `web-${(await sha256Hex(finalUrl)).slice(0, 8)}`;
+}
+
+function webSourceTitle(value, finalUrl) {
+  const title = String(value || "").trim();
+  if (title) return title;
+  try {
+    return new URL(finalUrl).hostname || "web-source";
+  } catch {
+    return "web-source";
+  }
+}
+
+function webSourceFileStem(title, sourceHash) {
+  const hash = String(sourceHash || "").trim() || "source";
+  const maxTitleLength = Math.max(1, 128 - hash.length - 1);
+  const slug = safeWebSourceTitleSlug(title).slice(0, maxTitleLength).replace(/[-.]+$/g, "") || "web-source";
+  return `${slug}-${hash}`;
+}
+
+function safeWebSourceTitleSlug(value) {
+  const normalized = String(value || "")
+    .normalize("NFKC")
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/\.{2,}/g, ".")
+    .replace(/^[-.]+|[-.]+$/g, "");
+  return normalized || "web-source";
 }
 
 function limitSourceText(text, maxChars) {

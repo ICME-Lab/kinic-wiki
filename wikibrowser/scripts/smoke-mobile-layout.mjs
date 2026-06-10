@@ -40,7 +40,7 @@ console.log(`Wiki browser mobile layout smoke OK: ${baseUrl} ${databaseId}`);
 function readBaseUrl() {
   const argIndex = process.argv.indexOf("--base-url");
   const value = argIndex >= 0 ? process.argv[argIndex + 1] : process.env.WIKI_BROWSER_BASE_URL;
-  return (value ?? "http://localhost:3000").replace(/\/$/, "");
+  return (value ?? "http://localhost:3010").replace(/\/$/, "");
 }
 
 function readDatabaseId() {

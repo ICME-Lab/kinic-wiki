@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import Image from "next/image";
 import { CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
+import { AdminContent } from "@/components/admin-shell";
+import { AdminPanel } from "@/components/admin-ui";
 
 export const metadata: Metadata = {
   title: "Kinic Wiki CLI",
@@ -52,32 +53,8 @@ const safetyNotes = [
 
 export default function CliPage() {
   return (
-    <main className="min-h-screen px-6 py-8">
-      <section className="mx-auto flex max-w-5xl flex-col gap-8">
-        <header className="border-b border-line pb-6">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-            <div className="flex min-w-0 items-center gap-4">
-              <Image className="h-12 w-12 rounded-xl shadow-sm" src="/icon.png" alt="" width={48} height={48} unoptimized />
-              <div className="min-w-0">
-                <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Kinic Wiki</p>
-                <h1 className="mt-1 text-4xl font-semibold text-ink">CLI</h1>
-              </div>
-            </div>
-            <a
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-action bg-action px-4 py-2 text-sm font-bold text-white no-underline hover:border-accent hover:bg-accent"
-              href="https://www.npmjs.com/package/kinic-vfs-cli"
-              rel="noreferrer"
-              target="_blank"
-            >
-              <TerminalSquare aria-hidden size={16} />
-              <span>Open npm</span>
-            </a>
-          </div>
-          <p className="mt-5 max-w-3xl text-base leading-7 text-muted">
-            <code>kinic-vfs-cli</code> is the npm-distributed operator CLI for Kinic Wiki databases and Skill Registry packages. Use this page as the canonical setup and agent workflow reference.
-          </p>
-        </header>
-
+    <AdminContent>
+      <div className="flex flex-col gap-8">
         <section className="grid gap-4 md:grid-cols-2">
           <CliGuideBlock icon={<TerminalSquare aria-hidden size={18} />} title="Install" commands={installCommands}>
             The npm package downloads the matching release binary and verifies its SHA-256 checksum.
@@ -100,19 +77,19 @@ export default function CliPage() {
           <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="Skill Registry Workflow" commands={skillCommands}>
             Agents and operators should discover a skill, inspect the package, use it, then record run evidence.
           </CliGuideBlock>
-          <section className="min-w-0 rounded-lg border border-line bg-paper p-5">
+          <AdminPanel className="min-w-0" padding="lg">
             <div className="flex items-center gap-2">
               <ShieldCheck aria-hidden className="text-accent" size={18} />
               <h2 className="text-lg font-semibold text-ink">Safety Notes</h2>
             </div>
             <ul className="mt-4 flex flex-col gap-3 text-sm leading-6 text-muted">
               {safetyNotes.map((note) => (
-                <li key={note}>{note}</li>
-              ))}
-            </ul>
-          </section>
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+          </AdminPanel>
         </section>
-      </section>
-    </main>
+      </div>
+    </AdminContent>
   );
 }

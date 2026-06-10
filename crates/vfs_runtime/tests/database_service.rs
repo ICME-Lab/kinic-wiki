@@ -10,13 +10,13 @@ use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
     DatabaseCyclesPurchaseWithLedgerDetails, KinicDepositWithLedgerDetails,
     MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES, MAX_RESTORE_CHUNK_BYTES, VfsService,
-    cycles_for_payment_amount_e8s,
+    cycles_for_payment_amount_e8s, fail_next_database_migration_for_test,
 };
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
     KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, MarketCreateListingRequest,
-    MarketPurchaseRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
     SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
@@ -48,19 +48,9 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
         title: "Team database".to_string(),
         description: "Reusable team knowledge base".to_string(),
         llm_summary: None,
-        summary_snapshot_revision: None,
-        sample_excerpts_json: "[]".to_string(),
         tags_json: "[]".to_string(),
         price_e8s,
     }
-}
-
-fn excerpt_json(path: &str, etag: &str, excerpt: &str) -> String {
-    format!("[{}]", excerpt_object(path, etag, excerpt))
-}
-
-fn excerpt_object(path: &str, etag: &str, excerpt: &str) -> String {
-    format!(r#"{{"path":"{path}","etag":"{etag}","excerpt":"{excerpt}"}}"#)
 }
 
 fn credit_kinic_balance(
@@ -1780,13 +1770,10 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         ("pending".to_string(), None, 0, None)
     );
     let meta = service
-        .activate_pending_database_for_cycles_purchase(&pending.database_id, 2)
+        .prepare_pending_database_activation(&pending.database_id, 2)
         .expect("pending activation should prepare")
         .expect("pending activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
-    service
-        .run_pending_database_migrations(&pending.database_id)
-        .expect("pending migrations should run");
     let purchased_cycles = default_cycles_for_payment(1_000_000);
     service
         .complete_database_cycles_purchase_ledger_transfer(
@@ -1897,7 +1884,7 @@ fn pending_database_creation_preserves_activation_started_reservations_during_cl
         .reserve_pending_generated_database("Activating", "owner", 0)
         .expect("pending database should create");
     service
-        .activate_pending_database_for_cycles_purchase(&activated.database_id, 1)
+        .prepare_pending_database_activation(&activated.database_id, 1)
         .expect("pending activation should start")
         .expect("pending activation should allocate mount");
     for offset in 0..2 {
@@ -1911,10 +1898,11 @@ fn pending_database_creation_preserves_activation_started_reservations_during_cl
         .expect("unactivated expired pending databases should be purged");
 
     assert!(database_index_row_exists(&root, &activated.database_id));
-    assert_eq!(
-        database_index_row(&root, &activated.database_id),
-        ("pending".to_string(), Some(11), 0, None)
-    );
+    let row = database_index_row(&root, &activated.database_id);
+    assert_eq!(row.0, "pending");
+    assert_eq!(row.1, Some(11));
+    assert!(row.2 > 0);
+    assert_eq!(row.3, None);
 }
 
 #[test]
@@ -1959,7 +1947,7 @@ fn cleanup_database_cycles_purchase_discards_started_pending_activation() {
         .expect("cycle purchase should begin");
     let purchased_cycles = default_cycles_for_payment(500);
     let meta = service
-        .activate_pending_database_for_cycles_purchase(&pending.database_id, 4)
+        .prepare_pending_database_activation(&pending.database_id, 4)
         .expect("pending activation should prepare")
         .expect("activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
@@ -4544,7 +4532,7 @@ fn kinic_fund_database_cycles_can_activate_pending_database_after_mount_allocati
         .reserve_pending_generated_database("Fund pending", "owner", 1)
         .expect("pending database should reserve");
     service
-        .activate_pending_database_for_cycles_purchase(&pending.database_id, 2)
+        .prepare_pending_database_activation(&pending.database_id, 2)
         .expect("pending activation should start")
         .expect("pending activation should allocate mount");
     credit_kinic_balance(&service, "owner", 1_000, 20, 3);
@@ -4556,6 +4544,18 @@ fn kinic_fund_database_cycles_can_activate_pending_database_after_mount_allocati
     assert!(result.amount_cycles > 0);
     assert_eq!(result.kinic_balance_e8s, 600);
     assert_eq!(database_status_text(&root, &pending.database_id), "active");
+    assert!(
+        service
+            .list_children(
+                "owner",
+                vfs_types::ListChildrenRequest {
+                    database_id: pending.database_id.clone(),
+                    path: "/Sources".to_string(),
+                },
+            )
+            .expect("/Sources should load after pending database funding")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -4591,18 +4591,22 @@ fn kinic_fund_database_cycles_rejects_invalid_payment_or_database_state() {
     let pending = service
         .reserve_pending_generated_database("Unallocated", "owner", 5)
         .expect("pending database should reserve");
-    let pending_error = service
+    let pending_result = service
         .kinic_fund_database_cycles("buyer", kinic_fund_request(&pending.database_id, 50), 6)
-        .expect_err("unallocated pending database should reject");
-    assert!(pending_error.contains("pending database has no activation mount"));
-    assert_eq!(database_status_text(&root, &pending.database_id), "pending");
-    assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
+        .expect("unallocated pending database should activate from KINIC balance");
+    assert!(pending_result.database_balance_cycles > 0);
+    assert_eq!(database_status_text(&root, &pending.database_id), "active");
+    assert_eq!(
+        u64::try_from(database_cycles_balance(&root, &pending.database_id))
+            .expect("database cycles should be non-negative"),
+        pending_result.database_balance_cycles
+    );
     assert_eq!(
         service
             .kinic_get_balance("buyer")
             .expect("buyer balance should load")
             .balance_e8s,
-        100
+        50
     );
 
     service
@@ -4615,6 +4619,76 @@ fn kinic_fund_database_cycles_rejects_invalid_payment_or_database_state() {
         .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-archive", 50), 9)
         .expect_err("archiving database should reject");
     assert!(archived.contains("database is archiving"));
+}
+
+#[test]
+fn kinic_fund_database_cycles_migration_failure_keeps_pending_financial_state() {
+    let (service, root) = service_with_root();
+    let pending = service
+        .reserve_pending_generated_database("Migration retry", "migration-owner", 1)
+        .expect("pending database should reserve");
+    credit_kinic_balance(&service, "migration-owner", 1_000, 20, 2);
+
+    fail_next_database_migration_for_test(&pending.database_id);
+    let error = service
+        .kinic_fund_database_cycles(
+            "migration-owner",
+            kinic_fund_request(&pending.database_id, 400),
+            3,
+        )
+        .expect_err("migration failure should reject funding");
+
+    assert!(error.contains("test database migration failure"));
+    assert_eq!(
+        database_index_row(&root, &pending.database_id).0,
+        "pending".to_string()
+    );
+    assert_eq!(
+        database_cycles_balance(&root, &pending.database_id),
+        0,
+        "database cycles must not credit before migration succeeds"
+    );
+    assert_eq!(
+        service
+            .kinic_get_balance("migration-owner")
+            .expect("balance should load")
+            .balance_e8s,
+        1_000,
+        "App KINIC balance must not debit before migration succeeds"
+    );
+    assert!(
+        service
+            .read_node(&pending.database_id, "migration-owner", "/Sources")
+            .expect_err("pending database read should reject clearly")
+            .contains("database is pending")
+    );
+
+    let row_after_failure = database_index_row(&root, &pending.database_id);
+    let result = service
+        .kinic_fund_database_cycles(
+            "migration-owner",
+            kinic_fund_request(&pending.database_id, 400),
+            4,
+        )
+        .expect("retry should migrate and fund");
+    let row_after_retry = database_index_row(&root, &pending.database_id);
+
+    assert_eq!(row_after_failure.1, row_after_retry.1);
+    assert_eq!(row_after_retry.0, "active");
+    assert!(result.database_balance_cycles > 0);
+    assert_eq!(result.kinic_balance_e8s, 600);
+    assert!(
+        service
+            .list_children(
+                "migration-owner",
+                vfs_types::ListChildrenRequest {
+                    database_id: pending.database_id,
+                    path: "/Sources".to_string(),
+                },
+            )
+            .expect("/Sources should load after retry")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -4792,6 +4866,65 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_price_m
 }
 
 #[test]
+fn market_database_entitlements_are_owner_readonly_and_paged() {
+    let service = service();
+    service
+        .create_database("buyer-list-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("buyer-list-market", 100),
+            2,
+        )
+        .expect("listing should create");
+    let listing = service
+        .market_publish_listing("seller", &listing.listing_id, 3)
+        .expect("listing should publish");
+
+    for (buyer, block_index) in [("buyer-a", 10), ("buyer-b", 11)] {
+        credit_kinic_balance(&service, buyer, 1_000, block_index, block_index as i64);
+        service
+            .market_purchase_access(
+                buyer,
+                MarketPurchaseRequest {
+                    listing_id: listing.listing_id.clone(),
+                    price_e8s: listing.price_e8s,
+                },
+                block_index as i64 + 10,
+            )
+            .expect("purchase should succeed");
+    }
+
+    let first_page = service
+        .market_list_database_entitlements("seller", "buyer-list-market", None, 1)
+        .expect("owner should list database entitlements");
+    assert_eq!(first_page.entitlements.len(), 1);
+    assert_eq!(first_page.entitlements[0].buyer_principal, "buyer-a");
+    assert_eq!(first_page.next_cursor.as_deref(), Some("buyer-a"));
+
+    let second_page = service
+        .market_list_database_entitlements("seller", "buyer-list-market", first_page.next_cursor, 1)
+        .expect("owner should load next page");
+    assert_eq!(second_page.entitlements.len(), 1);
+    assert_eq!(second_page.entitlements[0].buyer_principal, "buyer-b");
+    assert_eq!(second_page.next_cursor, None);
+
+    assert_eq!(
+        service
+            .market_list_entitlements("buyer-a", None, 10)
+            .expect("buyer entitlement query should remain buyer-scoped")
+            .entitlements
+            .len(),
+        1
+    );
+    let forbidden = service
+        .market_list_database_entitlements("buyer-a", "buyer-list-market", None, 10)
+        .expect_err("buyer must not inspect seller database entitlements");
+    assert!(forbidden.contains("database owner or admin required"));
+}
+
+#[test]
 fn market_listing_owner_policy_and_database_listing_query() {
     let service = service();
     service
@@ -4821,6 +4954,40 @@ fn market_listing_owner_policy_and_database_listing_query() {
         .expect("owner should list database listings");
     assert_eq!(listings.len(), 1);
     assert_eq!(listings[0].listing_id, listing.listing_id);
+    assert_eq!(listings[0].revision, 0);
+
+    let updated = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id.clone(),
+                expected_revision: listing.revision,
+                title: "Updated team database".to_string(),
+                description: "Updated reusable team knowledge base".to_string(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+                price_e8s: 150,
+            },
+            5,
+        )
+        .expect("current revision should update listing");
+    assert_eq!(updated.revision, 1);
+    let stale = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id,
+                expected_revision: 0,
+                title: "Stale team database".to_string(),
+                description: "Stale reusable team knowledge base".to_string(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+                price_e8s: 200,
+            },
+            6,
+        )
+        .expect_err("stale revision should reject listing update");
+    assert!(stale.contains("market listing revision mismatch"));
 }
 
 #[test]
@@ -4838,7 +5005,7 @@ fn market_listing_detail_returns_verified_preview() {
         "/Sources/raw/web/source.md",
         2,
     );
-    let alpha = service
+    service
         .write_node(
             "seller",
             WriteNodeRequest {
@@ -4881,11 +5048,8 @@ fn market_listing_detail_returns_verified_preview() {
         )
         .expect("source node should write");
 
-    let mut request = market_listing_request("preview-market", 100);
-    request.sample_excerpts_json =
-        excerpt_json("/Wiki/alpha/a.md", &alpha.node.etag, "paid insight links");
     let listing = service
-        .market_create_listing("seller", request, 5)
+        .market_create_listing("seller", market_listing_request("preview-market", 100), 5)
         .expect("listing should create");
     let listing = service
         .market_publish_listing("seller", &listing.listing_id, 6)
@@ -4902,8 +5066,7 @@ fn market_listing_detail_returns_verified_preview() {
     assert!(detail.verified_stats.markdown_chars >= 64);
     assert_eq!(detail.verified_stats.source_chars, 15);
     assert_eq!(detail.verified_stats.link_edges, 1);
-    assert_eq!(detail.preview.excerpts.len(), 1);
-    assert_eq!(detail.preview.excerpts[0].excerpt, "paid insight links");
+    assert!(detail.preview.excerpts.is_empty());
     assert!(!detail.preview.preview_stale);
     assert!(
         detail
@@ -4935,103 +5098,9 @@ fn market_listing_detail_returns_verified_preview() {
                 && edge.target_category == "/Wiki/beta"
                 && edge.link_count == 1)
     );
-
-    service
-        .write_node(
-            "seller",
-            WriteNodeRequest {
-                database_id: "preview-market".to_string(),
-                path: "/Wiki/alpha/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "Alpha body changed".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: Some(alpha.node.etag),
-            },
-            7,
-        )
-        .expect("alpha node should update");
-    let stale_detail = service
-        .market_get_listing("2vxsx-fae", &listing.listing_id)
-        .expect("anonymous should still read stale public listing preview");
-    assert!(stale_detail.preview.excerpts.is_empty());
-    assert!(stale_detail.preview.preview_stale);
-}
-
-#[test]
-fn market_listing_sample_excerpts_must_be_verified_wiki_substrings() {
-    let service = service();
-    service
-        .create_database("verified-excerpts", "seller", 1)
-        .expect("database should create");
-    ensure_parent_folders(
-        &service,
-        "seller",
-        "verified-excerpts",
-        "/Wiki/alpha/a.md",
-        2,
-    );
-    ensure_parent_folders(
-        &service,
-        "seller",
-        "verified-excerpts",
-        "/Sources/raw/web/source.md",
-        2,
-    );
-    let node = service
-        .write_node(
-            "seller",
-            WriteNodeRequest {
-                database_id: "verified-excerpts".to_string(),
-                path: "/Wiki/alpha/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "Verified paid excerpt body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("wiki node should write");
-    service
-        .write_node(
-            "seller",
-            WriteNodeRequest {
-                database_id: "verified-excerpts".to_string(),
-                path: "/Sources/raw/web/source.md".to_string(),
-                kind: NodeKind::Source,
-                content: "Verified paid excerpt body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            3,
-        )
-        .expect("source node should write");
-
-    for sample_excerpts_json in [
-        excerpt_json("/Wiki/alpha/a.md", "wrong-etag", "paid excerpt"),
-        excerpt_json("/Wiki/alpha/a.md", &node.node.etag, "missing text"),
-        excerpt_json(
-            "/Sources/raw/web/source.md",
-            &node.node.etag,
-            "paid excerpt",
-        ),
-        format!(
-            "[{},{},{},{},{},{}]",
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt")
-        ),
-        excerpt_json("/Wiki/alpha/a.md", &node.node.etag, &"x".repeat(401)),
-    ] {
-        let mut request = market_listing_request("verified-excerpts", 100);
-        request.sample_excerpts_json = sample_excerpts_json;
-        assert!(
-            service.market_create_listing("seller", request, 4).is_err(),
-            "invalid sample excerpt must reject"
-        );
-    }
+    assert!(detail.preview.graph_links.iter().any(
+        |edge| edge.source_path == "/Wiki/alpha/a.md" && edge.target_path == "/Wiki/beta/b.md"
+    ));
 }
 
 #[test]
@@ -5246,7 +5315,7 @@ fn market_listing_requires_active_database() {
         .market_purchase_access(
             "buyer",
             MarketPurchaseRequest {
-                listing_id: listing.listing_id,
+                listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
             },
             12,
@@ -5285,7 +5354,7 @@ fn delete_database_removes_marketplace_rows() {
         .market_purchase_access(
             "buyer",
             MarketPurchaseRequest {
-                listing_id: listing.listing_id,
+                listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
             },
             6,
@@ -5361,7 +5430,7 @@ fn market_entitlement_allows_read_surface_but_not_export() {
         .market_purchase_access(
             "buyer",
             MarketPurchaseRequest {
-                listing_id: listing.listing_id,
+                listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s,
             },
             7,

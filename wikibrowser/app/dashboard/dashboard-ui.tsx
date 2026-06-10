@@ -8,10 +8,11 @@ import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRo
 import { ActionButton } from "./action-button";
 import { DatabaseDangerZone } from "./database-danger-zone";
 import { MemberTable } from "./member-table";
+import { AdminNotice } from "@/components/admin-ui";
 import { formatRawCycles } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -23,7 +24,7 @@ type PendingAclAction = {
   kind: "grant" | "revoke";
 };
 
-export type DashboardTab = "access" | "cycles-history";
+export type DashboardTab = "access" | "list" | "buyers" | "cycles-history";
 
 export function AuthControls(props: { authReady: boolean; loading: boolean; principal: string | null; onLogin: () => void; onLogout: () => void }) {
   if (!props.principal) {
@@ -44,13 +45,11 @@ export function SummaryPanel({
   cyclesConfig,
   database,
   databaseId,
-  principal,
   publicReadable
 }: {
   cyclesConfig: CyclesBillingConfig | null;
   database: DatabaseSummary | null;
   databaseId: string;
-  principal: string;
   publicReadable: boolean;
 }) {
   const routable = isRoutableDatabaseId(databaseId);
@@ -60,7 +59,6 @@ export function SummaryPanel({
   const purchaseHref = database ? databaseCyclesHref(database) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-      <Field label="Principal" value={principal} />
       <Field label="Database" value={database?.name ?? databaseId} />
       <Field label="Database ID" value={databaseId} />
       <Field label="Your Role" value={database?.role ?? "-"} />
@@ -109,18 +107,11 @@ export function OwnerPanel(props: {
   databaseId: string;
   databaseName: string;
   activeEntitlementCount: string | null;
-  marketBusy: boolean;
-  marketError: string | null;
-  marketListings: MarketListing[];
   members: DatabaseMember[];
   principal: string;
-  onCreateListing: (request: MarketCreateListingRequest) => void;
   onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
-  onPauseListing: (listingId: string) => void;
-  onPublishListing: (listingId: string) => void;
   onRevoke: (principalText: string) => void;
-  onUpdateListing: (request: MarketUpdateListingRequest) => void;
 }) {
   const [pendingAction, setPendingAction] = useState<PendingAclAction | null>(null);
   const publicMember = props.members.find((member) => member.principal === ANONYMOUS_PRINCIPAL);
@@ -250,17 +241,6 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
-      <MarketListingsPanel
-        busy={props.marketBusy}
-        databaseId={props.databaseId}
-        databaseName={props.databaseName}
-        error={props.marketError}
-        listings={props.marketListings}
-        onCreate={props.onCreateListing}
-        onPause={props.onPauseListing}
-        onPublish={props.onPublishListing}
-        onUpdate={props.onUpdateListing}
-      />
       <DatabaseDangerZone
         activeEntitlementCount={props.activeEntitlementCount}
         cyclesBalance={props.cyclesBalance}
@@ -274,7 +254,7 @@ export function OwnerPanel(props: {
   );
 }
 
-function MarketListingsPanel(props: {
+export function MarketListingsPanel(props: {
   busy: boolean;
   databaseId: string;
   databaseName: string;
@@ -309,17 +289,15 @@ function MarketListingsPanel(props: {
       title: title.trim(),
       description: description.trim(),
       llmSummary: null,
-      summarySnapshotRevision: null,
-      sampleExcerptsJson: "[]",
       tagsJson: tagsJsonFromInput(tags),
       priceE8s
     };
     if (selected) {
-      props.onUpdate({
-        ...base,
-        listingId: selected.listingId,
-        expectedRevision: selected.revision
-      });
+        props.onUpdate({
+          ...base,
+          listingId: selected.listingId,
+          expectedRevision: selected.revision
+        });
     } else {
       props.onCreate({
         ...base,
@@ -412,6 +390,59 @@ function MarketListingsPanel(props: {
   );
 }
 
+export function BuyersPanel(props: {
+  entitlements: MarketEntitlement[];
+  error: string | null;
+  loading: boolean;
+  nextCursor: string | null;
+  onLoadMore: () => void;
+}) {
+  return (
+    <section className="rounded-lg border border-line bg-paper shadow-sm">
+      <div className="grid gap-2 border-b border-line px-4 py-4">
+        <h2 className="text-lg font-semibold text-ink">Buyers</h2>
+        <p className="text-sm leading-6 text-muted">Readonly list of marketplace reader access purchased for this database.</p>
+      </div>
+      {props.error ? <div className="border-b border-line px-4 py-3 text-sm text-red-900">{props.error}</div> : null}
+      {props.entitlements.length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead className="bg-white/70 text-xs uppercase tracking-[0.12em] text-muted">
+              <tr>
+                <th className="px-4 py-3 font-medium">Buyer</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Listing</th>
+                <th className="px-4 py-3 font-medium">Order</th>
+                <th className="px-4 py-3 font-medium">Purchased</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.entitlements.map((entitlement) => (
+                <tr className="border-t border-line" key={`${entitlement.databaseId}:${entitlement.buyerPrincipal}:${entitlement.orderId}`}>
+                  <td className="px-4 py-3 font-mono text-xs text-ink">{entitlement.buyerPrincipal}</td>
+                  <td className="px-4 py-3 text-ink">{entitlement.status}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{entitlement.listingId}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{entitlement.orderId}</td>
+                  <td className="px-4 py-3 text-muted">{formatTimestamp(entitlement.purchasedAtMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="px-4 py-6 text-sm text-muted">No marketplace buyers.</div>
+      )}
+      {props.nextCursor ? (
+        <div className="border-t border-line px-4 py-3">
+          <ActionButton disabled={props.loading} loading={props.loading} loadingLabel="Loading..." onClick={props.onLoadMore} variant="secondary">
+            Load more
+          </ActionButton>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function RenameDatabaseDialog(props: {
   busy: boolean;
   busyAction: BusyAction | null;
@@ -483,14 +514,15 @@ export function ReadonlyMembersPanel(props: { memberError: string | null; member
 }
 
 export function StatusPanel({ tone, message }: { tone: "error" | "info"; message: string }) {
-  const toneClass = tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-paper text-ink";
-  return <div className={`rounded-lg border px-4 py-3 text-sm ${toneClass}`}>{message}</div>;
+  return <AdminNotice tone={tone} message={message} />;
 }
 
-export function DashboardTabs({ activeTab, onChange }: { activeTab: DashboardTab; onChange: (tab: DashboardTab) => void }) {
+export function DashboardTabs({ activeTab, canManageListings, onChange }: { activeTab: DashboardTab; canManageListings: boolean; onChange: (tab: DashboardTab) => void }) {
   return (
     <nav aria-label="Database dashboard sections" className="flex flex-wrap gap-2 border-b border-line">
       <DashboardTabButton active={activeTab === "access"} label="Access" onClick={() => onChange("access")} />
+      {canManageListings ? <DashboardTabButton active={activeTab === "list"} label="List" onClick={() => onChange("list")} /> : null}
+      {canManageListings ? <DashboardTabButton active={activeTab === "buyers"} label="Buyers" onClick={() => onChange("buyers")} /> : null}
       <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} />
     </nav>
   );

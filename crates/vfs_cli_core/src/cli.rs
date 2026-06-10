@@ -64,6 +64,10 @@ pub enum VfsCommand {
         #[command(subcommand)]
         command: DatabaseCommand,
     },
+    Market {
+        #[command(subcommand)]
+        command: MarketCommand,
+    },
     ReadNode {
         #[arg(long)]
         path: String,
@@ -253,6 +257,19 @@ pub enum VfsCommand {
         top_k: u32,
         #[arg(long, value_enum)]
         preview_mode: Option<SearchPreviewModeArg>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum MarketCommand {
+    #[command(about = "List marketplace database entitlements for the current identity")]
+    Entitlements {
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
         #[arg(long)]
         json: bool,
     },

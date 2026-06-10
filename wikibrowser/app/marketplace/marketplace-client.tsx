@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { ArrowDownAZ, Clock3, Search, Sparkles, TrendingUp } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { ChangeEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AdminPanel } from "@/components/admin-ui";
+import { Input } from "@/components/ui/input";
 import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
@@ -15,16 +18,29 @@ type MarketplaceClientProps = {
 
 type LoadState = "idle" | "loading" | "error";
 
+const QUICK_FILTERS: { label: string; params: Record<string, string> }[] = [
+  { label: "All listings", params: {} }
+];
+
+const SORT_ITEMS = [
+  { value: "recent", label: "Recent", icon: Clock3 },
+  { value: "popular", label: "Popular", icon: TrendingUp },
+  { value: "price_low", label: "Low price", icon: ArrowDownAZ }
+] as const;
+
 export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
+  const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [listings, setListings] = useState<MarketListing[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const query = searchParams.get("q") ?? "";
-  const sort = parseMarketSort(searchParams.get("sort"));
-  const maxPriceE8s = parseKinicDecimalToE8s(searchParams.get("max"));
-  const previewOnly = searchParams.get("preview") === "1";
+  const sortParam = searchParams.get("sort") ?? "";
+  const sort = parseMarketSort(sortParam);
+  const max = searchParams.get("max") ?? "";
+  const maxPriceE8s = parseKinicDecimalToE8s(max);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -35,13 +51,10 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
       if (maxPriceE8s !== null && parseBigIntOrZero(listing.priceE8s) > maxPriceE8s) {
         return false;
       }
-      if (previewOnly && !hasListingPreview(listing)) {
-        return false;
-      }
       return true;
     });
     return [...nextListings].sort((left, right) => compareListings(left, right, sort));
-  }, [listings, maxPriceE8s, previewOnly, query, sort]);
+  }, [listings, maxPriceE8s, query, sort]);
 
   const load = useCallback(async (nextCursor: string | null, append: boolean) => {
     if (!canisterId) {
@@ -69,31 +82,50 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  function replaceParams(next: Record<string, string | null>) {
+    const params = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(next)) {
+      if (value === null || value === "") {
+        params.delete(key);
+      } else {
+        params.set(key, value);
+      }
+    }
+    const queryString = params.toString();
+    const targetPath = pathname.startsWith("/marketplace/") ? "/marketplace" : pathname;
+    router.replace(queryString ? `${targetPath}?${queryString}` : targetPath);
+  }
+
+  function runSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const nextQuery = String(formData.get("q") ?? "").trim();
+    replaceParams({ q: nextQuery || null });
+  }
+
+  function updateMax(event: ChangeEvent<HTMLInputElement>) {
+    const normalized = normalizeKinicDecimalInput(event.target.value);
+    replaceParams({ max: normalized || null });
+  }
+
   return (
-    <main className="min-w-0 text-ink">
-      <section className="flex max-w-none flex-col gap-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold">Marketplace</h1>
-            <p className="text-sm text-muted">
-              {filtered.length} matching loaded listings from {listings.length} loaded
-              {cursor ? " shown from loaded pages" : ""}
-            </p>
-          </div>
-          <button className="grid size-10 place-items-center rounded-xl border border-line bg-white hover:border-accent hover:text-accent" type="button" onClick={() => void load(null, false)}>
-            <RefreshCw aria-label="Refresh listings" size={17} />
-          </button>
-        </div>
+    <div className="min-w-0 text-ink">
+      <section className="flex flex-col gap-5">
+        <MarketplaceFilterBar
+          max={max}
+          query={query}
+          sort={sort}
+          onMaxChange={updateMax}
+          onReplaceParams={replaceParams}
+          onSearch={runSearch}
+        />
 
         {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((listing) => (
-            <Link
-              className="grid min-h-48 gap-3 rounded-lg border border-line bg-white p-4 shadow-[0_8px_24px_#14142b0a] hover:border-accent"
-              href={marketListingPath(listing.listingId)}
-              key={listing.listingId}
-            >
+            <Link className="no-underline" href={marketListingPath(listing.listingId)} key={listing.listingId}>
+              <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
               <div className="grid gap-1">
                 <h2 className="line-clamp-2 text-base font-semibold">{listing.title}</h2>
                 <p className="line-clamp-3 text-sm text-muted">{listing.description}</p>
@@ -102,6 +134,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
                 <span className="font-mono font-semibold">{formatTokenAmountFromE8s(listing.priceE8s)}</span>
                 <span className="text-muted">{listing.purchaseCount} sold</span>
               </div>
+              </AdminPanel>
             </Link>
           ))}
         </section>
@@ -117,7 +150,78 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
           </button>
         ) : null}
       </section>
-    </main>
+    </div>
+  );
+}
+
+function MarketplaceFilterBar({
+  max,
+  query,
+  sort,
+  onMaxChange,
+  onReplaceParams,
+  onSearch
+}: {
+  max: string;
+  query: string;
+  sort: MarketSort;
+  onMaxChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onReplaceParams: (next: Record<string, string | null>) => void;
+  onSearch: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <AdminPanel ariaLabel="Marketplace filters" className="grid gap-3" padding="sm">
+      <form className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center" onSubmit={onSearch}>
+        <label className="sr-only" htmlFor="market-search">Search marketplace</label>
+        <div className="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line bg-white px-3 focus-within:border-accent">
+          <Search aria-hidden className="shrink-0 text-muted" size={16} />
+          <input id="market-search" className="min-w-0 flex-1 bg-transparent py-2 text-sm outline-none" name="q" placeholder="Filter loaded listings" defaultValue={query} />
+        </div>
+        <label className="sr-only" htmlFor="market-max-price">Max price</label>
+        <Input id="market-max-price" className="h-10 rounded-lg bg-white font-mono text-xs lg:w-36" inputMode="decimal" placeholder="0.5 KINIC" value={max} onChange={onMaxChange} />
+      </form>
+
+      <div className="flex flex-wrap gap-2">
+        {QUICK_FILTERS.map((filter) => {
+          const active = isQuickFilterActive(filter.params, { sort, query, max });
+          return (
+            <button
+              className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${active ? "bg-accent text-white" : "bg-white text-muted hover:bg-accentSoft hover:text-accentText"}`}
+              key={filter.label}
+              type="button"
+              onClick={() => {
+                if (filter.label === "All listings") {
+                  onReplaceParams({ q: null, sort: null, max: null });
+                } else {
+                  onReplaceParams(filter.params);
+                }
+              }}
+            >
+              <span>{filter.label}</span>
+              {active ? <Sparkles aria-hidden size={14} /> : null}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {SORT_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const active = sort === item.value;
+          return (
+            <button
+              className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors ${active ? "bg-accent text-white" : "bg-white text-muted hover:bg-accentSoft hover:text-accentText"}`}
+              key={item.value}
+              type="button"
+              onClick={() => onReplaceParams({ sort: active ? null : item.value })}
+            >
+              <Icon aria-hidden size={16} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </AdminPanel>
   );
 }
 
@@ -164,12 +268,21 @@ function parseBigIntOrZero(value: string): bigint {
   }
 }
 
-function hasListingPreview(listing: MarketListing): boolean {
-  if (listing.llmSummary) return true;
-  try {
-    const parsed: unknown = JSON.parse(listing.sampleExcerptsJson);
-    return Array.isArray(parsed) && parsed.length > 0;
-  } catch {
-    return false;
+function isQuickFilterActive(
+  params: Record<string, string>,
+  current: { sort: string; query: string; max: string }
+): boolean {
+  if (Object.keys(params).length === 0) {
+    return !current.sort && !current.query && !current.max;
   }
+  if (params.sort) return current.sort === params.sort;
+  return false;
+}
+
+function normalizeKinicDecimalInput(value: string): string | null {
+  const normalized = value.replace(/[^\d.]/g, "");
+  const [whole = "", ...fractions] = normalized.split(".");
+  const fraction = fractions.join("").slice(0, 8);
+  if (!whole && !fraction) return null;
+  return fraction ? `${whole || "0"}.${fraction}` : whole;
 }

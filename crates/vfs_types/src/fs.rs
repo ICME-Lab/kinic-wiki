@@ -170,6 +170,22 @@ pub struct KinicDepositResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicWithdrawRequest {
+    pub amount_e8s: u64,
+    pub expected_fee_e8s: u64,
+    pub to_owner: String,
+    pub to_subaccount: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct KinicWithdrawResult {
+    pub block_index: u64,
+    pub amount_e8s: u64,
+    pub fee_e8s: u64,
+    pub balance_e8s: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct KinicFundDatabaseCyclesRequest {
     pub database_id: String,
     pub payment_amount_e8s: u64,
@@ -203,8 +219,6 @@ pub struct MarketListing {
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
-    pub summary_snapshot_revision: Option<String>,
-    pub sample_excerpts_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
     pub status: MarketListingStatus,
@@ -259,6 +273,7 @@ pub struct MarketListingPreview {
     pub top_level_paths: Vec<String>,
     pub excerpts: Vec<MarketPreviewExcerpt>,
     pub category_graph: MarketCategoryGraph,
+    pub graph_links: Vec<LinkEdge>,
     pub preview_stale: bool,
 }
 
@@ -281,8 +296,6 @@ pub struct MarketCreateListingRequest {
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
-    pub summary_snapshot_revision: Option<String>,
-    pub sample_excerpts_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
 }
@@ -294,8 +307,6 @@ pub struct MarketUpdateListingRequest {
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
-    pub summary_snapshot_revision: Option<String>,
-    pub sample_excerpts_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
 }
@@ -323,7 +334,6 @@ pub struct MarketOrder {
     pub buyer_principal: String,
     pub seller_principal: String,
     pub price_e8s: u64,
-    pub listing_revision: u64,
     pub created_at_ms: i64,
 }
 

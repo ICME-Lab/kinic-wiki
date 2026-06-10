@@ -179,6 +179,7 @@ impl FsStore {
                 top_level_paths: load_marketplace_top_level_paths(conn)?,
                 excerpts: Vec::new(),
                 category_graph: load_marketplace_category_graph(conn)?,
+                graph_links: load_graph_links(conn, "/Wiki", 100)?,
                 preview_stale: false,
             };
             Ok((stats, preview))

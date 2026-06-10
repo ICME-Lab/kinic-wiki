@@ -83,7 +83,7 @@ for (const fixture of FIXTURES) {
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);
   callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Wiki") }));
-  const firstNode = writeNodes(databaseId, fixture);
+  writeNodes(databaseId, fixture);
   const listing = callOk(
     "market_create_listing",
     candidRecord({
@@ -91,8 +91,6 @@ for (const fixture of FIXTURES) {
       title: candidText(fixture.title),
       description: candidText(fixture.description),
       llm_summary: `opt ${candidText(fixture.summary)}`,
-      summary_snapshot_revision: "null",
-      sample_excerpts_json: candidText(JSON.stringify([{ path: firstNode.path, etag: firstNode.etag, excerpt: fixture.excerpt }])),
       tags_json: candidText(JSON.stringify(fixture.tags)),
       price_e8s: `${fixture.priceE8s} : nat64`
     })

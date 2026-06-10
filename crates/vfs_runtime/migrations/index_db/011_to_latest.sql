@@ -119,8 +119,6 @@ CREATE TABLE market_listings (
   title TEXT NOT NULL,
   description TEXT NOT NULL,
   llm_summary TEXT,
-  summary_snapshot_revision TEXT,
-  sample_excerpts_json TEXT NOT NULL,
   tags_json TEXT NOT NULL,
   price_e8s INTEGER NOT NULL,
   status TEXT NOT NULL,
@@ -145,7 +143,6 @@ CREATE TABLE market_orders (
   buyer_principal TEXT NOT NULL,
   seller_principal TEXT NOT NULL,
   price_e8s INTEGER NOT NULL,
-  listing_revision INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL
 );
 

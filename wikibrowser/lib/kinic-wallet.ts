@@ -7,6 +7,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, kinicDepositBalance, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
 import { cyclesForPaymentAmountE8s, formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64 } from "@/lib/cycles";
+import { configuredIcHost, isLocalIcHost } from "@/lib/ic-host";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 
 type WalletProvider = "oisy" | "plug";
@@ -58,7 +59,6 @@ type MarketPurchaseResult = {
   buyerPrincipal: string;
   sellerPrincipal: string;
   priceE8s: string;
-  listingRevision: string;
   createdAtMs: string;
 };
 
@@ -132,6 +132,7 @@ type CyclesPurchaseWalletConnectOptions = {
 type PlugWallet = {
   requestConnect: (input?: { whitelist?: string[]; host?: string }) => Promise<boolean>;
   createActor: <T>(input: { canisterId: string; interfaceFactory: unknown }) => Promise<T>;
+  disconnect?: () => Promise<void>;
   agent?: { getPrincipal: () => Promise<Principal> };
 };
 
@@ -148,7 +149,6 @@ type RawMarketOrder = {
   buyer_principal: string;
   seller_principal: string;
   price_e8s: bigint;
-  listing_revision: bigint;
   created_at_ms: bigint;
 };
 
@@ -239,7 +239,7 @@ class KinicIcrcWallet extends IcrcWallet {
 function openOisyWallet(): Promise<KinicIcrcWallet> {
   return KinicIcrcWallet.connect({
     url: process.env.NEXT_PUBLIC_OISY_SIGNER_URL ?? DEFAULT_OISY_SIGNER_URL,
-    host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
+    host: configuredIcHost()
   });
 }
 
@@ -266,9 +266,7 @@ export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
 export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await plug.requestConnect({
-    host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
-  });
+  const connected = await connectPlug(plug);
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -323,10 +321,7 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
   const prepared = await prepareCyclesPurchase(request, connection.principal);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await plug.requestConnect({
-    whitelist: [request.canisterId, prepared.kinicLedgerCanisterId],
-    host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
-  });
+  const connected = await connectPlug(plug, [request.canisterId, prepared.kinicLedgerCanisterId]);
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -404,10 +399,7 @@ export async function depositKinicBalanceWithPlug(request: KinicDepositRequest, 
   const prepared = await prepareKinicDeposit(request, connection.principal);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await plug.requestConnect({
-    whitelist: [request.canisterId, prepared.kinicLedgerCanisterId],
-    host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
-  });
+  const connected = await connectPlug(plug, [request.canisterId, prepared.kinicLedgerCanisterId]);
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -496,10 +488,7 @@ export async function purchaseMarketAccessWithPlug(request: MarketPurchaseReques
   assertConfiguredCyclesCanister(request.canisterId);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await plug.requestConnect({
-    whitelist: [request.canisterId],
-    host: process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io"
-  });
+  const connected = await connectPlug(plug, [request.canisterId]);
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -511,6 +500,14 @@ export async function purchaseMarketAccessWithPlug(request: MarketPurchaseReques
   const result = await vfsActor.market_purchase_access(rawMarketPurchaseRequest(request));
   if ("Err" in result) throw new Error(result.Err);
   return normalizeMarketOrder(result.Ok, "plug");
+}
+
+async function connectPlug(plug: PlugWallet, whitelist?: string[]): Promise<boolean> {
+  const host = configuredIcHost();
+  if (isLocalIcHost(host)) {
+    await plug.disconnect?.();
+  }
+  return plug.requestConnect({ whitelist, host });
 }
 
 function approveParams(canisterId: string, allowanceE8s: bigint, expectedAllowanceE8s: bigint, expiresAt: bigint): ApproveParams {
@@ -940,7 +937,6 @@ function marketPurchaseResultType() {
     buyer_principal: IDL.Text,
     seller_principal: IDL.Text,
     price_e8s: IDL.Nat64,
-    listing_revision: IDL.Nat64,
     created_at_ms: IDL.Int64
   });
   return IDL.Variant({
@@ -965,7 +961,6 @@ function normalizeMarketOrder(raw: RawMarketOrder, provider: WalletProvider): Ma
     buyerPrincipal: raw.buyer_principal,
     sellerPrincipal: raw.seller_principal,
     priceE8s: raw.price_e8s.toString(),
-    listingRevision: raw.listing_revision.toString(),
     createdAtMs: raw.created_at_ms.toString()
   };
 }
@@ -1057,7 +1052,6 @@ function isRawMarketOrder(value: unknown): value is RawMarketOrder {
     typeof Reflect.get(value, "buyer_principal") === "string" &&
     typeof Reflect.get(value, "seller_principal") === "string" &&
     typeof Reflect.get(value, "price_e8s") === "bigint" &&
-    typeof Reflect.get(value, "listing_revision") === "bigint" &&
     typeof Reflect.get(value, "created_at_ms") === "bigint"
   );
 }

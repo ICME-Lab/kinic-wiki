@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3010",
     "build": "next build && node scripts/normalize-typegen-tsconfig.mjs",
     "lint": "eslint .",
     "smoke": "node scripts/smoke-ui.mjs",
@@ -11,7 +11,7 @@
     "smoke:errors": "node scripts/smoke-errors.mjs",
     "smoke:public": "node scripts/smoke-public.mjs",
     "generate:vfs-idl": "node scripts/generate-vfs-idl.mjs",
-    "test": "node scripts/generate-vfs-idl.mjs --check && node scripts/check-candid-drift.mjs && node scripts/check-paths.mjs && node scripts/check-ui-helpers.mjs && node scripts/check-api-errors.mjs && node scripts/check-auth.mjs && node scripts/check-smoke-url.mjs && node scripts/check-dashboard.mjs && node scripts/check-cycles.mjs && node scripts/check-cycles-wallet.mjs && node scripts/check-marketplace.mjs && node scripts/check-skill-registry.mjs && node scripts/check-url-security.mjs",
+    "test": "node scripts/generate-vfs-idl.mjs --check && node scripts/check-candid-drift.mjs && node scripts/check-paths.mjs && node scripts/check-ui-helpers.mjs && node scripts/check-api-errors.mjs && node scripts/check-auth.mjs && node scripts/check-smoke-url.mjs && node scripts/check-dashboard.mjs && node scripts/check-cycles.mjs && node scripts/check-cycles-wallet.mjs && node scripts/check-marketplace.mjs && node scripts/check-profile.mjs && node scripts/check-skill-registry.mjs && node scripts/check-url-security.mjs",
     "typecheck": "next typegen && node scripts/normalize-typegen-tsconfig.mjs && tsc --noEmit",
     "audit:moderate": "pnpm audit --audit-level moderate",
     "build:worker": "opennextjs-cloudflare build",

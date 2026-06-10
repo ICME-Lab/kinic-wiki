@@ -10,12 +10,13 @@ use std::fs::{File, OpenOptions, create_dir_all, remove_file};
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
+#[cfg(any(test, debug_assertions))]
+use std::sync::{LazyLock, Mutex};
 
 use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
 use candid::Principal;
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{Db, DbError, DbHandle};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
 use vfs_store::FsStore;
 use vfs_types::{
@@ -27,14 +28,14 @@ use vfs_types::{
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
     IncomingLinksRequest, IndexSqlJsonQueryResult, KinicBalance, KinicFundDatabaseCyclesRequest,
     KinicFundDatabaseCyclesResult, KinicPendingOperation, KinicPendingOperationsPage,
-    KinicPendingOperationsPageRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
-    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
-    MarketListingStatus, MarketListingVerifiedStats, MarketOrder, MarketOrderPage,
-    MarketPreviewExcerpt, MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    KinicPendingOperationsPageRequest, KinicWithdrawRequest, KinicWithdrawResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
+    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
     Status, StorageBillingBatchRequest, StorageBillingBatchResult,
@@ -124,9 +125,21 @@ const KINIC_OPERATION_STATUS_COMPLETED: &str = "completed";
 const KINIC_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
 const KINIC_LEDGER_SOURCE_INTERNAL: &str = "canister_internal";
 const KINIC_PENDING_KIND_DEPOSIT: &str = "deposit";
+const KINIC_PENDING_KIND_WITHDRAW: &str = "withdraw";
 const MARKET_LISTING_STATUS_DRAFT: &str = "draft";
 const MARKET_LISTING_STATUS_ACTIVE: &str = "active";
 const MARKET_LISTING_STATUS_PAUSED: &str = "paused";
+
+#[cfg(any(test, debug_assertions))]
+static TEST_DATABASE_MIGRATION_FAIL_ONCE: LazyLock<Mutex<Option<String>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[cfg(any(test, debug_assertions))]
+pub fn fail_next_database_migration_for_test(database_id: &str) {
+    *TEST_DATABASE_MIGRATION_FAIL_ONCE
+        .lock()
+        .expect("test migration failure lock should not poison") = Some(database_id.to_string());
+}
 const MARKET_ENTITLEMENT_STATUS_ACTIVE: &str = "active";
 const GENERATED_LISTING_ID_PREFIX: &str = "";
 const GENERATED_ORDER_ID_PREFIX: &str = "order_";
@@ -134,8 +147,6 @@ const GENERATED_MARKET_ID_HASH_CHARS: usize = 16;
 const MAX_MARKET_TITLE_CHARS: usize = 160;
 const MAX_MARKET_DESCRIPTION_CHARS: usize = 4_000;
 const MAX_MARKET_JSON_CHARS: usize = 20_000;
-const MAX_MARKET_PREVIEW_EXCERPTS: usize = 5;
-const MAX_MARKET_PREVIEW_EXCERPT_CHARS: usize = 400;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseMeta {
@@ -205,6 +216,21 @@ pub struct KinicDepositWithLedgerDetails<'a> {
 pub struct KinicDepositStart {
     pub operation_id: u64,
     pub amount_e8s: u64,
+}
+
+pub struct KinicWithdrawWithLedgerDetails<'a> {
+    pub caller: &'a str,
+    pub request: &'a KinicWithdrawRequest,
+    pub ledger: CyclesPendingLedgerDetailsInput<'a>,
+    pub now: i64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KinicWithdrawStart {
+    pub operation_id: u64,
+    pub amount_e8s: u64,
+    pub fee_e8s: u64,
+    pub balance_e8s: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -687,41 +713,53 @@ impl VfsService {
         Ok(())
     }
 
-    pub fn activate_pending_database_for_cycles_purchase(
+    pub fn prepare_pending_database_activation(
         &self,
         database_id: &str,
         now: i64,
     ) -> Result<Option<DatabaseMeta>, String> {
-        self.write_index(|tx| {
-            let status = load_database_status(tx, database_id)?;
-            if status != DatabaseStatus::Pending {
-                return Ok(None);
-            }
-            let active_mount_id: Option<i64> = tx
-                .query_row(
-                    "SELECT active_mount_id FROM databases WHERE database_id = ?1",
-                    params![database_id],
-                    |row| crate::sqlite::row_get(row, 0),
-                )
-                .map_err(|error| error.to_string())?;
-            if active_mount_id.is_some() {
-                return load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending]);
-            }
-            let mount_id = allocate_mount_id(tx)?;
-            let db_file_name = self.database_file_name(database_id, mount_id)?;
-            record_mount_history(tx, database_id, mount_id, "activate", now)?;
-            tx.execute(
-                "UPDATE databases
-                 SET db_file_name = ?2,
-                     mount_id = ?3,
-                     active_mount_id = ?3,
-                     updated_at_ms = ?4
-                 WHERE database_id = ?1 AND status = 'pending'",
-                params![database_id, db_file_name, i64::from(mount_id), now],
+        let activation = self
+            .write_index(|tx| self.activate_pending_database_mount_for_tx(tx, database_id, now))?;
+        if activation.is_some() {
+            self.run_pending_database_migrations(database_id)?;
+        }
+        Ok(activation)
+    }
+
+    fn activate_pending_database_mount_for_tx(
+        &self,
+        tx: &Connection,
+        database_id: &str,
+        now: i64,
+    ) -> Result<Option<DatabaseMeta>, String> {
+        let status = load_database_status(tx, database_id)?;
+        if status != DatabaseStatus::Pending {
+            return Ok(None);
+        }
+        let active_mount_id: Option<i64> = tx
+            .query_row(
+                "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+                params![database_id],
+                |row| crate::sqlite::row_get(row, 0),
             )
             .map_err(|error| error.to_string())?;
-            load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])
-        })
+        if active_mount_id.is_some() {
+            return load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending]);
+        }
+        let mount_id = allocate_mount_id(tx)?;
+        let db_file_name = self.database_file_name(database_id, mount_id)?;
+        record_mount_history(tx, database_id, mount_id, "activate", now)?;
+        tx.execute(
+            "UPDATE databases
+             SET db_file_name = ?2,
+                 mount_id = ?3,
+                 active_mount_id = ?3,
+                 updated_at_ms = ?4
+             WHERE database_id = ?1 AND status = 'pending'",
+            params![database_id, db_file_name, i64::from(mount_id), now],
+        )
+        .map_err(|error| error.to_string())?;
+        load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])
     }
 
     pub fn validate_database_cycles_purchase(
@@ -1144,6 +1182,25 @@ impl VfsService {
     ) -> Result<KinicFundDatabaseCyclesResult, String> {
         require_authenticated_principal(caller)?;
         let payment_amount = amount_to_i64(request.payment_amount_e8s)?;
+        let activation = self.read_index(|tx| {
+            let config = load_cycles_billing_config(tx)?;
+            let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
+            validate_cycles_purchase_minimum(amount_cycles, request.min_expected_cycles)?;
+            let amount_cycles_i64 = cycles_to_i64(amount_cycles)?;
+            validate_database_cycles_purchase_for_conn(
+                tx,
+                &request.database_id,
+                amount_cycles_i64,
+            )?;
+            let kinic_balance = load_kinic_balance(tx, caller)?;
+            if kinic_balance < payment_amount {
+                return Err("insufficient KINIC balance".to_string());
+            }
+            Ok(load_database_status(tx, &request.database_id)? == DatabaseStatus::Pending)
+        })?;
+        if activation {
+            self.prepare_pending_database_activation(&request.database_id, now)?;
+        }
         self.write_index(|tx| {
             let config = load_cycles_billing_config(tx)?;
             let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
@@ -1154,7 +1211,9 @@ impl VfsService {
                 &request.database_id,
                 amount_cycles_i64,
             )?;
-            complete_pending_database_activation(tx, &request.database_id, now)?;
+            if activation {
+                complete_pending_database_activation(tx, &request.database_id, now)?;
+            }
 
             let kinic_balance = load_kinic_balance(tx, caller)?;
             if kinic_balance < payment_amount {
@@ -1406,6 +1465,234 @@ impl VfsService {
         })
     }
 
+    pub fn begin_kinic_withdraw_with_ledger_details(
+        &self,
+        request: KinicWithdrawWithLedgerDetails<'_>,
+    ) -> Result<KinicWithdrawStart, String> {
+        require_authenticated_principal(request.caller)?;
+        if request.request.amount_e8s == 0 {
+            return Err("KINIC withdraw amount must be positive".to_string());
+        }
+        Principal::from_text(&request.request.to_owner)
+            .map_err(|error| format!("invalid KINIC withdraw recipient principal: {error}"))?;
+        if let Some(subaccount) = &request.request.to_subaccount
+            && subaccount.len() != 32
+        {
+            return Err("KINIC withdraw recipient subaccount must be 32 bytes".to_string());
+        }
+        let amount_e8s = amount_to_i64(request.request.amount_e8s)?;
+        let ledger_fee = amount_to_i64(request.request.expected_fee_e8s)?;
+        let total_debit = amount_e8s
+            .checked_add(ledger_fee)
+            .ok_or_else(|| "KINIC withdraw debit overflow".to_string())?;
+        let ledger_created_at_time = i64::try_from(request.ledger.ledger_created_at_time_ns)
+            .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
+        self.write_index(|tx| {
+            ensure_no_pending_kinic_withdraw_for_caller(tx, request.caller)?;
+            let balance = load_kinic_balance(tx, request.caller)?;
+            if balance < total_debit {
+                return Err("insufficient KINIC balance".to_string());
+            }
+            let next_balance = balance
+                .checked_sub(total_debit)
+                .ok_or_else(|| "KINIC withdraw balance underflow".to_string())?;
+            upsert_kinic_balance(tx, request.caller, next_balance, request.now)?;
+            let operation_id = insert_pending_kinic_operation(
+                tx,
+                PendingKinicOperationInsert {
+                    kind: KINIC_PENDING_KIND_WITHDRAW,
+                    caller: request.caller,
+                    amount_e8s,
+                    ledger: PendingCyclesLedgerDetails {
+                        from_owner: request.ledger.from_owner,
+                        from_subaccount: request.ledger.from_subaccount,
+                        to_owner: request.ledger.to_owner,
+                        to_subaccount: request.ledger.to_subaccount,
+                        ledger_fee_e8s: ledger_fee,
+                        ledger_created_at_time_ns: ledger_created_at_time,
+                    },
+                    operation_status: KINIC_OPERATION_STATUS_IN_FLIGHT,
+                    now: request.now,
+                },
+            )?;
+            Ok(KinicWithdrawStart {
+                operation_id,
+                amount_e8s: request.request.amount_e8s,
+                fee_e8s: request.request.expected_fee_e8s,
+                balance_e8s: u64::try_from(next_balance).map_err(|error| error.to_string())?,
+            })
+        })
+    }
+
+    pub fn complete_kinic_withdraw_ledger_transfer(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        request: &KinicWithdrawRequest,
+        ledger_block_index: u64,
+    ) -> Result<(), String> {
+        let amount_e8s = amount_to_i64(request.amount_e8s)?;
+        let ledger_block_index = i64::try_from(ledger_block_index)
+            .map_err(|_| "ledger block index exceeds i64".to_string())?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_kinic_operation(
+                tx,
+                PendingKinicOperationMatch {
+                    operation_id,
+                    kind: KINIC_PENDING_KIND_WITHDRAW,
+                    caller,
+                    amount_e8s,
+                },
+            )?;
+            require_pending_kinic_operation_status(
+                &operation,
+                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
+                "complete KINIC withdraw ledger transfer",
+            )?;
+            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+            tx.execute(
+                "UPDATE kinic_pending_operations
+                 SET operation_status = ?2,
+                     external_block_index = ?3
+                 WHERE operation_id = ?1",
+                params![
+                    operation_id,
+                    KINIC_OPERATION_STATUS_COMPLETED,
+                    ledger_block_index
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+    }
+
+    pub fn apply_kinic_withdraw(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        request: &KinicWithdrawRequest,
+        now: i64,
+    ) -> Result<KinicWithdrawResult, String> {
+        let amount_e8s = amount_to_i64(request.amount_e8s)?;
+        let ledger_fee = amount_to_i64(request.expected_fee_e8s)?;
+        let total_debit = amount_e8s
+            .checked_add(ledger_fee)
+            .ok_or_else(|| "KINIC withdraw debit overflow".to_string())?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_kinic_operation(
+                tx,
+                PendingKinicOperationMatch {
+                    operation_id,
+                    kind: KINIC_PENDING_KIND_WITHDRAW,
+                    caller,
+                    amount_e8s,
+                },
+            )?;
+            require_pending_kinic_operation_status(
+                &operation,
+                &[KINIC_OPERATION_STATUS_COMPLETED],
+                "apply KINIC withdraw",
+            )?;
+            let block_index = operation
+                .external_block_index
+                .ok_or_else(|| "completed KINIC withdraw missing ledger block index".to_string())?;
+            let balance_after = load_kinic_balance(tx, caller)?;
+            insert_kinic_ledger(
+                tx,
+                KinicLedgerInsert {
+                    principal: caller,
+                    source: KINIC_LEDGER_SOURCE_INTERNAL,
+                    kind: KINIC_PENDING_KIND_WITHDRAW,
+                    amount_e8s: -total_debit,
+                    balance_after_e8s: balance_after,
+                    counterparty: Some(&request.to_owner),
+                    listing_id: None,
+                    order_id: None,
+                    external_block_index: Some(block_index),
+                    now,
+                },
+            )?;
+            delete_pending_kinic_operation(tx, operation_id)?;
+            Ok(KinicWithdrawResult {
+                block_index: u64::try_from(block_index).map_err(|error| error.to_string())?,
+                amount_e8s: request.amount_e8s,
+                fee_e8s: request.expected_fee_e8s,
+                balance_e8s: u64::try_from(balance_after).map_err(|error| error.to_string())?,
+            })
+        })
+    }
+
+    pub fn refund_kinic_withdraw_after_ledger_error(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        request: &KinicWithdrawRequest,
+        now: i64,
+    ) -> Result<KinicBalance, String> {
+        let amount_e8s = amount_to_i64(request.amount_e8s)?;
+        let ledger_fee = amount_to_i64(request.expected_fee_e8s)?;
+        let total_debit = amount_e8s
+            .checked_add(ledger_fee)
+            .ok_or_else(|| "KINIC withdraw debit overflow".to_string())?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_kinic_operation(
+                tx,
+                PendingKinicOperationMatch {
+                    operation_id,
+                    kind: KINIC_PENDING_KIND_WITHDRAW,
+                    caller,
+                    amount_e8s,
+                },
+            )?;
+            require_pending_kinic_operation_status(
+                &operation,
+                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
+                "refund KINIC withdraw",
+            )?;
+            let balance = load_kinic_balance(tx, caller)?;
+            let next_balance = checked_balance_add(balance, total_debit)?;
+            upsert_kinic_balance(tx, caller, next_balance, now)?;
+            delete_pending_kinic_operation(tx, operation_id)?;
+            Ok(KinicBalance {
+                balance_e8s: u64::try_from(next_balance).map_err(|error| error.to_string())?,
+            })
+        })
+    }
+
+    pub fn mark_kinic_withdraw_ambiguous(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        request: &KinicWithdrawRequest,
+    ) -> Result<(), String> {
+        let amount_e8s = amount_to_i64(request.amount_e8s)?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_kinic_operation(
+                tx,
+                PendingKinicOperationMatch {
+                    operation_id,
+                    kind: KINIC_PENDING_KIND_WITHDRAW,
+                    caller,
+                    amount_e8s,
+                },
+            )?;
+            require_pending_kinic_operation_status(
+                &operation,
+                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
+                "mark KINIC withdraw ambiguous",
+            )?;
+            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+            tx.execute(
+                "UPDATE kinic_pending_operations
+                 SET operation_status = ?2
+                 WHERE operation_id = ?1",
+                params![operation_id, KINIC_OPERATION_STATUS_AMBIGUOUS],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
+    }
+
     pub fn kinic_list_pending_operations(
         &self,
         caller: &str,
@@ -1449,7 +1736,6 @@ impl VfsService {
     ) -> Result<MarketListing, String> {
         require_authenticated_principal(caller)?;
         validate_market_create_listing_request(&request)?;
-        self.validate_market_listing_excerpts(&request.database_id, &request.sample_excerpts_json)?;
         self.write_index(|tx| {
             require_market_seller_can_list(tx, caller, &request.database_id)?;
             let listing_id = unique_market_id(
@@ -1464,10 +1750,9 @@ impl VfsService {
             tx.execute(
                 "INSERT INTO market_listings
                  (listing_id, seller_principal, database_id, title, description,
-                  llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                  tags_json, price_e8s, status, revision,
-                  purchase_count, report_count, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 1, 0, 0, ?12, ?12)",
+                  llm_summary, tags_json, price_e8s, status,
+                  revision, purchase_count, report_count, created_at_ms, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, 0, ?10, ?10)",
                 params![
                     listing_id,
                     caller,
@@ -1475,8 +1760,6 @@ impl VfsService {
                     request.title,
                     request.description,
                     crate::sqlite::nullable_text_value(request.llm_summary),
-                    crate::sqlite::nullable_text_value(request.summary_snapshot_revision),
-                    request.sample_excerpts_json,
                     request.tags_json,
                     i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
                     MARKET_LISTING_STATUS_DRAFT,
@@ -1497,23 +1780,10 @@ impl VfsService {
     ) -> Result<MarketListing, String> {
         require_authenticated_principal(caller)?;
         validate_market_update_listing_request(&request)?;
-        let listing_database_id = self.read_index(|tx| {
-            let listing = load_market_listing_by_id(tx, &request.listing_id)?
-                .ok_or_else(|| "market listing not found".to_string())?;
-            require_market_listing_seller_or_admin(tx, caller, &listing)?;
-            if listing.revision != request.expected_revision {
-                return Err("market listing revision mismatch".to_string());
-            }
-            Ok(listing.database_id)
-        })?;
-        self.validate_market_listing_excerpts(&listing_database_id, &request.sample_excerpts_json)?;
         self.write_index(|tx| {
             let listing = load_market_listing_by_id(tx, &request.listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
             require_market_listing_seller_or_admin(tx, caller, &listing)?;
-            if listing.revision != request.expected_revision {
-                return Err("market listing revision mismatch".to_string());
-            }
             if listing.status == MarketListingStatus::Active {
                 require_market_seller_can_list(
                     tx,
@@ -1521,31 +1791,32 @@ impl VfsService {
                     &listing.database_id,
                 )?;
             }
-            tx.execute(
+            let updated = tx.execute(
                 "UPDATE market_listings
                  SET title = ?2,
                      description = ?3,
                      llm_summary = ?4,
-                     summary_snapshot_revision = ?5,
-                     sample_excerpts_json = ?6,
-                     tags_json = ?7,
-                     price_e8s = ?8,
+                     tags_json = ?5,
+                     price_e8s = ?6,
                      revision = revision + 1,
-                     updated_at_ms = ?9
-                 WHERE listing_id = ?1",
+                     updated_at_ms = ?8
+                 WHERE listing_id = ?1
+                   AND revision = ?7",
                 params![
                     request.listing_id,
                     request.title,
                     request.description,
                     crate::sqlite::nullable_text_value(request.llm_summary),
-                    crate::sqlite::nullable_text_value(request.summary_snapshot_revision),
-                    request.sample_excerpts_json,
                     request.tags_json,
                     i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
+                    i64::try_from(request.expected_revision).map_err(|error| error.to_string())?,
                     now
                 ],
             )
             .map_err(|error| error.to_string())?;
+            if updated == 0 {
+                return Err("market listing revision mismatch".to_string());
+            }
             load_market_listing_by_id(tx, &listing.listing_id)?
                 .ok_or_else(|| "market listing update failed".to_string())
         })
@@ -1591,7 +1862,6 @@ impl VfsService {
             tx.execute(
                 "UPDATE market_listings
                  SET status = ?2,
-                     revision = revision + 1,
                      updated_at_ms = ?3
                  WHERE listing_id = ?1",
                 params![listing_id, status, now],
@@ -1613,9 +1883,8 @@ impl VfsService {
             let mut stmt = conn
                 .prepare(
                     "SELECT l.listing_id, l.seller_principal, l.database_id, l.title, l.description,
-                            l.llm_summary, l.summary_snapshot_revision, l.sample_excerpts_json,
-                            l.tags_json, l.price_e8s, l.status, l.revision,
-                            l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
+                            l.llm_summary, l.tags_json, l.price_e8s, l.status,
+                            l.revision, l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
                      FROM market_listings l
                      JOIN databases d ON d.database_id = l.database_id
                      JOIN database_members m
@@ -1671,9 +1940,8 @@ impl VfsService {
             let mut stmt = conn
                 .prepare(
                     "SELECT listing_id, seller_principal, database_id, title, description,
-                            llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                            tags_json, price_e8s, status, revision,
-                            purchase_count, report_count, created_at_ms, updated_at_ms
+                            llm_summary, tags_json, price_e8s, status,
+                            revision, purchase_count, report_count, created_at_ms, updated_at_ms
                      FROM market_listings
                      WHERE database_id = ?1
                      ORDER BY updated_at_ms DESC, listing_id ASC",
@@ -1714,60 +1982,13 @@ impl VfsService {
         };
         let store = self.database_store(&meta)?;
         let (verified_stats, mut preview) = store.marketplace_preview()?;
-        let (excerpts, stale) = self.load_verified_market_preview_excerpts(
-            &listing.database_id,
-            &listing.sample_excerpts_json,
-        )?;
-        preview.excerpts = excerpts;
-        preview.preview_stale = stale;
+        preview.excerpts = Vec::new();
+        preview.preview_stale = false;
         Ok(MarketListingDetail {
             listing,
             verified_stats,
             preview,
         })
-    }
-
-    fn validate_market_listing_excerpts(
-        &self,
-        database_id: &str,
-        sample_excerpts_json: &str,
-    ) -> Result<(), String> {
-        let (excerpts, stale) =
-            self.load_verified_market_preview_excerpts(database_id, sample_excerpts_json)?;
-        if stale || excerpts.len() != parse_market_preview_excerpts(sample_excerpts_json)?.len() {
-            return Err(
-                "market listing sample excerpts must match existing wiki nodes".to_string(),
-            );
-        }
-        Ok(())
-    }
-
-    fn load_verified_market_preview_excerpts(
-        &self,
-        database_id: &str,
-        sample_excerpts_json: &str,
-    ) -> Result<(Vec<MarketPreviewExcerpt>, bool), String> {
-        let excerpts = parse_market_preview_excerpts(sample_excerpts_json)?;
-        if excerpts.is_empty() {
-            return Ok((Vec::new(), false));
-        }
-        let meta = self.database_meta(database_id)?;
-        let store = self.database_store(&meta)?;
-        let mut verified = Vec::new();
-        let mut stale = false;
-        for excerpt in excerpts {
-            match store.read_node(&excerpt.path)? {
-                Some(node)
-                    if node.kind == NodeKind::File
-                        && node.etag == excerpt.etag
-                        && node.content.contains(&excerpt.excerpt) =>
-                {
-                    verified.push(excerpt);
-                }
-                _ => stale = true,
-            }
-        }
-        Ok((verified, stale))
     }
 
     pub fn market_preview_purchase(
@@ -1802,6 +2023,12 @@ impl VfsService {
         now: i64,
     ) -> Result<MarketOrder, String> {
         require_authenticated_principal(caller)?;
+        if request.listing_id.trim().is_empty() {
+            return Err("market listing id is required".to_string());
+        }
+        if request.price_e8s == 0 {
+            return Err("market listing price must be positive".to_string());
+        }
         self.write_index(|tx| {
             let listing = load_market_listing_by_id(tx, &request.listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
@@ -1867,8 +2094,8 @@ impl VfsService {
             tx.execute(
                 "INSERT INTO market_orders
                  (order_id, listing_id, database_id, buyer_principal, seller_principal,
-                  price_e8s, listing_revision, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                  price_e8s, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     order_id,
                     listing.listing_id,
@@ -1876,7 +2103,6 @@ impl VfsService {
                     caller,
                     listing.seller_principal,
                     price_i64,
-                    i64::try_from(listing.revision).map_err(|error| error.to_string())?,
                     now
                 ],
             )
@@ -1956,6 +2182,56 @@ impl VfsService {
         })
     }
 
+    pub fn market_list_database_entitlements(
+        &self,
+        caller: &str,
+        database_id: &str,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketEntitlementPage, String> {
+        require_authenticated_principal(caller)?;
+        let limit = page_limit(limit);
+        let after = cursor.unwrap_or_default();
+        self.read_index(|conn| {
+            require_database_owner_or_billing_admin(conn, caller, database_id)?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT database_id, buyer_principal, listing_id, order_id,
+                            purchased_at_ms, status
+                     FROM market_entitlements
+                     WHERE database_id = ?1
+                       AND buyer_principal > ?2
+                       AND status = ?3
+                     ORDER BY buyer_principal ASC
+                     LIMIT ?4",
+                )
+                .map_err(|error| error.to_string())?;
+            let mut entitlements = crate::sqlite::query_map(
+                &mut stmt,
+                params![
+                    database_id,
+                    after,
+                    MARKET_ENTITLEMENT_STATUS_ACTIVE,
+                    i64::from(limit) + 1
+                ],
+                map_market_entitlement,
+            )
+            .map_err(|error| error.to_string())?;
+            let next_cursor = if entitlements.len() > limit as usize {
+                entitlements.pop();
+                entitlements
+                    .last()
+                    .map(|entitlement| entitlement.buyer_principal.clone())
+            } else {
+                None
+            };
+            Ok(MarketEntitlementPage {
+                entitlements,
+                next_cursor,
+            })
+        })
+    }
+
     pub fn market_list_orders(
         &self,
         caller: &str,
@@ -1969,7 +2245,7 @@ impl VfsService {
             let mut stmt = conn
                 .prepare(
                     "SELECT order_id, listing_id, database_id, buyer_principal, seller_principal,
-                            price_e8s, listing_revision, created_at_ms
+                            price_e8s, created_at_ms
                      FROM market_orders
                      WHERE buyer_principal = ?1 AND order_id > ?2
                      ORDER BY order_id ASC
@@ -2112,6 +2388,23 @@ impl VfsService {
         database_id: &str,
         meta: &DatabaseMeta,
     ) -> Result<(), String> {
+        #[cfg(any(test, debug_assertions))]
+        {
+            let should_fail = {
+                let mut next_failure = TEST_DATABASE_MIGRATION_FAIL_ONCE
+                    .lock()
+                    .expect("test migration failure lock should not poison");
+                if next_failure.as_deref() == Some(database_id) {
+                    *next_failure = None;
+                    true
+                } else {
+                    false
+                }
+            };
+            if should_fail {
+                return Err("test database migration failure".to_string());
+            }
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(parent) = Path::new(&meta.db_file_name).parent() {
             create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -3227,9 +3520,7 @@ impl VfsService {
     }
 
     fn database_meta(&self, database_id: &str) -> Result<DatabaseMeta, String> {
-        self.read_index(|conn| {
-            load_database(conn, database_id)?.ok_or_else(|| database_meta_error(conn, database_id))
-        })
+        self.database_meta_with_statuses(database_id, &[DatabaseStatus::Active])
     }
 
     fn database_meta_allowing_restoring(&self, database_id: &str) -> Result<DatabaseMeta, String> {
@@ -3828,8 +4119,6 @@ fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), 
           title TEXT NOT NULL,
           description TEXT NOT NULL,
           llm_summary TEXT,
-          summary_snapshot_revision TEXT,
-          sample_excerpts_json TEXT NOT NULL,
           tags_json TEXT NOT NULL,
           price_e8s INTEGER NOT NULL,
           status TEXT NOT NULL,
@@ -3854,7 +4143,6 @@ fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), 
           buyer_principal TEXT NOT NULL,
           seller_principal TEXT NOT NULL,
           price_e8s INTEGER NOT NULL,
-          listing_revision INTEGER NOT NULL,
           created_at_ms INTEGER NOT NULL
         );
 
@@ -3895,8 +4183,6 @@ fn apply_marketplace_preview_index_migration(conn: &Transaction<'_>) -> Result<(
           title TEXT NOT NULL,
           description TEXT NOT NULL,
           llm_summary TEXT,
-          summary_snapshot_revision TEXT,
-          sample_excerpts_json TEXT NOT NULL,
           tags_json TEXT NOT NULL,
           price_e8s INTEGER NOT NULL,
           status TEXT NOT NULL,
@@ -3910,12 +4196,10 @@ fn apply_marketplace_preview_index_migration(conn: &Transaction<'_>) -> Result<(
 
         INSERT INTO market_listings_next
           (listing_id, seller_principal, database_id, title, description,
-           llm_summary, summary_snapshot_revision, sample_excerpts_json,
-           tags_json, price_e8s, status, revision, purchase_count, report_count,
+           llm_summary, tags_json, price_e8s, status, revision, purchase_count, report_count,
            created_at_ms, updated_at_ms)
         SELECT listing_id, seller_principal, database_id, title, description,
-               llm_summary, summary_snapshot_revision, sample_excerpts_json,
-               tags_json, price_e8s, status, revision, purchase_count, report_count,
+               llm_summary, tags_json, price_e8s, status, revision, purchase_count, report_count,
                created_at_ms, updated_at_ms
           FROM market_listings;
 
@@ -4417,8 +4701,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "title",
                 "description",
                 "llm_summary",
-                "summary_snapshot_revision",
-                "sample_excerpts_json",
                 "tags_json",
                 "price_e8s",
                 "status",
@@ -4438,7 +4720,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "buyer_principal",
                 "seller_principal",
                 "price_e8s",
-                "listing_revision",
                 "created_at_ms",
             ][..],
         ),
@@ -5423,6 +5704,21 @@ fn ensure_no_pending_kinic_deposit_for_caller(
     conn: &Connection,
     caller: &str,
 ) -> Result<(), String> {
+    ensure_no_pending_kinic_operation_for_caller(conn, caller, KINIC_PENDING_KIND_DEPOSIT)
+}
+
+fn ensure_no_pending_kinic_withdraw_for_caller(
+    conn: &Connection,
+    caller: &str,
+) -> Result<(), String> {
+    ensure_no_pending_kinic_operation_for_caller(conn, caller, KINIC_PENDING_KIND_WITHDRAW)
+}
+
+fn ensure_no_pending_kinic_operation_for_caller(
+    conn: &Connection,
+    caller: &str,
+    kind: &str,
+) -> Result<(), String> {
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*)
@@ -5432,7 +5728,7 @@ fn ensure_no_pending_kinic_deposit_for_caller(
                AND operation_status IN (?3, ?4, ?5)",
             params![
                 caller,
-                KINIC_PENDING_KIND_DEPOSIT,
+                kind,
                 KINIC_OPERATION_STATUS_IN_FLIGHT,
                 KINIC_OPERATION_STATUS_COMPLETED,
                 KINIC_OPERATION_STATUS_AMBIGUOUS
@@ -5441,7 +5737,7 @@ fn ensure_no_pending_kinic_deposit_for_caller(
         )
         .map_err(|error| error.to_string())?;
     if count > 0 {
-        return Err("KINIC deposit already pending for caller".to_string());
+        return Err(format!("KINIC {kind} already pending for caller"));
     }
     Ok(())
 }
@@ -5465,15 +5761,20 @@ fn load_kinic_pending_operations(
                 "SELECT operation_id, kind, caller, operation_status, amount_e8s,
                         external_block_index, created_at_ms
                  FROM kinic_pending_operations
-                 WHERE kind = ?1
-                   AND operation_id > ?2
+                 WHERE kind IN (?1, ?2)
+                   AND operation_id > ?3
                  ORDER BY operation_id ASC
-                 LIMIT ?3",
+                 LIMIT ?4",
             )
             .map_err(|error| error.to_string())?;
         crate::sqlite::query_map(
             &mut stmt,
-            params![KINIC_PENDING_KIND_DEPOSIT, cursor, fetch_limit],
+            params![
+                KINIC_PENDING_KIND_DEPOSIT,
+                KINIC_PENDING_KIND_WITHDRAW,
+                cursor,
+                fetch_limit
+            ],
             map_pending_kinic_operation_raw,
         )
         .map_err(|error| error.to_string())
@@ -5483,15 +5784,21 @@ fn load_kinic_pending_operations(
                 "SELECT operation_id, kind, caller, operation_status, amount_e8s,
                         external_block_index, created_at_ms
                  FROM kinic_pending_operations
-                 WHERE kind = ?1 AND caller = ?2
-                   AND operation_id > ?3
+                 WHERE kind IN (?1, ?2) AND caller = ?3
+                   AND operation_id > ?4
                  ORDER BY operation_id ASC
-                 LIMIT ?4",
+                 LIMIT ?5",
             )
             .map_err(|error| error.to_string())?;
         crate::sqlite::query_map(
             &mut stmt,
-            params![KINIC_PENDING_KIND_DEPOSIT, caller, cursor, fetch_limit],
+            params![
+                KINIC_PENDING_KIND_DEPOSIT,
+                KINIC_PENDING_KIND_WITHDRAW,
+                caller,
+                cursor,
+                fetch_limit
+            ],
             map_pending_kinic_operation_raw,
         )
         .map_err(|error| error.to_string())
@@ -5610,6 +5917,21 @@ fn require_market_listing_seller_or_admin(
     Err("market listing seller or admin required".to_string())
 }
 
+fn require_database_owner_or_billing_admin(
+    conn: &Connection,
+    caller: &str,
+    database_id: &str,
+) -> Result<(), String> {
+    let config = load_cycles_billing_config(conn)?;
+    if caller == config.billing_authority_id {
+        return Ok(());
+    }
+    if load_member_role(conn, database_id, caller)? == Some(DatabaseRole::Owner) {
+        return Ok(());
+    }
+    Err("database owner or admin required".to_string())
+}
+
 fn require_market_listing_purchasable(
     conn: &Connection,
     listing: &MarketListing,
@@ -5648,9 +5970,8 @@ fn load_market_listing_by_id(
 ) -> Result<Option<MarketListing>, String> {
     conn.query_row(
         "SELECT listing_id, seller_principal, database_id, title, description,
-                llm_summary, summary_snapshot_revision, sample_excerpts_json,
-                tags_json, price_e8s, status, revision,
-                purchase_count, report_count, created_at_ms, updated_at_ms
+                llm_summary, tags_json, price_e8s, status,
+                revision, purchase_count, report_count, created_at_ms, updated_at_ms
          FROM market_listings
          WHERE listing_id = ?1",
         params![listing_id],
@@ -5661,10 +5982,10 @@ fn load_market_listing_by_id(
 }
 
 fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketListing> {
-    let price_e8s: i64 = crate::sqlite::row_get(row, 9)?;
-    let revision: i64 = crate::sqlite::row_get(row, 11)?;
-    let purchase_count: i64 = crate::sqlite::row_get(row, 12)?;
-    let report_count: i64 = crate::sqlite::row_get(row, 13)?;
+    let price_e8s: i64 = crate::sqlite::row_get(row, 7)?;
+    let revision: i64 = crate::sqlite::row_get(row, 9)?;
+    let purchase_count: i64 = crate::sqlite::row_get(row, 10)?;
+    let report_count: i64 = crate::sqlite::row_get(row, 11)?;
     Ok(MarketListing {
         listing_id: crate::sqlite::row_get(row, 0)?,
         seller_principal: crate::sqlite::row_get(row, 1)?,
@@ -5672,20 +5993,18 @@ fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Mar
         title: crate::sqlite::row_get(row, 3)?,
         description: crate::sqlite::row_get(row, 4)?,
         llm_summary: crate::sqlite::row_get(row, 5)?,
-        summary_snapshot_revision: crate::sqlite::row_get(row, 6)?,
-        sample_excerpts_json: crate::sqlite::row_get(row, 7)?,
-        tags_json: crate::sqlite::row_get(row, 8)?,
+        tags_json: crate::sqlite::row_get(row, 6)?,
         price_e8s: u64::try_from(price_e8s)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(9, price_e8s))?,
-        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 10)?)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(7, price_e8s))?,
+        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 8)?)?,
         revision: u64::try_from(revision)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(11, revision))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(9, revision))?,
         purchase_count: u64::try_from(purchase_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(12, purchase_count))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(10, purchase_count))?,
         report_count: u64::try_from(report_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(13, report_count))?,
-        created_at_ms: crate::sqlite::row_get(row, 14)?,
-        updated_at_ms: crate::sqlite::row_get(row, 15)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(11, report_count))?,
+        created_at_ms: crate::sqlite::row_get(row, 12)?,
+        updated_at_ms: crate::sqlite::row_get(row, 13)?,
     })
 }
 
@@ -5695,7 +6014,7 @@ fn load_market_order_by_id(
 ) -> Result<Option<MarketOrder>, String> {
     conn.query_row(
         "SELECT order_id, listing_id, database_id, buyer_principal, seller_principal,
-                price_e8s, listing_revision, created_at_ms
+                price_e8s, created_at_ms
          FROM market_orders
          WHERE order_id = ?1",
         params![order_id],
@@ -5707,7 +6026,6 @@ fn load_market_order_by_id(
 
 fn map_market_order(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketOrder> {
     let price_e8s: i64 = crate::sqlite::row_get(row, 5)?;
-    let listing_revision: i64 = crate::sqlite::row_get(row, 6)?;
     Ok(MarketOrder {
         order_id: crate::sqlite::row_get(row, 0)?,
         listing_id: crate::sqlite::row_get(row, 1)?,
@@ -5716,9 +6034,7 @@ fn map_market_order(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Marke
         seller_principal: crate::sqlite::row_get(row, 4)?,
         price_e8s: u64::try_from(price_e8s)
             .map_err(|_| crate::sqlite::integral_value_out_of_range(5, price_e8s))?,
-        listing_revision: u64::try_from(listing_revision)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(6, listing_revision))?,
-        created_at_ms: crate::sqlite::row_get(row, 7)?,
+        created_at_ms: crate::sqlite::row_get(row, 6)?,
     })
 }
 
@@ -5765,6 +6081,7 @@ fn empty_market_listing_detail(listing: MarketListing) -> MarketListingDetail {
                 nodes: Vec::new(),
                 edges: Vec::new(),
             },
+            graph_links: Vec::new(),
             preview_stale: true,
         },
     }
@@ -5778,8 +6095,6 @@ fn validate_market_create_listing_request(
         title: &request.title,
         description: &request.description,
         llm_summary: request.llm_summary.as_deref(),
-        summary_snapshot_revision: request.summary_snapshot_revision.as_deref(),
-        sample_excerpts_json: &request.sample_excerpts_json,
         tags_json: &request.tags_json,
         price_e8s: request.price_e8s,
     })
@@ -5792,8 +6107,6 @@ fn validate_market_update_listing_request(
         title: &request.title,
         description: &request.description,
         llm_summary: request.llm_summary.as_deref(),
-        summary_snapshot_revision: request.summary_snapshot_revision.as_deref(),
-        sample_excerpts_json: &request.sample_excerpts_json,
         tags_json: &request.tags_json,
         price_e8s: request.price_e8s,
     })
@@ -5803,8 +6116,6 @@ struct MarketListingMetadataValidation<'a> {
     title: &'a str,
     description: &'a str,
     llm_summary: Option<&'a str>,
-    summary_snapshot_revision: Option<&'a str>,
-    sample_excerpts_json: &'a str,
     tags_json: &'a str,
     price_e8s: u64,
 }
@@ -5836,72 +6147,12 @@ fn validate_market_listing_metadata(
             MAX_MARKET_DESCRIPTION_CHARS,
         )?;
     }
-    if let Some(revision) = input.summary_snapshot_revision {
-        validate_market_text("market listing summary revision", revision, 0, 256)?;
-    }
-    validate_market_text(
-        "market listing sample excerpts",
-        input.sample_excerpts_json,
-        0,
-        MAX_MARKET_JSON_CHARS,
-    )?;
-    parse_market_preview_excerpts(input.sample_excerpts_json)?;
     validate_market_text(
         "market listing tags",
         input.tags_json,
         0,
         MAX_MARKET_JSON_CHARS,
     )
-}
-
-fn parse_market_preview_excerpts(value: &str) -> Result<Vec<MarketPreviewExcerpt>, String> {
-    let parsed = serde_json::from_str::<Value>(value)
-        .map_err(|error| format!("market listing sample excerpts JSON is invalid: {error}"))?;
-    let Value::Array(items) = parsed else {
-        return Err("market listing sample excerpts must be a JSON array".to_string());
-    };
-    if items.len() > MAX_MARKET_PREVIEW_EXCERPTS {
-        return Err(format!(
-            "market listing sample excerpts must have at most {MAX_MARKET_PREVIEW_EXCERPTS} items"
-        ));
-    }
-    let mut excerpts = Vec::with_capacity(items.len());
-    for item in items {
-        let Value::Object(object) = item else {
-            return Err("market listing sample excerpt must be an object".to_string());
-        };
-        let path = market_preview_string_field(&object, "path")?;
-        let etag = market_preview_string_field(&object, "etag")?;
-        let excerpt = market_preview_string_field(&object, "excerpt")?;
-        validate_source_path_for_kind(&path, &NodeKind::File)?;
-        if !path.starts_with("/Wiki/") {
-            return Err("market listing sample excerpt path must be under /Wiki".to_string());
-        }
-        validate_market_text("market listing sample excerpt etag", &etag, 1, 256)?;
-        validate_market_text(
-            "market listing sample excerpt",
-            &excerpt,
-            1,
-            MAX_MARKET_PREVIEW_EXCERPT_CHARS,
-        )?;
-        excerpts.push(MarketPreviewExcerpt {
-            path,
-            etag,
-            excerpt,
-        });
-    }
-    Ok(excerpts)
-}
-
-fn market_preview_string_field(
-    object: &serde_json::Map<String, Value>,
-    field: &str,
-) -> Result<String, String> {
-    object
-        .get(field)
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .ok_or_else(|| format!("market listing sample excerpt {field} is required"))
 }
 
 fn validate_market_text(
@@ -7307,10 +7558,6 @@ fn database_meta_error(conn: &Connection, database_id: &str) -> String {
         }
         _ => format!("database not found: {database_id}"),
     }
-}
-
-fn load_database(conn: &Connection, database_id: &str) -> Result<Option<DatabaseMeta>, String> {
-    load_database_with_statuses(conn, database_id, &[DatabaseStatus::Active])
 }
 
 fn load_database_status(conn: &Connection, database_id: &str) -> Result<DatabaseStatus, String> {
