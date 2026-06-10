@@ -16,10 +16,11 @@ use vfs_types::{
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KinicDepositRequest,
     KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, KinicWithdrawRequest,
     ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketPurchaseRequest,
-    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
-    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest,
-    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest,
-    StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -40,15 +41,16 @@ use super::{
     last_ledger_memo_for_test, last_ledger_to_for_test, ledger_transfer_fees_for_test,
     list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
     list_database_members, list_databases, list_nodes, market_create_listing, market_get_listing,
-    market_publish_listing, market_purchase_access, memory_manifest, mkdir_node, move_node,
-    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
-    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
-    read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
-    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
-    set_next_ledger_transfer_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
-    status, transfer_error_outcome, transfer_from_error_outcome, update_charge_cycles,
-    update_cycles_billing_config, write_database_restore_chunk, write_node, write_nodes,
+    market_publish_listing, market_purchase_access, market_update_listing, memory_manifest,
+    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
+    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
+    rename_database, revoke_database_access, search_node_paths, search_nodes,
+    set_next_ledger_transfer_from_outcome_for_test, set_next_ledger_transfer_outcome_for_test,
+    set_test_caller_principal_for_test, set_update_charge_units_for_test,
+    settle_database_storage_charges_batch, source_evidence, status, transfer_error_outcome,
+    transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -2076,6 +2078,97 @@ fn canister_list_databases_hides_deleted_databases() {
     let summaries = list_databases().expect("database summaries should load");
 
     assert!(summaries.is_empty());
+}
+
+#[test]
+fn market_listing_description_allows_newlines() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Multiline market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(220));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        let mut create = market_listing_request(&database_id, 500);
+        create.description = "Line one\nLine two\r\n\tIndented".to_string();
+        create.llm_summary = Some("Summary one\nSummary two".to_string());
+        let listing = market_create_listing(create).expect("multiline description should create");
+        assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
+        assert_eq!(
+            listing.llm_summary,
+            Some("Summary one\nSummary two".to_string())
+        );
+
+        let updated = market_update_listing(MarketUpdateListingRequest {
+            listing_id: listing.listing_id,
+            expected_revision: listing.revision,
+            title: "Updated market DB".to_string(),
+            description: "Updated one\nUpdated two".to_string(),
+            llm_summary: Some("Updated summary\nSecond line".to_string()),
+            tags_json: "[]".to_string(),
+            price_e8s: 600,
+        })
+        .expect("multiline description should update");
+        assert_eq!(updated.description, "Updated one\nUpdated two");
+        assert_eq!(
+            updated.llm_summary,
+            Some("Updated summary\nSecond line".to_string())
+        );
+    }
+}
+
+#[test]
+fn market_listing_description_rejects_non_whitespace_control_characters() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Control market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(221));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        let mut bad_description = market_listing_request(&database_id, 500);
+        bad_description.description = "bad\0description".to_string();
+        let description_error = market_create_listing(bad_description)
+            .expect_err("NUL in description should be rejected");
+        assert!(
+            description_error
+                .contains("market listing description may not contain control characters")
+        );
+
+        let mut bad_title = market_listing_request(&database_id, 500);
+        bad_title.title = "bad\ntitle".to_string();
+        let title_error =
+            market_create_listing(bad_title).expect_err("title newline should be rejected");
+        assert!(title_error.contains("market listing title may not contain control characters"));
+
+        let mut bad_tags = market_listing_request(&database_id, 500);
+        bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
+        let tags_error =
+            market_create_listing(bad_tags).expect_err("tags newline should be rejected");
+        assert!(tags_error.contains("market listing tags may not contain control characters"));
+    }
 }
 
 #[test]

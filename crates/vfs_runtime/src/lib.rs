@@ -6132,14 +6132,14 @@ fn validate_market_listing_metadata(
         1,
         MAX_MARKET_TITLE_CHARS,
     )?;
-    validate_market_text(
+    validate_market_multiline_text(
         "market listing description",
         input.description,
         1,
         MAX_MARKET_DESCRIPTION_CHARS,
     )?;
     if let Some(summary) = input.llm_summary {
-        validate_market_text(
+        validate_market_multiline_text(
             "market listing summary",
             summary,
             0,
@@ -6167,6 +6167,27 @@ fn validate_market_text(
         ));
     }
     if value.chars().any(char::is_control) {
+        return Err(format!("{label} may not contain control characters"));
+    }
+    Ok(())
+}
+
+fn validate_market_multiline_text(
+    label: &str,
+    value: &str,
+    min_chars: usize,
+    max_chars: usize,
+) -> Result<(), String> {
+    let count = value.chars().count();
+    if count < min_chars || count > max_chars {
+        return Err(format!(
+            "{label} must be {min_chars}..{max_chars} characters"
+        ));
+    }
+    if value
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    {
         return Err(format!("{label} may not contain control characters"));
     }
     Ok(())

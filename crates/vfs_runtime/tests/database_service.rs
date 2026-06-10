@@ -4763,6 +4763,78 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
 }
 
 #[test]
+fn market_listing_description_allows_newlines() {
+    let service = service();
+    service
+        .create_database("multiline-market", "seller", 1)
+        .expect("database should create");
+
+    let mut create = market_listing_request("multiline-market", 250);
+    create.description = "Line one\nLine two\r\n\tIndented".to_string();
+    create.llm_summary = Some("Summary one\nSummary two".to_string());
+    let listing = service
+        .market_create_listing("seller", create, 2)
+        .expect("multiline description should create");
+    assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
+    assert_eq!(
+        listing.llm_summary,
+        Some("Summary one\nSummary two".to_string())
+    );
+
+    let updated = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id,
+                expected_revision: listing.revision,
+                title: "Updated market DB".to_string(),
+                description: "Updated one\nUpdated two".to_string(),
+                llm_summary: Some("Updated summary\nSecond line".to_string()),
+                tags_json: "[]".to_string(),
+                price_e8s: 300,
+            },
+            3,
+        )
+        .expect("multiline description should update");
+    assert_eq!(updated.description, "Updated one\nUpdated two");
+    assert_eq!(
+        updated.llm_summary,
+        Some("Updated summary\nSecond line".to_string())
+    );
+}
+
+#[test]
+fn market_listing_description_rejects_non_whitespace_control_characters() {
+    let service = service();
+    service
+        .create_database("control-market", "seller", 1)
+        .expect("database should create");
+
+    let mut bad_description = market_listing_request("control-market", 250);
+    bad_description.description = "bad\0description".to_string();
+    let description_error = service
+        .market_create_listing("seller", bad_description, 2)
+        .expect_err("NUL in description should be rejected");
+    assert!(
+        description_error.contains("market listing description may not contain control characters")
+    );
+
+    let mut bad_title = market_listing_request("control-market", 250);
+    bad_title.title = "bad\ntitle".to_string();
+    let title_error = service
+        .market_create_listing("seller", bad_title, 3)
+        .expect_err("title newline should be rejected");
+    assert!(title_error.contains("market listing title may not contain control characters"));
+
+    let mut bad_tags = market_listing_request("control-market", 250);
+    bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
+    let tags_error = service
+        .market_create_listing("seller", bad_tags, 4)
+        .expect_err("tags newline should be rejected");
+    assert!(tags_error.contains("market listing tags may not contain control characters"));
+}
+
+#[test]
 fn market_purchase_rejects_seller_self_purchase() {
     let service = service();
     service
