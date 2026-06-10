@@ -80,12 +80,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const KinicDepositRequest = idl.Record({ amount_e8s: idl.Nat64, expected_fee_e8s: idl.Nat64 });
   const KinicDepositResult = idl.Record({ block_index: idl.Nat64, amount_e8s: idl.Nat64, balance_e8s: idl.Nat64 });
-  const KinicWithdrawRequest = idl.Record({
-    to_owner: idl.Text,
-    amount_e8s: idl.Nat64,
-    to_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
-    expected_fee_e8s: idl.Nat64
-  });
+  const KinicWithdrawRequest = idl.Record({ to_owner: idl.Text, amount_e8s: idl.Nat64, expected_fee_e8s: idl.Nat64 });
   const KinicWithdrawResult = idl.Record({
     block_index: idl.Nat64,
     amount_e8s: idl.Nat64,
@@ -161,7 +156,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     price_e8s: idl.Nat64
   });
   const MarketOrderPage = idl.Record({ orders: idl.Vec(MarketOrder), next_cursor: idl.Opt(idl.Text) });
-  const MarketPreviewExcerpt = idl.Record({ path: idl.Text, etag: idl.Text, excerpt: idl.Text });
+  const MarketPreviewExcerpt = idl.Record({
+    path: idl.Text,
+    etag: idl.Text,
+    excerpt: idl.Text,
+    content_chars: idl.Nat64
+  });
   const MarketListingPreview = idl.Record({
     top_level_paths: idl.Vec(idl.Text),
     excerpts: idl.Vec(MarketPreviewExcerpt),

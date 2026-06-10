@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { Bot, CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminPanel } from "@/components/admin-ui";
@@ -51,42 +51,84 @@ const safetyNotes = [
   "Agents should request JSON output and use etag guards before mutating existing nodes."
 ];
 
+const workflowSteps = [
+  { label: "Install", text: "Add the CLI package once per machine." },
+  { label: "Connect", text: "Link a database or pass a database id per command." },
+  { label: "Use JSON", text: "Request structured output for agents and scripts." },
+  { label: "Guard writes", text: "Read etags before editing existing nodes." }
+];
+
 export default function CliPage() {
   return (
     <AdminContent>
-      <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-6">
+        <AdminPanel className="min-w-0" padding="lg">
+          <div className="grid gap-6 lg:grid-cols-[1fr_0.92fr]">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Bot aria-hidden className="text-accent" size={20} />
+                <p className="text-sm font-semibold uppercase text-accentText">Automation entrypoint</p>
+              </div>
+              <h1 className="mt-3 text-2xl font-semibold text-ink">Run Kinic Wiki from the CLI</h1>
+              <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
+                <code>kinic-vfs-cli</code> is the command-line interface for Kinic Wiki databases. It lets automation search, read, edit,
+                connect databases, and record Skill Registry evidence without opening the browser.
+              </p>
+              <div className="mt-5">
+                <CliGuideBlock compact icon={<TerminalSquare aria-hidden size={18} />} title="Install" commands={installCommands}>
+                  Install the published npm package. It downloads the matching <code>kinic-vfs-cli</code> release binary and verifies its SHA-256 checksum.
+                </CliGuideBlock>
+              </div>
+            </div>
+            <div className="min-w-0 rounded-lg border border-line bg-white p-4">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 aria-hidden className="text-accent" size={18} />
+                <h2 className="text-base font-semibold text-ink">CLI workflow</h2>
+              </div>
+              <ol className="mt-4 grid gap-3">
+                {workflowSteps.map((step, index) => (
+                  <li className="grid grid-cols-[2rem_1fr] gap-3" key={step.label}>
+                    <span className="inline-flex size-8 items-center justify-center rounded-lg border border-line bg-paper text-sm font-semibold text-ink">{index + 1}</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold text-ink">{step.label}</span>
+                      <span className="mt-0.5 block text-sm leading-5 text-muted">{step.text}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </AdminPanel>
+
         <section className="grid gap-4 md:grid-cols-2">
-          <CliGuideBlock icon={<TerminalSquare aria-hidden size={18} />} title="Install" commands={installCommands}>
-            The npm package downloads the matching release binary and verifies its SHA-256 checksum.
-          </CliGuideBlock>
           <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="First Check" commands={checkCommands}>
-            Confirm the installed binary, then inspect the command index before connecting it to a database.
+            Confirm the installed binary, then use <code>--help</code> to inspect the command index before connecting automation to a database.
           </CliGuideBlock>
-          <CliGuideBlock icon={<Database aria-hidden size={18} />} title="Connect" commands={connectionCommands}>
-            Pass <code>--database-id</code> for one command, run <code>database link</code> once for a workspace, or set <code>VFS_DATABASE_ID</code> for scripts.
+          <CliGuideBlock icon={<Database aria-hidden size={18} />} title="Connect Database" commands={connectionCommands}>
+            Pass <code>--database-id</code> for one command, run <code>database link</code> once for a workspace, or set <code>VFS_DATABASE_ID</code> in scripted environments.
           </CliGuideBlock>
-          <CliGuideBlock icon={<Search aria-hidden size={18} />} title="Agent Read Workflow" commands={readCommands}>
-            Search first, read exact paths next, then request context when link relationships matter. Agents should use <code>--json</code>.
+          <CliGuideBlock icon={<Search aria-hidden size={18} />} title="Read Workflow" commands={readCommands}>
+            Search first, read exact paths next, then request context when link relationships matter. Use <code>--json</code> so agents can parse results safely.
           </CliGuideBlock>
-          <CliGuideBlock icon={<Wrench aria-hidden size={18} />} title="Agent Write Workflow" commands={writeCommands}>
-            Read the node first, keep its <code>etag</code>, mutate with <code>--expected-etag</code>, then read again to verify the stored content.
+          <CliGuideBlock icon={<Wrench aria-hidden size={18} />} title="Safe Write Workflow" commands={writeCommands}>
+            Read the node first, keep its <code>etag</code>, edit with <code>--expected-etag</code>, then read again to verify the stored content.
+          </CliGuideBlock>
+          <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="Skill Registry" commands={skillCommands}>
+            Find a skill, inspect the package before use, then record run evidence after the agent completes the task.
           </CliGuideBlock>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="Skill Registry Workflow" commands={skillCommands}>
-            Agents and operators should discover a skill, inspect the package, use it, then record run evidence.
-          </CliGuideBlock>
-          <AdminPanel className="min-w-0" padding="lg">
+        <section>
+          <AdminPanel className="min-w-0" padding="md">
             <div className="flex items-center gap-2">
               <ShieldCheck aria-hidden className="text-accent" size={18} />
-              <h2 className="text-lg font-semibold text-ink">Safety Notes</h2>
+              <h2 className="text-base font-semibold text-ink">Safety Notes</h2>
             </div>
-            <ul className="mt-4 flex flex-col gap-3 text-sm leading-6 text-muted">
+            <ul className="mt-3 grid gap-2 text-sm leading-6 text-muted md:grid-cols-2">
               {safetyNotes.map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
           </AdminPanel>
         </section>
       </div>

@@ -64,9 +64,8 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Create requires {requiredBalanceLabel}. App balance pays from the canister account; External wallet approves from ledger wallet balance.
+              Create requires {requiredBalanceLabel}. External wallet pays directly from ledger balance. App balance is for seller proceeds or internal balance.
             </p>
-            <p className="mt-1 text-xs leading-5 text-muted">Direct ledger transfers are wallet balance only. Use Deposit to credit App balance.</p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
             <X aria-hidden size={16} />

@@ -191,6 +191,7 @@ type RawMarketPreviewExcerpt = {
   path: string;
   etag: string;
   excerpt: string;
+  content_chars: bigint;
 };
 
 type RawMarketCategoryGraphNode = {
@@ -257,7 +258,6 @@ type RawKinicWithdrawRequest = {
   amount_e8s: bigint;
   expected_fee_e8s: bigint;
   to_owner: string;
-  to_subaccount: [] | [number[]];
 };
 
 type RawKinicWithdrawResult = {
@@ -765,8 +765,7 @@ export async function kinicWithdrawBalance(
   identity: Identity,
   amountE8s: string,
   expectedFeeE8s: string,
-  toOwner: string,
-  toSubaccount: number[] | null
+  toOwner: string
 ): Promise<KinicWithdrawResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
@@ -777,8 +776,7 @@ export async function kinicWithdrawBalance(
     const result = await actor.kinic_withdraw_balance({
       amount_e8s: BigInt(amountE8s),
       expected_fee_e8s: BigInt(expectedFeeE8s),
-      to_owner: recipient.toText(),
-      to_subaccount: toSubaccount ? [toSubaccount] : []
+      to_owner: recipient.toText()
     });
     if ("Err" in result) {
       throwCanisterError(result.Err);
@@ -1525,7 +1523,8 @@ function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListin
       excerpts: raw.preview.excerpts.map((excerpt) => ({
         path: excerpt.path,
         etag: excerpt.etag,
-        excerpt: excerpt.excerpt
+        excerpt: excerpt.excerpt,
+        contentChars: excerpt.content_chars.toString()
       })),
       categoryGraph: {
         nodes: raw.preview.category_graph.nodes.map((node) => ({

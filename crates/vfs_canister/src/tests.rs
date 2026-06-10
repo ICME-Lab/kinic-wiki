@@ -39,7 +39,7 @@ use super::{
     kinic_list_pending_operations, kinic_withdraw_balance, last_ledger_from_for_test,
     last_ledger_memo_for_test, last_ledger_to_for_test, ledger_transfer_fees_for_test,
     list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
-    list_database_members, list_databases, list_nodes, market_create_listing,
+    list_database_members, list_databases, list_nodes, market_create_listing, market_get_listing,
     market_publish_listing, market_purchase_access, memory_manifest, mkdir_node, move_node,
     multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
     purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
@@ -286,7 +286,6 @@ fn kinic_withdraw_request(amount_e8s: u64) -> KinicWithdrawRequest {
         amount_e8s,
         expected_fee_e8s: KINIC_LEDGER_FEE_E8S,
         to_owner: "bkyz2-fmaaa-aaaaa-qaaaq-cai".to_string(),
-        to_subaccount: None,
     }
 }
 
@@ -1032,13 +1031,6 @@ fn kinic_withdraw_balance_validates_recipient_and_balance() {
     }))
     .expect_err("invalid recipient principal should reject");
     assert!(invalid_owner.contains("invalid KINIC withdraw recipient principal"));
-
-    let invalid_subaccount = block_on_ready(kinic_withdraw_balance(KinicWithdrawRequest {
-        to_subaccount: Some(vec![1, 2, 3]),
-        ..kinic_withdraw_request(1)
-    }))
-    .expect_err("invalid recipient subaccount should reject");
-    assert!(invalid_subaccount.contains("subaccount must be 32 bytes"));
 
     let insufficient = block_on_ready(kinic_withdraw_balance(kinic_withdraw_request(1)))
         .expect_err("empty internal balance should reject");
@@ -2175,6 +2167,79 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].role, DatabaseRole::Writer);
     }
+}
+
+#[test]
+fn marketplace_listing_detail_includes_wiki_node_character_counts() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+    let listing_id;
+    let japanese_content = "# 日本語\n\nabc";
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market character counts".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(211));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Wiki/japanese.md".to_string(),
+            kind: NodeKind::File,
+            content: japanese_content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("wiki node should write");
+        for path in ["/Sources", "/Sources/raw", "/Sources/raw/test"] {
+            mkdir_node(MkdirNodeRequest {
+                database_id: database_id.clone(),
+                path: path.to_string(),
+            })
+            .expect("source parent folder should create");
+        }
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Sources/raw/test/source.md".to_string(),
+            kind: NodeKind::Source,
+            content: "source text should not appear in marketplace node sizes".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("source node should write");
+        let listing = market_create_listing(market_listing_request(&database_id, 500))
+            .expect("listing should create");
+        let active = market_publish_listing(listing.listing_id).expect("listing should publish");
+        listing_id = active.listing_id;
+    }
+
+    let detail = market_get_listing(listing_id).expect("listing detail should load");
+    let excerpt = detail
+        .preview
+        .excerpts
+        .iter()
+        .find(|excerpt| excerpt.path == "/Wiki/japanese.md")
+        .expect("wiki file should appear in marketplace node size details");
+    assert_eq!(
+        excerpt.content_chars,
+        japanese_content.chars().count() as u64
+    );
+    assert_eq!(excerpt.excerpt, japanese_content);
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .all(|excerpt| !excerpt.path.starts_with("/Sources/"))
+    );
 }
 
 #[test]

@@ -47,7 +47,7 @@ export function AppHeader() {
               connectedProvider={wallet?.provider ?? null}
               balanceLoading={walletBalanceLoading}
               disabled={walletControlsLocked}
-              externalWalletDisabledReason={runtime.externalWalletUnavailableReason}
+              externalWalletsAvailable={runtime.externalWalletsAvailable}
               onConnect={(provider) => {
                 void connectWallet(provider);
               }}

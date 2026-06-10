@@ -24,7 +24,7 @@ type PendingAclAction = {
   kind: "grant" | "revoke";
 };
 
-export type DashboardTab = "access" | "list" | "buyers" | "cycles-history";
+export type DashboardTab = "access" | "list" | "buyers" | "cycles-history" | "settings";
 
 export function AuthControls(props: { authReady: boolean; loading: boolean; principal: string | null; onLogin: () => void; onLogout: () => void }) {
   if (!props.principal) {
@@ -82,34 +82,22 @@ export function SummaryPanel({
   );
 }
 
-export function PendingDatabasePanel(props: {
-  busy: boolean;
-  busyAction: BusyAction | null;
-  databaseId: string;
-  databaseName: string;
-  onDelete: () => Promise<string | null>;
-}) {
+export function PendingDatabasePanel() {
   return (
     <section className="rounded-lg border border-line bg-paper shadow-sm">
       <div className="grid gap-2 border-b border-line px-4 py-4">
         <h2 className="text-lg font-semibold text-ink">Reserved database</h2>
         <p className="text-sm leading-6 text-muted">This database is reserved until the first cycle purchase completes. VFS, skills, and member management are available after activation.</p>
       </div>
-      <DatabaseDangerZone activeEntitlementCount={null} cyclesBalance="0" busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
     </section>
   );
 }
 
 export function OwnerPanel(props: {
-  cyclesBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
-  databaseId: string;
-  databaseName: string;
-  activeEntitlementCount: string | null;
   members: DatabaseMember[];
   principal: string;
-  onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
   onRevoke: (principalText: string) => void;
 }) {
@@ -241,6 +229,38 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
+    </section>
+  );
+}
+
+export function DashboardSettingsPanel(props: {
+  activeEntitlementCount: string | null;
+  busy: boolean;
+  busyAction: BusyAction | null;
+  canRename: boolean;
+  cyclesBalance: string;
+  databaseId: string;
+  databaseName: string;
+  onDelete: () => Promise<string | null>;
+  onRename: () => void;
+}) {
+  return (
+    <div className="grid gap-4">
+      {props.canRename ? (
+        <section className="rounded-lg border border-line bg-paper shadow-sm">
+          <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-ink">Rename database</h2>
+              <p className="mt-2 break-all font-mono text-xs text-muted">
+                {props.databaseName} / {props.databaseId}
+              </p>
+            </div>
+            <ActionButton disabled={props.busy} loading={props.busyAction?.kind === "rename"} loadingLabel="Saving..." onClick={props.onRename} size="compact" variant="secondary">
+              Rename
+            </ActionButton>
+          </div>
+        </section>
+      ) : null}
       <DatabaseDangerZone
         activeEntitlementCount={props.activeEntitlementCount}
         cyclesBalance={props.cyclesBalance}
@@ -250,7 +270,7 @@ export function OwnerPanel(props: {
         databaseName={props.databaseName}
         onDelete={props.onDelete}
       />
-    </section>
+    </div>
   );
 }
 
@@ -269,7 +289,7 @@ export function MarketListingsPanel(props: {
   const [title, setTitle] = useState(props.databaseName);
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("1");
-  const [tags, setTags] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
   const selected = props.listings.find((listing) => listing.listingId === selectedListingId) ?? null;
   const priceE8s = parseKinicInput(price);
   const submitDisabled = props.busy || !title.trim() || !description.trim() || !priceE8s;
@@ -289,7 +309,7 @@ export function MarketListingsPanel(props: {
       title: title.trim(),
       description: description.trim(),
       llmSummary: null,
-      tagsJson: tagsJsonFromInput(tags),
+      tagsJson: tagsJsonFromTags(tags),
       priceE8s
     };
     if (selected) {
@@ -306,20 +326,36 @@ export function MarketListingsPanel(props: {
     }
   }
 
+  function updateTag(index: number, value: string) {
+    setTags((current) => current.map((tag, tagIndex) => (tagIndex === index ? value : tag)));
+  }
+
+  function addTag() {
+    setTags((current) => [...current, ""]);
+  }
+
+  function removeTag(index: number) {
+    setTags((current) => current.filter((_, tagIndex) => tagIndex !== index));
+  }
+
   return (
-    <div className="grid gap-4 border-t border-line px-4 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="rounded-lg border border-line bg-paper shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-ink">Marketplace</h3>
+          <h3 className="text-lg font-semibold text-ink">Marketplace</h3>
           <p className="mt-1 text-sm leading-6 text-muted">DB owner can sell paid reader access.</p>
         </div>
         <Link className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent" href="/marketplace">
           Marketplace
         </Link>
       </div>
-      {props.error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{props.error}</p> : null}
+      {props.error ? (
+        <div className="px-4 pt-4">
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{props.error}</p>
+        </div>
+      ) : null}
       {props.listings.length ? (
-        <div className="grid gap-2">
+        <div className="grid gap-2 px-4 py-4">
           {props.listings.map((listing) => (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm" key={listing.listingId}>
               <div className="min-w-0">
@@ -346,7 +382,7 @@ export function MarketListingsPanel(props: {
           ))}
         </div>
       ) : null}
-      <form className="grid gap-3" onSubmit={submit}>
+      <form className={`${props.listings.length ? "border-t border-line" : ""} grid gap-3 px-4 py-4`} onSubmit={submit}>
         <div className="grid gap-3 md:grid-cols-2">
           <label className="grid gap-1 text-sm">
             <span className="text-xs uppercase text-muted">Title</span>
@@ -361,11 +397,27 @@ export function MarketListingsPanel(props: {
           <span className="text-xs uppercase text-muted">Description</span>
           <textarea className="min-h-24 rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={description} onChange={(event) => setDescription(event.target.value)} />
         </label>
-        <label className="grid gap-1 text-sm">
-          <span className="text-xs uppercase text-muted">Tags</span>
-          <input className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={tags} onChange={(event) => setTags(event.target.value)} />
-        </label>
-        <div className="flex flex-wrap gap-2">
+        <div className="grid gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs uppercase text-muted">Tags</span>
+            <ActionButton disabled={props.busy} onClick={addTag} size="compact" variant="secondary">
+              Add tag
+            </ActionButton>
+          </div>
+          {tags.length ? (
+            <div className="grid gap-2">
+              {tags.map((tag, index) => (
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" key={index}>
+                  <input aria-label={`Tag ${index + 1}`} className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={tag} onChange={(event) => updateTag(index, event.target.value)} />
+                  <ActionButton disabled={props.busy} onClick={() => removeTag(index)} size="compact" variant="secondary">
+                    Remove
+                  </ActionButton>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
           <ActionButton disabled={submitDisabled} loading={props.busy} loadingLabel="Saving..." type="submit" variant="primary">
             {selected ? "Edit listing" : "Sell"}
           </ActionButton>
@@ -377,7 +429,7 @@ export function MarketListingsPanel(props: {
                 setTitle(props.databaseName);
                 setDescription("");
                 setPrice("1");
-                setTags("");
+                setTags([]);
               }}
               variant="secondary"
             >
@@ -386,7 +438,7 @@ export function MarketListingsPanel(props: {
           ) : null}
         </div>
       </form>
-    </div>
+    </section>
   );
 }
 
@@ -517,13 +569,14 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
   return <AdminNotice tone={tone} message={message} />;
 }
 
-export function DashboardTabs({ activeTab, canManageListings, onChange }: { activeTab: DashboardTab; canManageListings: boolean; onChange: (tab: DashboardTab) => void }) {
+export function DashboardTabs({ activeTab, canManageListings, canManageSettings, onChange }: { activeTab: DashboardTab; canManageListings: boolean; canManageSettings: boolean; onChange: (tab: DashboardTab) => void }) {
   return (
     <nav aria-label="Database dashboard sections" className="flex flex-wrap gap-2 border-b border-line">
       <DashboardTabButton active={activeTab === "access"} label="Access" onClick={() => onChange("access")} />
       {canManageListings ? <DashboardTabButton active={activeTab === "list"} label="List" onClick={() => onChange("list")} /> : null}
       {canManageListings ? <DashboardTabButton active={activeTab === "buyers"} label="Buyers" onClick={() => onChange("buyers")} /> : null}
       <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} />
+      {canManageSettings ? <DashboardTabButton active={activeTab === "settings"} label="Settings" onClick={() => onChange("settings")} /> : null}
     </nav>
   );
 }
@@ -796,22 +849,17 @@ function decimalFromE8s(value: string): string {
   return fraction ? `${whole}.${fraction}` : whole;
 }
 
-function tagsJsonFromInput(value: string): string {
-  const tags = value
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0);
-  return JSON.stringify(tags);
+function tagsJsonFromTags(value: string[]): string {
+  return JSON.stringify(value.map((tag) => tag.trim()).filter((tag) => tag.length > 0));
 }
 
-function tagsFromJson(value: string): string {
+function tagsFromJson(value: string): string[] {
   try {
     const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) return "";
-    const tags = parsed.filter((item): item is string => typeof item === "string");
-    return tags.join(", ");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string");
   } catch {
-    return "";
+    return [];
   }
 }
 

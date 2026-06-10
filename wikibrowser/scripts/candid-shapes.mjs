@@ -106,7 +106,6 @@ export const expectedTypes = {
     fields: {
       to_owner: "text",
       amount_e8s: "nat64",
-      to_subaccount: "opt blob",
       expected_fee_e8s: "nat64"
     }
   },
@@ -160,6 +159,7 @@ export const expectedTypes = {
       purchase_count: "nat64",
       database_id: "text",
       listing_id: "text",
+      revision: "nat64",
       price_e8s: "nat64",
       tags_json: "text"
     }
@@ -248,7 +248,7 @@ export const expectedTypes = {
   },
   MarketPreviewExcerpt: {
     kind: "record",
-    fields: { path: "text", etag: "text", excerpt: "text" }
+    fields: { path: "text", etag: "text", excerpt: "text", content_chars: "nat64" }
   },
   MarketUpdateListingRequest: {
     kind: "record",
@@ -257,6 +257,7 @@ export const expectedTypes = {
       title: "text",
       description: "text",
       listing_id: "text",
+      expected_revision: "nat64",
       price_e8s: "nat64",
       tags_json: "text"
     }

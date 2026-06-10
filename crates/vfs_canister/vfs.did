@@ -274,7 +274,6 @@ type KinicPendingOperationsPageRequest = record {
 };
 type KinicWithdrawRequest = record {
   to_owner : text;
-  to_subaccount : opt blob;
   amount_e8s : nat64;
   expected_fee_e8s : nat64;
 };
@@ -386,7 +385,12 @@ type MarketOrderPage = record {
   orders : vec MarketOrder;
   next_cursor : opt text;
 };
-type MarketPreviewExcerpt = record { etag : text; path : text; excerpt : text };
+type MarketPreviewExcerpt = record {
+  etag : text;
+  path : text;
+  excerpt : text;
+  content_chars : nat64;
+};
 type MarketPurchasePreview = record {
   already_entitled : bool;
   buyer_balance_e8s : nat64;

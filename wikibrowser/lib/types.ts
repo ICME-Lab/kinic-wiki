@@ -228,6 +228,7 @@ export type MarketPreviewExcerpt = {
   path: string;
   etag: string;
   excerpt: string;
+  contentChars: string;
 };
 
 export type MarketCategoryGraphNode = {

@@ -47,12 +47,12 @@ assert.match(client, /Login with Internet Identity to select a database\./);
 assert.match(client, /No fundable databases linked to this principal\./);
 assert.match(client, /const hasNoFundableDatabases = principal !== null && databaseLoadState === "ready" && fundableDatabases\.length === 0;/);
 assert.match(client, /const targetError = typeof parsedTarget === "string" && !hasNoFundableDatabases \? parsedTarget : null;/);
-assert.match(client, /typeof parsedTarget === "string" \|\|/);
-assert.match(client, /Wallet KINIC/);
-assert.match(client, /KINIC balance/);
+assert.match(client, /parsedTarget === null \|\|\s*typeof parsedTarget === "string" \|\|/);
+assert.match(client, /Wallet\s*<\/button>/);
+assert.match(client, /App balance\s*<\/button>/);
 assert.match(client, /useAppSession/);
 assert.match(client, /authClient\.getIdentity\(\)/);
-assert.match(client, /Login with Internet Identity to use KINIC balance/);
+assert.match(client, /Login with Internet Identity to use App balance/);
 assert.match(kinicFundingClient, /getCyclesBillingConfig\(canisterId\)/);
 assert.match(kinicFundingClient, /cyclesForPaymentAmountE8s\(parsedAmount, BigInt\(config\.cyclesPerKinic\)\)/);
 assert.match(cycles, /export function cyclesForPaymentAmountE8s\(amountE8s: bigint, cyclesPerKinic: bigint\): bigint/);
@@ -91,7 +91,9 @@ assert.match(client, /params\.set\("kinic", kinic\)/);
 assert.match(client, /params\.set\("cycles", cycles\)/);
 assert.match(client, /paymentSource === "wallet" \? !selectedProvider \|\| !runtime\.externalWalletsAvailable : authLoading \|\| !authClient \|\| kinicBalancePendingDisabled/);
 assert.match(client, /walletRuntime\(\)/);
-assert.match(client, /Wallet KINIC uses ledger wallet approval\. KINIC balance uses App balance; direct ledger transfers are not credited to App balance\./);
+assert.doesNotMatch(client, /Wallet funding pays directly from ledger balance\. App balance funding uses seller proceeds or internal balance\./);
+assert.match(client, /Fund cycles from App balance/);
+assert.match(client, /from App balance; database cycles balance/);
 assert.match(client, /disabled=\{resolvedDatabaseStatus === "pending"\}/);
 assert.doesNotMatch(client, /function WalletConnect/);
 assert.match(client, /onClick=\{\(\) => void purchase\(\)\}/);
@@ -204,7 +206,7 @@ assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the l
 assert.match(client, /transfer fee/);
 assert.match(client, /A newly created database is pending, not active, until this first cycles purchase completes\./);
 assert.match(client, /resolvedDatabaseStatus === "pending"/);
-assert.match(client, /External wallets are unavailable for local replica|externalWalletUnavailableReason/);
+assert.match(client, /!runtime\.externalWalletsAvailable && paymentSource === "wallet"/);
 assert.doesNotMatch(client, new RegExp("extractCycles" + "RepairTarget"));
 assert.doesNotMatch(client, new RegExp("saveCycles" + "Repair" + "Record"));
 assert.doesNotMatch(
@@ -219,7 +221,6 @@ assert.match(url, /MAX_CANISTER_I64/);
 assert.match(url, /kinicBaseUnitsPerToken/);
 assert.match(url, /KINIC must be a positive number with up to \$\{KINIC_DECIMALS\} decimals/);
 assert.match(url, /KINIC amount e8s must be <= i64::MAX/);
-assert.match(url, /database_id is required/);
 assert.doesNotMatch(url, /params\.set\("amount_e8s"/);
 assert.match(idl, /get_cycles_billing_config/);
 assert.doesNotMatch(idl, /preview_database_cycles_purchase/);
@@ -247,7 +248,7 @@ assert.throws(
 );
 assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams("database_id=db_ok-1")).databaseId, "db_ok-1");
 assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams("databaseId=dbLegacy")).databaseId, "dbLegacy");
-assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams()), "database_id is required");
+assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams()), null);
 assert.equal(cyclesUrlModule.parseCyclesTarget(new URLSearchParams("database_id=bad/path")), "database_id contains unsupported characters");
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("1"), 100_000_000n);
 assert.equal(cyclesUrlModule.parseKinicAmountE8sInput("0.00000001"), 1n);
@@ -313,8 +314,7 @@ const clientModule = loadTsModule(
       walletRuntime: () => ({
         icHost: "https://icp0.io",
         localReplica: false,
-        externalWalletsAvailable: true,
-        externalWalletUnavailableReason: null
+        externalWalletsAvailable: true
       })
     },
     "@/lib/kinic-wallet": {

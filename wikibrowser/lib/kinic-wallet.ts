@@ -281,6 +281,13 @@ export async function getConnectedWalletKinicBalance(canisterId: string, wallet:
   return balance.toString();
 }
 
+export async function getPrincipalKinicLedgerBalance(canisterId: string, principal: string): Promise<string> {
+  assertConfiguredCyclesCanister(canisterId);
+  const config = await getCyclesBillingConfig(canisterId);
+  const balance = await getLedgerBalance(config.kinicLedgerCanisterId, principal);
+  return balance.toString();
+}
+
 export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
   const prepared = await prepareCyclesPurchase(request, connection.owner);
   const wallet = await openOisyWallet();

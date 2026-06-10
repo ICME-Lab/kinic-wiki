@@ -20,12 +20,13 @@ use vfs_types::{
     FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge, MarketCategoryGraphNode,
-    MarketListingPreview, MarketListingVerifiedStats, MkdirNodeRequest, MkdirNodeResult,
-    MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node,
-    NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, SourceEvidence, SourceEvidenceRef, SourceEvidenceRequest, Status,
-    WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    MarketListingPreview, MarketListingVerifiedStats, MarketPreviewExcerpt, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidence, SourceEvidenceRef,
+    SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 use crate::{
@@ -54,6 +55,7 @@ const WIKI_ROOT_PATH: &str = "/Wiki";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
+const MARKETPLACE_PREVIEW_NODE_LIMIT: u32 = 12;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
@@ -177,7 +179,7 @@ impl FsStore {
             stats.logical_size_bytes = logical_size_bytes_for_conn(conn)?;
             let preview = MarketListingPreview {
                 top_level_paths: load_marketplace_top_level_paths(conn)?,
-                excerpts: Vec::new(),
+                excerpts: load_marketplace_preview_excerpts(conn)?,
                 category_graph: load_marketplace_category_graph(conn)?,
                 graph_links: load_graph_links(conn, "/Wiki", 100)?,
                 preview_stale: false,
@@ -1522,6 +1524,34 @@ fn load_marketplace_top_level_paths(conn: &Connection) -> Result<Vec<String>, St
         .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], |row| crate::sqlite::row_get(row, 0))
         .map_err(|error| error.to_string())
+}
+
+fn load_marketplace_preview_excerpts(
+    conn: &Connection,
+) -> Result<Vec<MarketPreviewExcerpt>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT path,
+                    etag,
+                    substr(content, 1, 240),
+                    length(content)
+             FROM fs_nodes
+             WHERE kind = 'file'
+               AND (path = '/Wiki' OR path LIKE '/Wiki/%')
+             ORDER BY path ASC
+             LIMIT ?1",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![MARKETPLACE_PREVIEW_NODE_LIMIT], |row| {
+        let content_chars = crate::sqlite::row_get::<i64>(row, 3)?;
+        Ok(MarketPreviewExcerpt {
+            path: crate::sqlite::row_get(row, 0)?,
+            etag: crate::sqlite::row_get(row, 1)?,
+            excerpt: crate::sqlite::row_get(row, 2)?,
+            content_chars: content_chars.max(0) as u64,
+        })
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGraph, String> {

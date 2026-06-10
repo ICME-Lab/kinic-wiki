@@ -1475,11 +1475,6 @@ impl VfsService {
         }
         Principal::from_text(&request.request.to_owner)
             .map_err(|error| format!("invalid KINIC withdraw recipient principal: {error}"))?;
-        if let Some(subaccount) = &request.request.to_subaccount
-            && subaccount.len() != 32
-        {
-            return Err("KINIC withdraw recipient subaccount must be 32 bytes".to_string());
-        }
         let amount_e8s = amount_to_i64(request.request.amount_e8s)?;
         let ledger_fee = amount_to_i64(request.request.expected_fee_e8s)?;
         let total_debit = amount_e8s
@@ -1815,7 +1810,9 @@ impl VfsService {
             )
             .map_err(|error| error.to_string())?;
             let updated: i64 = tx
-                .query_row("SELECT changes()", params![], |row| crate::sqlite::row_get(row, 0))
+                .query_row("SELECT changes()", params![], |row| {
+                    crate::sqlite::row_get(row, 0)
+                })
                 .map_err(|error| error.to_string())?;
             if updated == 0 {
                 return Err("market listing revision mismatch".to_string());
@@ -1985,7 +1982,6 @@ impl VfsService {
         };
         let store = self.database_store(&meta)?;
         let (verified_stats, mut preview) = store.marketplace_preview()?;
-        preview.excerpts = Vec::new();
         preview.preview_stale = false;
         Ok(MarketListingDetail {
             listing,

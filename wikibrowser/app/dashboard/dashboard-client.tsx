@@ -4,9 +4,8 @@ import type { AuthClient } from "@icp-sdk/auth/client";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil } from "lucide-react";
 import type { BusyAction } from "./access-control";
-import { BuyersPanel, CyclesHistoryPanel, DashboardTabs, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
+import { BuyersPanel, CyclesHistoryPanel, DashboardSettingsPanel, DashboardTabs, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
 import { useAppSession } from "../app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
 import { CycleBattery } from "@/components/cycle-battery";
@@ -77,6 +76,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const isActiveDatabase = database?.status === "active";
   const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
   const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
+  const canManageSettings = canManage || canDeletePendingDatabase;
   const showDashboardTabs = Boolean(databaseId && (database || principal));
 
   const resetCyclesHistoryState = useCallback(() => {
@@ -273,8 +273,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   useEffect(() => {
     if ((activeTab === "list" || activeTab === "buyers") && !canManage) {
       setActiveTab("access");
+      return;
     }
-  }, [activeTab, canManage]);
+    if (activeTab === "settings" && !canManageSettings) {
+      setActiveTab("access");
+    }
+  }, [activeTab, canManage, canManageSettings]);
 
   async function grantAccess(principalText: string, role: DatabaseRole) {
     if (!authClient || !databaseId) return;
@@ -453,20 +457,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     <AdminContent>
         <DatabaseDetailHeader
           title={database?.name ?? "Database access"}
-          titleAction={
-            canManage ? (
-              <button
-                aria-label="Rename database"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-white text-muted hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                title="Rename database"
-                type="button"
-                onClick={openRenameDialog}
-              >
-                <Pencil aria-hidden size={15} />
-              </button>
-            ) : null
-          }
-          actions={canisterId ? <CycleBattery canisterId={canisterId} /> : null}
+          actions={<CycleBattery cyclesBalance={database?.cyclesBalance ?? null} />}
         />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
@@ -485,7 +476,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         ) : null}
 
         {databaseId && (database || principal) ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} publicReadable={database?.publicReadable ?? false} /> : null}
-        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} canManageListings={canManage} onChange={setActiveTab} /> : null}
+        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} canManageListings={canManage} canManageSettings={canManageSettings} onChange={setActiveTab} /> : null}
 
         {activeTab === "list" && showDashboardTabs && canManage && database ? (
           <MarketListingsPanel
@@ -520,20 +511,27 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             onLoadMore={() => void loadCyclesHistory(true, cycleNextCursor)}
             onRefresh={() => void loadCyclesHistory(false, null)}
           />
+        ) : activeTab === "settings" && showDashboardTabs && canManageSettings && database ? (
+          <DashboardSettingsPanel
+            activeEntitlementCount={activeEntitlementCount}
+            busy={busy}
+            busyAction={busyAction}
+            canRename={canManage}
+            cyclesBalance={database.cyclesBalance}
+            databaseId={databaseId}
+            databaseName={database.name}
+            onDelete={deleteDatabase}
+            onRename={openRenameDialog}
+          />
         ) : database ? (
           canDeletePendingDatabase ? (
-            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
+            <PendingDatabasePanel />
           ) : canManage ? (
             <OwnerPanel
-              cyclesBalance={database.cyclesBalance}
               busy={busy}
               busyAction={busyAction}
-              databaseId={databaseId}
-              databaseName={database.name}
-              activeEntitlementCount={activeEntitlementCount}
               members={members}
               principal={principal ?? "anonymous"}
-              onDelete={deleteDatabase}
               onGrant={grantAccess}
               onRevoke={revokeAccess}
             />
@@ -555,7 +553,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   );
 }
 
-function DatabaseDetailHeader({ actions, title, titleAction }: { actions: ReactNode; title: string; titleAction: ReactNode }) {
+function DatabaseDetailHeader({ actions, title, titleAction }: { actions: ReactNode; title: string; titleAction?: ReactNode }) {
   return (
     <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
       <div className="flex min-w-0 items-center gap-2">

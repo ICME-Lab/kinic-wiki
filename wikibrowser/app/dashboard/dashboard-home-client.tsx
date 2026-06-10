@@ -52,7 +52,7 @@ export function DashboardHomeClient() {
   const [walletMessage, setWalletMessage] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newDatabaseName, setNewDatabaseName] = useState("");
-  const [createPaymentSource, setCreatePaymentSource] = useState<CreateDatabasePaymentSource>("app-balance");
+  const [createPaymentSource, setCreatePaymentSource] = useState<CreateDatabasePaymentSource>("wallet");
   const [creating, setCreating] = useState(false);
 
   const refreshDatabases = useCallback(
@@ -136,12 +136,12 @@ export function DashboardHomeClient() {
 
   useEffect(() => {
     if (!createDialogOpen) return;
-    if (appBalanceReadyToFundCreate) {
-      setCreatePaymentSource("app-balance");
-      return;
-    }
     if (walletPaymentAvailable) {
       setCreatePaymentSource("wallet");
+      return;
+    }
+    if (appBalanceReadyToFundCreate) {
+      setCreatePaymentSource("app-balance");
       return;
     }
     setCreatePaymentSource("app-balance");
@@ -235,13 +235,13 @@ export function DashboardHomeClient() {
       },
       {
         disabled: !walletPaymentAvailable,
-        detail: runtime.externalWalletUnavailableReason ?? walletBalanceDetail(wallet?.provider ?? null, walletBalance, walletBalanceLoading, walletBalanceError),
+        detail: walletBalanceDetail(wallet?.provider ?? null, walletBalance, walletBalanceLoading, walletBalanceError),
         label: "External wallet",
         source: "wallet" as const,
-        status: walletPaymentAvailable ? "Ready" : runtime.externalWalletUnavailableReason ?? (wallet ? `Needs ${formatTokenAmountFromE8s(createDatabaseWalletRequiredBalanceE8s())}` : "Connect OISY or Plug")
+        status: walletPaymentAvailable ? "Ready" : wallet ? `Needs ${formatTokenAmountFromE8s(createDatabaseWalletRequiredBalanceE8s())}` : "Connect OISY or Plug"
       }
     ],
-    [appBalanceReadyToFundCreate, kinicBalance, kinicBalanceError, kinicBalanceLoading, runtime.externalWalletUnavailableReason, wallet, walletBalance, walletBalanceError, walletBalanceLoading, walletPaymentAvailable]
+    [appBalanceReadyToFundCreate, kinicBalance, kinicBalanceError, kinicBalanceLoading, wallet, walletBalance, walletBalanceError, walletBalanceLoading, walletPaymentAvailable]
   );
   const fundingSuccessMessage = dashboardFundingSuccessMessage(searchParams);
   const createDatabaseAction = (

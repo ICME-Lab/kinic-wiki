@@ -144,7 +144,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       const runtime = walletRuntime();
       if (!runtime.externalWalletsAvailable) {
         setWalletBalance(null);
-        setWalletBalanceError(runtime.externalWalletUnavailableReason);
+        setWalletBalanceError(null);
         return;
       }
       setWalletBusyProvider(provider);

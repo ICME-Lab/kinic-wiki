@@ -174,7 +174,6 @@ pub struct KinicWithdrawRequest {
     pub amount_e8s: u64,
     pub expected_fee_e8s: u64,
     pub to_owner: String,
-    pub to_subaccount: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -247,6 +246,7 @@ pub struct MarketPreviewExcerpt {
     pub path: String,
     pub etag: String,
     pub excerpt: String,
+    pub content_chars: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

@@ -542,13 +542,6 @@ fn icrc21_canister_call_consent_message(
                     "invalid KINIC withdraw recipient principal: {error}"
                 ));
             }
-            if let Some(subaccount) = &withdraw.to_subaccount
-                && subaccount.len() != 32
-            {
-                return icrc21_unsupported(
-                    "KINIC withdraw recipient subaccount must be 32 bytes".to_string(),
-                );
-            }
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
@@ -948,7 +941,7 @@ async fn kinic_withdraw_balance(
                 from_owner: &canister_owner,
                 from_subaccount: None,
                 to_owner: &request.to_owner,
-                to_subaccount: request.to_subaccount.as_deref(),
+                to_subaccount: None,
                 ledger_fee_e8s: request.expected_fee_e8s,
                 ledger_created_at_time_ns,
             },
@@ -960,7 +953,7 @@ async fn kinic_withdraw_balance(
         ledger,
         IcrcAccount {
             owner: to_owner,
-            subaccount: request.to_subaccount.clone(),
+            subaccount: None,
         },
         request.amount_e8s,
         request.expected_fee_e8s,

@@ -2,13 +2,10 @@
 // What: centralizes IC host and external wallet availability decisions.
 // Why: local replica wallet behavior must be explicit and consistent across UI and wallet calls.
 
-export const LOCAL_EXTERNAL_WALLET_UNAVAILABLE_MESSAGE = "External wallets are unavailable for local replica";
-
 export type WalletRuntime = {
   icHost: string;
   localReplica: boolean;
   externalWalletsAvailable: boolean;
-  externalWalletUnavailableReason: string | null;
 };
 
 export function configuredIcHost(): string {
@@ -30,7 +27,6 @@ export function walletRuntime(): WalletRuntime {
   return {
     icHost,
     localReplica,
-    externalWalletsAvailable: !localReplica,
-    externalWalletUnavailableReason: localReplica ? LOCAL_EXTERNAL_WALLET_UNAVAILABLE_MESSAGE : null
+    externalWalletsAvailable: !localReplica
   };
 }

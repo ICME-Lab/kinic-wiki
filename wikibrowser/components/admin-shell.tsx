@@ -186,7 +186,7 @@ function AdminAccountControls() {
           <div className="grid w-full max-w-md gap-4 rounded-lg border border-line bg-white p-5 shadow-xl">
             <div className="grid gap-1">
               <h2 className="text-lg font-semibold text-ink">Deposit KINIC</h2>
-              <p className="text-sm text-muted">Use Deposit for App balance. Direct ledger transfers are not credited to App balance.</p>
+              <p className="text-sm text-muted">Direct ledger transfers are not credited to App balance.</p>
             </div>
             <label className="grid gap-2">
               <span className="text-xs font-semibold uppercase text-muted">Amount</span>

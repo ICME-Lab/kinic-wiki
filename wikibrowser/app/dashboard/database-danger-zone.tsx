@@ -35,24 +35,24 @@ export function DatabaseDangerZone(props: {
   }
   return (
     <>
-      <div className="grid gap-3 border-t border-red-200 bg-red-50/60 p-4">
-        <div>
-          <h3 className="text-sm font-semibold text-red-950">Delete database</h3>
-          <p className="mt-1 text-sm leading-6 text-red-900">
-            This action is irreversible. Archive first if recovery is required.
-          </p>
-          <p className="mt-2 break-all font-mono text-xs text-red-900">
-            {props.databaseName} / {props.databaseId}
-          </p>
-          <DeleteEntitlementNotice count={props.activeEntitlementCount} />
-          <DeleteCyclesNotice />
-        </div>
-        <div>
+      <section className="rounded-lg border border-red-200 bg-red-50/60 shadow-sm">
+        <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-red-950">Delete database</h3>
+            <p className="mt-1 text-sm leading-6 text-red-900">
+              This action is irreversible. Archive first if recovery is required.
+            </p>
+            <p className="mt-2 break-all font-mono text-xs text-red-900">
+              {props.databaseName} / {props.databaseId}
+            </p>
+            <DeleteEntitlementNotice count={props.activeEntitlementCount} />
+            <DeleteCyclesNotice />
+          </div>
           <ActionButton disabled={deleteDisabled} onClick={openDeleteDialog} variant="danger">
             Delete database
           </ActionButton>
         </div>
-      </div>
+      </section>
       {deleteDialogOpen ? (
         <ConfirmDeleteDatabaseDialog
           busy={props.busy}

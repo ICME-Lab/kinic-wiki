@@ -64,6 +64,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const runtime = walletRuntime();
   const kinicBalancePendingDisabled = paymentSource === "kinic" && resolvedDatabaseStatus === "pending";
   const purchaseDisabled =
+    parsedTarget === null ||
     typeof parsedTarget === "string" ||
     Boolean(error) ||
     Boolean(amountError) ||
@@ -121,7 +122,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   }
 
   async function purchase() {
-    if (typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
+    if (parsedTarget === null || typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
     setStatus("running");
     setMessage(null);
     try {
@@ -142,7 +143,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
           minExpectedCycles.toString()
         );
         setMessage(
-          `Internet Identity funded cycles ${result.amountCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} from KINIC balance; database cycles balance ${result.databaseBalanceCycles}; KINIC balance ${formatTokenAmountFromE8s(result.kinicBalanceE8s)}`
+          `Internet Identity funded cycles ${result.amountCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} from App balance; database cycles balance ${result.databaseBalanceCycles}; App balance ${formatTokenAmountFromE8s(result.kinicBalanceE8s)}`
         );
         await refreshKinicBalance();
         setStatus("success");
@@ -220,7 +221,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
                 type="button"
                 onClick={() => setPaymentSource("wallet")}
               >
-                Wallet KINIC
+                Wallet
               </button>
               <button
                 className={`min-h-10 rounded-md px-3 ${paymentSource === "kinic" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
@@ -228,7 +229,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
                 type="button"
                 onClick={() => setPaymentSource("kinic")}
               >
-                KINIC balance
+                App balance
               </button>
             </div>
           </div>
@@ -240,8 +241,6 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
         {hasNoFundableDatabases ? <Notice tone="info" text="No fundable databases linked to this principal." /> : null}
         {databaseId && principal && databaseLoadState === "ready" && !selectedDatabase ? <Notice tone="info" text="The selected database is not linked to this principal. The URL target is still shown below." /> : null}
         {resolvedDatabaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
-        {!runtime.externalWalletsAvailable && runtime.externalWalletUnavailableReason ? <Notice tone="warning" text={runtime.externalWalletUnavailableReason} /> : null}
-        <Notice tone="warning" text="Wallet KINIC uses ledger wallet approval. KINIC balance uses App balance; direct ledger transfers are not credited to App balance." />
 
         <div className="grid gap-3">
           <button
@@ -257,7 +256,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
 
         {error ? <Notice tone="error" text={error} /> : null}
         {paymentSource === "wallet" && walletBalanceError ? <Notice tone="error" text={walletBalanceError} /> : null}
-        {paymentSource === "kinic" && !principal ? <Notice tone="info" text="Login with Internet Identity to use KINIC balance." /> : null}
+        {paymentSource === "kinic" && !principal ? <Notice tone="info" text="Login with Internet Identity to use App balance." /> : null}
         {status === "success" && message ? <Notice tone="success" text={message} /> : null}
         {status === "notice" && message ? <Notice tone="info" text={message} /> : null}
         {status === "error" && message ? <Notice tone="error" text={message} /> : null}
@@ -268,7 +267,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
 
 function purchaseButtonLabel(selectedProvider: CyclesProvider | null, status: CyclesStatus, paymentSource: PaymentSource): string {
   if (paymentSource === "kinic") {
-    return status === "running" ? "Processing Internet Identity" : "Fund cycles from KINIC balance";
+    return status === "running" ? "Processing App balance" : "Fund cycles from App balance";
   }
   if (status === "running") {
     if (selectedProvider === "oisy") return "Processing OISY";

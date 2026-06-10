@@ -377,8 +377,7 @@ const sessionModule = loadTsModule(
       walletRuntime: () => ({
         icHost: "https://icp0.io",
         localReplica: false,
-        externalWalletsAvailable: true,
-        externalWalletUnavailableReason: null
+        externalWalletsAvailable: true
       })
     },
     "@/lib/kinic-wallet": {

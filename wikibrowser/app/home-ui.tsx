@@ -26,7 +26,7 @@ export function WalletControls({
   connectedLabel,
   connectedProvider,
   disabled,
-  externalWalletDisabledReason,
+  externalWalletsAvailable,
   onConnect,
   onDisconnect
 }: {
@@ -36,13 +36,13 @@ export function WalletControls({
   connectedLabel: string | null;
   connectedProvider: HeaderWalletProvider | null;
   disabled: boolean;
-  externalWalletDisabledReason?: string | null;
+  externalWalletsAvailable: boolean;
   onConnect: (provider: HeaderWalletProvider) => void;
   onDisconnect: (provider: HeaderWalletProvider) => void;
 }) {
   const oisyConnected = connectedProvider === "oisy";
   const plugConnected = connectedProvider === "plug";
-  const externalWalletDisabled = Boolean(externalWalletDisabledReason);
+  const externalWalletDisabled = !externalWalletsAvailable;
   const oisyDisabled = !oisyConnected && externalWalletDisabled;
   const plugDisabled = !plugConnected && externalWalletDisabled;
   return (
@@ -58,7 +58,6 @@ export function WalletControls({
         hoverIcon={oisyConnected ? <PowerOff aria-hidden size={15} /> : null}
         icon={<Wallet aria-hidden size={15} />}
         label="OISY"
-        title={oisyDisabled ? externalWalletDisabledReason ?? undefined : undefined}
         onClick={() => (oisyConnected ? onDisconnect("oisy") : onConnect("oisy"))}
       />
       <WalletConnectButton
@@ -72,7 +71,6 @@ export function WalletControls({
         hoverIcon={plugConnected ? <PowerOff aria-hidden size={15} /> : null}
         icon={<PlugZap aria-hidden size={15} />}
         label="Plug"
-        title={plugDisabled ? externalWalletDisabledReason ?? undefined : undefined}
         onClick={() => (plugConnected ? onDisconnect("plug") : onConnect("plug"))}
       />
     </div>

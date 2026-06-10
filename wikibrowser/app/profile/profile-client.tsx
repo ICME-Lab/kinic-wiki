@@ -12,7 +12,7 @@ import { AdminField, AdminIconButton, AdminNotice, AdminPanel } from "@/componen
 import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmount } from "@/lib/kinic-deposit";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { depositKinicBalanceWithIdentity } from "@/lib/kinic-wallet";
+import { depositKinicBalanceWithIdentity, getPrincipalKinicLedgerBalance } from "@/lib/kinic-wallet";
 import { kinicGetBalance, kinicWithdrawBalance } from "@/lib/vfs-client";
 
 type ProfileClientProps = {
@@ -22,29 +22,53 @@ type ProfileClientProps = {
 type DepositState = "idle" | "running" | "success" | "error";
 type WithdrawState = "idle" | "running" | "success" | "error";
 
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 export function ProfileClient({ canisterId }: ProfileClientProps) {
-  const { authClient, kinicBalance, kinicBalanceError, kinicBalanceLoading, login, principal, refreshKinicBalance } = useAppSession();
+  const {
+    authClient,
+    authLoading,
+    authReady,
+    kinicBalance,
+    kinicBalanceError,
+    kinicBalanceLoading,
+    login,
+    principal,
+    refreshKinicBalance
+  } = useAppSession();
   const [amount, setAmount] = useState("1");
   const [depositState, setDepositState] = useState<DepositState>("idle");
   const [depositMessage, setDepositMessage] = useState<string | null>(null);
   const [withdrawAmount, setWithdrawAmount] = useState("1");
   const [withdrawRecipient, setWithdrawRecipient] = useState("");
-  const [withdrawSubaccount, setWithdrawSubaccount] = useState("");
   const [withdrawState, setWithdrawState] = useState<WithdrawState>("idle");
   const [withdrawMessage, setWithdrawMessage] = useState<string | null>(null);
   const [profileBalance, setProfileBalance] = useState<string | null>(null);
   const [profileBalanceError, setProfileBalanceError] = useState<string | null>(null);
+  const [principalLedgerBalance, setPrincipalLedgerBalance] = useState<string | null>(null);
+  const [principalLedgerBalanceError, setPrincipalLedgerBalanceError] = useState<string | null>(null);
+  const [principalLedgerBalanceLoading, setPrincipalLedgerBalanceLoading] = useState(false);
   const parsedAmount = useMemo(() => parseKinicAmount(amount), [amount]);
   const parsedWithdrawAmount = useMemo(() => parseKinicAmount(withdrawAmount), [withdrawAmount]);
   const parsedWithdrawRecipient = useMemo(() => parsePrincipalText(withdrawRecipient), [withdrawRecipient]);
-  const parsedWithdrawSubaccount = useMemo(() => parseSubaccountHex(withdrawSubaccount), [withdrawSubaccount]);
   const amountError = parsedAmount ? null : "Enter an amount greater than 0 KINIC";
   const withdrawAmountError = parsedWithdrawAmount ? null : "Enter an amount greater than 0 KINIC";
   const withdrawRecipientError = withdrawRecipient.trim() ? (parsedWithdrawRecipient ? null : "Enter a valid recipient principal") : "Enter a recipient principal";
-  const withdrawSubaccountError = withdrawSubaccount.trim() && !parsedWithdrawSubaccount ? "Enter 64 hex characters for a 32-byte subaccount" : null;
   const balance = profileBalance ?? kinicBalance;
   const balanceError = profileBalanceError ?? kinicBalanceError;
   const currentBalance = kinicBalanceLoading ? "Loading" : balance !== null ? formatTokenAmountFromE8s(balance) : "-";
+  const principalLedgerBalanceLabel = principalLedgerBalanceLoading ? "Loading" : principalLedgerBalance !== null ? formatTokenAmountFromE8s(principalLedgerBalance) : "-";
+  const principalLedgerBalanceE8s = parseE8sText(principalLedgerBalance);
+  const totalDepositDebit = parsedAmount ? BigInt(parsedAmount) + KINIC_LEDGER_FEE_E8S * 2n : null;
+  const maxDepositAmountE8s = principalLedgerBalanceE8s !== null && principalLedgerBalanceE8s > KINIC_LEDGER_FEE_E8S * 2n ? principalLedgerBalanceE8s - KINIC_LEDGER_FEE_E8S * 2n : 0n;
+  const depositBalanceError =
+    totalDepositDebit !== null && principalLedgerBalanceE8s !== null && principalLedgerBalanceE8s < totalDepositDebit
+      ? `Deposit requires ${formatTokenAmountFromE8s(totalDepositDebit.toString())} in II principal balance.`
+      : null;
+  const balanceE8s = parseE8sText(balance);
+  const maxWithdrawAmountE8s = balanceE8s !== null && balanceE8s > KINIC_LEDGER_FEE_E8S ? balanceE8s - KINIC_LEDGER_FEE_E8S : 0n;
   const totalWithdrawDebit = parsedWithdrawAmount ? BigInt(parsedWithdrawAmount) + KINIC_LEDGER_FEE_E8S : null;
   const depositBusy = depositState === "running";
   const withdrawBusy = withdrawState === "running";
@@ -53,17 +77,32 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
     if (!authClient || !principal) {
       setProfileBalance(null);
       setProfileBalanceError(null);
+      setPrincipalLedgerBalance(null);
+      setPrincipalLedgerBalanceError(null);
+      setPrincipalLedgerBalanceLoading(false);
       return;
     }
     setProfileBalanceError(null);
-    try {
-      const identity = authClient.getIdentity();
-      const balanceResult = await kinicGetBalance(canisterId, identity);
-      setProfileBalance(balanceResult.balanceE8s);
-    } catch (cause) {
+    setPrincipalLedgerBalanceError(null);
+    setPrincipalLedgerBalanceLoading(true);
+    const identity = authClient.getIdentity();
+    const [appBalanceResult, ledgerBalanceResult] = await Promise.allSettled([
+      kinicGetBalance(canisterId, identity),
+      getPrincipalKinicLedgerBalance(canisterId, principal)
+    ]);
+    if (appBalanceResult.status === "fulfilled") {
+      setProfileBalance(appBalanceResult.value.balanceE8s);
+    } else {
       setProfileBalance(null);
-      setProfileBalanceError(cause instanceof Error ? cause.message : String(cause));
+      setProfileBalanceError(errorMessage(appBalanceResult.reason));
     }
+    if (ledgerBalanceResult.status === "fulfilled") {
+      setPrincipalLedgerBalance(ledgerBalanceResult.value);
+    } else {
+      setPrincipalLedgerBalance(null);
+      setPrincipalLedgerBalanceError(errorMessage(ledgerBalanceResult.reason));
+    }
+    setPrincipalLedgerBalanceLoading(false);
   }, [authClient, canisterId, principal]);
 
   useEffect(() => {
@@ -95,8 +134,14 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
     if (withdrawState !== "running") setWithdrawState("idle");
   }
 
-  function updateWithdrawSubaccount(event: ChangeEvent<HTMLInputElement>) {
-    setWithdrawSubaccount(event.target.value);
+  function useMaxDepositAmount() {
+    setAmount(formatKinicInputFromE8s(maxDepositAmountE8s));
+    setDepositMessage(null);
+    if (depositState !== "running") setDepositState("idle");
+  }
+
+  function useMaxWithdrawAmount() {
+    setWithdrawAmount(formatKinicInputFromE8s(maxWithdrawAmountE8s));
     setWithdrawMessage(null);
     if (withdrawState !== "running") setWithdrawState("idle");
   }
@@ -109,6 +154,11 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
     if (!parsedAmount) {
       setDepositState("error");
       setDepositMessage(amountError);
+      return;
+    }
+    if (depositBalanceError) {
+      setDepositState("error");
+      setDepositMessage(depositBalanceError);
       return;
     }
     setDepositState("running");
@@ -141,11 +191,6 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
       setWithdrawMessage(withdrawRecipientError);
       return;
     }
-    if (withdrawSubaccountError) {
-      setWithdrawState("error");
-      setWithdrawMessage(withdrawSubaccountError);
-      return;
-    }
     setWithdrawState("running");
     setWithdrawMessage(null);
     try {
@@ -154,8 +199,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
         authClient.getIdentity(),
         parsedWithdrawAmount,
         KINIC_LEDGER_FEE_E8S.toString(),
-        parsedWithdrawRecipient,
-        parsedWithdrawSubaccount
+        parsedWithdrawRecipient
       );
       setProfileBalance(result.balanceE8s);
       setWithdrawState("success");
@@ -174,7 +218,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
         {principal ? (
           <section className="grid gap-6">
             <AdminPanel className="grid gap-3 bg-white" padding="md">
-              <AdminField label="Internet Identity" value="Connected" />
+              <AdminField label="Principal ID" value={principal} breakAll mono />
               <AdminField
                 label="App KINIC balance"
                 value={
@@ -191,54 +235,72 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
 
             <AdminPanel className="grid gap-3 bg-white" padding="md">
               <h2 className="text-lg font-semibold">Deposit KINIC</h2>
-              <AdminNotice tone="warning" message="Use Deposit and Withdraw for App balance movements. Direct ledger transfers are not credited to App balance." />
               <div className="flex flex-wrap gap-2">
-                <input
-                  className="min-h-11 min-w-0 flex-1 rounded-lg border border-line px-3 py-2 font-mono text-sm outline-none focus:border-accent"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={updateAmount}
-                />
+                <div className="relative min-w-0 flex-1">
+                  <input
+                    className="min-h-11 w-full min-w-0 rounded-lg border border-line px-3 py-2 pr-20 font-mono text-sm outline-none focus:border-accent"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={updateAmount}
+                  />
+                  <button
+                    className="absolute right-2 top-1/2 min-h-8 -translate-y-1/2 rounded-md border border-line bg-paper px-3 text-xs font-semibold text-ink hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={depositBusy || principalLedgerBalanceLoading || maxDepositAmountE8s <= 0n}
+                    type="button"
+                    onClick={useMaxDepositAmount}
+                  >
+                    Max
+                  </button>
+                </div>
                 <button
                   className="min-h-11 rounded-lg border border-action bg-action px-4 text-sm font-semibold text-white hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={depositBusy}
+                  disabled={depositBusy || Boolean(amountError) || Boolean(depositBalanceError) || principalLedgerBalanceLoading}
                   type="button"
                   onClick={() => void deposit()}
                 >
                   {depositBusy ? "Depositing" : "Deposit"}
                 </button>
               </div>
+              <div className="grid gap-1 text-xs text-muted">
+                <p>II principal balance: {principalLedgerBalanceLabel}</p>
+                <p>Total II principal debit: {totalDepositDebit ? formatTokenAmountFromE8s(totalDepositDebit.toString()) : "-"}</p>
+                {principalLedgerBalanceError ? <p className="text-red-700">{principalLedgerBalanceError}</p> : null}
+              </div>
               {amountError && amount.trim() ? <p className="text-xs text-red-700">{amountError}</p> : null}
+              {depositBalanceError ? <p className="text-xs text-red-700">{depositBalanceError}</p> : null}
               {depositState === "success" && depositMessage ? <AdminNotice tone="success" message={depositMessage} /> : null}
               {depositState === "error" && depositMessage ? <AdminNotice tone="error" message={depositMessage} /> : null}
             </AdminPanel>
 
             <AdminPanel className="grid gap-3 bg-white" padding="md">
               <h2 className="text-lg font-semibold">Withdraw KINIC</h2>
-              <AdminNotice tone="info" message="Recipient receives amount. App balance decreases by amount plus ledger fee." />
               <div className="grid gap-3">
-                <input
-                  className="min-h-11 min-w-0 rounded-lg border border-line px-3 py-2 font-mono text-sm outline-none focus:border-accent"
-                  inputMode="decimal"
-                  placeholder="Amount"
-                  value={withdrawAmount}
-                  onChange={updateWithdrawAmount}
-                />
+                <div className="relative min-w-0">
+                  <input
+                    className="min-h-11 w-full min-w-0 rounded-lg border border-line px-3 py-2 pr-20 font-mono text-sm outline-none focus:border-accent"
+                    inputMode="decimal"
+                    placeholder="Amount"
+                    value={withdrawAmount}
+                    onChange={updateWithdrawAmount}
+                  />
+                  <button
+                    className="absolute right-2 top-1/2 min-h-8 -translate-y-1/2 rounded-md border border-line bg-paper px-3 text-xs font-semibold text-ink hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={withdrawBusy || maxWithdrawAmountE8s <= 0n}
+                    type="button"
+                    onClick={useMaxWithdrawAmount}
+                  >
+                    Max
+                  </button>
+                </div>
                 <input
                   className="min-h-11 min-w-0 rounded-lg border border-line px-3 py-2 font-mono text-sm outline-none focus:border-accent"
                   placeholder="Recipient principal"
                   value={withdrawRecipient}
                   onChange={updateWithdrawRecipient}
                 />
-                <input
-                  className="min-h-11 min-w-0 rounded-lg border border-line px-3 py-2 font-mono text-sm outline-none focus:border-accent"
-                  placeholder="Subaccount hex, optional"
-                  value={withdrawSubaccount}
-                  onChange={updateWithdrawSubaccount}
-                />
               </div>
               <div className="grid gap-1 text-xs text-muted">
-                <p>Ledger fee: {formatTokenAmountFromE8s(KINIC_LEDGER_FEE_E8S.toString())}</p>
+                <p>Balance: {currentBalance}</p>
                 <p>Total App balance debit: {totalWithdrawDebit ? formatTokenAmountFromE8s(totalWithdrawDebit.toString()) : "-"}</p>
               </div>
               <button
@@ -251,26 +313,29 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
               </button>
               {withdrawAmountError && withdrawAmount.trim() ? <p className="text-xs text-red-700">{withdrawAmountError}</p> : null}
               {withdrawRecipientError && withdrawRecipient.trim() ? <p className="text-xs text-red-700">{withdrawRecipientError}</p> : null}
-              {withdrawSubaccountError ? <p className="text-xs text-red-700">{withdrawSubaccountError}</p> : null}
               {withdrawState === "success" && withdrawMessage ? <AdminNotice tone="success" message={withdrawMessage} /> : null}
               {withdrawState === "error" && withdrawMessage ? <AdminNotice tone="error" message={withdrawMessage} /> : null}
             </AdminPanel>
           </section>
-        ) : null}
+        ) : (
+          <AdminPanel className="grid gap-4 bg-white" padding="md">
+            <div className="grid gap-1">
+              <h1 className="text-xl font-semibold text-ink">My Profile</h1>
+              <p className="text-sm leading-6 text-muted">Login with Internet Identity to view your principal and manage App KINIC.</p>
+            </div>
+            <button
+              className="min-h-11 w-fit rounded-lg border border-action bg-action px-4 text-sm font-semibold text-white hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!authReady || authLoading}
+              type="button"
+              onClick={() => void login()}
+            >
+              Internet Identity
+            </button>
+          </AdminPanel>
+        )}
       </div>
     </AdminContent>
   );
-}
-
-function parseSubaccountHex(value: string): number[] | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) return null;
-  const bytes: number[] = [];
-  for (let index = 0; index < trimmed.length; index += 2) {
-    bytes.push(Number.parseInt(trimmed.slice(index, index + 2), 16));
-  }
-  return bytes;
 }
 
 function parsePrincipalText(value: string): string | null {
@@ -281,4 +346,16 @@ function parsePrincipalText(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function parseE8sText(value: string | null): bigint | null {
+  if (!value || !/^[0-9]+$/.test(value)) return null;
+  return BigInt(value);
+}
+
+function formatKinicInputFromE8s(value: bigint): string {
+  if (value <= 0n) return "0";
+  const whole = value / 100_000_000n;
+  const fraction = (value % 100_000_000n).toString().padStart(8, "0").replace(/0+$/, "");
+  return fraction ? `${whole.toString()}.${fraction}` : whole.toString();
 }
