@@ -110,7 +110,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     next_cursor: idl.Opt(idl.Text),
     entitlements: idl.Vec(MarketEntitlement)
   });
-  const MarketListingStatus = idl.Variant({ Paused: idl.Null, Active: idl.Null, Draft: idl.Null });
+  const MarketListingStatus = idl.Variant({ Paused: idl.Null, Active: idl.Null });
   const MarketListing = idl.Record({
     status: MarketListingStatus,
     llm_summary: idl.Opt(idl.Text),

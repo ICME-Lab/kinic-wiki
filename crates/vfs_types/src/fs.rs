@@ -202,8 +202,6 @@ pub struct KinicFundDatabaseCyclesResult {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketListingStatus {
-    #[serde(alias = "Draft")]
-    Draft,
     #[serde(alias = "Active")]
     Active,
     #[serde(alias = "Paused")]

@@ -126,7 +126,6 @@ const KINIC_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
 const KINIC_LEDGER_SOURCE_INTERNAL: &str = "canister_internal";
 const KINIC_PENDING_KIND_DEPOSIT: &str = "deposit";
 const KINIC_PENDING_KIND_WITHDRAW: &str = "withdraw";
-const MARKET_LISTING_STATUS_DRAFT: &str = "draft";
 const MARKET_LISTING_STATUS_ACTIVE: &str = "active";
 const MARKET_LISTING_STATUS_PAUSED: &str = "paused";
 
@@ -1757,7 +1756,7 @@ impl VfsService {
                     crate::sqlite::nullable_text_value(request.llm_summary),
                     request.tags_json,
                     i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
-                    MARKET_LISTING_STATUS_DRAFT,
+                    MARKET_LISTING_STATUS_ACTIVE,
                     now
                 ],
             )
@@ -6052,7 +6051,6 @@ fn map_market_entitlement(
 
 fn market_listing_status_from_db(value: &str) -> crate::sqlite::Result<MarketListingStatus> {
     match value {
-        MARKET_LISTING_STATUS_DRAFT => Ok(MarketListingStatus::Draft),
         MARKET_LISTING_STATUS_ACTIVE => Ok(MarketListingStatus::Active),
         MARKET_LISTING_STATUS_PAUSED => Ok(MarketListingStatus::Paused),
         _ => Err(crate::sqlite::invalid_query()),

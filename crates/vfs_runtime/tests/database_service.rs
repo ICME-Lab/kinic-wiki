@@ -16,9 +16,10 @@ use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
     KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, MarketCreateListingRequest,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    MarketListingStatus, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
+    MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
+    UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
@@ -4701,9 +4702,7 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
         .market_create_listing("seller", market_listing_request("market-db", 250), 2)
         .expect("listing should create");
     assert!(!listing.listing_id.starts_with("listing_"));
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
+    assert_eq!(listing.status, MarketListingStatus::Active);
     credit_kinic_balance(&service, "buyer", 1_000, 10, 5);
 
     let order = service
@@ -4744,9 +4743,6 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
     let second_listing = service
         .market_create_listing("seller", market_listing_request("market-db", 300), 7)
         .expect("second listing should create");
-    let second_listing = service
-        .market_publish_listing("seller", &second_listing.listing_id, 8)
-        .expect("second listing should publish");
     assert!(
         service
             .market_purchase_access(
@@ -4843,9 +4839,6 @@ fn market_purchase_rejects_seller_self_purchase() {
     let listing = service
         .market_create_listing("seller", market_listing_request("self-market", 250), 2)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
     credit_kinic_balance(&service, "seller", 1_000, 10, 4);
 
     let error = service
@@ -4878,9 +4871,6 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_price_m
     let listing = service
         .market_create_listing("seller", market_listing_request("reject-market", 100), 2)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
 
     let insufficient = service
         .market_purchase_access(
@@ -4950,9 +4940,6 @@ fn market_database_entitlements_are_owner_readonly_and_paged() {
             2,
         )
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
 
     for (buyer, block_index) in [("buyer-a", 10), ("buyer-b", 11)] {
         credit_kinic_balance(&service, buyer, 1_000, block_index, block_index as i64);
@@ -5063,6 +5050,44 @@ fn market_listing_owner_policy_and_database_listing_query() {
 }
 
 #[test]
+fn market_publish_listing_reactivates_paused_listing() {
+    let service = service();
+    service
+        .create_database("republish-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("republish-market", 100), 2)
+        .expect("listing should create active");
+    assert_eq!(listing.status, MarketListingStatus::Active);
+
+    let paused = service
+        .market_pause_listing("seller", &listing.listing_id, 3)
+        .expect("listing should pause");
+    assert_eq!(paused.status, MarketListingStatus::Paused);
+    assert!(
+        service
+            .market_list_listings(None, 10)
+            .expect("paused listings should load")
+            .listings
+            .is_empty(),
+        "paused listing should leave public marketplace"
+    );
+
+    let active = service
+        .market_publish_listing("seller", &listing.listing_id, 4)
+        .expect("paused listing should republish");
+    assert_eq!(active.status, MarketListingStatus::Active);
+    assert_eq!(
+        service
+            .market_list_listings(None, 10)
+            .expect("active listings should load")
+            .listings
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn market_listing_detail_returns_verified_preview() {
     let service = service();
     service
@@ -5123,9 +5148,6 @@ fn market_listing_detail_returns_verified_preview() {
     let listing = service
         .market_create_listing("seller", market_listing_request("preview-market", 100), 5)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 6)
-        .expect("listing should publish");
     let detail = service
         .market_get_listing("2vxsx-fae", &listing.listing_id)
         .expect("anonymous should read public listing preview");
@@ -5138,7 +5160,22 @@ fn market_listing_detail_returns_verified_preview() {
     assert!(detail.verified_stats.markdown_chars >= 64);
     assert_eq!(detail.verified_stats.source_chars, 15);
     assert_eq!(detail.verified_stats.link_edges, 1);
-    assert!(detail.preview.excerpts.is_empty());
+    assert!(detail
+        .preview
+        .excerpts
+        .iter()
+        .any(|excerpt| excerpt.path == "/Wiki/alpha/a.md"
+            && excerpt.excerpt == "Alpha paid insight links to [beta](/Wiki/beta/b.md)."));
+    assert!(detail
+        .preview
+        .excerpts
+        .iter()
+        .any(|excerpt| excerpt.path == "/Wiki/beta/b.md" && excerpt.excerpt == "Beta paid body"));
+    assert!(detail
+        .preview
+        .excerpts
+        .iter()
+        .all(|excerpt| !excerpt.path.starts_with("/Sources/")));
     assert!(!detail.preview.preview_stale);
     assert!(
         detail
@@ -5188,9 +5225,6 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
             2,
         )
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
     service
         .grant_database_access(
             "stale-owner-market",
@@ -5283,9 +5317,6 @@ fn market_listing_requires_active_database() {
     let listing = service
         .market_create_listing("owner", market_listing_request("archive-market", 100), 4)
         .expect("active database listing should create");
-    let listing = service
-        .market_publish_listing("owner", &listing.listing_id, 5)
-        .expect("active database listing should publish");
     assert_eq!(
         service
             .market_list_listings(None, 10)
@@ -5418,9 +5449,6 @@ fn delete_database_removes_marketplace_rows() {
     let listing = service
         .market_create_listing("seller", market_listing_request("market-delete", 100), 3)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 4)
-        .expect("listing should publish");
     credit_kinic_balance(&service, "buyer", 100, 10, 5);
     service
         .market_purchase_access(
@@ -5494,9 +5522,6 @@ fn market_entitlement_allows_read_surface_but_not_export() {
     let listing = service
         .market_create_listing("seller", market_listing_request("read-market", 100), 3)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 4)
-        .expect("listing should publish");
     credit_kinic_balance(&service, "buyer", 100, 20, 6);
     service
         .market_purchase_access(

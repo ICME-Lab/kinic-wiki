@@ -360,7 +360,7 @@ type MarketListingPreview = record {
   graph_links : vec LinkEdge;
   category_graph : MarketCategoryGraph;
 };
-type MarketListingStatus = variant { Paused; Active; Draft };
+type MarketListingStatus = variant { Paused; Active };
 type MarketListingVerifiedStats = record {
   source_chars : nat64;
   last_content_updated_at_ms : opt int64;

@@ -597,6 +597,12 @@ assert.match(dashboardClient, /activeTab === "buyers" && showDashboardTabs && ca
 assert.match(dashboardClient, /activeTab === "settings" && showDashboardTabs && canManageSettings && database/);
 assert.match(dashboardClient, /canManageListings=\{canManage\}/);
 assert.match(dashboardClient, /canManageSettings=\{canManageSettings\}/);
+assert.match(dashboardClient, /await marketCreateListing\(canisterId, authClient\.getIdentity\(\), request\);/);
+assert.doesNotMatch(dashboardClient, /listing = await marketCreateListing/);
+assert.doesNotMatch(dashboardClient, /Could not publish listing:/);
+assert.match(dashboardClient, /setActionMessage\("Listing published\."\);/);
+assert.doesNotMatch(dashboardClient, /created as draft/);
+assert.doesNotMatch(dashboardClient, /Listing created\./);
 assert.doesNotMatch(dashboardClient, /onCreateListing=\{createMarketListing\}/);
 assert.match(dashboardClient, /listDatabaseCycleEntries/);
 assert.match(dashboardClient, /listDatabaseCyclesPendingPurchasesAuthenticated/);

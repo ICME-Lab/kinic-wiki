@@ -200,7 +200,7 @@ export const expectedTypes = {
   },
   MarketListingStatus: {
     kind: "variant",
-    cases: { Paused: "null", Active: "null", Draft: "null" }
+    cases: { Paused: "null", Active: "null" }
   },
   MarketListingVerifiedStats: {
     kind: "record",

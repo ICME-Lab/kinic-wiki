@@ -381,7 +381,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     try {
       await marketCreateListing(canisterId, authClient.getIdentity(), request);
       setActionTone("info");
-      setActionMessage("Listing created.");
+      setActionMessage("Listing published.");
       await refresh(authClient, databaseId);
     } catch (cause) {
       setMarketError(errorMessage(cause));

@@ -193,7 +193,7 @@ export type KinicPendingOperationsPage = {
   nextCursorOperationId: string | null;
 };
 
-export type MarketListingStatus = "Draft" | "Active" | "Paused";
+export type MarketListingStatus = "Active" | "Paused";
 
 export type MarketListing = {
   listingId: string;

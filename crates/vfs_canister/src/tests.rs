@@ -15,12 +15,12 @@ use vfs_types::{
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KinicDepositRequest,
     KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, KinicWithdrawRequest,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketListingStatus,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest,
+    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
@@ -41,7 +41,7 @@ use super::{
     last_ledger_memo_for_test, last_ledger_to_for_test, ledger_transfer_fees_for_test,
     list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
     list_database_members, list_databases, list_nodes, market_create_listing, market_get_listing,
-    market_publish_listing, market_purchase_access, market_update_listing, memory_manifest,
+    market_purchase_access, market_update_listing, memory_manifest,
     mkdir_node, move_node, multi_edit_node, outgoing_links,
     parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
     query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
@@ -2204,8 +2204,8 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         let listing = market_create_listing(market_listing_request(&database_id, 500))
             .expect("listing should create");
         assert!(!listing.listing_id.starts_with("listing_"));
-        let active = market_publish_listing(listing.listing_id).expect("listing should publish");
-        listing_id = active.listing_id;
+        assert_eq!(listing.status, MarketListingStatus::Active);
+        listing_id = listing.listing_id;
     }
 
     {
@@ -2310,8 +2310,8 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
         .expect("source node should write");
         let listing = market_create_listing(market_listing_request(&database_id, 500))
             .expect("listing should create");
-        let active = market_publish_listing(listing.listing_id).expect("listing should publish");
-        listing_id = active.listing_id;
+        assert_eq!(listing.status, MarketListingStatus::Active);
+        listing_id = listing.listing_id;
     }
 
     let detail = market_get_listing(listing_id).expect("listing detail should load");

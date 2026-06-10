@@ -96,8 +96,7 @@ for (const fixture of FIXTURES) {
     })
   );
   const listingId = extractTextField(listing, "listing_id");
-  const published = callOk("market_publish_listing", candidText(listingId));
-  console.log(`${listingId}\t${databaseId}\t${extractTextField(published, "title")}\t${extractNat64Field(published, "price_e8s")}`);
+  console.log(`${listingId}\t${databaseId}\t${extractTextField(listing, "title")}\t${extractNat64Field(listing, "price_e8s")}`);
 }
 
 function fundDatabase(databaseId) {

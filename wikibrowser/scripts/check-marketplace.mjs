@@ -14,6 +14,8 @@ const listingDetail = readFileSync(new URL("../app/marketplace/[listingId]/listi
 const sellerPage = readFileSync(new URL("../app/marketplace/seller/[principal]/page.tsx", import.meta.url), "utf8");
 const sellerProfileClient = readFileSync(new URL("../app/marketplace/seller/[principal]/seller-profile-client.tsx", import.meta.url), "utf8");
 const dashboardUi = readFileSync(new URL("../app/dashboard/dashboard-ui.tsx", import.meta.url), "utf8");
+const vfsTypes = readFileSync(new URL("../lib/types.ts", import.meta.url), "utf8");
+const vfsIdl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
 const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
 const marketplaceLayout = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
 const marketplace = readFileSync(new URL("../app/marketplace/marketplace-client.tsx", import.meta.url), "utf8");
@@ -122,7 +124,10 @@ assert.match(sellerProfileClient, /marketListingPath\(listing\.listingId\)/);
 
 assert.match(marketplaceSeed, /purchase_database_cycles/);
 assert.match(marketplaceSeed, /market_create_listing/);
-assert.match(marketplaceSeed, /market_publish_listing/);
+assert.doesNotMatch(marketplaceSeed, /market_publish_listing/);
+assert.doesNotMatch(vfsTypes, /MarketListingStatus = "Draft"/);
+assert.doesNotMatch(vfsIdl, /Draft: idl\.Null/);
+assert.doesNotMatch(vfsClient, /return "Draft"/);
 assert.match(marketplaceSeed, /--canister-id/);
 assert.match(marketplaceSeed, /DEFAULT_PAYMENT_E8S/);
 assert.match(marketplaceSeed, /DEFAULT_ALLOWANCE_E8S/);

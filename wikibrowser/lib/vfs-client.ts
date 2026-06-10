@@ -1545,8 +1545,7 @@ function normalizeMarketListingDetail(raw: RawMarketListingDetail): MarketListin
 
 function normalizeMarketListingStatus(status: RawMarketListingStatus): MarketListingStatus {
   if ("Active" in status) return "Active";
-  if ("Paused" in status) return "Paused";
-  return "Draft";
+  return "Paused";
 }
 
 function normalizeKinicDepositResult(raw: RawKinicDepositResult): KinicDepositResult {
