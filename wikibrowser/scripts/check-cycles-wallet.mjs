@@ -23,7 +23,6 @@ let lastKinicDepositRequest = null;
 let lastMarketPurchaseRequest = null;
 let lastIdentityKinicDeposit = null;
 let lastPlugConnectInput = null;
-let plugDisconnectCalls = 0;
 const ledgerActorMock = {
   icrc1_balance_of: async (account) => {
     lastBalanceAccount = account;
@@ -66,9 +65,6 @@ const plugMock = {
   requestConnect: async (input) => {
     lastPlugConnectInput = input;
     return true;
-  },
-  disconnect: async () => {
-    plugDisconnectCalls += 1;
   },
   agent: { getPrincipal: async () => ({ toText: () => "plug-principal" }) },
   createActor: async ({ canisterId }) => (canisterId === "ledger" ? ledgerActorMock : vfsActorMock)
@@ -122,12 +118,8 @@ const walletModule = loadTsModule(
       MAX_CANISTER_I64: 9_223_372_036_854_775_807n,
       MAX_LEDGER_U64: 18_446_744_073_709_551_615n,
     },
-    "@/lib/ic-host": {
+    "@/lib/wallet-runtime": {
       configuredIcHost: () => walletModule.__context.process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io",
-      isLocalIcHost: (host) => {
-        const { hostname } = new URL(host);
-        return hostname === "localhost" || hostname === "127.0.0.1" || hostname.endsWith(".localhost");
-      }
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s }
   },
@@ -186,11 +178,9 @@ assert.equal(Array.isArray(lastBalanceAccount.subaccount), true);
 assert.equal(lastBalanceAccount.subaccount.length, 0);
 
 walletModule.__context.process.env.NEXT_PUBLIC_WIKI_IC_HOST = "http://127.0.0.1:8011";
-plugDisconnectCalls = 0;
 lastPlugConnectInput = null;
 const connectedPlug = await walletModule.connectPlugWallet();
 assert.equal(connectedPlug.principal, "plug-principal");
-assert.equal(plugDisconnectCalls, 1);
 assert.equal(lastPlugConnectInput.host, "http://127.0.0.1:8011");
 assert.equal(lastPlugConnectInput.whitelist, undefined);
 walletModule.__context.process.env.NEXT_PUBLIC_WIKI_IC_HOST = "https://icp0.io";
@@ -382,10 +372,14 @@ const sessionModule = loadTsModule(
     },
     "react/jsx-runtime": { jsx: () => null, jsxs: () => null },
     "@/lib/auth": { AUTH_CLIENT_CREATE_OPTIONS: {}, authLoginOptions: () => ({}) },
-    "@/lib/ic-host": {
+    "@/lib/wallet-runtime": {
       configuredIcHost: () => "https://icp0.io",
-      isLocalIcHost: () => false,
-      LOCAL_OISY_UNAVAILABLE_MESSAGE: "OISY hosted signer is unavailable for local replica"
+      walletRuntime: () => ({
+        icHost: "https://icp0.io",
+        localReplica: false,
+        externalWalletsAvailable: true,
+        externalWalletUnavailableReason: null
+      })
     },
     "@/lib/kinic-wallet": {
       connectOisyWallet: async () => ({ owner: "oisy-principal" }),

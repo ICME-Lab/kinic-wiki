@@ -26,7 +26,7 @@ export function WalletControls({
   connectedLabel,
   connectedProvider,
   disabled,
-  oisyDisabledReason,
+  externalWalletDisabledReason,
   onConnect,
   onDisconnect
 }: {
@@ -36,13 +36,15 @@ export function WalletControls({
   connectedLabel: string | null;
   connectedProvider: HeaderWalletProvider | null;
   disabled: boolean;
-  oisyDisabledReason?: string | null;
+  externalWalletDisabledReason?: string | null;
   onConnect: (provider: HeaderWalletProvider) => void;
   onDisconnect: (provider: HeaderWalletProvider) => void;
 }) {
   const oisyConnected = connectedProvider === "oisy";
   const plugConnected = connectedProvider === "plug";
-  const oisyDisabled = !oisyConnected && Boolean(oisyDisabledReason);
+  const externalWalletDisabled = Boolean(externalWalletDisabledReason);
+  const oisyDisabled = !oisyConnected && externalWalletDisabled;
+  const plugDisabled = !plugConnected && externalWalletDisabled;
   return (
     <div className="flex flex-wrap gap-2">
       <WalletConnectButton
@@ -56,7 +58,7 @@ export function WalletControls({
         hoverIcon={oisyConnected ? <PowerOff aria-hidden size={15} /> : null}
         icon={<Wallet aria-hidden size={15} />}
         label="OISY"
-        title={oisyDisabled ? oisyDisabledReason ?? undefined : undefined}
+        title={oisyDisabled ? externalWalletDisabledReason ?? undefined : undefined}
         onClick={() => (oisyConnected ? onDisconnect("oisy") : onConnect("oisy"))}
       />
       <WalletConnectButton
@@ -66,10 +68,11 @@ export function WalletControls({
         balanceLoading={plugConnected && balanceLoading}
         connected={plugConnected}
         connectedLabel={plugConnected ? connectedLabel : null}
-        disabled={disabled || busyProvider !== null}
+        disabled={disabled || busyProvider !== null || plugDisabled}
         hoverIcon={plugConnected ? <PowerOff aria-hidden size={15} /> : null}
         icon={<PlugZap aria-hidden size={15} />}
         label="Plug"
+        title={plugDisabled ? externalWalletDisabledReason ?? undefined : undefined}
         onClick={() => (plugConnected ? onDisconnect("plug") : onConnect("plug"))}
       />
     </div>

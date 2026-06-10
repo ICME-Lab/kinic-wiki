@@ -6,8 +6,8 @@
 import { AuthClient } from "@icp-sdk/auth/client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { configuredIcHost, isLocalIcHost, LOCAL_OISY_UNAVAILABLE_MESSAGE } from "@/lib/ic-host";
 import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
+import { walletRuntime } from "@/lib/wallet-runtime";
 import { kinicGetBalance } from "@/lib/vfs-client";
 import type { HeaderWalletProvider } from "./home-ui";
 
@@ -141,9 +141,10 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const connectWallet = useCallback(
     async (provider: HeaderWalletProvider) => {
       if (walletControlsLocked || walletBusyProvider) return;
-      if (provider === "oisy" && isLocalIcHost(configuredIcHost())) {
+      const runtime = walletRuntime();
+      if (!runtime.externalWalletsAvailable) {
         setWalletBalance(null);
-        setWalletBalanceError(LOCAL_OISY_UNAVAILABLE_MESSAGE);
+        setWalletBalanceError(runtime.externalWalletUnavailableReason);
         return;
       }
       setWalletBusyProvider(provider);
@@ -265,7 +266,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const stored = readStoredWallet();
-    if (stored?.provider === "oisy" && isLocalIcHost(configuredIcHost())) {
+    if (stored && !walletRuntime().externalWalletsAvailable) {
       clearStoredWallet();
       return;
     }

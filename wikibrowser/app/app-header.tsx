@@ -5,8 +5,8 @@
 // Why: external wallet funding stays separate from the sidebar App account controls.
 import { usePathname } from "next/navigation";
 import { AdminHeader } from "@/components/admin-header";
-import { configuredIcHost, isLocalIcHost, LOCAL_OISY_UNAVAILABLE_MESSAGE } from "@/lib/ic-host";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { walletRuntime } from "@/lib/wallet-runtime";
 import { WalletControls } from "./home-ui";
 import { connectedWalletPrincipal, useAppSession } from "./app-session-provider";
 
@@ -31,7 +31,7 @@ export function AppHeader() {
 
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
-  const oisyDisabledReason = isLocalIcHost(configuredIcHost()) ? LOCAL_OISY_UNAVAILABLE_MESSAGE : null;
+  const runtime = walletRuntime();
 
   return (
     <div className="px-6 pt-4">
@@ -47,7 +47,7 @@ export function AppHeader() {
               connectedProvider={wallet?.provider ?? null}
               balanceLoading={walletBalanceLoading}
               disabled={walletControlsLocked}
-              oisyDisabledReason={oisyDisabledReason}
+              externalWalletDisabledReason={runtime.externalWalletUnavailableReason}
               onConnect={(provider) => {
                 void connectWallet(provider);
               }}

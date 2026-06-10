@@ -14,6 +14,7 @@ import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/kinic-wall
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, kinicFundDatabaseCycles, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
+import { walletRuntime } from "@/lib/wallet-runtime";
 import type { DatabaseRow } from "../home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -130,6 +131,8 @@ export function DashboardHomeClient() {
 
   const appBalanceReadyToFundCreate = balanceCanFundCreate(kinicBalance, createDatabasePurchaseAmountE8s());
   const walletReadyToFundCreate = balanceCanFundCreate(walletBalance, createDatabaseWalletRequiredBalanceE8s());
+  const runtime = walletRuntime();
+  const walletPaymentAvailable = runtime.externalWalletsAvailable && walletReadyToFundCreate;
 
   useEffect(() => {
     if (!createDialogOpen) return;
@@ -137,12 +140,12 @@ export function DashboardHomeClient() {
       setCreatePaymentSource("app-balance");
       return;
     }
-    if (walletReadyToFundCreate) {
+    if (walletPaymentAvailable) {
       setCreatePaymentSource("wallet");
       return;
     }
     setCreatePaymentSource("app-balance");
-  }, [appBalanceReadyToFundCreate, createDialogOpen, walletReadyToFundCreate]);
+  }, [appBalanceReadyToFundCreate, createDialogOpen, walletPaymentAvailable]);
 
   async function createDatabase() {
     if (!authClient || !canisterId) return;
@@ -154,7 +157,7 @@ export function DashboardHomeClient() {
       return;
     }
     if (createPaymentSource === "app-balance" && !appBalanceReadyToFundCreate) return;
-    if (createPaymentSource === "wallet" && (!wallet || !walletReadyToFundCreate)) return;
+    if (createPaymentSource === "wallet" && (!wallet || !walletPaymentAvailable)) return;
     setCreating(true);
     setError(null);
     setWalletMessage(null);
@@ -208,7 +211,7 @@ export function DashboardHomeClient() {
   const trimmedDatabaseName = newDatabaseName.trim();
   const databaseNameValidationError = databaseNameError(trimmedDatabaseName);
   const createUnavailable = !principal || loadState === "loading" || walletBusyProvider !== null;
-  const selectedPaymentReady = createPaymentSource === "app-balance" ? appBalanceReadyToFundCreate : walletReadyToFundCreate;
+  const selectedPaymentReady = createPaymentSource === "app-balance" ? appBalanceReadyToFundCreate : walletPaymentAvailable;
   const createDisabled =
     creating ||
     createUnavailable ||
@@ -231,14 +234,14 @@ export function DashboardHomeClient() {
         status: appBalanceReadyToFundCreate ? "Ready" : `Needs ${formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}`
       },
       {
-        disabled: !walletReadyToFundCreate,
-        detail: walletBalanceDetail(wallet?.provider ?? null, walletBalance, walletBalanceLoading, walletBalanceError),
+        disabled: !walletPaymentAvailable,
+        detail: runtime.externalWalletUnavailableReason ?? walletBalanceDetail(wallet?.provider ?? null, walletBalance, walletBalanceLoading, walletBalanceError),
         label: "External wallet",
         source: "wallet" as const,
-        status: walletReadyToFundCreate ? "Ready" : wallet ? `Needs ${formatTokenAmountFromE8s(createDatabaseWalletRequiredBalanceE8s())}` : "Connect OISY or Plug"
+        status: walletPaymentAvailable ? "Ready" : runtime.externalWalletUnavailableReason ?? (wallet ? `Needs ${formatTokenAmountFromE8s(createDatabaseWalletRequiredBalanceE8s())}` : "Connect OISY or Plug")
       }
     ],
-    [appBalanceReadyToFundCreate, kinicBalance, kinicBalanceError, kinicBalanceLoading, wallet, walletBalance, walletBalanceError, walletBalanceLoading, walletReadyToFundCreate]
+    [appBalanceReadyToFundCreate, kinicBalance, kinicBalanceError, kinicBalanceLoading, runtime.externalWalletUnavailableReason, wallet, walletBalance, walletBalanceError, walletBalanceLoading, walletPaymentAvailable]
   );
   const fundingSuccessMessage = dashboardFundingSuccessMessage(searchParams);
   const createDatabaseAction = (

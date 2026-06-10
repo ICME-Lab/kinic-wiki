@@ -89,8 +89,8 @@ assert.match(client, /params\.set\("database_id", databaseId\)/);
 assert.match(client, /params\.set\("provider", provider\)/);
 assert.match(client, /params\.set\("kinic", kinic\)/);
 assert.match(client, /params\.set\("cycles", cycles\)/);
-assert.match(client, /paymentSource === "wallet" \? !selectedProvider \|\| oisyLocalUnavailable : authLoading \|\| !authClient \|\| kinicBalancePendingDisabled/);
-assert.match(client, /LOCAL_OISY_UNAVAILABLE_MESSAGE/);
+assert.match(client, /paymentSource === "wallet" \? !selectedProvider \|\| !runtime\.externalWalletsAvailable : authLoading \|\| !authClient \|\| kinicBalancePendingDisabled/);
+assert.match(client, /walletRuntime\(\)/);
 assert.match(client, /Wallet KINIC uses ledger wallet approval\. KINIC balance uses App balance; direct ledger transfers are not credited to App balance\./);
 assert.match(client, /disabled=\{resolvedDatabaseStatus === "pending"\}/);
 assert.doesNotMatch(client, /function WalletConnect/);
@@ -120,16 +120,16 @@ assert.match(wallet, /async function safeDisconnectOisyWallet\(wallet: KinicIcrc
 assert.match(wallet, /Cleanup failures must not hide connect, approve, or purchase errors\./);
 assert.match(connectOisy, /safeDisconnectOisyWallet\(wallet\)/);
 assert.doesNotMatch(connectOisy, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
-assert.match(connectPlug, /connectPlug\(plug\)/);
+assert.match(connectPlug, /plug\.requestConnect\(\{\s*host: configuredIcHost\(\)\s*\}\)/);
 assert.doesNotMatch(connectPlug, /getCyclesBillingConfig|previewDatabaseCyclesPurchase|whitelist/);
-assert.match(wallet, /async function connectPlug\(plug: PlugWallet, whitelist\?: string\[\]\): Promise<boolean>/);
-assert.match(wallet, /await plug\.disconnect\?\.\(\)/);
-assert.match(wallet, /return plug\.requestConnect\(\{ whitelist, host \}\)/);
+assert.doesNotMatch(wallet, /async function connectPlug\(/);
+assert.doesNotMatch(wallet, /plug\.disconnect/);
 assert.match(walletBalance, /getCyclesBillingConfig\(canisterId\)/);
 assert.match(walletBalance, /getLedgerBalance\(config\.kinicLedgerCanisterId, connectedWalletPrincipal\(wallet\)\)/);
 assert.match(purchaseOisy, /prepareCyclesPurchase\(request, connection\.owner\)/);
 assert.match(purchasePlug, /prepareCyclesPurchase\(request, connection\.principal\)/);
-assert.match(purchasePlug, /connectPlug\(plug, \[request\.canisterId, prepared\.kinicLedgerCanisterId\]\)/);
+assert.match(purchasePlug, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
+assert.match(purchasePlug, /host: configuredIcHost\(\)/);
 assert.match(wallet, /icrc2_approve/);
 assert.match(wallet, /icrc1_balance_of/);
 assert.doesNotMatch(purchasePlug, /JSON\.stringify\(approve\.Err\)/);
@@ -187,8 +187,8 @@ assert.doesNotMatch(wallet, /encodeKinicFundDatabaseCyclesArgs/);
 assert.match(wallet, /encodeMarketPurchaseArgs\(request: MarketPurchaseCanisterRequest\)/);
 assert.match(wallet, /method: "market_purchase_access"/);
 assert.doesNotMatch(wallet, /method: "kinic_fund_database_cycles"/);
-assert.match(wallet, /connectPlug\(plug, \[request\.canisterId, prepared\.kinicLedgerCanisterId\]\)/);
-assert.match(marketPurchasePlug, /connectPlug\(plug, \[request\.canisterId\]\)/);
+assert.match(wallet, /whitelist: \[request\.canisterId, prepared\.kinicLedgerCanisterId\]/);
+assert.match(marketPurchasePlug, /whitelist: \[request\.canisterId\]/);
 assert.doesNotMatch(marketPurchaseOisy, /approve\(/);
 assert.doesNotMatch(marketPurchasePlug, /icrc2_approve/);
 assert.match(wallet, /function defaultAccount\(owner: string\): LedgerAccount/);
@@ -204,7 +204,7 @@ assert.doesNotMatch(client, /Wallet approval uses the DB cycle amount plus the l
 assert.match(client, /transfer fee/);
 assert.match(client, /A newly created database is pending, not active, until this first cycles purchase completes\./);
 assert.match(client, /resolvedDatabaseStatus === "pending"/);
-assert.match(client, /OISY hosted signer is unavailable for local replica|LOCAL_OISY_UNAVAILABLE_MESSAGE/);
+assert.match(client, /External wallets are unavailable for local replica|externalWalletUnavailableReason/);
 assert.doesNotMatch(client, new RegExp("extractCycles" + "RepairTarget"));
 assert.doesNotMatch(client, new RegExp("saveCycles" + "Repair" + "Record"));
 assert.doesNotMatch(
@@ -309,10 +309,13 @@ const clientModule = loadTsModule(
       databaseCyclesHref: (database) => `/cycles?database_id=${database.databaseId}&status=${database.status}`,
       databaseCyclesView: (database) => ({ purchaseAvailable: database.status === "active" || database.status === "pending", summary: database.status })
     },
-    "@/lib/ic-host": {
-      configuredIcHost: () => "https://icp0.io",
-      isLocalIcHost: () => false,
-      LOCAL_OISY_UNAVAILABLE_MESSAGE: "OISY hosted signer is unavailable for local replica"
+    "@/lib/wallet-runtime": {
+      walletRuntime: () => ({
+        icHost: "https://icp0.io",
+        localReplica: false,
+        externalWalletsAvailable: true,
+        externalWalletUnavailableReason: null
+      })
     },
     "@/lib/kinic-wallet": {
       purchaseCyclesWithOisy: async () => ({}),

@@ -1791,7 +1791,7 @@ impl VfsService {
                     &listing.database_id,
                 )?;
             }
-            let updated = tx.execute(
+            tx.execute(
                 "UPDATE market_listings
                  SET title = ?2,
                      description = ?3,
@@ -1814,6 +1814,9 @@ impl VfsService {
                 ],
             )
             .map_err(|error| error.to_string())?;
+            let updated: i64 = tx
+                .query_row("SELECT changes()", params![], |row| crate::sqlite::row_get(row, 0))
+                .map_err(|error| error.to_string())?;
             if updated == 0 {
                 return Err("market listing revision mismatch".to_string());
             }

@@ -7,8 +7,8 @@ import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, kinicDepositBalance, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
 import { idlFactory } from "@/lib/vfs-idl";
 import { cyclesForPaymentAmountE8s, formatRawCycles, KINIC_LEDGER_FEE_E8S, MAX_CANISTER_I64, MAX_LEDGER_U64 } from "@/lib/cycles";
-import { configuredIcHost, isLocalIcHost } from "@/lib/ic-host";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { configuredIcHost } from "@/lib/wallet-runtime";
 
 type WalletProvider = "oisy" | "plug";
 type KinicDepositProvider = WalletProvider | "ii";
@@ -132,7 +132,6 @@ type CyclesPurchaseWalletConnectOptions = {
 type PlugWallet = {
   requestConnect: (input?: { whitelist?: string[]; host?: string }) => Promise<boolean>;
   createActor: <T>(input: { canisterId: string; interfaceFactory: unknown }) => Promise<T>;
-  disconnect?: () => Promise<void>;
   agent?: { getPrincipal: () => Promise<Principal> };
 };
 
@@ -266,7 +265,9 @@ export async function connectOisyWallet(): Promise<ConnectedOisyWallet> {
 export async function connectPlugWallet(): Promise<ConnectedPlugWallet> {
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await connectPlug(plug);
+  const connected = await plug.requestConnect({
+    host: configuredIcHost()
+  });
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -321,7 +322,10 @@ export async function purchaseCyclesWithPlug(request: CyclesPurchaseRequest, con
   const prepared = await prepareCyclesPurchase(request, connection.principal);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await connectPlug(plug, [request.canisterId, prepared.kinicLedgerCanisterId]);
+  const connected = await plug.requestConnect({
+    whitelist: [request.canisterId, prepared.kinicLedgerCanisterId],
+    host: configuredIcHost()
+  });
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -399,7 +403,10 @@ export async function depositKinicBalanceWithPlug(request: KinicDepositRequest, 
   const prepared = await prepareKinicDeposit(request, connection.principal);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await connectPlug(plug, [request.canisterId, prepared.kinicLedgerCanisterId]);
+  const connected = await plug.requestConnect({
+    whitelist: [request.canisterId, prepared.kinicLedgerCanisterId],
+    host: configuredIcHost()
+  });
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -488,7 +495,10 @@ export async function purchaseMarketAccessWithPlug(request: MarketPurchaseReques
   assertConfiguredCyclesCanister(request.canisterId);
   const plug = window.ic?.plug;
   if (!plug) throw new Error("Plug wallet extension not found");
-  const connected = await connectPlug(plug, [request.canisterId]);
+  const connected = await plug.requestConnect({
+    whitelist: [request.canisterId],
+    host: configuredIcHost()
+  });
   if (!connected) throw new Error("Plug connection rejected");
   const principal = await plug.agent?.getPrincipal();
   if (!principal) throw new Error("Plug principal is not available");
@@ -500,14 +510,6 @@ export async function purchaseMarketAccessWithPlug(request: MarketPurchaseReques
   const result = await vfsActor.market_purchase_access(rawMarketPurchaseRequest(request));
   if ("Err" in result) throw new Error(result.Err);
   return normalizeMarketOrder(result.Ok, "plug");
-}
-
-async function connectPlug(plug: PlugWallet, whitelist?: string[]): Promise<boolean> {
-  const host = configuredIcHost();
-  if (isLocalIcHost(host)) {
-    await plug.disconnect?.();
-  }
-  return plug.requestConnect({ whitelist, host });
 }
 
 function approveParams(canisterId: string, allowanceE8s: bigint, expectedAllowanceE8s: bigint, expiresAt: bigint): ApproveParams {

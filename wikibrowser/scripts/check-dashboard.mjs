@@ -284,6 +284,14 @@ const dashboardHomeModule = loadTsModule(
       purchaseCyclesWithPlug: async () => ({})
     },
     "@/lib/kinic-amount": { formatTokenAmountFromE8s: (value) => `${value} KINIC` },
+    "@/lib/wallet-runtime": {
+      walletRuntime: () => ({
+        icHost: "https://icp0.io",
+        localReplica: false,
+        externalWalletsAvailable: true,
+        externalWalletUnavailableReason: null
+      })
+    },
     "@/lib/vfs-client": {
       createDatabaseAuthenticated: async () => ({ database_id: "db_ok-1" }),
       getCyclesBillingConfig: async () => ({}),
@@ -376,12 +384,15 @@ assert.doesNotMatch(dashboardHomeClient, /purchaseQueryString\(\{ databaseId: re
 assert.doesNotMatch(dashboardHomeClient, /useRouter|router\.push/);
 assert.match(dashboardHomeClient, /const \[createPaymentSource, setCreatePaymentSource\] = useState<CreateDatabasePaymentSource>\("app-balance"\);/);
 assert.match(dashboardHomeClient, /if \(appBalanceReadyToFundCreate\) \{\s*setCreatePaymentSource\("app-balance"\);/);
-assert.match(dashboardHomeClient, /if \(walletReadyToFundCreate\) \{\s*setCreatePaymentSource\("wallet"\);/);
+assert.match(dashboardHomeClient, /if \(walletPaymentAvailable\) \{\s*setCreatePaymentSource\("wallet"\);/);
 assert.match(dashboardHomeClient, /if \(createPaymentSource === "app-balance" && !appBalanceReadyToFundCreate\) return;/);
-assert.match(dashboardHomeClient, /if \(createPaymentSource === "wallet" && \(!wallet \|\| !walletReadyToFundCreate\)\) return;/);
+assert.match(dashboardHomeClient, /if \(createPaymentSource === "wallet" && \(!wallet \|\| !walletPaymentAvailable\)\) return;/);
 assert.match(dashboardHomeClient, /createLabel=\{createPaymentSource === "app-balance" \? "Create with App balance" : "Create with wallet"\}/);
 assert.match(dashboardHomeClient, /paymentSource=\{createPaymentSource\}/);
 assert.match(dashboardHomeClient, /paymentSources=\{createDialogPaymentSources\}/);
+assert.match(dashboardHomeClient, /walletRuntime\(\)/);
+assert.match(dashboardHomeClient, /runtime\.externalWalletsAvailable && walletReadyToFundCreate/);
+assert.match(dashboardHomeClient, /runtime\.externalWalletUnavailableReason/);
 assert.doesNotMatch(dashboardHomeClient, /Checking KINIC balance|Create database will request the first cycles purchase|walletFundingMessage/);
 assert.match(dashboardHomeClient, /await purchaseCyclesWithOisy\(\{ canisterId, databaseId: result\.database_id, paymentAmountE8s \}, wallet\.connection\)/);
 assert.match(dashboardHomeClient, /await purchaseCyclesWithPlug\(\{ canisterId, databaseId: result\.database_id, paymentAmountE8s \}, wallet\.connection\)/);
@@ -399,12 +410,19 @@ assert.match(dashboardHomeClient, /disabled=\{creating \|\| createUnavailable\}/
 assert.doesNotMatch(dashboardHomeClient, /<WalletControls/);
 assert.match(appHeader, /connectedBalanceLabel=\{connectedWalletBalanceLabel\}/);
 assert.match(appHeader, /balanceLoading=\{walletBalanceLoading\}/);
+assert.match(appHeader, /walletRuntime\(\)/);
+assert.match(appHeader, /externalWalletDisabledReason=\{runtime\.externalWalletUnavailableReason\}/);
 assert.match(appHeader, /onDisconnect=\{disconnectWallet\}/);
 assert.match(appSession, /const disconnectWallet = useCallback/);
+assert.match(appSession, /walletRuntime\(\)/);
+assert.match(appSession, /!runtime\.externalWalletsAvailable/);
+assert.match(appSession, /clearStoredWallet\(\);/);
 assert.match(appSession, /if \(walletControlsLocked \|\| walletBusyProvider \|\| wallet\?\.provider !== provider\) return;/);
 assert.match(appSession, /walletBalanceSeqRef\.current \+= 1;\n    setWallet\(null\);\n    setWalletBalance\(null\);\n    setWalletBalanceLoading\(false\);\n    setWalletBalanceError\(null\);\n    setWalletBusyProvider\(null\);/);
 assert.match(homeUi, /export type HeaderWalletProvider = "oisy" \| "plug"/);
 assert.match(homeUi, /export function WalletControls/);
+assert.match(homeUi, /externalWalletDisabledReason\?: string \| null/);
+assert.match(homeUi, /const plugDisabled = !plugConnected && externalWalletDisabled/);
 assert.match(homeUi, /PowerOff/);
 assert.match(homeUi, /onDisconnect: \(provider: HeaderWalletProvider\) => void/);
 assert.match(homeUi, /onClick=\{\(\) => \(oisyConnected \? onDisconnect\("oisy"\) : onConnect\("oisy"\)\)\}/);
@@ -420,7 +438,8 @@ assert.match(homeUi, /connectedBalanceLabel: string \| null/);
 assert.match(homeUi, /balanceLoading: boolean/);
 assert.match(homeUi, /\/ \{secondaryLabel\}/);
 assert.match(homeUi, /PlugZap/);
-assert.match(homeUi, /disabled=\{disabled \|\| busyProvider !== null\}/);
+assert.match(homeUi, /disabled=\{disabled \|\| busyProvider !== null \|\| oisyDisabled\}/);
+assert.match(homeUi, /disabled=\{disabled \|\| busyProvider !== null \|\| plugDisabled\}/);
 assert.match(dashboardHomeClient, /<CreateDatabaseDialog/);
 assert.match(dashboardHomeClient, /requiredBalanceLabel=\{formatTokenAmountFromE8s\(createDatabasePurchaseAmountE8s\(\)\)\}/);
 assert.match(dashboardHomeClient, /setCreateDialogOpen\(false\);/);

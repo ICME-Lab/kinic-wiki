@@ -12,9 +12,9 @@ import { AdminField, AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { cyclesForPaymentAmountE8s } from "@/lib/cycles";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
 import { databaseCyclesHref, databaseCyclesView } from "@/lib/cycles-state";
-import { configuredIcHost, isLocalIcHost, LOCAL_OISY_UNAVAILABLE_MESSAGE } from "@/lib/ic-host";
 import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { walletRuntime } from "@/lib/wallet-runtime";
 import { getCyclesBillingConfig, kinicFundDatabaseCycles, listDatabasesAuthenticated } from "@/lib/vfs-client";
 import type { CyclesBillingConfig, DatabaseStatus, DatabaseSummary } from "@/lib/types";
 
@@ -61,14 +61,14 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const amountError = typeof parsedAmount === "string" ? parsedAmount : null;
   const busy = status === "running" || walletBusyProvider !== null;
   const selectedProvider = wallet?.provider ?? null;
-  const oisyLocalUnavailable = selectedProvider === "oisy" && isLocalIcHost(configuredIcHost());
+  const runtime = walletRuntime();
   const kinicBalancePendingDisabled = paymentSource === "kinic" && resolvedDatabaseStatus === "pending";
   const purchaseDisabled =
     typeof parsedTarget === "string" ||
     Boolean(error) ||
     Boolean(amountError) ||
     busy ||
-    (paymentSource === "wallet" ? !selectedProvider || oisyLocalUnavailable : authLoading || !authClient || kinicBalancePendingDisabled);
+    (paymentSource === "wallet" ? !selectedProvider || !runtime.externalWalletsAvailable : authLoading || !authClient || kinicBalancePendingDisabled);
 
   const loadDatabases = useCallback(async () => {
     if (!authClient || !principal || !canisterId) {
@@ -107,6 +107,12 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
       cancelled = true;
     };
   }, [loadDatabases]);
+
+  useEffect(() => {
+    if (!runtime.externalWalletsAvailable && paymentSource === "wallet") {
+      setPaymentSource("kinic");
+    }
+  }, [paymentSource, runtime.externalWalletsAvailable]);
 
   function selectDatabase(nextDatabaseId: string) {
     const nextDatabase = fundableDatabases.find((database) => database.databaseId === nextDatabaseId);
@@ -210,6 +216,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             <div className="grid grid-cols-2 rounded-lg border border-line bg-paper p-1 text-sm font-semibold">
               <button
                 className={`min-h-10 rounded-md px-3 ${paymentSource === "wallet" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
+                disabled={!runtime.externalWalletsAvailable}
                 type="button"
                 onClick={() => setPaymentSource("wallet")}
               >
@@ -233,7 +240,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
         {hasNoFundableDatabases ? <Notice tone="info" text="No fundable databases linked to this principal." /> : null}
         {databaseId && principal && databaseLoadState === "ready" && !selectedDatabase ? <Notice tone="info" text="The selected database is not linked to this principal. The URL target is still shown below." /> : null}
         {resolvedDatabaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
-        {oisyLocalUnavailable ? <Notice tone="warning" text={LOCAL_OISY_UNAVAILABLE_MESSAGE} /> : null}
+        {!runtime.externalWalletsAvailable && runtime.externalWalletUnavailableReason ? <Notice tone="warning" text={runtime.externalWalletUnavailableReason} /> : null}
         <Notice tone="warning" text="Wallet KINIC uses ledger wallet approval. KINIC balance uses App balance; direct ledger transfers are not credited to App balance." />
 
         <div className="grid gap-3">
