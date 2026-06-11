@@ -14,38 +14,35 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest,
-    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
     Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
-    SERVICE, TransferFromError, append_node,
-    begin_database_archive, begin_database_restore, cancel_database_archive,
-    check_database_write_cycles, clear_last_ledger_memo_for_test,
+    SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
+    cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
     graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    last_ledger_from_for_test,
-    last_ledger_memo_for_test, last_ledger_to_for_test, ledger_transfer_fees_for_test,
-    list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
-    list_database_members, list_databases, list_nodes, market_create_listing, market_get_listing,
-    market_purchase_access, market_update_listing, memory_manifest,
-    mkdir_node, move_node, multi_edit_node, outgoing_links,
+    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
+    ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
+    list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
+    market_create_listing, market_get_listing, market_purchase_access, market_update_listing,
+    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
     parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
     query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
     rename_database, revoke_database_access, search_node_paths, search_nodes,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test,
-    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
-    update_charge_cycles, update_cycles_billing_config,
+    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
+    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
     write_database_restore_chunk, write_node, write_nodes,
 };
 
@@ -189,7 +186,11 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     }
 }
 
-fn market_purchase_request(listing_id: &str, price_e8s: u64, access_principal: Principal) -> MarketPurchaseRequest {
+fn market_purchase_request(
+    listing_id: &str,
+    price_e8s: u64,
+    access_principal: Principal,
+) -> MarketPurchaseRequest {
     MarketPurchaseRequest {
         listing_id: listing_id.to_string(),
         price_e8s,
@@ -1528,7 +1529,11 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     {
         let _caller = AuthenticatedCallerGuard::install_principal(wallet);
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(202));
-        let order = block_on_ready(market_purchase_access(market_purchase_request(&listing_id, 500, buyer)))
+        let order = block_on_ready(market_purchase_access(market_purchase_request(
+            &listing_id,
+            500,
+            buyer,
+        )))
         .expect("wallet should pay for buyer access");
         assert_eq!(order.buyer_principal, buyer.to_text());
         assert_eq!(order.ledger_block_index, 202);

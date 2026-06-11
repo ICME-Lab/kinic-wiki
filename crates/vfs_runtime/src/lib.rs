@@ -26,19 +26,18 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
-    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
-    MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
-    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
+    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
+    MarketListingStatus, MarketListingVerifiedStats, MarketOrder, MarketOrderPage,
+    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
@@ -1414,7 +1413,11 @@ impl VfsService {
             if has_active_market_entitlement(tx, &listing.database_id, &request.access_principal)? {
                 return Err("active entitlement already exists".to_string());
             }
-            ensure_no_pending_market_purchase_for_buyer(tx, &listing.listing_id, &request.access_principal)?;
+            ensure_no_pending_market_purchase_for_buyer(
+                tx,
+                &listing.listing_id,
+                &request.access_principal,
+            )?;
             let price_e8s = amount_to_i64(request.price_e8s)?;
             let ledger_fee_e8s = amount_to_i64(ledger.ledger_fee_e8s)?;
             let ledger_created_at_time_ns = i64::try_from(ledger.ledger_created_at_time_ns)
@@ -1479,7 +1482,13 @@ impl VfsService {
             price_e8s,
             0,
         )?;
-        self.apply_market_purchase(start.operation_id, &access_principal, &listing_id, price_e8s, now)
+        self.apply_market_purchase(
+            start.operation_id,
+            &access_principal,
+            &listing_id,
+            price_e8s,
+            now,
+        )
     }
 
     pub fn complete_market_purchase_ledger_transfer(
@@ -1542,9 +1551,9 @@ impl VfsService {
                 &[CYCLES_OPERATION_STATUS_COMPLETED],
                 "apply market purchase",
             )?;
-            let ledger_block_index = operation
-                .ledger_block_index
-                .ok_or_else(|| "completed market purchase missing ledger block index".to_string())?;
+            let ledger_block_index = operation.ledger_block_index.ok_or_else(|| {
+                "completed market purchase missing ledger block index".to_string()
+            })?;
             let listing = load_market_listing_by_id(tx, listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
             require_market_listing_purchasable(tx, &listing)?;
@@ -1600,7 +1609,8 @@ impl VfsService {
             )
             .map_err(|error| error.to_string())?;
             delete_pending_market_purchase(tx, operation_id)?;
-            load_market_order_by_id(tx, &order_id)?.ok_or_else(|| "market order insert failed".to_string())
+            load_market_order_by_id(tx, &order_id)?
+                .ok_or_else(|| "market order insert failed".to_string())
         })
     }
 
@@ -4957,10 +4967,7 @@ fn ensure_no_pending_market_purchase_for_buyer(
     Ok(())
 }
 
-fn delete_pending_market_purchase(
-    conn: &Transaction<'_>,
-    operation_id: u64,
-) -> Result<(), String> {
+fn delete_pending_market_purchase(conn: &Transaction<'_>, operation_id: u64) -> Result<(), String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.execute(
         "DELETE FROM market_purchase_pending_operations WHERE operation_id = ?1",

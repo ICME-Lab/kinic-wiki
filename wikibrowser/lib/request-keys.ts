@@ -12,7 +12,8 @@ export function graphRequestKey(
   centerPath: string | null,
   depth: 1 | 2,
   principal: string | null = null
-): string {
+): string | null {
+  if (centerPath === null) return null;
   return `${canisterId}\n${databaseId}\n${centerPath}\n${depth}\n${authRequestKey(principal)}`;
 }
 

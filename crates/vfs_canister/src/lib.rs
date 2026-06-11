@@ -53,11 +53,10 @@ use vfs_types::{
     MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
     MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -532,7 +531,10 @@ async fn purchase_database_cycles(
                     block_index,
                 )
             })?;
-            activate_pending_database_after_cycles_purchase_ledger_success(&request.database_id, now)?;
+            activate_pending_database_after_cycles_purchase_ledger_success(
+                &request.database_id,
+                now,
+            )?;
             #[cfg(test)]
             if TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
                 return Err("test cycle purchase apply failure".to_string());
@@ -615,10 +617,10 @@ fn activate_pending_database_after_cycles_purchase_ledger_success(
 ) -> Result<(), String> {
     let activation =
         with_service(|service| service.prepare_pending_database_activation(database_id, now))?;
-    if let Some(meta) = &activation {
-        if let Err(error) = mount_database_file(meta) {
-            return Err(database_create_error(error, None));
-        }
+    if let Some(meta) = &activation
+        && let Err(error) = mount_database_file(meta)
+    {
+        return Err(database_create_error(error, None));
     }
     Ok(())
 }

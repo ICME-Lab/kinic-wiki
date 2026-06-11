@@ -52,7 +52,10 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     }
 }
 
-fn market_purchase_request(listing: &MarketListing, access_principal: &str) -> MarketPurchaseRequest {
+fn market_purchase_request(
+    listing: &MarketListing,
+    access_principal: &str,
+) -> MarketPurchaseRequest {
     MarketPurchaseRequest {
         listing_id: listing.listing_id.clone(),
         price_e8s: listing.price_e8s,
@@ -4496,11 +4499,7 @@ fn market_purchase_rejects_seller_self_purchase() {
         .market_create_listing("seller", market_listing_request("self-market", 250), 2)
         .expect("listing should create");
     let error = service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "seller"),
-            5,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "seller"), 5)
         .expect_err("seller access principal must not buy their own listing");
 
     assert!(error.contains("seller cannot purchase own listing"));
@@ -4530,18 +4529,10 @@ fn market_purchase_rejects_existing_entitlement_and_price_mismatch() {
     assert!(price_mismatch.contains("market listing price mismatch"));
 
     service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "buyer"),
-            7,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 7)
         .expect("first purchase should succeed");
     let duplicate = service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "buyer"),
-            8,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 8)
         .expect_err("existing entitlement should reject");
     assert!(duplicate.contains("active entitlement already exists"));
 }
@@ -4775,22 +4766,26 @@ fn market_listing_detail_returns_verified_preview() {
     assert!(detail.verified_stats.markdown_chars >= 64);
     assert_eq!(detail.verified_stats.source_chars, 15);
     assert_eq!(detail.verified_stats.link_edges, 1);
-    assert!(detail
-        .preview
-        .excerpts
-        .iter()
-        .any(|excerpt| excerpt.path == "/Wiki/alpha/a.md"
-            && excerpt.excerpt == "Alpha paid insight links to [beta](/Wiki/beta/b.md)."));
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .any(|excerpt| excerpt.path == "/Wiki/alpha/a.md"
+                && excerpt.excerpt == "Alpha paid insight links to [beta](/Wiki/beta/b.md).")
+    );
     assert!(detail
         .preview
         .excerpts
         .iter()
         .any(|excerpt| excerpt.path == "/Wiki/beta/b.md" && excerpt.excerpt == "Beta paid body"));
-    assert!(detail
-        .preview
-        .excerpts
-        .iter()
-        .all(|excerpt| !excerpt.path.starts_with("/Sources/")));
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .all(|excerpt| !excerpt.path.starts_with("/Sources/"))
+    );
     assert!(!detail.preview.preview_stale);
     assert!(
         detail
@@ -4875,11 +4870,7 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
     );
     assert!(
         service
-            .market_purchase_access(
-                "buyer",
-                market_purchase_request(&listing, "buyer"),
-                6,
-            )
+            .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 6,)
             .expect_err("purchase should reject stale seller")
             .contains("principal has no access to database")
     );
@@ -4953,11 +4944,7 @@ fn market_listing_requires_active_database() {
         .expect_err("archived database preview should reject");
     assert!(preview_error.contains("database is archived"));
     let purchase_error = service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "buyer"),
-            9,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 9)
         .expect_err("archived database purchase should reject");
     assert!(purchase_error.contains("database is archived"));
     service
@@ -4992,11 +4979,7 @@ fn market_listing_requires_active_database() {
         1
     );
     service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "buyer"),
-            12,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 12)
         .expect("restored active database purchase should succeed");
 }
 
@@ -5024,11 +5007,7 @@ fn delete_database_removes_marketplace_rows() {
         .market_create_listing("seller", market_listing_request("market-delete", 100), 3)
         .expect("listing should create");
     service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "buyer"),
-            6,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 6)
         .expect("purchase should succeed");
     service
         .read_node("market-delete", "buyer", "/Wiki/private.md")
@@ -5093,11 +5072,7 @@ fn market_entitlement_allows_read_surface_but_not_export() {
         .market_create_listing("seller", market_listing_request("read-market", 100), 3)
         .expect("listing should create");
     service
-        .market_purchase_access(
-            "buyer",
-            market_purchase_request(&listing, "buyer"),
-            7,
-        )
+        .market_purchase_access("buyer", market_purchase_request(&listing, "buyer"), 7)
         .expect("purchase should succeed");
 
     let node = service

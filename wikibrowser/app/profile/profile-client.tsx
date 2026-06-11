@@ -88,7 +88,6 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
           ) : (
             <div className="grid gap-4">
               <section className="grid gap-3">
-                <h2 className="text-sm font-semibold uppercase text-muted">Account</h2>
                 <AdminField breakAll mono label="Principal" value={principal} />
               </section>
 
