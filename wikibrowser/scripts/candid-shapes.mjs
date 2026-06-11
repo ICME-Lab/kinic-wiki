@@ -182,7 +182,7 @@ export const expectedTypes = {
   },
   MarketPurchaseRequest: {
     kind: "record",
-    fields: { listing_id: "text", price_e8s: "nat64" }
+    fields: { listing_id: "text", price_e8s: "nat64", access_principal: "text" }
   },
   MarketPreviewExcerpt: {
     kind: "record",

@@ -55,7 +55,14 @@ export function readIdentityMode(
 }
 
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    const serialized = JSON.stringify(error, (_key, value) => (typeof value === "bigint" ? value.toString() : value));
+    return serialized ?? "Unexpected error";
+  } catch {
+    return "Unexpected error";
+  }
 }
 
 export function errorHint(error: unknown): string | null {

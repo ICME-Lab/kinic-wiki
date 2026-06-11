@@ -222,6 +222,7 @@ type RawMarketPurchasePreview = {
 type RawMarketPurchaseRequest = {
   listing_id: string;
   price_e8s: bigint;
+  access_principal: string;
 };
 
 type RawMarketOrder = {
@@ -709,25 +710,6 @@ export async function marketPreviewPurchase(canisterId: string, identity: Identi
       throwCanisterError(result.Err);
     }
     return normalizeMarketPurchasePreview(result.Ok);
-  });
-}
-
-export async function marketPurchaseAccess(
-  canisterId: string,
-  identity: Identity,
-  listingId: string,
-  priceE8s: string
-): Promise<MarketOrder> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.market_purchase_access({
-      listing_id: listingId,
-      price_e8s: BigInt(priceE8s)
-    });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeMarketOrder(result.Ok);
   });
 }
 

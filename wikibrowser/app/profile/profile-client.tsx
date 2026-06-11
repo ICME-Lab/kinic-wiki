@@ -9,6 +9,7 @@ import { useAppSession } from "@/app/app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminField, AdminIconButton, AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { marketListEntitlements, marketListListings } from "@/lib/vfs-client";
+import { errorMessage } from "@/lib/wiki-helpers";
 
 type ProfileClientProps = {
   canisterId: string;
@@ -42,7 +43,7 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
       });
     } catch (cause) {
       setProfileStats(null);
-      setProfileError(cause instanceof Error ? cause.message : String(cause));
+      setProfileError(errorMessage(cause));
     } finally {
       setProfileLoading(false);
     }

@@ -33,6 +33,7 @@ type MarketPurchaseRequest = {
   canisterId: string;
   listingId: string;
   priceE8s: bigint;
+  accessPrincipal: string;
 };
 
 type MarketPurchaseResult = {
@@ -52,6 +53,7 @@ type MarketPurchaseResult = {
 type MarketPurchaseCanisterRequest = {
   listing_id: string;
   price_e8s: bigint;
+  access_principal: string;
 };
 
 export class KinicAfterApproveError extends Error {
@@ -601,6 +603,7 @@ function errorMessage(cause: unknown): string {
   if (isObject(cause)) {
     const message = Reflect.get(cause, "message");
     if (typeof message === "string") return message;
+    return safeJsonWithBigInts(cause);
   }
   return String(cause);
 }
@@ -617,7 +620,8 @@ function encodeCyclesPurchaseArgs(request: DatabaseCyclesPurchaseRequest): strin
 function encodeMarketPurchaseArgs(request: MarketPurchaseCanisterRequest): string {
   const PurchaseRequest = IDL.Record({
     listing_id: IDL.Text,
-    price_e8s: IDL.Nat64
+    price_e8s: IDL.Nat64,
+    access_principal: IDL.Text
   });
   return uint8ArrayToBase64(IDL.encode([PurchaseRequest], [request]));
 }
@@ -758,7 +762,8 @@ function marketPurchaseResultType() {
 function rawMarketPurchaseRequest(request: MarketPurchaseRequest): MarketPurchaseCanisterRequest {
   return {
     listing_id: request.listingId,
-    price_e8s: request.priceE8s
+    price_e8s: request.priceE8s,
+    access_principal: request.accessPrincipal
   };
 }
 

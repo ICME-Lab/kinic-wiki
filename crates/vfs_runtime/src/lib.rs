@@ -1394,6 +1394,7 @@ impl VfsService {
         now: i64,
     ) -> Result<MarketPurchaseStart, String> {
         require_authenticated_principal(caller)?;
+        require_authenticated_principal(&request.access_principal)?;
         if request.listing_id.trim().is_empty() {
             return Err("market listing id is required".to_string());
         }
@@ -1407,13 +1408,13 @@ impl VfsService {
             if listing.price_e8s != request.price_e8s {
                 return Err("market listing price mismatch".to_string());
             }
-            if caller == listing.seller_principal {
+            if request.access_principal == listing.seller_principal {
                 return Err("market seller cannot purchase own listing".to_string());
             }
-            if has_active_market_entitlement(tx, &listing.database_id, caller)? {
+            if has_active_market_entitlement(tx, &listing.database_id, &request.access_principal)? {
                 return Err("active entitlement already exists".to_string());
             }
-            ensure_no_pending_market_purchase_for_buyer(tx, &listing.listing_id, caller)?;
+            ensure_no_pending_market_purchase_for_buyer(tx, &listing.listing_id, &request.access_principal)?;
             let price_e8s = amount_to_i64(request.price_e8s)?;
             let ledger_fee_e8s = amount_to_i64(ledger.ledger_fee_e8s)?;
             let ledger_created_at_time_ns = i64::try_from(ledger.ledger_created_at_time_ns)
@@ -1423,7 +1424,7 @@ impl VfsService {
                 PendingMarketPurchaseInsert {
                     listing_id: &listing.listing_id,
                     database_id: &listing.database_id,
-                    buyer_principal: caller,
+                    buyer_principal: &request.access_principal,
                     seller_principal: &listing.seller_principal,
                     price_e8s,
                     ledger: PendingCyclesLedgerDetails {
@@ -1444,6 +1445,7 @@ impl VfsService {
                 database_id: listing.database_id,
                 seller_principal: listing.seller_principal,
                 price_e8s: request.price_e8s,
+                access_principal: request.access_principal,
             })
         })
     }
@@ -1456,6 +1458,7 @@ impl VfsService {
     ) -> Result<MarketOrder, String> {
         let price_e8s = request.price_e8s;
         let listing_id = request.listing_id.clone();
+        let access_principal = request.access_principal.clone();
         let start = self.begin_market_purchase_with_ledger_details(
             caller,
             request,
@@ -1471,18 +1474,18 @@ impl VfsService {
         )?;
         self.complete_market_purchase_ledger_transfer(
             start.operation_id,
-            caller,
+            &access_principal,
             &listing_id,
             price_e8s,
             0,
         )?;
-        self.apply_market_purchase(start.operation_id, caller, &listing_id, price_e8s, now)
+        self.apply_market_purchase(start.operation_id, &access_principal, &listing_id, price_e8s, now)
     }
 
     pub fn complete_market_purchase_ledger_transfer(
         &self,
         operation_id: u64,
-        caller: &str,
+        access_principal: &str,
         listing_id: &str,
         price_e8s: u64,
         ledger_block_index: u64,
@@ -1495,7 +1498,7 @@ impl VfsService {
                 tx,
                 PendingMarketPurchaseMatch {
                     operation_id,
-                    buyer_principal: caller,
+                    buyer_principal: access_principal,
                     listing_id,
                     price_e8s,
                 },
@@ -1518,7 +1521,7 @@ impl VfsService {
     pub fn apply_market_purchase(
         &self,
         operation_id: u64,
-        caller: &str,
+        access_principal: &str,
         listing_id: &str,
         price_e8s: u64,
         now: i64,
@@ -1529,7 +1532,7 @@ impl VfsService {
                 tx,
                 PendingMarketPurchaseMatch {
                     operation_id,
-                    buyer_principal: caller,
+                    buyer_principal: access_principal,
                     listing_id,
                     price_e8s,
                 },
@@ -1545,7 +1548,7 @@ impl VfsService {
             let listing = load_market_listing_by_id(tx, listing_id)?
                 .ok_or_else(|| "market listing not found".to_string())?;
             require_market_listing_purchasable(tx, &listing)?;
-            if has_active_market_entitlement(tx, &listing.database_id, caller)? {
+            if has_active_market_entitlement(tx, &listing.database_id, access_principal)? {
                 return Err("active entitlement already exists".to_string());
             }
             let order_id = unique_market_id(
@@ -1553,7 +1556,7 @@ impl VfsService {
                 "market_orders",
                 "order_id",
                 GENERATED_ORDER_ID_PREFIX,
-                caller,
+                access_principal,
                 &listing.listing_id,
                 now,
             )?;
@@ -1566,7 +1569,7 @@ impl VfsService {
                     order_id,
                     listing.listing_id,
                     listing.database_id,
-                    caller,
+                    access_principal,
                     listing.seller_principal,
                     price_e8s,
                     ledger_block_index,
@@ -1580,7 +1583,7 @@ impl VfsService {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     listing.database_id,
-                    caller,
+                    access_principal,
                     listing.listing_id,
                     order_id,
                     now,
@@ -1604,7 +1607,7 @@ impl VfsService {
     pub fn cancel_market_purchase(
         &self,
         operation_id: u64,
-        caller: &str,
+        access_principal: &str,
         listing_id: &str,
         price_e8s: u64,
     ) -> Result<(), String> {
@@ -1614,7 +1617,7 @@ impl VfsService {
                 tx,
                 PendingMarketPurchaseMatch {
                     operation_id,
-                    buyer_principal: caller,
+                    buyer_principal: access_principal,
                     listing_id,
                     price_e8s,
                 },
@@ -1631,7 +1634,7 @@ impl VfsService {
     pub fn mark_market_purchase_ambiguous(
         &self,
         operation_id: u64,
-        caller: &str,
+        access_principal: &str,
         listing_id: &str,
         price_e8s: u64,
     ) -> Result<(), String> {
@@ -1641,7 +1644,7 @@ impl VfsService {
                 tx,
                 PendingMarketPurchaseMatch {
                     operation_id,
-                    buyer_principal: caller,
+                    buyer_principal: access_principal,
                     listing_id,
                     price_e8s,
                 },
@@ -3456,11 +3459,6 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
-    DropAppBalanceUpgrade,
-    DirectMarketPurchaseUpgrade,
-    MarketplacePreviewUpgrade,
-    MarketplaceCoreUpgrade,
-    StorageBillingBatchUpgrade,
     Mainnet011,
 }
 
@@ -3470,36 +3468,6 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
-        IndexSchemaState::DropAppBalanceUpgrade => {
-            apply_drop_app_balance_index_migration(conn)?;
-            validate_index_schema(conn)
-        }
-        IndexSchemaState::DirectMarketPurchaseUpgrade => {
-            apply_direct_market_purchase_index_migration(conn)?;
-            apply_drop_app_balance_index_migration(conn)?;
-            validate_index_schema(conn)
-        }
-        IndexSchemaState::MarketplacePreviewUpgrade => {
-            apply_marketplace_preview_index_migration(conn)?;
-            apply_direct_market_purchase_index_migration(conn)?;
-            apply_drop_app_balance_index_migration(conn)?;
-            validate_index_schema(conn)
-        }
-        IndexSchemaState::MarketplaceCoreUpgrade => {
-            apply_marketplace_core_index_migration(conn)?;
-            apply_marketplace_preview_index_migration(conn)?;
-            apply_direct_market_purchase_index_migration(conn)?;
-            apply_drop_app_balance_index_migration(conn)?;
-            validate_index_schema(conn)
-        }
-        IndexSchemaState::StorageBillingBatchUpgrade => {
-            apply_storage_billing_batch_index_migration(conn)?;
-            apply_marketplace_core_index_migration(conn)?;
-            apply_marketplace_preview_index_migration(conn)?;
-            apply_direct_market_purchase_index_migration(conn)?;
-            apply_drop_app_balance_index_migration(conn)?;
-            validate_index_schema(conn)
-        }
         IndexSchemaState::Mainnet011 => {
             let config = config
                 .ok_or_else(|| "cycles config required for first cycles upgrade".to_string())?;
@@ -3528,34 +3496,16 @@ fn classify_existing_index_schema_state(
         .map_err(|error| error.to_string())?;
     if let Some(version) = legacy_billing_marker {
         return Err(format!(
-            "unsupported partial billing index schema: migration {version} is already applied"
+            "unsupported partial index schema: migration {version} is already applied"
         ));
     }
     if let Some(table) = legacy_credit_index_table_name_tx(conn)? {
         return Err(format!(
-            "unsupported partial billing index schema: table {table} already exists"
+            "unsupported partial index schema: table {table} already exists"
         ));
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
         return Ok(IndexSchemaState::Latest);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE)? {
-        return Ok(IndexSchemaState::DropAppBalanceUpgrade);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW)? {
-        return Ok(IndexSchemaState::DirectMarketPurchaseUpgrade);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)? {
-        return Ok(IndexSchemaState::MarketplacePreviewUpgrade);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)? {
-        return Ok(IndexSchemaState::MarketplacePreviewUpgrade);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
-        return Ok(IndexSchemaState::MarketplaceCoreUpgrade);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX)? {
-        return Ok(IndexSchemaState::StorageBillingBatchUpgrade);
     }
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         return Err(format!(
@@ -3565,14 +3515,14 @@ fn classify_existing_index_schema_state(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         if migration_applied_tx(conn, version)? {
             return Err(format!(
-                "unsupported partial billing index schema: migration {version} is already applied"
+                "unsupported partial index schema: migration {version} is already applied"
             ));
         }
     }
     for table in POST_011_INDEX_SCHEMA_TABLES {
         if tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!(
-                "unsupported partial billing index schema: table {table} already exists"
+                "unsupported partial index schema: table {table} already exists"
             ));
         }
     }
@@ -3589,231 +3539,6 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
-    Ok(())
-}
-
-fn apply_storage_billing_batch_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute(
-        "CREATE TABLE storage_billing_state (
-           key TEXT PRIMARY KEY,
-           cursor_mount_id INTEGER,
-           billing_now_ms INTEGER NOT NULL,
-           updated_at_ms INTEGER NOT NULL,
-           CHECK (key = 'timer')
-         )",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)?;
-    Ok(())
-}
-
-fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "
-        CREATE TABLE market_listings (
-          listing_id TEXT PRIMARY KEY,
-          seller_principal TEXT NOT NULL,
-          database_id TEXT NOT NULL,
-          title TEXT NOT NULL,
-          description TEXT NOT NULL,
-          llm_summary TEXT,
-          tags_json TEXT NOT NULL,
-          price_e8s INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          revision INTEGER NOT NULL,
-          purchase_count INTEGER NOT NULL,
-          report_count INTEGER NOT NULL,
-          created_at_ms INTEGER NOT NULL,
-          updated_at_ms INTEGER NOT NULL,
-          FOREIGN KEY (database_id) REFERENCES databases(database_id)
-        );
-
-        CREATE INDEX market_listings_status_idx
-          ON market_listings(status, listing_id);
-
-        CREATE INDEX market_listings_database_idx
-          ON market_listings(database_id);
-
-        CREATE TABLE market_orders (
-          order_id TEXT PRIMARY KEY,
-          listing_id TEXT NOT NULL,
-          database_id TEXT NOT NULL,
-          buyer_principal TEXT NOT NULL,
-          seller_principal TEXT NOT NULL,
-          price_e8s INTEGER NOT NULL,
-          ledger_block_index INTEGER NOT NULL,
-          created_at_ms INTEGER NOT NULL
-        );
-
-        CREATE INDEX market_orders_buyer_idx
-          ON market_orders(buyer_principal, order_id);
-
-        CREATE TABLE market_purchase_pending_operations (
-          operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          listing_id TEXT NOT NULL,
-          database_id TEXT NOT NULL,
-          buyer_principal TEXT NOT NULL,
-          seller_principal TEXT NOT NULL,
-          price_e8s INTEGER NOT NULL,
-          from_owner TEXT NOT NULL,
-          from_subaccount BLOB,
-          to_owner TEXT NOT NULL,
-          to_subaccount BLOB,
-          ledger_fee_e8s INTEGER NOT NULL,
-          ledger_created_at_time_ns INTEGER NOT NULL,
-          operation_status TEXT NOT NULL,
-          ledger_block_index INTEGER,
-          created_at_ms INTEGER NOT NULL
-        );
-
-        CREATE INDEX market_purchase_pending_buyer_idx
-          ON market_purchase_pending_operations(buyer_principal, listing_id);
-
-        CREATE TABLE market_entitlements (
-          database_id TEXT NOT NULL,
-          buyer_principal TEXT NOT NULL,
-          listing_id TEXT NOT NULL,
-          order_id TEXT NOT NULL,
-          purchased_at_ms INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          PRIMARY KEY (database_id, buyer_principal, listing_id),
-          FOREIGN KEY (database_id) REFERENCES databases(database_id)
-        );
-
-        CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
-          ON market_entitlements(database_id, buyer_principal)
-          WHERE status = 'active';
-
-        CREATE INDEX market_entitlements_buyer_idx
-          ON market_entitlements(buyer_principal, database_id);
-        ",
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)?;
-    Ok(())
-}
-
-fn apply_marketplace_preview_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "
-        CREATE TABLE market_listings_next (
-          listing_id TEXT PRIMARY KEY,
-          seller_principal TEXT NOT NULL,
-          database_id TEXT NOT NULL,
-          title TEXT NOT NULL,
-          description TEXT NOT NULL,
-          llm_summary TEXT,
-          tags_json TEXT NOT NULL,
-          price_e8s INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          revision INTEGER NOT NULL,
-          purchase_count INTEGER NOT NULL,
-          report_count INTEGER NOT NULL,
-          created_at_ms INTEGER NOT NULL,
-          updated_at_ms INTEGER NOT NULL,
-          FOREIGN KEY (database_id) REFERENCES databases(database_id)
-        );
-
-        INSERT INTO market_listings_next
-          (listing_id, seller_principal, database_id, title, description,
-           llm_summary, tags_json, price_e8s, status, revision, purchase_count, report_count,
-           created_at_ms, updated_at_ms)
-        SELECT listing_id, seller_principal, database_id, title, description,
-               llm_summary, tags_json, price_e8s, status, revision, purchase_count, report_count,
-               created_at_ms, updated_at_ms
-          FROM market_listings;
-
-        DROP TABLE market_listings;
-        ALTER TABLE market_listings_next RENAME TO market_listings;
-
-        CREATE INDEX market_listings_status_idx
-          ON market_listings(status, listing_id);
-
-        CREATE INDEX market_listings_database_idx
-          ON market_listings(database_id);
-        ",
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW)?;
-    Ok(())
-}
-
-fn apply_direct_market_purchase_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "
-        DROP TABLE market_entitlements;
-        DROP TABLE market_orders;
-
-        CREATE TABLE market_orders (
-          order_id TEXT PRIMARY KEY,
-          listing_id TEXT NOT NULL,
-          database_id TEXT NOT NULL,
-          buyer_principal TEXT NOT NULL,
-          seller_principal TEXT NOT NULL,
-          price_e8s INTEGER NOT NULL,
-          ledger_block_index INTEGER NOT NULL,
-          created_at_ms INTEGER NOT NULL
-        );
-
-        CREATE INDEX market_orders_buyer_idx
-          ON market_orders(buyer_principal, order_id);
-
-        CREATE TABLE market_purchase_pending_operations (
-          operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          listing_id TEXT NOT NULL,
-          database_id TEXT NOT NULL,
-          buyer_principal TEXT NOT NULL,
-          seller_principal TEXT NOT NULL,
-          price_e8s INTEGER NOT NULL,
-          from_owner TEXT NOT NULL,
-          from_subaccount BLOB,
-          to_owner TEXT NOT NULL,
-          to_subaccount BLOB,
-          ledger_fee_e8s INTEGER NOT NULL,
-          ledger_created_at_time_ns INTEGER NOT NULL,
-          operation_status TEXT NOT NULL,
-          ledger_block_index INTEGER,
-          created_at_ms INTEGER NOT NULL
-        );
-
-        CREATE INDEX market_purchase_pending_buyer_idx
-          ON market_purchase_pending_operations(buyer_principal, listing_id);
-
-        CREATE TABLE market_entitlements (
-          database_id TEXT NOT NULL,
-          buyer_principal TEXT NOT NULL,
-          listing_id TEXT NOT NULL,
-          order_id TEXT NOT NULL,
-          purchased_at_ms INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          PRIMARY KEY (database_id, buyer_principal, listing_id),
-          FOREIGN KEY (database_id) REFERENCES databases(database_id)
-        );
-
-        CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
-          ON market_entitlements(database_id, buyer_principal)
-          WHERE status = 'active';
-
-        CREATE INDEX market_entitlements_buyer_idx
-          ON market_entitlements(buyer_principal, database_id);
-        ",
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE)?;
-    Ok(())
-}
-
-fn apply_drop_app_balance_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute_batch(
-        "
-        DROP TABLE IF EXISTS kinic_pending_operations;
-        DROP TABLE IF EXISTS kinic_ledger;
-        DROP TABLE IF EXISTS kinic_accounts;
-        ",
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)?;
     Ok(())
 }
 
@@ -4001,6 +3726,7 @@ const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
     "storage_billing_state",
     "market_listings",
     "market_orders",
+    "market_purchase_pending_operations",
     "market_entitlements",
 ];
 
@@ -5092,6 +4818,7 @@ pub struct MarketPurchaseStart {
     pub database_id: String,
     pub seller_principal: String,
     pub price_e8s: u64,
+    pub access_principal: String,
 }
 
 struct PendingMarketPurchase {
@@ -7651,7 +7378,7 @@ mod tests {
             .run_index_migrations_for_upgrade(Some(test_cycles_billing_config()))
             .expect_err("partial billing schema should be unsupported");
 
-        assert!(error.contains("unsupported partial billing index schema"));
+        assert!(error.contains("unsupported partial index schema"));
         assert!(error.contains("database_index:020_"));
     }
 

@@ -825,7 +825,7 @@ async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<Market
             with_service(|service| {
                 service.complete_market_purchase_ledger_transfer(
                     operation_id,
-                    &caller,
+                    &purchase_start.access_principal,
                     &purchase_start.listing_id,
                     purchase_start.price_e8s,
                     block_index,
@@ -834,7 +834,7 @@ async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<Market
             with_service(|service| {
                 service.apply_market_purchase(
                     operation_id,
-                    &caller,
+                    &purchase_start.access_principal,
                     &purchase_start.listing_id,
                     purchase_start.price_e8s,
                     now,
@@ -845,7 +845,7 @@ async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<Market
             with_service(|service| {
                 service.cancel_market_purchase(
                     operation_id,
-                    &caller,
+                    &purchase_start.access_principal,
                     &purchase_start.listing_id,
                     purchase_start.price_e8s,
                 )
@@ -855,7 +855,7 @@ async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<Market
             with_service(|service| {
                 service.mark_market_purchase_ambiguous(
                     operation_id,
-                    &caller,
+                    &purchase_start.access_principal,
                     &purchase_start.listing_id,
                     purchase_start.price_e8s,
                 )

@@ -14,7 +14,7 @@ use vfs_runtime::{
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
+    MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
     MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
     SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
@@ -49,6 +49,14 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
         llm_summary: None,
         tags_json: "[]".to_string(),
         price_e8s,
+    }
+}
+
+fn market_purchase_request(listing: &MarketListing, access_principal: &str) -> MarketPurchaseRequest {
+    MarketPurchaseRequest {
+        listing_id: listing.listing_id.clone(),
+        price_e8s: listing.price_e8s,
+        access_principal: access_principal.to_string(),
     }
 }
 
@@ -328,7 +336,30 @@ fn partial_billing_index_schema_is_rejected() {
         .run_index_migrations()
         .expect_err("partial billing schema should reject");
 
-    assert!(error.contains("unsupported partial billing index schema"));
+    assert!(error.contains("unsupported partial index schema"));
+}
+
+#[test]
+fn partial_marketplace_index_schema_is_rejected() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let index_path = root.join("index.sqlite3");
+    write_mainnet_011_index_schema(&index_path, "hot");
+    let conn = Connection::open(&index_path).expect("index should reopen");
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+        params!["database_index:027_marketplace_core"],
+    )
+    .expect("partial marketplace marker should insert");
+    drop(conn);
+
+    let service = VfsService::new(index_path, root.join("databases"));
+    let error = service
+        .run_index_migrations()
+        .expect_err("partial marketplace schema should reject");
+
+    assert!(error.contains("unsupported partial index schema"));
+    assert!(error.contains("database_index:027_marketplace_core"));
 }
 
 #[test]
@@ -434,7 +465,7 @@ fn cycles_per_cycle_ledger_schema_is_rejected() {
         )
         .expect("ledger cycles column count should load");
 
-    assert!(error.contains("unsupported partial billing index schema"));
+    assert!(error.contains("unsupported partial index schema"));
     assert_eq!(ledger_cycles_column_count, 1);
 }
 
@@ -661,6 +692,13 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
         schema_migration_count(&root, "database_index:031_drop_app_balance"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:027_marketplace_core"),
+        1
+    );
+    assert!(table_exists(&root, "market_listings"));
+    assert!(table_exists(&root, "market_purchase_pending_operations"));
+    assert!(table_exists(&root, "market_entitlements"));
     assert!(!table_exists(&root, "kinic_accounts"));
     assert!(!table_exists(&root, "kinic_ledger"));
     assert!(!table_exists(&root, "kinic_pending_operations"));
@@ -4270,10 +4308,7 @@ fn market_purchase_creates_order_with_ledger_block_and_entitlement() {
     let order = service
         .begin_market_purchase_with_ledger_details(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             ledger_details("buyer", "seller", 100_000, 6),
             6,
         )
@@ -4313,14 +4348,69 @@ fn market_purchase_creates_order_with_ledger_block_and_entitlement() {
         service
             .market_purchase_access(
                 "buyer",
-                MarketPurchaseRequest {
-                    listing_id: second_listing.listing_id,
-                    price_e8s: second_listing.price_e8s,
-                },
+                market_purchase_request(&second_listing, "buyer"),
                 9,
             )
             .is_err(),
         "same buyer cannot repurchase the same database"
+    );
+}
+
+#[test]
+fn market_purchase_payer_can_grant_access_to_ii_principal() {
+    let service = service();
+    service
+        .create_database("market-access-db", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("market-access-db", 250), 2)
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "wallet",
+            market_purchase_request(&listing, "ii-user"),
+            ledger_details("wallet", "seller", 100_000, 6),
+            6,
+        )
+        .expect("wallet payer should begin purchase");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            "ii-user",
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete for access principal");
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            "ii-user",
+            &listing.listing_id,
+            listing.price_e8s,
+            7,
+        )
+        .expect("purchase should grant II access");
+
+    assert_eq!(order.buyer_principal, "ii-user");
+    assert!(
+        service
+            .list_database_summaries_for_caller("ii-user")
+            .expect("II principal should list purchased database")
+            .iter()
+            .any(|database| database.database_id == "market-access-db")
+    );
+    assert!(
+        service
+            .market_preview_purchase("ii-user", &listing.listing_id)
+            .expect("II principal should preview purchase")
+            .already_entitled
+    );
+    assert!(
+        !service
+            .market_preview_purchase("wallet", &listing.listing_id)
+            .expect("wallet payer should preview purchase")
+            .already_entitled
     );
 }
 
@@ -4407,14 +4497,11 @@ fn market_purchase_rejects_seller_self_purchase() {
         .expect("listing should create");
     let error = service
         .market_purchase_access(
-            "seller",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
-                price_e8s: listing.price_e8s,
-            },
+            "buyer",
+            market_purchase_request(&listing, "seller"),
             5,
         )
-        .expect_err("seller must not buy their own listing");
+        .expect_err("seller access principal must not buy their own listing");
 
     assert!(error.contains("seller cannot purchase own listing"));
 }
@@ -4435,6 +4522,7 @@ fn market_purchase_rejects_existing_entitlement_and_price_mismatch() {
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s + 1,
+                access_principal: "buyer".to_string(),
             },
             6,
         )
@@ -4444,20 +4532,14 @@ fn market_purchase_rejects_existing_entitlement_and_price_mismatch() {
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             7,
         )
         .expect("first purchase should succeed");
     let duplicate = service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             8,
         )
         .expect_err("existing entitlement should reject");
@@ -4482,10 +4564,7 @@ fn market_database_entitlements_are_owner_readonly_and_paged() {
         service
             .market_purchase_access(
                 buyer,
-                MarketPurchaseRequest {
-                    listing_id: listing.listing_id.clone(),
-                    price_e8s: listing.price_e8s,
-                },
+                market_purchase_request(&listing, buyer),
                 block_index as i64 + 10,
             )
             .expect("purchase should succeed");
@@ -4798,10 +4877,7 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
         service
             .market_purchase_access(
                 "buyer",
-                MarketPurchaseRequest {
-                    listing_id: listing.listing_id.clone(),
-                    price_e8s: listing.price_e8s,
-                },
+                market_purchase_request(&listing, "buyer"),
                 6,
             )
             .expect_err("purchase should reject stale seller")
@@ -4879,10 +4955,7 @@ fn market_listing_requires_active_database() {
     let purchase_error = service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             9,
         )
         .expect_err("archived database purchase should reject");
@@ -4921,10 +4994,7 @@ fn market_listing_requires_active_database() {
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             12,
         )
         .expect("restored active database purchase should succeed");
@@ -4956,10 +5026,7 @@ fn delete_database_removes_marketplace_rows() {
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             6,
         )
         .expect("purchase should succeed");
@@ -5028,10 +5095,7 @@ fn market_entitlement_allows_read_surface_but_not_export() {
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, "buyer"),
             7,
         )
         .expect("purchase should succeed");

@@ -15,6 +15,10 @@ assert.match(dashboardClient, /setActiveTab\("access"\)/);
 
 assert.match(dashboardHome, /Create with wallet/);
 assert.match(dashboardHome, /purchaseCyclesWithWallet/);
+assert.match(dashboardHome, /KinicAfterApproveError/);
+assert.match(dashboardHome, /purchase_database_cycles failed/);
+assert.match(dashboardHome, /Retry cycles purchase for the same database from Cycles/);
+assert.doesNotMatch(dashboardHome, /setLoadState\("idle"\)/);
 assertNoAppBalanceSurface(dashboardHome);
 assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource|createDialogPaymentSources|paymentSources|onPaymentSourceChange|walletBalanceDetail/);
 assert.match(createDialog, /Wallet approval pays directly from ledger balance/);
@@ -25,8 +29,9 @@ assert.match(appSession, /getConnectedWalletKinicBalance/);
 assertNoAppBalanceSurface(appSession);
 assert.doesNotMatch(appSession, /kinicBalance|refreshKinicBalance/);
 assertNoAppBalanceSurface(adminShell);
-assert.match(profile, /Ledger KINIC balance/);
+assert.match(profile, /Marketplace access/);
+assert.match(profile, /Purchased databases/);
 assertNoAppBalanceSurface(profile);
-assert.doesNotMatch(profile, /Deposit|Withdraw/);
+assert.doesNotMatch(profile, /Ledger KINIC balance|Deposit|Withdraw/);
 
 console.log("Dashboard direct funding checks passed");

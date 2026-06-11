@@ -11,6 +11,7 @@ import { marketListListings } from "@/lib/vfs-client";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
 import type { MarketListing } from "@/lib/types";
+import { errorMessage } from "@/lib/wiki-helpers";
 
 type MarketplaceClientProps = {
   canisterId: string;
@@ -70,7 +71,7 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
       setCursor(page.nextCursor);
       setState("idle");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
       setState("error");
     }
   }, [canisterId]);

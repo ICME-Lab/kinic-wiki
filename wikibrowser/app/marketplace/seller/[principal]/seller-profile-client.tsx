@@ -7,6 +7,7 @@ import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
 import type { MarketListing } from "@/lib/types";
 import { marketListListings } from "@/lib/vfs-client";
+import { errorMessage } from "@/lib/wiki-helpers";
 
 type SellerProfileClientProps = {
   canisterId: string;
@@ -44,7 +45,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
         setCursor(page.nextCursor);
         setState("idle");
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setError(errorMessage(cause));
         setState("error");
       }
     },

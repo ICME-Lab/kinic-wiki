@@ -156,7 +156,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     listing_id: idl.Text,
     price_e8s: idl.Nat64
   });
-  const MarketPurchaseRequest = idl.Record({ listing_id: idl.Text, price_e8s: idl.Nat64 });
+  const MarketPurchaseRequest = idl.Record({ listing_id: idl.Text, price_e8s: idl.Nat64, access_principal: idl.Text });
   const MarketUpdateListingRequest = idl.Record({
     llm_summary: idl.Opt(idl.Text),
     title: idl.Text,

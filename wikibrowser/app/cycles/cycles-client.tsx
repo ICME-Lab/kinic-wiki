@@ -14,6 +14,7 @@ import { databaseCyclesHref, databaseCyclesView } from "@/lib/cycles-state";
 import { purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
+import { errorMessage } from "@/lib/wiki-helpers";
 import type { CyclesBillingConfig, DatabaseStatus, DatabaseSummary } from "@/lib/types";
 
 type CyclesStatus = "idle" | "running" | "success" | "notice" | "error";
@@ -87,7 +88,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
     } catch (cause) {
       setDatabases([]);
       setCyclesConfig(null);
-      setDatabaseLoadError(cause instanceof Error ? cause.message : String(cause));
+      setDatabaseLoadError(errorMessage(cause));
       setDatabaseLoadState("error");
     }
   }, [authClient, canisterId, principal]);

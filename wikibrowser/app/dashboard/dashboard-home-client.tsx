@@ -11,7 +11,7 @@ import { DatabaseBody, StatusPanel } from "../home-ui";
 import { AdminContent } from "@/components/admin-shell";
 import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
-import { purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
+import { KinicAfterApproveError, purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
@@ -162,9 +162,8 @@ export function DashboardHomeClient() {
     } catch (cause) {
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
-        setError(null);
-        setWalletMessage("Database created pending. Initial cycles purchase did not complete. Fund cycles later from Cycles.");
-        setLoadState("idle");
+        setError(createDatabasePurchaseFailureMessage(createdDatabaseId, cause));
+        setWalletMessage(null);
       } else {
         const message = errorMessage(cause);
         setError(message);
@@ -302,6 +301,13 @@ function fundingProviderLabel(provider: FundingProvider): string {
   if (provider === "oisy") return "OISY";
   if (provider === "plug") return "Plug";
   return "Internet Identity";
+}
+
+function createDatabasePurchaseFailureMessage(databaseId: string, cause: unknown): string {
+  if (cause instanceof KinicAfterApproveError) {
+    return `Database ${databaseId} was created pending, but wallet approval did not activate it because purchase_database_cycles failed: ${cause.causeMessage}. Approval may remain usable until expiry; retry cycles purchase for the same database from Cycles.`;
+  }
+  return `Database ${databaseId} was created pending, but initial cycles purchase did not complete: ${errorMessage(cause)}. Retry cycles purchase for the same database from Cycles.`;
 }
 
 function balanceCanFundCreate(balanceE8s: string | null, requiredE8s: bigint): boolean {

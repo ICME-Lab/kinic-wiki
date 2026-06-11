@@ -241,6 +241,7 @@ pub struct MarketUpdateListingRequest {
 pub struct MarketPurchaseRequest {
     pub listing_id: String,
     pub price_e8s: u64,
+    pub access_principal: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

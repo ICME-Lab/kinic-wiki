@@ -12,8 +12,10 @@ import { hrefForPath } from "@/lib/paths";
 import { marketSellerPath } from "@/lib/marketplace-routes";
 import { marketGetListing, marketPreviewPurchase } from "@/lib/vfs-client";
 import type { LinkEdge, MarketListing, MarketListingDetail, MarketListingVerifiedStats, MarketPreviewExcerpt } from "@/lib/types";
+import { errorMessage } from "@/lib/wiki-helpers";
 
 const GRAPH_LIMIT = 100;
+const PURCHASED_MARKET_LISTING_KEY_PREFIX = "kinic-wiki.market-purchase";
 
 type ListingDetailClientProps = {
   canisterId: string;
@@ -47,21 +49,25 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       setDetail(nextListing);
       setState("idle");
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
+      setMessage(errorMessage(cause));
       setState("error");
     }
   }, [canisterId, listingId]);
 
   const loadPurchasePreview = useCallback(async () => {
+    if (principal && readStoredMarketPurchase(canisterId, listingId, principal)) {
+      setPurchaseState("success");
+      return;
+    }
     if (!authClient || !principal) {
-      setPurchaseState("idle");
+      setPurchaseState((current) => (current === "success" ? "success" : "idle"));
       return;
     }
     try {
       const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listingId);
-      setPurchaseState(preview.alreadyEntitled ? "success" : "idle");
+      setPurchaseState((current) => (preview.alreadyEntitled || current === "success" ? "success" : "idle"));
     } catch {
-      setPurchaseState("idle");
+      setPurchaseState((current) => (current === "success" ? "success" : "idle"));
     }
   }, [authClient, canisterId, listingId, principal]);
 
@@ -79,19 +85,20 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     setPurchaseState("loading");
     setMessage(null);
     try {
-      const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s) }, wallet);
-      setMessage(`Order ${order.orderId}. Ledger block ${order.ledgerBlockIndex}. Access is ready.`);
+      const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s), accessPrincipal: principal }, wallet);
+      setMessage(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
+      storeMarketPurchase(canisterId, order.listingId, principal);
       await refreshWalletBalance(wallet);
       setPurchaseState("success");
-      void loadPurchasePreview();
     } catch (cause) {
-      const errorMessage = cause instanceof Error ? cause.message : String(cause);
-      if (errorMessage.includes("active entitlement already exists")) {
+      const message = errorMessage(cause);
+      if (message.includes("active entitlement already exists")) {
         setMessage("Access is already active.");
+        storeMarketPurchase(canisterId, listing.listingId, principal);
         setPurchaseState("success");
         return;
       }
-      setMessage(errorMessage);
+      setMessage(message);
       setPurchaseState("error");
     }
   }
@@ -416,6 +423,26 @@ function formatDate(value: string | null): string {
   if (!value) return "-";
   const date = new Date(Number(value));
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString();
+}
+
+function marketPurchaseStorageKey(canisterId: string, listingId: string, buyerPrincipal: string): string {
+  return `${PURCHASED_MARKET_LISTING_KEY_PREFIX}:${canisterId}:${listingId}:${buyerPrincipal}`;
+}
+
+function readStoredMarketPurchase(canisterId: string, listingId: string, buyerPrincipal: string): boolean {
+  try {
+    return localStorage.getItem(marketPurchaseStorageKey(canisterId, listingId, buyerPrincipal)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function storeMarketPurchase(canisterId: string, listingId: string, buyerPrincipal: string): void {
+  try {
+    localStorage.setItem(marketPurchaseStorageKey(canisterId, listingId, buyerPrincipal), "1");
+  } catch {
+    // The canister order is authoritative; local storage only keeps the button state across reloads.
+  }
 }
 
 function formatInteger(value: string): string {

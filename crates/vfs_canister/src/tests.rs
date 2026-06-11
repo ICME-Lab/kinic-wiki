@@ -189,6 +189,14 @@ fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateList
     }
 }
 
+fn market_purchase_request(listing_id: &str, price_e8s: u64, access_principal: Principal) -> MarketPurchaseRequest {
+    MarketPurchaseRequest {
+        listing_id: listing_id.to_string(),
+        price_e8s,
+        access_principal: access_principal.to_text(),
+    }
+}
+
 fn consent_request(method: &str, arg: Vec<u8>) -> Icrc21ConsentMessageRequest {
     Icrc21ConsentMessageRequest {
         arg,
@@ -1484,6 +1492,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     install_empty_test_service();
     let owner = Principal::management_canister();
     let buyer = Principal::self_authenticating(b"market buyer");
+    let wallet = Principal::self_authenticating(b"market wallet payer");
     let database_id;
     let listing_id;
 
@@ -1517,21 +1526,28 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     }
 
     {
-        let _caller = AuthenticatedCallerGuard::install_principal(buyer);
+        let _caller = AuthenticatedCallerGuard::install_principal(wallet);
         set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(202));
-        let order = block_on_ready(market_purchase_access(MarketPurchaseRequest {
-            listing_id: listing_id.clone(),
-            price_e8s: 500,
-        }))
-        .expect("buyer should purchase access");
+        let order = block_on_ready(market_purchase_access(market_purchase_request(&listing_id, 500, buyer)))
+        .expect("wallet should pay for buyer access");
+        assert_eq!(order.buyer_principal, buyer.to_text());
         assert_eq!(order.ledger_block_index, 202);
+        assert_eq!(
+            last_ledger_from_for_test()
+                .expect("market payer should record")
+                .owner,
+            wallet
+        );
         assert_eq!(
             last_ledger_to_for_test()
                 .expect("market recipient should record")
                 .owner,
             owner
         );
+    }
 
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(buyer);
         let summaries = list_databases().expect("buyer database summaries should load");
         let summary = summaries
             .iter()
