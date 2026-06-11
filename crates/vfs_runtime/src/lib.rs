@@ -1294,6 +1294,60 @@ impl VfsService {
         })
     }
 
+    pub fn market_list_seller_listings(
+        &self,
+        seller_principal: &str,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketListingPage, String> {
+        require_authenticated_principal(seller_principal)?;
+        let limit = page_limit(limit);
+        let after = cursor.unwrap_or_default();
+        self.read_index(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT l.listing_id, l.seller_principal, l.database_id, l.title, l.description,
+                            l.llm_summary, l.tags_json, l.price_e8s, l.status,
+                            l.revision, l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
+                     FROM market_listings l
+                     JOIN databases d ON d.database_id = l.database_id
+                     JOIN database_members m
+                       ON m.database_id = l.database_id
+                      AND m.principal = l.seller_principal
+                      AND m.role = 'owner'
+                     WHERE l.status = ?1
+                       AND d.status = ?2
+                       AND l.seller_principal = ?3
+                       AND l.listing_id > ?4
+                     ORDER BY l.listing_id ASC
+                     LIMIT ?5",
+                )
+                .map_err(|error| error.to_string())?;
+            let mut listings = crate::sqlite::query_map(
+                &mut stmt,
+                params![
+                    MARKET_LISTING_STATUS_ACTIVE,
+                    status_to_db(DatabaseStatus::Active),
+                    seller_principal,
+                    after,
+                    i64::from(limit) + 1
+                ],
+                map_market_listing,
+            )
+            .map_err(|error| error.to_string())?;
+            let next_cursor = if listings.len() > limit as usize {
+                listings.pop();
+                listings.last().map(|listing| listing.listing_id.clone())
+            } else {
+                None
+            };
+            Ok(MarketListingPage {
+                listings,
+                next_cursor,
+            })
+        })
+    }
+
     pub fn market_list_database_listings(
         &self,
         caller: &str,
@@ -1401,23 +1455,7 @@ impl VfsService {
             return Err("market listing price must be positive".to_string());
         }
         self.write_index(|tx| {
-            let listing = load_market_listing_by_id(tx, &request.listing_id)?
-                .ok_or_else(|| "market listing not found".to_string())?;
-            require_market_listing_purchasable(tx, &listing)?;
-            if listing.price_e8s != request.price_e8s {
-                return Err("market listing price mismatch".to_string());
-            }
-            if request.access_principal == listing.seller_principal {
-                return Err("market seller cannot purchase own listing".to_string());
-            }
-            if has_active_market_entitlement(tx, &listing.database_id, &request.access_principal)? {
-                return Err("active entitlement already exists".to_string());
-            }
-            ensure_no_pending_market_purchase_for_buyer(
-                tx,
-                &listing.listing_id,
-                &request.access_principal,
-            )?;
+            let listing = validate_market_purchase_request(tx, &request)?;
             let price_e8s = amount_to_i64(request.price_e8s)?;
             let ledger_fee_e8s = amount_to_i64(ledger.ledger_fee_e8s)?;
             let ledger_created_at_time_ns = i64::try_from(ledger.ledger_created_at_time_ns)
@@ -1451,6 +1489,22 @@ impl VfsService {
                 access_principal: request.access_principal,
             })
         })
+    }
+
+    pub fn validate_market_purchase_for_consent(
+        &self,
+        payer: &str,
+        request: &MarketPurchaseRequest,
+    ) -> Result<MarketListing, String> {
+        require_authenticated_principal(payer)?;
+        require_authenticated_principal(&request.access_principal)?;
+        if request.listing_id.trim().is_empty() {
+            return Err("market listing id is required".to_string());
+        }
+        if request.price_e8s == 0 {
+            return Err("market listing price must be positive".to_string());
+        }
+        self.read_index(|conn| validate_market_purchase_request(conn, request))
     }
 
     pub fn market_purchase_access(
@@ -5098,6 +5152,30 @@ fn require_market_listing_purchasable(
         return Err("market listing is not active".to_string());
     }
     require_market_seller_can_list(conn, &listing.seller_principal, &listing.database_id)
+}
+
+fn validate_market_purchase_request(
+    conn: &Connection,
+    request: &MarketPurchaseRequest,
+) -> Result<MarketListing, String> {
+    let listing = load_market_listing_by_id(conn, &request.listing_id)?
+        .ok_or_else(|| "market listing not found".to_string())?;
+    require_market_listing_purchasable(conn, &listing)?;
+    if listing.price_e8s != request.price_e8s {
+        return Err("market listing price mismatch".to_string());
+    }
+    if request.access_principal == listing.seller_principal {
+        return Err("market seller cannot purchase own listing".to_string());
+    }
+    if has_active_market_entitlement(conn, &listing.database_id, &request.access_principal)? {
+        return Err("active entitlement already exists".to_string());
+    }
+    ensure_no_pending_market_purchase_for_buyer(
+        conn,
+        &listing.listing_id,
+        &request.access_principal,
+    )?;
+    Ok(listing)
 }
 
 fn has_active_market_entitlement(

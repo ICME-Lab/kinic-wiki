@@ -6,7 +6,7 @@ import { AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { marketListingPath } from "@/lib/marketplace-routes";
 import type { MarketListing } from "@/lib/types";
-import { marketListListings } from "@/lib/vfs-client";
+import { marketListSellerListings } from "@/lib/vfs-client";
 import { errorMessage } from "@/lib/wiki-helpers";
 
 type SellerProfileClientProps = {
@@ -24,11 +24,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
   const [state, setState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
 
-  const sellerListings = useMemo(() => listings.filter((listing) => listing.sellerPrincipal === principal), [listings, principal]);
-  const purchases = useMemo(
-    () => sellerListings.reduce((total, listing) => total + parseNonNegativeInteger(listing.purchaseCount), 0n),
-    [sellerListings]
-  );
+  const purchases = useMemo(() => listings.reduce((total, listing) => total + parseNonNegativeInteger(listing.purchaseCount), 0n), [listings]);
 
   const load = useCallback(
     async (nextCursor: string | null, append: boolean) => {
@@ -40,7 +36,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
       setState("loading");
       setError(null);
       try {
-        const page = await marketListListings(canisterId, nextCursor, LISTING_PAGE_LIMIT);
+        const page = await marketListSellerListings(canisterId, principal, nextCursor, LISTING_PAGE_LIMIT);
         setListings((current) => (append ? [...current, ...page.listings] : page.listings));
         setCursor(page.nextCursor);
         setState("idle");
@@ -49,7 +45,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
         setState("error");
       }
     },
-    [canisterId]
+    [canisterId, principal]
   );
 
   useEffect(() => {
@@ -68,16 +64,16 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
             <span className="break-all font-mono text-xs text-ink">{principal}</span>
           </div>
           <dl className="grid gap-2 sm:grid-cols-2">
-            <SellerStat label="Listings" value={sellerListings.length.toString()} />
+            <SellerStat label="Loaded seller listings" value={listings.length.toString()} />
             <SellerStat label="Purchases" value={purchases.toString()} />
           </dl>
-          <p className="text-xs text-muted">Stats use loaded public marketplace listings.</p>
+          <p className="text-xs text-muted">Stats use loaded seller marketplace listings.</p>
         </AdminPanel>
 
         {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
 
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {sellerListings.map((listing) => (
+          {listings.map((listing) => (
             <Link className="no-underline" href={marketListingPath(listing.listingId)} key={listing.listingId}>
               <AdminPanel className="grid min-h-48 gap-3 bg-white hover:border-accent" padding="md">
                 <div className="grid gap-1">
@@ -93,7 +89,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
           ))}
         </section>
 
-        {state !== "loading" && !sellerListings.length ? <p className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted">No loaded public listings for this seller.</p> : null}
+        {state !== "loading" && !listings.length ? <p className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted">No public listings for this seller.</p> : null}
 
         {cursor ? (
           <button className="mx-auto min-h-11 rounded-lg border border-line px-4 text-sm font-semibold hover:border-accent disabled:opacity-60" disabled={state === "loading"} type="button" onClick={() => void load(cursor, true)}>

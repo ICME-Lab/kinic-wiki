@@ -85,6 +85,19 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     setPurchaseState("loading");
     setMessage(null);
     try {
+      const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listing.listingId);
+      if (preview.alreadyEntitled) {
+        setMessage("Access is already active.");
+        storeMarketPurchase(canisterId, listing.listingId, principal);
+        setPurchaseState("success");
+        return;
+      }
+      if (preview.priceE8s !== listing.priceE8s) {
+        setMessage("Listing price changed. Reload the listing before purchasing.");
+        setPurchaseState("error");
+        await load();
+        return;
+      }
       const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s), accessPrincipal: principal }, wallet);
       setMessage(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
       storeMarketPurchase(canisterId, order.listingId, principal);

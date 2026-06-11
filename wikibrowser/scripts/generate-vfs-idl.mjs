@@ -163,6 +163,7 @@ const methodOrder = [
   "market_list_entitlements",
   "market_list_listings",
   "market_list_orders",
+  "market_list_seller_listings",
   "market_pause_listing",
   "market_preview_purchase",
   "market_publish_listing",

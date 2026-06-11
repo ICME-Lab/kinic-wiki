@@ -643,6 +643,7 @@ service : (CyclesBillingConfig) -> {
   market_list_entitlements : (opt text, nat32) -> (Result_21) query;
   market_list_listings : (opt text, nat32) -> (Result_23) query;
   market_list_orders : (opt text, nat32) -> (Result_24) query;
+  market_list_seller_listings : (text, opt text, nat32) -> (Result_23) query;
   market_pause_listing : (text) -> (Result_19);
   market_preview_purchase : (text) -> (Result_25) query;
   market_publish_listing : (text) -> (Result_19);

@@ -65,7 +65,7 @@ export class KinicAfterApproveError extends Error {
       input.expiresAt === null
         ? "approval remains without expiry"
         : `approval remains until ${new Date(Number(input.expiresAt / 1_000_000n)).toISOString()}`;
-    super(`KINIC canister call failed after approval; ${approvalText}: ${input.causeMessage}`);
+    super(`Purchase did not complete after KINIC approval; temporary allowance may remain until expiry (${approvalText}): ${input.causeMessage}`);
     this.name = "KinicAfterApproveError";
     this.approveBlockIndex = input.approveBlockIndex;
     this.causeMessage = input.causeMessage;

@@ -35,15 +35,16 @@ use super::{
     last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
-    market_create_listing, market_get_listing, market_purchase_access, market_update_listing,
-    memory_manifest, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, revoke_database_access, search_node_paths, search_nodes,
-    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
-    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    write_database_restore_chunk, write_node, write_nodes,
+    market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
+    market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
+    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
+    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
+    read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_test_caller_principal_for_test, set_update_charge_units_for_test,
+    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
+    update_charge_cycles, update_cycles_billing_config, write_database_restore_chunk, write_node,
+    write_nodes,
 };
 
 fn install_test_service() {
@@ -1172,6 +1173,172 @@ fn icrc21_rejects_malformed_cycle_consent_arg() {
         response,
         Icrc21ConsentMessageResponse::Err(super::Icrc21Error::ConsentMessageUnavailable(_))
     ));
+}
+
+#[test]
+fn icrc21_market_purchase_access_returns_consent_message() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains("Purchase marketplace database access"));
+    assert!(message.contains("Listing: `Private market DB`"));
+    assert!(message.contains("Payment: `2.5` KINIC"));
+    assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
+    assert!(message.contains(&format!("Seller principal: `{}`", seller.to_text())));
+    assert!(message.contains(&format!("Payer wallet principal: `{}`", payer.to_text())));
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(message.contains("read-only marketplace entitlement"));
+}
+
+#[test]
+fn icrc21_market_purchase_access_rejects_price_mismatch() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Price mismatch".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 302);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s + 1,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("market listing price mismatch"));
+        }
+        other => panic!("price mismatch consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn icrc21_market_purchase_access_rejects_inactive_listing() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Inactive listing".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 303);
+        let listing = market_create_listing(market_listing_request(&database.database_id, 250))
+            .expect("listing should create");
+        market_pause_listing(listing.listing_id.clone()).expect("listing should pause");
+        listing
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("market listing is not active"));
+        }
+        other => panic!("inactive listing consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn market_list_seller_listings_filters_by_seller_and_pages() {
+    install_empty_test_service();
+    let seller_a = test_billing_authority_principal();
+    let seller_b = Principal::management_canister();
+    {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller_a);
+        let first = create_database(CreateDatabaseRequest {
+            name: "Seller A first".to_string(),
+        })
+        .expect("first database should create");
+        fund_database(&first.database_id, 1_000_000, 304);
+        market_create_listing(market_listing_request(&first.database_id, 100))
+            .expect("first listing should create");
+        let second = create_database(CreateDatabaseRequest {
+            name: "Seller A second".to_string(),
+        })
+        .expect("second database should create");
+        fund_database(&second.database_id, 1_000_000, 305);
+        market_create_listing(market_listing_request(&second.database_id, 200))
+            .expect("second listing should create");
+    }
+    {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller_b);
+        let other = create_database(CreateDatabaseRequest {
+            name: "Seller B listing".to_string(),
+        })
+        .expect("other database should create");
+        fund_database(&other.database_id, 1_000_000, 306);
+        market_create_listing(market_listing_request(&other.database_id, 300))
+            .expect("other listing should create");
+    }
+
+    let first_page = market_list_seller_listings(seller_a.to_text(), None, 1)
+        .expect("first seller page should load");
+    assert_eq!(first_page.listings.len(), 1);
+    assert_eq!(first_page.listings[0].seller_principal, seller_a.to_text());
+    assert!(first_page.next_cursor.is_some());
+
+    let second_page = market_list_seller_listings(seller_a.to_text(), first_page.next_cursor, 10)
+        .expect("second seller page should load");
+    assert_eq!(second_page.listings.len(), 1);
+    assert_eq!(second_page.listings[0].seller_principal, seller_a.to_text());
+    assert!(second_page.next_cursor.is_none());
 }
 
 #[test]

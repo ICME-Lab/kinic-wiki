@@ -649,6 +649,7 @@ export const expectedMethods = {
   market_list_database_listings: { input: ["text"], output: "ResultMarketListings", mode: "query" },
   market_list_entitlements: { input: ["opt text", "nat32"], output: "ResultMarketEntitlementPage", mode: "query" },
   market_list_listings: { input: ["opt text", "nat32"], output: "ResultMarketListingPage", mode: "query" },
+  market_list_seller_listings: { input: ["text", "opt text", "nat32"], output: "ResultMarketListingPage", mode: "query" },
   market_list_orders: { input: ["opt text", "nat32"], output: "ResultMarketOrderPage", mode: "query" },
   market_pause_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_preview_purchase: { input: ["text"], output: "ResultMarketPurchasePreview", mode: "query" },

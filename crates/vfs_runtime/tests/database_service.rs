@@ -4694,6 +4694,89 @@ fn market_publish_listing_reactivates_paused_listing() {
 }
 
 #[test]
+fn market_list_seller_listings_filters_by_seller_and_pages() {
+    let service = service();
+    for (database_id, seller, price) in [
+        ("seller-a-one", "seller-a", 100),
+        ("seller-a-two", "seller-a", 200),
+        ("seller-b-one", "seller-b", 300),
+        ("seller-a-paused", "seller-a", 400),
+    ] {
+        service
+            .create_database(database_id, seller, 1)
+            .expect("database should create");
+        let listing = service
+            .market_create_listing(seller, market_listing_request(database_id, price), 2)
+            .expect("listing should create");
+        if database_id == "seller-a-paused" {
+            service
+                .market_pause_listing(seller, &listing.listing_id, 3)
+                .expect("listing should pause");
+        }
+    }
+    service
+        .create_database("seller-a-stale-owner", "seller-a", 4)
+        .expect("stale owner database should create");
+    let stale = service
+        .market_create_listing(
+            "seller-a",
+            market_listing_request("seller-a-stale-owner", 500),
+            5,
+        )
+        .expect("stale owner listing should create");
+    service
+        .grant_database_access(
+            "seller-a-stale-owner",
+            "seller-a",
+            "successor",
+            DatabaseRole::Owner,
+            6,
+        )
+        .expect("successor should become owner");
+    service
+        .revoke_database_access("seller-a-stale-owner", "successor", "seller-a")
+        .expect("seller-a should lose owner role");
+
+    let first = service
+        .market_list_seller_listings("seller-a", None, 1)
+        .expect("seller listings should load");
+    assert_eq!(first.listings.len(), 1);
+    assert_eq!(first.listings[0].seller_principal, "seller-a");
+    assert!(first.next_cursor.is_some());
+
+    let second = service
+        .market_list_seller_listings("seller-a", first.next_cursor, 10)
+        .expect("second seller page should load");
+    assert_eq!(second.listings.len(), 1);
+    assert_eq!(second.listings[0].seller_principal, "seller-a");
+    assert_ne!(second.listings[0].listing_id, stale.listing_id);
+    assert!(second.next_cursor.is_none());
+
+    let all = [first.listings, second.listings].concat();
+    assert_eq!(all.len(), 2);
+    assert!(
+        all.iter()
+            .all(|listing| listing.seller_principal == "seller-a")
+    );
+    assert!(
+        all.iter()
+            .all(|listing| listing.status == MarketListingStatus::Active)
+    );
+    assert!(
+        !all.iter()
+            .any(|listing| listing.database_id == "seller-b-one")
+    );
+    assert!(
+        !all.iter()
+            .any(|listing| listing.database_id == "seller-a-paused")
+    );
+    assert!(
+        !all.iter()
+            .any(|listing| listing.database_id == "seller-a-stale-owner")
+    );
+}
+
+#[test]
 fn market_listing_detail_returns_verified_preview() {
     let service = service();
     service

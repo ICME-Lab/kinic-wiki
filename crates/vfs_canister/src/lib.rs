@@ -459,6 +459,36 @@ fn icrc21_canister_call_consent_message(
                 )),
             })
         }
+        "market_purchase_access" => {
+            let purchase = match Decode!(&request.arg, MarketPurchaseRequest) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    return icrc21_unavailable(format!(
+                        "market_purchase_access argument decode failed: {error}"
+                    ));
+                }
+            };
+            let payer = caller_text();
+            let listing = match with_service(|service| {
+                service.validate_market_purchase_for_consent(&payer, &purchase)
+            }) {
+                Ok(listing) => listing,
+                Err(error) => return icrc21_unsupported(error),
+            };
+            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+                metadata,
+                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+                    "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
+                    listing_title = listing.title,
+                    database_id = listing.database_id,
+                    payment = format_e8s(purchase.price_e8s),
+                    fee = format_e8s(KINIC_LEDGER_FEE_E8S),
+                    seller = listing.seller_principal,
+                    payer = payer,
+                    access = purchase.access_principal,
+                )),
+            })
+        }
         method => icrc21_unsupported(format!("unsupported canister call: {method}")),
     }
 }
@@ -749,6 +779,15 @@ fn market_pause_listing(listing_id: String) -> Result<MarketListing, String> {
 #[query]
 fn market_list_listings(cursor: Option<String>, limit: u32) -> Result<MarketListingPage, String> {
     with_service(|service| service.market_list_listings(cursor, limit))
+}
+
+#[query]
+fn market_list_seller_listings(
+    seller_principal: String,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<MarketListingPage, String> {
+    with_service(|service| service.market_list_seller_listings(&seller_principal, cursor, limit))
 }
 
 #[query]

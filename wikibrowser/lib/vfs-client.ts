@@ -431,6 +431,7 @@ type VfsActor = {
   market_list_database_listings: (databaseId: string) => Promise<{ Ok: RawMarketListing[] } | { Err: string }>;
   market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
+  market_list_seller_listings: (sellerPrincipal: string, cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
   market_list_orders: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketOrderPage } | { Err: string }>;
   market_pause_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   market_preview_purchase: (listingId: string) => Promise<{ Ok: RawMarketPurchasePreview } | { Err: string }>;
@@ -662,6 +663,17 @@ export async function marketListListings(canisterId: string, cursor: string | nu
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
     const result = await actor.market_list_listings(rawTextCursor(cursor), limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeMarketListingPage(result.Ok);
+  });
+}
+
+export async function marketListSellerListings(canisterId: string, sellerPrincipal: string, cursor: string | null, limit: number): Promise<MarketListingPage> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.market_list_seller_listings(sellerPrincipal, rawTextCursor(cursor), limit);
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }

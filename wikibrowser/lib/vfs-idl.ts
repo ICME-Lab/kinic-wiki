@@ -443,6 +443,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     market_list_entitlements: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
     market_list_listings: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketListingPage], ["query"]),
     market_list_orders: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketOrderPage], ["query"]),
+    market_list_seller_listings: idl.Func([idl.Text, idl.Opt(idl.Text), idl.Nat32], [ResultMarketListingPage], ["query"]),
     market_pause_listing: idl.Func([idl.Text], [ResultMarketListing], []),
     market_preview_purchase: idl.Func([idl.Text], [ResultMarketPurchasePreview], ["query"]),
     market_publish_listing: idl.Func([idl.Text], [ResultMarketListing], []),

@@ -114,6 +114,16 @@ pub trait VfsApi: Sync {
             "market_list_listings is not implemented by this client"
         ))
     }
+    async fn market_list_seller_listings(
+        &self,
+        _seller_principal: &str,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<MarketListingPage> {
+        Err(anyhow!(
+            "market_list_seller_listings is not implemented by this client"
+        ))
+    }
     async fn market_list_database_listings(
         &self,
         _database_id: &str,
@@ -616,6 +626,23 @@ impl VfsApi for CanisterVfsClient {
     ) -> Result<MarketListingPage> {
         let result: Result<MarketListingPage, String> =
             self.query2("market_list_listings", &cursor, &limit).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_seller_listings(
+        &self,
+        seller_principal: &str,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketListingPage> {
+        let result: Result<MarketListingPage, String> = self
+            .query3(
+                "market_list_seller_listings",
+                &seller_principal.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
         result.map_err(|error| anyhow!(error))
     }
 
