@@ -19,13 +19,7 @@ import type {
   DatabaseStatus,
   DatabaseSummary,
   LinkEdge,
-  KinicBalance,
-  KinicFundDatabaseCyclesResult,
-  KinicPendingOperation,
-  KinicPendingOperationsPage,
-  KinicWithdrawResult,
   MarketCreateListingRequest,
-  KinicDepositResult,
   MarketEntitlementPage,
   MarketListing,
   MarketListingDetail,
@@ -131,31 +125,6 @@ type RawDatabaseCyclesPendingPurchase = {
   required_action: string;
 };
 
-type RawKinicBalance = {
-  balance_e8s: bigint;
-};
-
-type RawKinicPendingOperation = {
-  operation_id: bigint;
-  kind: string;
-  caller: string;
-  status: string;
-  amount_e8s: bigint;
-  ledger_block_index: [] | [bigint];
-  created_at_ms: bigint;
-  required_action: string;
-};
-
-type RawKinicPendingOperationsPageRequest = {
-  cursor_operation_id: [] | [bigint];
-  limit: number;
-};
-
-type RawKinicPendingOperationsPage = {
-  operations: RawKinicPendingOperation[];
-  next_cursor_operation_id: [] | [bigint];
-};
-
 type RawMarketListingStatus = Variant;
 
 type RawMarketListing = {
@@ -243,48 +212,10 @@ type RawMarketUpdateListingRequest = Omit<RawMarketCreateListingRequest, "databa
   expected_revision: bigint;
 };
 
-type RawKinicDepositRequest = {
-  amount_e8s: bigint;
-  expected_fee_e8s: bigint;
-};
-
-type RawKinicDepositResult = {
-  block_index: bigint;
-  amount_e8s: bigint;
-  balance_e8s: bigint;
-};
-
-type RawKinicWithdrawRequest = {
-  amount_e8s: bigint;
-  expected_fee_e8s: bigint;
-  to_owner: string;
-};
-
-type RawKinicWithdrawResult = {
-  block_index: bigint;
-  amount_e8s: bigint;
-  fee_e8s: bigint;
-  balance_e8s: bigint;
-};
-
-type RawKinicFundDatabaseCyclesRequest = {
-  database_id: string;
-  payment_amount_e8s: bigint;
-  min_expected_cycles: bigint;
-};
-
-type RawKinicFundDatabaseCyclesResult = {
-  payment_amount_e8s: bigint;
-  amount_cycles: bigint;
-  database_balance_cycles: bigint;
-  kinic_balance_e8s: bigint;
-};
-
 type RawMarketPurchasePreview = {
   listing_id: string;
   database_id: string;
   price_e8s: bigint;
-  buyer_balance_e8s: bigint;
   already_entitled: boolean;
 };
 
@@ -300,6 +231,7 @@ type RawMarketOrder = {
   buyer_principal: string;
   seller_principal: string;
   price_e8s: bigint;
+  ledger_block_index: bigint;
   created_at_ms: bigint;
 };
 
@@ -493,17 +425,12 @@ type VfsActor = {
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
   market_count_active_entitlements: (databaseId: string) => Promise<{ Ok: bigint } | { Err: string }>;
   market_create_listing: (request: RawMarketCreateListingRequest) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
-  kinic_deposit_balance: (request: RawKinicDepositRequest) => Promise<{ Ok: RawKinicDepositResult } | { Err: string }>;
-  kinic_fund_database_cycles: (request: RawKinicFundDatabaseCyclesRequest) => Promise<{ Ok: RawKinicFundDatabaseCyclesResult } | { Err: string }>;
-  kinic_get_balance: () => Promise<{ Ok: RawKinicBalance } | { Err: string }>;
-  kinic_withdraw_balance: (request: RawKinicWithdrawRequest) => Promise<{ Ok: RawKinicWithdrawResult } | { Err: string }>;
   market_get_listing: (listingId: string) => Promise<{ Ok: RawMarketListingDetail } | { Err: string }>;
   market_list_database_entitlements: (databaseId: string, cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_database_listings: (databaseId: string) => Promise<{ Ok: RawMarketListing[] } | { Err: string }>;
   market_list_entitlements: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketEntitlementPage } | { Err: string }>;
   market_list_listings: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketListingPage } | { Err: string }>;
   market_list_orders: (cursor: [] | [string], limit: number) => Promise<{ Ok: RawMarketOrderPage } | { Err: string }>;
-  kinic_list_pending_operations: (request: RawKinicPendingOperationsPageRequest) => Promise<{ Ok: RawKinicPendingOperationsPage } | { Err: string }>;
   market_pause_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
   market_preview_purchase: (listingId: string) => Promise<{ Ok: RawMarketPurchasePreview } | { Err: string }>;
   market_publish_listing: (listingId: string) => Promise<{ Ok: RawMarketListing } | { Err: string }>;
@@ -727,101 +654,6 @@ export async function listDatabaseCyclesPendingPurchasesAuthenticated(
       throwCanisterError(result.Err);
     }
     return result.Ok.map(normalizeDatabaseCyclesPendingPurchase);
-  });
-}
-
-export async function kinicGetBalance(canisterId: string, identity: Identity): Promise<KinicBalance> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.kinic_get_balance();
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeKinicBalance(result.Ok);
-  });
-}
-
-export async function kinicDepositBalance(
-  canisterId: string,
-  identity: Identity,
-  amountE8s: string,
-  expectedFeeE8s: string
-): Promise<KinicDepositResult> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.kinic_deposit_balance({
-      amount_e8s: BigInt(amountE8s),
-      expected_fee_e8s: BigInt(expectedFeeE8s)
-    });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeKinicDepositResult(result.Ok);
-  });
-}
-
-export async function kinicWithdrawBalance(
-  canisterId: string,
-  identity: Identity,
-  amountE8s: string,
-  expectedFeeE8s: string,
-  toOwner: string
-): Promise<KinicWithdrawResult> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const recipient = validateCanisterId(toOwner);
-    if (typeof recipient === "string") {
-      throw new ApiError(`Invalid recipient principal: ${recipient}`, 400);
-    }
-    const result = await actor.kinic_withdraw_balance({
-      amount_e8s: BigInt(amountE8s),
-      expected_fee_e8s: BigInt(expectedFeeE8s),
-      to_owner: recipient.toText()
-    });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeKinicWithdrawResult(result.Ok);
-  });
-}
-
-export async function kinicFundDatabaseCycles(
-  canisterId: string,
-  identity: Identity,
-  databaseId: string,
-  paymentAmountE8s: string,
-  minExpectedCycles: string
-): Promise<KinicFundDatabaseCyclesResult> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.kinic_fund_database_cycles({
-      database_id: databaseId,
-      payment_amount_e8s: BigInt(paymentAmountE8s),
-      min_expected_cycles: BigInt(minExpectedCycles)
-    });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeKinicFundDatabaseCyclesResult(result.Ok);
-  });
-}
-
-export async function kinicListPendingOperations(
-  canisterId: string,
-  identity: Identity,
-  cursorOperationId: string | null,
-  limit: number
-): Promise<KinicPendingOperationsPage> {
-  return callVfs(async () => {
-    const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.kinic_list_pending_operations({
-      cursor_operation_id: rawDatabaseCycleCursor(cursorOperationId),
-      limit
-    });
-    if ("Err" in result) {
-      throwCanisterError(result.Err);
-    }
-    return normalizeKinicPendingOperationsPage(result.Ok);
   });
 }
 
@@ -1452,32 +1284,6 @@ function normalizeDatabaseCyclesPendingPurchase(raw: RawDatabaseCyclesPendingPur
   };
 }
 
-function normalizeKinicBalance(raw: RawKinicBalance): KinicBalance {
-  return {
-    balanceE8s: raw.balance_e8s.toString()
-  };
-}
-
-function normalizeKinicPendingOperation(raw: RawKinicPendingOperation): KinicPendingOperation {
-  return {
-    operationId: raw.operation_id.toString(),
-    kind: raw.kind,
-    caller: raw.caller,
-    status: raw.status,
-    amountE8s: raw.amount_e8s.toString(),
-    ledgerBlockIndex: raw.ledger_block_index[0]?.toString() ?? null,
-    createdAtMs: raw.created_at_ms.toString(),
-    requiredAction: raw.required_action
-  };
-}
-
-function normalizeKinicPendingOperationsPage(raw: RawKinicPendingOperationsPage): KinicPendingOperationsPage {
-  return {
-    operations: raw.operations.map(normalizeKinicPendingOperation),
-    nextCursorOperationId: raw.next_cursor_operation_id[0]?.toString() ?? null
-  };
-}
-
 function normalizeMarketListingPage(raw: RawMarketListingPage): MarketListingPage {
   return {
     listings: raw.listings.map(normalizeMarketListing),
@@ -1548,38 +1354,11 @@ function normalizeMarketListingStatus(status: RawMarketListingStatus): MarketLis
   return "Paused";
 }
 
-function normalizeKinicDepositResult(raw: RawKinicDepositResult): KinicDepositResult {
-  return {
-    blockIndex: raw.block_index.toString(),
-    amountE8s: raw.amount_e8s.toString(),
-    balanceE8s: raw.balance_e8s.toString()
-  };
-}
-
-function normalizeKinicWithdrawResult(raw: RawKinicWithdrawResult): KinicWithdrawResult {
-  return {
-    blockIndex: raw.block_index.toString(),
-    amountE8s: raw.amount_e8s.toString(),
-    feeE8s: raw.fee_e8s.toString(),
-    balanceE8s: raw.balance_e8s.toString()
-  };
-}
-
-function normalizeKinicFundDatabaseCyclesResult(raw: RawKinicFundDatabaseCyclesResult): KinicFundDatabaseCyclesResult {
-  return {
-    paymentAmountE8s: raw.payment_amount_e8s.toString(),
-    amountCycles: raw.amount_cycles.toString(),
-    databaseBalanceCycles: raw.database_balance_cycles.toString(),
-    kinicBalanceE8s: raw.kinic_balance_e8s.toString()
-  };
-}
-
 function normalizeMarketPurchasePreview(raw: RawMarketPurchasePreview): MarketPurchasePreview {
   return {
     listingId: raw.listing_id,
     databaseId: raw.database_id,
     priceE8s: raw.price_e8s.toString(),
-    buyerBalanceE8s: raw.buyer_balance_e8s.toString(),
     alreadyEntitled: raw.already_entitled
   };
 }
@@ -1599,6 +1378,7 @@ function normalizeMarketOrder(raw: RawMarketOrder): MarketOrder {
     buyerPrincipal: raw.buyer_principal,
     sellerPrincipal: raw.seller_principal,
     priceE8s: raw.price_e8s.toString(),
+    ledgerBlockIndex: raw.ledger_block_index.toString(),
     createdAtMs: raw.created_at_ms.toString()
   };
 }

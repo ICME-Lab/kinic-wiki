@@ -5,7 +5,7 @@
 import { Plus, X } from "lucide-react";
 import type { FormEvent } from "react";
 
-export type CreateDatabasePaymentSource = "app-balance" | "wallet";
+export type CreateDatabasePaymentSource = "wallet";
 
 type PaymentSourceOption = {
   disabled: boolean;
@@ -64,7 +64,7 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Create requires {requiredBalanceLabel}. External wallet pays directly from ledger balance. App balance is for seller proceeds or internal balance.
+              Create requires {requiredBalanceLabel}. Wallet approval pays directly from ledger balance.
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>

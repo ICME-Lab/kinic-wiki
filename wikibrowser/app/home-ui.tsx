@@ -175,7 +175,8 @@ export function DatabaseBody({
   myDatabases,
   principal,
   publicError,
-  publicDatabases
+  publicDatabases,
+  purchasedDatabases
 }: {
   createDatabaseAction?: ReactNode;
   cyclesConfig: CyclesBillingConfig | null;
@@ -184,15 +185,17 @@ export function DatabaseBody({
   principal: string | null;
   publicError: string | null;
   publicDatabases: DatabaseRow[];
+  purchasedDatabases: DatabaseRow[];
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} description="Readable without login." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
       <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} emptyMessage="No purchased databases are linked to this principal." mode="member" rows={purchasedDatabases} title="Purchased databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }

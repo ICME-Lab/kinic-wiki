@@ -54,22 +54,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     payment_amount_e8s: idl.Nat64,
     min_expected_cycles: idl.Nat64
   });
-  const KinicBalance = idl.Record({ balance_e8s: idl.Nat64 });
-  const KinicPendingOperation = idl.Record({
-    status: idl.Text,
-    kind: idl.Text,
-    operation_id: idl.Nat64,
-    created_at_ms: idl.Int64,
-    amount_e8s: idl.Nat64,
-    required_action: idl.Text,
-    ledger_block_index: idl.Opt(idl.Nat64),
-    caller: idl.Text
-  });
-  const KinicPendingOperationsPageRequest = idl.Record({ cursor_operation_id: idl.Opt(idl.Nat64), limit: idl.Nat32 });
-  const KinicPendingOperationsPage = idl.Record({
-    operations: idl.Vec(KinicPendingOperation),
-    next_cursor_operation_id: idl.Opt(idl.Nat64)
-  });
   const MarketCreateListingRequest = idl.Record({
     llm_summary: idl.Opt(idl.Text),
     title: idl.Text,
@@ -77,26 +61,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     database_id: idl.Text,
     price_e8s: idl.Nat64,
     tags_json: idl.Text
-  });
-  const KinicDepositRequest = idl.Record({ amount_e8s: idl.Nat64, expected_fee_e8s: idl.Nat64 });
-  const KinicDepositResult = idl.Record({ block_index: idl.Nat64, amount_e8s: idl.Nat64, balance_e8s: idl.Nat64 });
-  const KinicWithdrawRequest = idl.Record({ to_owner: idl.Text, amount_e8s: idl.Nat64, expected_fee_e8s: idl.Nat64 });
-  const KinicWithdrawResult = idl.Record({
-    block_index: idl.Nat64,
-    amount_e8s: idl.Nat64,
-    fee_e8s: idl.Nat64,
-    balance_e8s: idl.Nat64
-  });
-  const KinicFundDatabaseCyclesRequest = idl.Record({
-    payment_amount_e8s: idl.Nat64,
-    database_id: idl.Text,
-    min_expected_cycles: idl.Nat64
-  });
-  const KinicFundDatabaseCyclesResult = idl.Record({
-    database_balance_cycles: idl.Nat64,
-    payment_amount_e8s: idl.Nat64,
-    kinic_balance_e8s: idl.Nat64,
-    amount_cycles: idl.Nat64
   });
   const MarketEntitlement = idl.Record({
     status: idl.Text,
@@ -153,6 +117,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     buyer_principal: idl.Text,
     order_id: idl.Text,
     listing_id: idl.Text,
+    ledger_block_index: idl.Nat64,
     price_e8s: idl.Nat64
   });
   const MarketOrderPage = idl.Record({ orders: idl.Vec(MarketOrder), next_cursor: idl.Opt(idl.Text) });
@@ -187,7 +152,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const MarketPurchasePreview = idl.Record({
     already_entitled: idl.Bool,
-    buyer_balance_e8s: idl.Nat64,
     database_id: idl.Text,
     listing_id: idl.Text,
     price_e8s: idl.Nat64
@@ -424,11 +388,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
   const ResultCyclesPendingPurchases = idl.Variant({ Ok: idl.Vec(DatabaseCyclesPendingPurchase), Err: idl.Text });
-  const ResultKinicBalance = idl.Variant({ Ok: KinicBalance, Err: idl.Text });
-  const ResultKinicPendingOperations = idl.Variant({ Ok: KinicPendingOperationsPage, Err: idl.Text });
-  const ResultKinicDeposit = idl.Variant({ Ok: KinicDepositResult, Err: idl.Text });
-  const ResultKinicWithdraw = idl.Variant({ Ok: KinicWithdrawResult, Err: idl.Text });
-  const ResultKinicFundDatabaseCycles = idl.Variant({ Ok: KinicFundDatabaseCyclesResult, Err: idl.Text });
   const ResultMarketEntitlementPage = idl.Variant({ Ok: MarketEntitlementPage, Err: idl.Text });
   const ResultMarketListing = idl.Variant({ Ok: MarketListing, Err: idl.Text });
   const ResultMarketListingDetail = idl.Variant({ Ok: MarketListingDetail, Err: idl.Text });
@@ -478,17 +437,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
     market_count_active_entitlements: idl.Func([idl.Text], [ResultNat64], ["query"]),
     market_create_listing: idl.Func([MarketCreateListingRequest], [ResultMarketListing], []),
-    kinic_deposit_balance: idl.Func([KinicDepositRequest], [ResultKinicDeposit], []),
-    kinic_fund_database_cycles: idl.Func([KinicFundDatabaseCyclesRequest], [ResultKinicFundDatabaseCycles], []),
-    kinic_get_balance: idl.Func([], [ResultKinicBalance], ["query"]),
-    kinic_withdraw_balance: idl.Func([KinicWithdrawRequest], [ResultKinicWithdraw], []),
     market_get_listing: idl.Func([idl.Text], [ResultMarketListingDetail], ["query"]),
     market_list_database_entitlements: idl.Func([idl.Text, idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
     market_list_database_listings: idl.Func([idl.Text], [ResultMarketListings], ["query"]),
     market_list_entitlements: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketEntitlementPage], ["query"]),
     market_list_listings: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketListingPage], ["query"]),
     market_list_orders: idl.Func([idl.Opt(idl.Text), idl.Nat32], [ResultMarketOrderPage], ["query"]),
-    kinic_list_pending_operations: idl.Func([KinicPendingOperationsPageRequest], [ResultKinicPendingOperations], ["query"]),
     market_pause_listing: idl.Func([idl.Text], [ResultMarketListing], []),
     market_preview_purchase: idl.Func([idl.Text], [ResultMarketPurchasePreview], ["query"]),
     market_publish_listing: idl.Func([idl.Text], [ResultMarketListing], []),

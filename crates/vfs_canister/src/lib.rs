@@ -36,8 +36,7 @@ use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use vfs_runtime::STORAGE_BILLING_INTERVAL_MS;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DatabaseCyclesPurchaseWithLedgerDetails, DatabaseMeta,
-    KinicDepositWithLedgerDetails, KinicWithdrawWithLedgerDetails, RequiredRole, VfsService,
-    cycles_for_payment_amount_e8s,
+    RequiredRole, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
@@ -48,15 +47,13 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, KinicBalance,
-    KinicDepositRequest, KinicDepositResult, KinicFundDatabaseCyclesRequest,
-    KinicFundDatabaseCyclesResult, KinicPendingOperationsPage, KinicPendingOperationsPageRequest,
-    KinicWithdrawRequest, KinicWithdrawResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
-    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
+    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest,
     OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
     QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
@@ -78,6 +75,8 @@ const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
 const UPDATE_ACCOUNTING_OVERHEAD_CYCLES: u128 = 15_000_000;
+const DB_PAYMENT_RECIPIENT_PRINCIPAL: &str =
+    "isz6c-6c4pl-oba7w-ikjex-472yu-rf3fe-valdh-lfazm-5f3ep-v474i-qae";
 #[cfg(target_arch = "wasm32")]
 const STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE: u32 = 6;
 #[cfg(target_arch = "wasm32")]
@@ -119,30 +118,11 @@ enum LedgerTransferFromOutcome {
     Ambiguous(String),
 }
 
-#[derive(Clone, Debug)]
-enum LedgerTransferOutcome {
-    Completed(u64),
-    BadFee { expected_fee_e8s: u64 },
-    LedgerErr(String),
-    Ambiguous(String),
-}
-
 #[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Deserialize)]
 struct IcrcAccount {
     owner: Principal,
     subaccount: Option<Vec<u8>>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType)]
-struct TransferArg {
-    from_subaccount: Option<Vec<u8>>,
-    to: IcrcAccount,
-    amount: Nat,
-    fee: Option<Nat>,
-    memo: Option<Vec<u8>>,
-    created_at_time: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -233,19 +213,6 @@ enum Icrc21ConsentMessageResponse {
 struct Icrc10SupportedStandard {
     name: String,
     url: String,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum TransferError {
-    BadFee { expected_fee: Nat },
-    BadBurn { min_burn_amount: Nat },
-    InsufficientFunds { balance: Nat },
-    TooOld,
-    CreatedInFuture { ledger_time: u64 },
-    Duplicate { duplicate_of: Nat },
-    TemporarilyUnavailable,
-    GenericError { error_code: Nat, message: String },
 }
 
 #[allow(dead_code)]
@@ -493,69 +460,6 @@ fn icrc21_canister_call_consent_message(
                 )),
             })
         }
-        "kinic_deposit_balance" => {
-            let deposit = match Decode!(&request.arg, KinicDepositRequest) {
-                Ok(decoded) => decoded,
-                Err(error) => {
-                    return icrc21_unavailable(format!(
-                        "kinic_deposit_balance argument decode failed: {error}"
-                    ));
-                }
-            };
-            if deposit.amount_e8s == 0 {
-                return icrc21_unsupported("KINIC deposit amount must be positive".to_string());
-            }
-            if i64::try_from(deposit.amount_e8s).is_err()
-                || i64::try_from(deposit.expected_fee_e8s).is_err()
-            {
-                return icrc21_unsupported("KINIC deposit amount exceeds i64".to_string());
-            }
-            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
-                metadata,
-                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-                    "# Deposit KINIC to KINIC balance\n\nAmount: `{amount}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`\n\nPurpose: canister-held KINIC balance",
-                    amount = format_e8s(deposit.amount_e8s),
-                    fee = format_e8s(deposit.expected_fee_e8s),
-                    spender = canister_principal().to_text()
-                )),
-            })
-        }
-        "kinic_withdraw_balance" => {
-            let withdraw = match Decode!(&request.arg, KinicWithdrawRequest) {
-                Ok(decoded) => decoded,
-                Err(error) => {
-                    return icrc21_unavailable(format!(
-                        "kinic_withdraw_balance argument decode failed: {error}"
-                    ));
-                }
-            };
-            if withdraw.amount_e8s == 0 {
-                return icrc21_unsupported("KINIC withdraw amount must be positive".to_string());
-            }
-            if i64::try_from(withdraw.amount_e8s).is_err()
-                || i64::try_from(withdraw.expected_fee_e8s).is_err()
-            {
-                return icrc21_unsupported("KINIC withdraw amount exceeds i64".to_string());
-            }
-            if let Err(error) = Principal::from_text(&withdraw.to_owner) {
-                return icrc21_unsupported(format!(
-                    "invalid KINIC withdraw recipient principal: {error}"
-                ));
-            }
-            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
-                metadata,
-                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-                    "# Withdraw KINIC from KINIC balance\n\nRecipient receives: `{amount}` KINIC\n\nApp balance debit: `{total}` KINIC\n\nRecipient principal: `{recipient}`\n\nPurpose: withdraw canister-held KINIC balance",
-                    amount = format_e8s(withdraw.amount_e8s),
-                    total = format_e8s(
-                        withdraw
-                            .amount_e8s
-                            .saturating_add(withdraw.expected_fee_e8s)
-                    ),
-                    recipient = withdraw.to_owner
-                )),
-            })
-        }
         method => icrc21_unsupported(format!("unsupported canister call: {method}")),
     }
 }
@@ -573,7 +477,9 @@ async fn purchase_database_cycles(
     let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
     let payment_amount_e8s = request.payment_amount_e8s;
     let ledger_created_at_time_ns = now_nanos();
-    let canister_owner = canister_principal().to_text();
+    let payment_recipient = Principal::from_text(DB_PAYMENT_RECIPIENT_PRINCIPAL)
+        .map_err(|error| format!("invalid database payment recipient principal: {error}"))?;
+    let payment_recipient_text = payment_recipient.to_text();
     let purchase_start = match with_service(|service| {
         service.begin_database_cycles_purchase_with_ledger_details(
             DatabaseCyclesPurchaseWithLedgerDetails {
@@ -584,7 +490,7 @@ async fn purchase_database_cycles(
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
-                    to_owner: &canister_owner,
+                    to_owner: &payment_recipient_text,
                     to_subaccount: None,
                     ledger_fee_e8s,
                     ledger_created_at_time_ns,
@@ -598,25 +504,26 @@ async fn purchase_database_cycles(
     };
     let operation_id = purchase_start.operation_id;
     let amount_cycles = purchase_start.amount_cycles;
-    match ledger_transfer_from(
-        ledger,
-        IcrcAccount {
-            owner: caller_principal(),
-            subaccount: None,
+    run_transfer_from_saga(
+        TransferFromSaga {
+            operation_id,
+            ledger,
+            from: IcrcAccount {
+                owner: caller_principal(),
+                subaccount: None,
+            },
+            to: IcrcAccount {
+                owner: payment_recipient,
+                subaccount: None,
+            },
+            amount_e8s: payment_amount_e8s,
+            ledger_fee_e8s,
+            memo: cycles_purchase_memo(operation_id),
+            created_at_time_ns: ledger_created_at_time_ns,
+            ambiguous_review_label: "billing authority review required",
         },
-        IcrcAccount {
-            owner: canister_principal(),
-            subaccount: None,
-        },
-        payment_amount_e8s,
-        ledger_fee_e8s,
-        operation_id,
-        ledger_created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferFromOutcome::Completed(block_index) => {
-            if let Err(error) = with_service(|service| {
+        |block_index| {
+            with_service(|service| {
                 service.complete_database_cycles_purchase_ledger_transfer(
                     operation_id,
                     &request.database_id,
@@ -624,32 +531,13 @@ async fn purchase_database_cycles(
                     amount_cycles,
                     block_index,
                 )
-            }) {
-                return Err(cycles_purchase_local_apply_error(
-                    operation_id,
-                    block_index,
-                    error,
-                ));
-            }
-            if let Err(error) = activate_pending_database_after_cycles_purchase_ledger_success(
-                &request.database_id,
-                now,
-            ) {
-                return Err(cycles_purchase_local_apply_error(
-                    operation_id,
-                    block_index,
-                    error,
-                ));
-            }
+            })?;
+            activate_pending_database_after_cycles_purchase_ledger_success(&request.database_id, now)?;
             #[cfg(test)]
             if TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
-                return Err(cycles_purchase_local_apply_error(
-                    operation_id,
-                    block_index,
-                    "test cycle purchase apply failure".to_string(),
-                ));
+                return Err("test cycle purchase apply failure".to_string());
             }
-            let balance = match with_service(|service| {
+            let balance = with_service(|service| {
                 service.apply_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
@@ -658,64 +546,36 @@ async fn purchase_database_cycles(
                     block_index,
                     now,
                 )
-            }) {
-                Ok(balance) => balance,
-                Err(error) => {
-                    return Err(cycles_purchase_local_apply_error(
-                        operation_id,
-                        block_index,
-                        error,
-                    ));
-                }
-            };
+            })?;
             Ok(CyclesPurchaseResult {
                 block_index,
                 amount_cycles,
                 balance_cycles: balance,
             })
-        }
-        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
-            let _ = with_service(|service| {
+        },
+        || {
+            with_service(|service| {
                 service.cancel_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
                     &caller,
                     amount_cycles,
                 )
-            });
-            Err(format!(
-                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
-            ))
-        }
-        LedgerTransferFromOutcome::LedgerErr(error) => {
-            let _ = with_service(|service| {
-                service.cancel_database_cycles_purchase(
-                    operation_id,
-                    &request.database_id,
-                    &caller,
-                    amount_cycles,
-                )
-            });
-            Err(error)
-        }
-        LedgerTransferFromOutcome::Ambiguous(error) => {
-            if let Err(mark_error) = with_service(|service| {
+            })
+        },
+        || {
+            with_service(|service| {
                 service.mark_database_cycles_purchase_ambiguous(
                     operation_id,
                     &request.database_id,
                     &caller,
                     amount_cycles,
                 )
-            }) {
-                return Err(format!(
-                    "icrc2_transfer_from result ambiguous for operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
-                ));
-            }
-            Err(format!(
-                "icrc2_transfer_from result ambiguous for operation_id {operation_id}; billing authority review required: {error}"
-            ))
-        }
-    }
+            })
+        },
+        cycles_purchase_local_apply_error,
+    )
+    .await
 }
 
 #[query]
@@ -763,6 +623,73 @@ fn activate_pending_database_after_cycles_purchase_ledger_success(
     Ok(())
 }
 
+struct TransferFromSaga {
+    operation_id: u64,
+    ledger: Principal,
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    ledger_fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time_ns: u64,
+    ambiguous_review_label: &'static str,
+}
+
+async fn run_transfer_from_saga<T, Apply, Cancel, Ambiguous, LocalApplyError>(
+    saga: TransferFromSaga,
+    apply_after_completed_transfer: Apply,
+    cancel_after_no_credit: Cancel,
+    mark_ambiguous: Ambiguous,
+    local_apply_error: LocalApplyError,
+) -> Result<T, String>
+where
+    Apply: FnOnce(u64) -> Result<T, String>,
+    Cancel: FnOnce() -> Result<(), String>,
+    Ambiguous: FnOnce() -> Result<(), String>,
+    LocalApplyError: Fn(u64, u64, String) -> String,
+{
+    match ledger_transfer_from_with_memo(
+        saga.ledger,
+        saga.from,
+        saga.to,
+        saga.amount_e8s,
+        saga.ledger_fee_e8s,
+        saga.memo,
+        saga.created_at_time_ns,
+    )
+    .await
+    {
+        LedgerTransferFromOutcome::Completed(block_index) => {
+            apply_after_completed_transfer(block_index)
+                .map_err(|error| local_apply_error(saga.operation_id, block_index, error))
+        }
+        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
+            let _ = cancel_after_no_credit();
+            Err(format!(
+                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
+            ))
+        }
+        LedgerTransferFromOutcome::LedgerErr(error) => {
+            let _ = cancel_after_no_credit();
+            Err(error)
+        }
+        LedgerTransferFromOutcome::Ambiguous(error) => {
+            if let Err(mark_error) = mark_ambiguous() {
+                return Err(format!(
+                    "icrc2_transfer_from result ambiguous for operation_id {operation_id}; failed to mark operation ambiguous; {review_label}: {mark_error}; original ledger ambiguity: {error}",
+                    operation_id = saga.operation_id,
+                    review_label = saga.ambiguous_review_label
+                ));
+            }
+            Err(format!(
+                "icrc2_transfer_from result ambiguous for operation_id {operation_id}; {review_label}: {error}",
+                operation_id = saga.operation_id,
+                review_label = saga.ambiguous_review_label
+            ))
+        }
+    }
+}
+
 fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
     format!(
         "cycles purchase payment completed at ledger block {block_index} but local cycles application failed; pending operation {operation_id} remains completed for billing authority review: {cause}"
@@ -781,278 +708,6 @@ fn list_database_cycles_pending_purchases(
     with_service(|service| {
         service.list_database_cycles_pending_purchases(&database_id, &caller_text())
     })
-}
-
-#[query]
-fn kinic_get_balance() -> Result<KinicBalance, String> {
-    with_service(|service| service.kinic_get_balance(&caller_text()))
-}
-
-#[update]
-fn kinic_fund_database_cycles(
-    request: KinicFundDatabaseCyclesRequest,
-) -> Result<KinicFundDatabaseCyclesResult, String> {
-    require_authenticated_caller()?;
-    with_unmetered_update(
-        "kinic_fund_database_cycles",
-        Some(request.database_id.clone()),
-        |service, caller, now| service.kinic_fund_database_cycles(caller, request, now),
-    )
-}
-
-#[update]
-async fn kinic_deposit_balance(request: KinicDepositRequest) -> Result<KinicDepositResult, String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    let now = now_millis();
-    let config = with_service(|service| service.cycles_billing_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let ledger_created_at_time_ns = now_nanos();
-    let canister_owner = canister_principal().to_text();
-    let deposit_start = with_service(|service| {
-        service.begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
-            caller: &caller,
-            amount_e8s: request.amount_e8s,
-            ledger: CyclesPendingLedgerDetailsInput {
-                from_owner: &caller,
-                from_subaccount: None,
-                to_owner: &canister_owner,
-                to_subaccount: None,
-                ledger_fee_e8s: request.expected_fee_e8s,
-                ledger_created_at_time_ns,
-            },
-            now,
-        })
-    })?;
-    let operation_id = deposit_start.operation_id;
-    match ledger_transfer_from_with_memo(
-        ledger,
-        IcrcAccount {
-            owner: caller_principal(),
-            subaccount: None,
-        },
-        IcrcAccount {
-            owner: canister_principal(),
-            subaccount: None,
-        },
-        request.amount_e8s,
-        request.expected_fee_e8s,
-        kinic_deposit_memo(operation_id),
-        ledger_created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferFromOutcome::Completed(block_index) => {
-            if let Err(error) = with_service(|service| {
-                service.complete_kinic_deposit_ledger_transfer(
-                    operation_id,
-                    &caller,
-                    request.amount_e8s,
-                    block_index,
-                )
-            }) {
-                return Err(kinic_deposit_local_apply_error(
-                    operation_id,
-                    block_index,
-                    error,
-                ));
-            }
-            #[cfg(test)]
-            if TEST_KINIC_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
-                return Err(kinic_deposit_local_apply_error(
-                    operation_id,
-                    block_index,
-                    "test KINIC deposit apply failure".to_string(),
-                ));
-            }
-            let balance = with_service(|service| {
-                service.apply_kinic_deposit(operation_id, &caller, request.amount_e8s, now)
-            })
-            .map_err(|error| kinic_deposit_local_apply_error(operation_id, block_index, error))?;
-            Ok(KinicDepositResult {
-                block_index,
-                amount_e8s: deposit_start.amount_e8s,
-                balance_e8s: balance.balance_e8s,
-            })
-        }
-        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
-            let _ = with_service(|service| {
-                service.cancel_kinic_deposit_after_ledger_error(
-                    operation_id,
-                    &caller,
-                    request.amount_e8s,
-                )
-            });
-            Err(format!(
-                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
-            ))
-        }
-        LedgerTransferFromOutcome::LedgerErr(error) => {
-            let _ = with_service(|service| {
-                service.cancel_kinic_deposit_after_ledger_error(
-                    operation_id,
-                    &caller,
-                    request.amount_e8s,
-                )
-            });
-            Err(error)
-        }
-        LedgerTransferFromOutcome::Ambiguous(error) => {
-            if let Err(mark_error) = with_service(|service| {
-                service.mark_kinic_deposit_ambiguous(operation_id, &caller, request.amount_e8s)
-            }) {
-                return Err(format!(
-                    "icrc2_transfer_from result ambiguous for KINIC deposit operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
-                ));
-            }
-            Err(format!(
-                "icrc2_transfer_from result ambiguous for KINIC deposit operation_id {operation_id}; billing authority review required: {error}"
-            ))
-        }
-    }
-}
-
-fn kinic_deposit_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
-    format!(
-        "KINIC deposit completed at ledger block {block_index} but local balance application failed; pending operation {operation_id} remains completed for billing authority review: {cause}"
-    )
-}
-
-#[update]
-async fn kinic_withdraw_balance(
-    request: KinicWithdrawRequest,
-) -> Result<KinicWithdrawResult, String> {
-    require_authenticated_caller()?;
-    let caller = caller_text();
-    let now = now_millis();
-    let config = with_service(|service| service.cycles_billing_config())?;
-    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
-        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
-    let to_owner = Principal::from_text(&request.to_owner)
-        .map_err(|error| format!("invalid KINIC withdraw recipient principal: {error}"))?;
-    let ledger_created_at_time_ns = now_nanos();
-    let canister_owner = canister_principal().to_text();
-    let withdraw_start = with_service(|service| {
-        service.begin_kinic_withdraw_with_ledger_details(KinicWithdrawWithLedgerDetails {
-            caller: &caller,
-            request: &request,
-            ledger: CyclesPendingLedgerDetailsInput {
-                from_owner: &canister_owner,
-                from_subaccount: None,
-                to_owner: &request.to_owner,
-                to_subaccount: None,
-                ledger_fee_e8s: request.expected_fee_e8s,
-                ledger_created_at_time_ns,
-            },
-            now,
-        })
-    })?;
-    let operation_id = withdraw_start.operation_id;
-    match ledger_transfer(
-        ledger,
-        IcrcAccount {
-            owner: to_owner,
-            subaccount: None,
-        },
-        request.amount_e8s,
-        request.expected_fee_e8s,
-        kinic_withdraw_memo(operation_id),
-        ledger_created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferOutcome::Completed(block_index) => {
-            if let Err(error) = with_service(|service| {
-                service.complete_kinic_withdraw_ledger_transfer(
-                    operation_id,
-                    &caller,
-                    &request,
-                    block_index,
-                )
-            }) {
-                return Err(kinic_withdraw_local_apply_error(
-                    operation_id,
-                    block_index,
-                    error,
-                ));
-            }
-            #[cfg(test)]
-            if TEST_KINIC_WITHDRAW_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
-                return Err(kinic_withdraw_local_apply_error(
-                    operation_id,
-                    block_index,
-                    "test KINIC withdraw apply failure".to_string(),
-                ));
-            }
-            with_service(|service| {
-                service.apply_kinic_withdraw(operation_id, &caller, &request, now)
-            })
-            .map_err(|error| kinic_withdraw_local_apply_error(operation_id, block_index, error))
-        }
-        LedgerTransferOutcome::BadFee { expected_fee_e8s } => {
-            if let Err(refund_error) =
-                refund_kinic_withdraw_after_ledger_error(operation_id, &caller, &request, now)
-            {
-                return Err(format!(
-                    "icrc1_transfer failed: BadFee expected fee {expected_fee_e8s}; failed to refund KINIC withdraw operation_id {operation_id}; billing authority review required: {refund_error}"
-                ));
-            }
-            Err(format!(
-                "icrc1_transfer failed: BadFee expected fee {expected_fee_e8s}; retry with the current ledger fee"
-            ))
-        }
-        LedgerTransferOutcome::LedgerErr(error) => {
-            if let Err(refund_error) =
-                refund_kinic_withdraw_after_ledger_error(operation_id, &caller, &request, now)
-            {
-                return Err(format!(
-                    "{error}; failed to refund KINIC withdraw operation_id {operation_id}; billing authority review required: {refund_error}"
-                ));
-            }
-            Err(error)
-        }
-        LedgerTransferOutcome::Ambiguous(error) => {
-            if let Err(mark_error) = with_service(|service| {
-                service.mark_kinic_withdraw_ambiguous(operation_id, &caller, &request)
-            }) {
-                return Err(format!(
-                    "icrc1_transfer result ambiguous for KINIC withdraw operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
-                ));
-            }
-            Err(format!(
-                "icrc1_transfer result ambiguous for KINIC withdraw operation_id {operation_id}; billing authority review required: {error}"
-            ))
-        }
-    }
-}
-
-fn kinic_withdraw_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
-    format!(
-        "KINIC withdraw completed at ledger block {block_index} but local ledger application failed; pending operation {operation_id} requires billing authority review: {cause}"
-    )
-}
-
-fn refund_kinic_withdraw_after_ledger_error(
-    operation_id: u64,
-    caller: &str,
-    request: &KinicWithdrawRequest,
-    now: i64,
-) -> Result<KinicBalance, String> {
-    #[cfg(test)]
-    if TEST_KINIC_WITHDRAW_REFUND_FAIL_ONCE.with(|flag| flag.replace(false)) {
-        return Err("test KINIC withdraw refund failure".to_string());
-    }
-    with_service(|service| {
-        service.refund_kinic_withdraw_after_ledger_error(operation_id, caller, request, now)
-    })
-}
-
-#[query]
-fn kinic_list_pending_operations(
-    request: KinicPendingOperationsPageRequest,
-) -> Result<KinicPendingOperationsPage, String> {
-    with_service(|service| service.kinic_list_pending_operations(&caller_text(), request))
 }
 
 #[update]
@@ -1121,11 +776,106 @@ fn market_preview_purchase(listing_id: String) -> Result<MarketPurchasePreview, 
 }
 
 #[update]
-fn market_purchase_access(request: MarketPurchaseRequest) -> Result<MarketOrder, String> {
+async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<MarketOrder, String> {
     require_authenticated_caller()?;
-    with_unmetered_update("market_purchase_access", None, |service, caller, now| {
-        service.market_purchase_access(caller, request, now)
-    })
+    let caller = caller_text();
+    let now = now_millis();
+    let config = with_service(|service| service.cycles_billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
+    let ledger_created_at_time_ns = now_nanos();
+    let purchase_start = with_service(|service| {
+        service.begin_market_purchase_with_ledger_details(
+            &caller,
+            request,
+            CyclesPendingLedgerDetailsInput {
+                from_owner: &caller,
+                from_subaccount: None,
+                to_owner: "",
+                to_subaccount: None,
+                ledger_fee_e8s,
+                ledger_created_at_time_ns,
+            },
+            now,
+        )
+    })?;
+    let seller = Principal::from_text(&purchase_start.seller_principal)
+        .map_err(|error| format!("invalid market seller principal: {error}"))?;
+    let operation_id = purchase_start.operation_id;
+    run_transfer_from_saga(
+        TransferFromSaga {
+            operation_id,
+            ledger,
+            from: IcrcAccount {
+                owner: caller_principal(),
+                subaccount: None,
+            },
+            to: IcrcAccount {
+                owner: seller,
+                subaccount: None,
+            },
+            amount_e8s: purchase_start.price_e8s,
+            ledger_fee_e8s,
+            memo: market_purchase_memo(operation_id),
+            created_at_time_ns: ledger_created_at_time_ns,
+            ambiguous_review_label: "review required",
+        },
+        |block_index| {
+            with_service(|service| {
+                service.complete_market_purchase_ledger_transfer(
+                    operation_id,
+                    &caller,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                    block_index,
+                )
+            })?;
+            with_service(|service| {
+                service.apply_market_purchase(
+                    operation_id,
+                    &caller,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                    now,
+                )
+            })
+        },
+        || {
+            with_service(|service| {
+                service.cancel_market_purchase(
+                    operation_id,
+                    &caller,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                )
+            })
+        },
+        || {
+            with_service(|service| {
+                service.mark_market_purchase_ambiguous(
+                    operation_id,
+                    &caller,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                )
+            })
+        },
+        market_purchase_local_apply_error,
+    )
+    .await
+}
+
+fn market_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+    format!(
+        "market purchase payment completed at ledger block {block_index} but local entitlement application failed; pending operation {operation_id} remains completed for review: {cause}"
+    )
+}
+
+fn market_purchase_memo(operation_id: u64) -> Vec<u8> {
+    let mut memo = b"kinic:market:".to_vec();
+    memo.extend_from_slice(operation_id.to_string().as_bytes());
+    memo
 }
 
 #[query]
@@ -1678,16 +1428,12 @@ fn unmount_database_file(_db_file_name: &str) {}
 thread_local! {
     static TEST_MOUNT_DATABASE_FILE_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_LEDGER_TRANSFER_FROM_OUTCOMES: RefCell<Vec<LedgerTransferFromOutcome>> = const { RefCell::new(Vec::new()) };
-    static TEST_LEDGER_TRANSFER_OUTCOMES: RefCell<Vec<LedgerTransferOutcome>> = const { RefCell::new(Vec::new()) };
     static TEST_LEDGER_TRANSFER_FEES: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_TO: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_KINIC_DEPOSIT_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_KINIC_WITHDRAW_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
-    static TEST_KINIC_WITHDRAW_REFUND_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -1702,35 +1448,8 @@ fn fail_next_apply_database_cycles_purchase_apply_for_test() {
 }
 
 #[cfg(test)]
-fn fail_next_database_migration_for_test(database_id: &str) {
-    vfs_runtime::fail_next_database_migration_for_test(database_id);
-}
-
-#[cfg(test)]
-fn fail_next_apply_kinic_deposit_for_test() {
-    TEST_KINIC_DEPOSIT_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
-}
-
-#[cfg(test)]
-fn fail_next_apply_kinic_withdraw_for_test() {
-    TEST_KINIC_WITHDRAW_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
-}
-
-#[cfg(test)]
-fn fail_next_refund_kinic_withdraw_for_test() {
-    TEST_KINIC_WITHDRAW_REFUND_FAIL_ONCE.with(|flag| flag.replace(true));
-}
-
-#[cfg(test)]
 fn set_next_ledger_transfer_from_outcome_for_test(outcome: LedgerTransferFromOutcome) {
     TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|slot| {
-        slot.replace(vec![outcome]);
-    });
-}
-
-#[cfg(test)]
-fn set_next_ledger_transfer_outcome_for_test(outcome: LedgerTransferOutcome) {
-    TEST_LEDGER_TRANSFER_OUTCOMES.with(|slot| {
         slot.replace(vec![outcome]);
     });
 }
@@ -1745,9 +1464,6 @@ fn set_update_charge_units_for_test(units: Vec<u128>) {
 #[cfg(test)]
 fn clear_ledger_transactions_for_test() {
     TEST_LEDGER_TRANSFER_FROM_OUTCOMES.with(|slot| {
-        slot.borrow_mut().clear();
-    });
-    TEST_LEDGER_TRANSFER_OUTCOMES.with(|slot| {
         slot.borrow_mut().clear();
     });
     TEST_LEDGER_TRANSFER_FEES.with(|slot| {
@@ -1972,28 +1688,6 @@ fn now_nanos() -> u64 {
     }
 }
 
-async fn ledger_transfer_from(
-    ledger: Principal,
-    from: IcrcAccount,
-    to: IcrcAccount,
-    amount_e8s: u64,
-    ledger_fee_e8s: u64,
-    operation_id: u64,
-    created_at_time_ns: u64,
-) -> LedgerTransferFromOutcome {
-    let memo = cycles_purchase_memo(operation_id);
-    ledger_transfer_from_with_memo(
-        ledger,
-        from,
-        to,
-        amount_e8s,
-        ledger_fee_e8s,
-        memo,
-        created_at_time_ns,
-    )
-    .await
-}
-
 async fn ledger_transfer_from_with_memo(
     ledger: Principal,
     from: IcrcAccount,
@@ -2006,6 +1700,7 @@ async fn ledger_transfer_from_with_memo(
     #[cfg(test)]
     {
         record_test_ledger_from(&from);
+        record_test_ledger_to(&to);
         let _ = (ledger, to, amount_e8s, created_at_time_ns);
         record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_FEES.with(|fees| {
@@ -2061,81 +1756,6 @@ async fn ledger_transfer_from_with_memo(
     }
 }
 
-async fn ledger_transfer(
-    ledger: Principal,
-    to: IcrcAccount,
-    amount_e8s: u64,
-    ledger_fee_e8s: u64,
-    memo: Vec<u8>,
-    created_at_time_ns: u64,
-) -> LedgerTransferOutcome {
-    #[cfg(test)]
-    {
-        record_test_ledger_to(&to);
-        let _ = (ledger, amount_e8s, created_at_time_ns);
-        record_test_ledger_memo(&memo);
-        TEST_LEDGER_TRANSFER_FEES.with(|fees| {
-            fees.borrow_mut().push(ledger_fee_e8s);
-        });
-        TEST_LEDGER_TRANSFER_OUTCOMES.with(|outcomes| {
-            let mut outcomes = outcomes.borrow_mut();
-            if outcomes.is_empty() {
-                LedgerTransferOutcome::Completed(1)
-            } else {
-                outcomes.remove(0)
-            }
-        })
-    }
-    #[cfg(not(test))]
-    {
-        let arg = TransferArg {
-            from_subaccount: None,
-            to,
-            amount: Nat::from(amount_e8s),
-            fee: Some(Nat::from(ledger_fee_e8s)),
-            memo: Some(memo),
-            created_at_time: Some(created_at_time_ns),
-        };
-        let response = Call::bounded_wait(ledger, "icrc1_transfer")
-            .with_arg(arg)
-            .await
-            .map_err(|error| {
-                LedgerTransferOutcome::Ambiguous(format!("icrc1_transfer call failed: {error:?}"))
-            });
-        let response = match response {
-            Ok(response) => response,
-            Err(outcome) => return outcome,
-        };
-        let result: Result<Nat, TransferError> = match response.candid().map_err(|error| {
-            LedgerTransferOutcome::Ambiguous(format!("icrc1_transfer decode failed: {error}"))
-        }) {
-            Ok(result) => result,
-            Err(outcome) => return outcome,
-        };
-        match result {
-            Ok(block_index) => match nat_to_u64(&block_index) {
-                Ok(block_index) => LedgerTransferOutcome::Completed(block_index),
-                Err(error) => LedgerTransferOutcome::Ambiguous(error),
-            },
-            Err(error) => transfer_error_outcome(error),
-        }
-    }
-}
-
-fn transfer_error_outcome(error: TransferError) -> LedgerTransferOutcome {
-    match error {
-        TransferError::BadFee { expected_fee } => match nat_to_u64(&expected_fee) {
-            Ok(expected_fee_e8s) => LedgerTransferOutcome::BadFee { expected_fee_e8s },
-            Err(error) => LedgerTransferOutcome::Ambiguous(error),
-        },
-        TransferError::Duplicate { duplicate_of } => match nat_to_u64(&duplicate_of) {
-            Ok(block_index) => LedgerTransferOutcome::Completed(block_index),
-            Err(error) => LedgerTransferOutcome::Ambiguous(error),
-        },
-        error => LedgerTransferOutcome::LedgerErr(format!("icrc1_transfer failed: {error:?}")),
-    }
-}
-
 fn transfer_from_error_outcome(error: TransferFromError) -> LedgerTransferFromOutcome {
     match error {
         TransferFromError::BadFee { expected_fee } => match nat_to_u64(&expected_fee) {
@@ -2162,14 +1782,6 @@ fn nat_to_u64(value: &Nat) -> Result<u64, String> {
 
 fn cycles_purchase_memo(operation_id: u64) -> Vec<u8> {
     format!("kvfs:cp:{operation_id}").into_bytes()
-}
-
-fn kinic_deposit_memo(operation_id: u64) -> Vec<u8> {
-    format!("kvfs:md:{operation_id}").into_bytes()
-}
-
-fn kinic_withdraw_memo(operation_id: u64) -> Vec<u8> {
-    format!("kvfs:mw:{operation_id}").into_bytes()
 }
 
 fn with_unmetered_update<T, F>(method: &str, database_id: Option<String>, f: F) -> Result<T, String>

@@ -12,12 +12,12 @@ export function AdminHeader({ actions, nav, title, titleAction }: { actions?: Re
         {nav ? <nav className="flex flex-wrap items-center gap-2 text-sm text-muted">{nav}</nav> : null}
         <div className={`flex min-w-0 items-center gap-3 ${nav ? "mt-3" : ""}`}>
           <Link className="shrink-0 rounded-xl no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/dashboard" aria-label="Back to dashboard">
-            <Image className="h-11 w-11 rounded-xl shadow-sm" src="/icon.png" alt="" width={44} height={44} unoptimized />
+            <Image className="h-12 w-12 rounded-xl shadow-sm" src="/kinic-mark.png" alt="" width={48} height={48} unoptimized />
           </Link>
           <div className="min-w-0">
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Kinic Wiki</p>
-            <div className="mt-1 flex min-w-0 items-center gap-2">
-              <h1 className="min-w-0 truncate text-3xl font-semibold text-ink">{title}</h1>
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="min-w-0 truncate text-3xl font-semibold leading-tight text-ink">{title}</h1>
               {titleAction ? <div className="shrink-0">{titleAction}</div> : null}
             </div>
           </div>

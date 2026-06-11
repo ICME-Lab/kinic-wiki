@@ -173,26 +173,6 @@ export type DatabaseCyclesPendingPurchase = {
   requiredAction: string;
 };
 
-export type KinicBalance = {
-  balanceE8s: string;
-};
-
-export type KinicPendingOperation = {
-  operationId: string;
-  kind: string;
-  caller: string;
-  status: string;
-  amountE8s: string;
-  ledgerBlockIndex: string | null;
-  createdAtMs: string;
-  requiredAction: string;
-};
-
-export type KinicPendingOperationsPage = {
-  operations: KinicPendingOperation[];
-  nextCursorOperationId: string | null;
-};
-
 export type MarketListingStatus = "Active" | "Paused";
 
 export type MarketListing = {
@@ -280,31 +260,10 @@ export type MarketUpdateListingRequest = Omit<MarketCreateListingRequest, "datab
   expectedRevision: string;
 };
 
-export type KinicDepositResult = {
-  blockIndex: string;
-  amountE8s: string;
-  balanceE8s: string;
-};
-
-export type KinicWithdrawResult = {
-  blockIndex: string;
-  amountE8s: string;
-  feeE8s: string;
-  balanceE8s: string;
-};
-
-export type KinicFundDatabaseCyclesResult = {
-  paymentAmountE8s: string;
-  amountCycles: string;
-  databaseBalanceCycles: string;
-  kinicBalanceE8s: string;
-};
-
 export type MarketPurchasePreview = {
   listingId: string;
   databaseId: string;
   priceE8s: string;
-  buyerBalanceE8s: string;
   alreadyEntitled: boolean;
 };
 
@@ -315,6 +274,7 @@ export type MarketOrder = {
   buyerPrincipal: string;
   sellerPrincipal: string;
   priceE8s: string;
+  ledgerBlockIndex: string;
   createdAtMs: string;
 };
 

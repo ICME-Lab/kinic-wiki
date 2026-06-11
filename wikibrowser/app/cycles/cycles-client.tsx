@@ -9,19 +9,17 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminField, AdminNotice, AdminPanel } from "@/components/admin-ui";
-import { cyclesForPaymentAmountE8s } from "@/lib/cycles";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
 import { databaseCyclesHref, databaseCyclesView } from "@/lib/cycles-state";
-import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/kinic-wallet";
+import { purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { walletRuntime } from "@/lib/wallet-runtime";
-import { getCyclesBillingConfig, kinicFundDatabaseCycles, listDatabasesAuthenticated } from "@/lib/vfs-client";
+import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
 import type { CyclesBillingConfig, DatabaseStatus, DatabaseSummary } from "@/lib/types";
 
 type CyclesStatus = "idle" | "running" | "success" | "notice" | "error";
 type CyclesProvider = "oisy" | "plug";
-type FundingProvider = CyclesProvider | "ii";
-type PaymentSource = "wallet" | "kinic";
+type FundingProvider = CyclesProvider;
 type DatabaseLoadState = "idle" | "loading" | "ready" | "error";
 
 type CyclesClientProps = {
@@ -32,11 +30,10 @@ type CyclesClientProps = {
 
 export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesClientProps) {
   const router = useRouter();
-  const { authClient, authLoading, login, principal, refreshKinicBalance, refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
+  const { authClient, principal, refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [amount, setAmount] = useState("1");
-  const [paymentSource, setPaymentSource] = useState<PaymentSource>("wallet");
   const [databaseLoadState, setDatabaseLoadState] = useState<DatabaseLoadState>("idle");
   const [databaseLoadError, setDatabaseLoadError] = useState<string | null>(null);
   const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
@@ -62,14 +59,14 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const busy = status === "running" || walletBusyProvider !== null;
   const selectedProvider = wallet?.provider ?? null;
   const runtime = walletRuntime();
-  const kinicBalancePendingDisabled = paymentSource === "kinic" && resolvedDatabaseStatus === "pending";
   const purchaseDisabled =
     parsedTarget === null ||
     typeof parsedTarget === "string" ||
     Boolean(error) ||
     Boolean(amountError) ||
     busy ||
-    (paymentSource === "wallet" ? !selectedProvider || !runtime.externalWalletsAvailable : authLoading || !authClient || kinicBalancePendingDisabled);
+    !selectedProvider ||
+    !runtime.externalWalletsAvailable;
 
   const loadDatabases = useCallback(async () => {
     if (!authClient || !principal || !canisterId) {
@@ -109,12 +106,6 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
     };
   }, [loadDatabases]);
 
-  useEffect(() => {
-    if (!runtime.externalWalletsAvailable && paymentSource === "wallet") {
-      setPaymentSource("kinic");
-    }
-  }, [paymentSource, runtime.externalWalletsAvailable]);
-
   function selectDatabase(nextDatabaseId: string) {
     const nextDatabase = fundableDatabases.find((database) => database.databaseId === nextDatabaseId);
     if (!nextDatabase) return;
@@ -127,39 +118,8 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
     setMessage(null);
     try {
       const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
-      if (paymentSource === "kinic") {
-        if (!authClient || !principal) {
-          await login();
-          setStatus("idle");
-          return;
-        }
-        const config = await getCyclesBillingConfig(canisterId);
-        const minExpectedCycles = cyclesForPaymentAmountE8s(parsedAmount, BigInt(config.cyclesPerKinic));
-        const result = await kinicFundDatabaseCycles(
-          canisterId,
-          authClient.getIdentity(),
-          parsedTarget.databaseId,
-          parsedAmount.toString(),
-          minExpectedCycles.toString()
-        );
-        setMessage(
-          `Internet Identity funded cycles ${result.amountCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)} from App balance; database cycles balance ${result.databaseBalanceCycles}; App balance ${formatTokenAmountFromE8s(result.kinicBalanceE8s)}`
-        );
-        await refreshKinicBalance();
-        setStatus("success");
-        router.replace(cyclesPurchaseSuccessHref({
-          cycles: result.amountCycles,
-          databaseId: parsedTarget.databaseId,
-          kinic: formatTokenAmountFromE8s(result.paymentAmountE8s),
-          provider: "ii"
-        }));
-        return;
-      }
       if (!wallet || !selectedProvider) return;
-      const result =
-        wallet.provider === "oisy"
-          ? await purchaseCyclesWithOisy(request, wallet.connection)
-          : await purchaseCyclesWithPlug(request, wallet.connection);
+        const result = await purchaseCyclesWithWallet(request, wallet);
       const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
       setMessage(
         `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
@@ -212,27 +172,6 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             />
             {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
           </label>
-          <div className="grid gap-2">
-            <span className="text-xs font-semibold uppercase text-muted">Payment source</span>
-            <div className="grid grid-cols-2 rounded-lg border border-line bg-paper p-1 text-sm font-semibold">
-              <button
-                className={`min-h-10 rounded-md px-3 ${paymentSource === "wallet" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
-                disabled={!runtime.externalWalletsAvailable}
-                type="button"
-                onClick={() => setPaymentSource("wallet")}
-              >
-                Wallet
-              </button>
-              <button
-                className={`min-h-10 rounded-md px-3 ${paymentSource === "kinic" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}
-                disabled={resolvedDatabaseStatus === "pending"}
-                type="button"
-                onClick={() => setPaymentSource("kinic")}
-              >
-                App balance
-              </button>
-            </div>
-          </div>
         </AdminPanel>
 
         {!principal ? <Notice tone="info" text="Login with Internet Identity to select a database." /> : null}
@@ -250,13 +189,12 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             onClick={() => void purchase()}
           >
             {selectedProvider === "plug" ? <PlugZap aria-hidden size={18} /> : <Wallet aria-hidden size={18} />}
-            <span>{purchaseButtonLabel(selectedProvider, status, paymentSource)}</span>
+            <span>{purchaseButtonLabel(selectedProvider, status)}</span>
           </button>
         </div>
 
         {error ? <Notice tone="error" text={error} /> : null}
-        {paymentSource === "wallet" && walletBalanceError ? <Notice tone="error" text={walletBalanceError} /> : null}
-        {paymentSource === "kinic" && !principal ? <Notice tone="info" text="Login with Internet Identity to use App balance." /> : null}
+        {walletBalanceError ? <Notice tone="error" text={walletBalanceError} /> : null}
         {status === "success" && message ? <Notice tone="success" text={message} /> : null}
         {status === "notice" && message ? <Notice tone="info" text={message} /> : null}
         {status === "error" && message ? <Notice tone="error" text={message} /> : null}
@@ -265,10 +203,7 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   );
 }
 
-function purchaseButtonLabel(selectedProvider: CyclesProvider | null, status: CyclesStatus, paymentSource: PaymentSource): string {
-  if (paymentSource === "kinic") {
-    return status === "running" ? "Processing App balance" : "Fund cycles from App balance";
-  }
+function purchaseButtonLabel(selectedProvider: CyclesProvider | null, status: CyclesStatus): string {
   if (status === "running") {
     if (selectedProvider === "oisy") return "Processing OISY";
     if (selectedProvider === "plug") return "Processing Plug";

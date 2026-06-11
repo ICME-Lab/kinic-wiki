@@ -127,78 +127,6 @@ pub struct DatabaseCyclesPendingPurchase {
     pub required_action: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicBalance {
-    pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicPendingOperation {
-    pub operation_id: u64,
-    pub kind: String,
-    pub caller: String,
-    pub status: String,
-    pub amount_e8s: u64,
-    pub ledger_block_index: Option<u64>,
-    pub created_at_ms: i64,
-    pub required_action: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicPendingOperationsPageRequest {
-    pub cursor_operation_id: Option<u64>,
-    pub limit: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicPendingOperationsPage {
-    pub operations: Vec<KinicPendingOperation>,
-    pub next_cursor_operation_id: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicDepositRequest {
-    pub amount_e8s: u64,
-    pub expected_fee_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicDepositResult {
-    pub block_index: u64,
-    pub amount_e8s: u64,
-    pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicWithdrawRequest {
-    pub amount_e8s: u64,
-    pub expected_fee_e8s: u64,
-    pub to_owner: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicWithdrawResult {
-    pub block_index: u64,
-    pub amount_e8s: u64,
-    pub fee_e8s: u64,
-    pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicFundDatabaseCyclesRequest {
-    pub database_id: String,
-    pub payment_amount_e8s: u64,
-    pub min_expected_cycles: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicFundDatabaseCyclesResult {
-    pub payment_amount_e8s: u64,
-    pub amount_cycles: u64,
-    pub database_balance_cycles: u64,
-    pub kinic_balance_e8s: u64,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketListingStatus {
@@ -320,7 +248,6 @@ pub struct MarketPurchasePreview {
     pub listing_id: String,
     pub database_id: String,
     pub price_e8s: u64,
-    pub buyer_balance_e8s: u64,
     pub already_entitled: bool,
 }
 
@@ -332,6 +259,7 @@ pub struct MarketOrder {
     pub buyer_principal: String,
     pub seller_principal: String,
     pub price_e8s: u64,
+    pub ledger_block_index: u64,
     pub created_at_ms: i64,
 }
 

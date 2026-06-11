@@ -26,10 +26,8 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, KinicBalance, KinicFundDatabaseCyclesRequest,
-    KinicFundDatabaseCyclesResult, KinicPendingOperation, KinicPendingOperationsPage,
-    KinicPendingOperationsPageRequest, KinicWithdrawRequest, KinicWithdrawResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
     MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
     MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
     MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
@@ -83,6 +81,9 @@ const INDEX_SCHEMA_VERSION_MARKETPLACE_CORE: &str = "database_index:027_marketpl
 const INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES: &str =
     "database_index:028_kinic_external_block_indexes";
 const INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW: &str = "database_index:029_marketplace_preview";
+const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
+    "database_index:030_direct_market_purchase";
+const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -108,7 +109,6 @@ pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
 const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
 const MAX_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
 const TIMER_STORAGE_BILLING_BATCH_LIMIT: u32 = 1_000;
-const MAX_KINIC_PENDING_OPERATIONS_PAGE_LIMIT: u32 = 100;
 const STORAGE_BILLING_BULK_MIN_BATCH_LEN: usize = 50;
 const GIB_BYTES: u128 = 1024 * 1024 * 1024;
 const MAX_DATABASE_NAME_CHARS: usize = 80;
@@ -120,12 +120,6 @@ const ANONYMOUS_PRINCIPAL: &str = "2vxsx-fae";
 const CYCLES_OPERATION_STATUS_IN_FLIGHT: &str = "in_flight";
 const CYCLES_OPERATION_STATUS_COMPLETED: &str = "completed";
 const CYCLES_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
-const KINIC_OPERATION_STATUS_IN_FLIGHT: &str = "in_flight";
-const KINIC_OPERATION_STATUS_COMPLETED: &str = "completed";
-const KINIC_OPERATION_STATUS_AMBIGUOUS: &str = "ambiguous";
-const KINIC_LEDGER_SOURCE_INTERNAL: &str = "canister_internal";
-const KINIC_PENDING_KIND_DEPOSIT: &str = "deposit";
-const KINIC_PENDING_KIND_WITHDRAW: &str = "withdraw";
 const MARKET_LISTING_STATUS_ACTIVE: &str = "active";
 const MARKET_LISTING_STATUS_PAUSED: &str = "paused";
 
@@ -202,34 +196,6 @@ pub struct DatabaseCyclesPurchaseWithLedgerDetails<'a> {
 pub struct DatabaseCyclesPurchaseStart {
     pub operation_id: u64,
     pub amount_cycles: u64,
-}
-
-pub struct KinicDepositWithLedgerDetails<'a> {
-    pub caller: &'a str,
-    pub amount_e8s: u64,
-    pub ledger: CyclesPendingLedgerDetailsInput<'a>,
-    pub now: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KinicDepositStart {
-    pub operation_id: u64,
-    pub amount_e8s: u64,
-}
-
-pub struct KinicWithdrawWithLedgerDetails<'a> {
-    pub caller: &'a str,
-    pub request: &'a KinicWithdrawRequest,
-    pub ledger: CyclesPendingLedgerDetailsInput<'a>,
-    pub now: i64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct KinicWithdrawStart {
-    pub operation_id: u64,
-    pub amount_e8s: u64,
-    pub fee_e8s: u64,
-    pub balance_e8s: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -939,19 +905,12 @@ impl VfsService {
                 &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
                 "complete cycle purchase ledger transfer",
             )?;
-            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE database_cycle_pending_operations
-                 SET operation_status = ?2,
-                     ledger_block_index = ?3
-                 WHERE operation_id = ?1",
-                params![
-                    operation_id,
-                    CYCLES_OPERATION_STATUS_COMPLETED,
-                    ledger_block_index
-                ],
-            )
-            .map_err(|error| error.to_string())?;
+            update_pending_operation_completed(
+                tx,
+                "database_cycle_pending_operations",
+                operation_id,
+                ledger_block_index,
+            )?;
             Ok(())
         })
     }
@@ -980,14 +939,12 @@ impl VfsService {
                 &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
                 "mark cycle purchase ambiguous",
             )?;
-            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE database_cycle_pending_operations
-                 SET operation_status = ?2
-                 WHERE operation_id = ?1",
-                params![operation_id, CYCLES_OPERATION_STATUS_AMBIGUOUS],
-            )
-            .map_err(|error| error.to_string())?;
+            update_pending_operation_status(
+                tx,
+                "database_cycle_pending_operations",
+                operation_id,
+                CYCLES_OPERATION_STATUS_AMBIGUOUS,
+            )?;
             Ok(())
         })
     }
@@ -1070,7 +1027,7 @@ impl VfsService {
             } else {
                 let role = load_member_role(conn, database_id, caller)?
                     .ok_or_else(|| format!("principal has no access to database: {database_id}"))?;
-                if !role_allows(role, RequiredRole::Reader) {
+                if !role_allows(role, RequiredRole::Writer) {
                     return Err(format!(
                         "principal lacks required database role: {database_id}"
                     ));
@@ -1136,589 +1093,6 @@ impl VfsService {
                 .into_iter()
                 .map(DatabaseCyclesPendingPurchaseRaw::into_public)
                 .collect::<Result<Vec<_>, _>>()
-        })
-    }
-
-    pub fn kinic_get_balance(&self, caller: &str) -> Result<KinicBalance, String> {
-        require_authenticated_principal(caller)?;
-        self.read_index(|conn| {
-            Ok(KinicBalance {
-                balance_e8s: u64::try_from(load_kinic_balance(conn, caller)?)
-                    .map_err(|error| error.to_string())?,
-            })
-        })
-    }
-
-    pub fn validate_kinic_fund_database_cycles(
-        &self,
-        caller: &str,
-        request: &KinicFundDatabaseCyclesRequest,
-    ) -> Result<(), String> {
-        require_authenticated_principal(caller)?;
-        let payment_amount = amount_to_i64(request.payment_amount_e8s)?;
-        self.read_index(|conn| {
-            let config = load_cycles_billing_config(conn)?;
-            let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
-            validate_cycles_purchase_minimum(amount_cycles, request.min_expected_cycles)?;
-            validate_database_cycles_purchase_for_conn(
-                conn,
-                &request.database_id,
-                cycles_to_i64(amount_cycles)?,
-            )?;
-            let kinic_balance = load_kinic_balance(conn, caller)?;
-            if kinic_balance < payment_amount {
-                return Err("insufficient KINIC balance".to_string());
-            }
-            Ok(())
-        })
-    }
-
-    pub fn kinic_fund_database_cycles(
-        &self,
-        caller: &str,
-        request: KinicFundDatabaseCyclesRequest,
-        now: i64,
-    ) -> Result<KinicFundDatabaseCyclesResult, String> {
-        require_authenticated_principal(caller)?;
-        let payment_amount = amount_to_i64(request.payment_amount_e8s)?;
-        let activation = self.read_index(|tx| {
-            let config = load_cycles_billing_config(tx)?;
-            let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
-            validate_cycles_purchase_minimum(amount_cycles, request.min_expected_cycles)?;
-            let amount_cycles_i64 = cycles_to_i64(amount_cycles)?;
-            validate_database_cycles_purchase_for_conn(
-                tx,
-                &request.database_id,
-                amount_cycles_i64,
-            )?;
-            let kinic_balance = load_kinic_balance(tx, caller)?;
-            if kinic_balance < payment_amount {
-                return Err("insufficient KINIC balance".to_string());
-            }
-            Ok(load_database_status(tx, &request.database_id)? == DatabaseStatus::Pending)
-        })?;
-        if activation {
-            self.prepare_pending_database_activation(&request.database_id, now)?;
-        }
-        self.write_index(|tx| {
-            let config = load_cycles_billing_config(tx)?;
-            let amount_cycles = cycles_for_payment_amount_e8s(request.payment_amount_e8s, &config)?;
-            validate_cycles_purchase_minimum(amount_cycles, request.min_expected_cycles)?;
-            let amount_cycles_i64 = cycles_to_i64(amount_cycles)?;
-            validate_database_cycles_purchase_for_conn(
-                tx,
-                &request.database_id,
-                amount_cycles_i64,
-            )?;
-            if activation {
-                complete_pending_database_activation(tx, &request.database_id, now)?;
-            }
-
-            let kinic_balance = load_kinic_balance(tx, caller)?;
-            if kinic_balance < payment_amount {
-                return Err("insufficient KINIC balance".to_string());
-            }
-            let next_kinic_balance = checked_balance_add(kinic_balance, -payment_amount)?;
-            let database_balance = database_balance_for_update(tx, &request.database_id)?;
-            let next_database_balance = checked_balance_add(database_balance, amount_cycles_i64)?;
-
-            upsert_kinic_balance(tx, caller, next_kinic_balance, now)?;
-            update_database_cycles_balance(
-                tx,
-                &request.database_id,
-                next_database_balance,
-                &config,
-                now,
-            )?;
-            insert_kinic_ledger(
-                tx,
-                KinicLedgerInsert {
-                    principal: caller,
-                    source: KINIC_LEDGER_SOURCE_INTERNAL,
-                    kind: "fund_database_cycles",
-                    amount_e8s: -payment_amount,
-                    balance_after_e8s: next_kinic_balance,
-                    counterparty: Some(&request.database_id),
-                    listing_id: None,
-                    order_id: None,
-                    external_block_index: None,
-                    now,
-                },
-            )?;
-            insert_database_ledger(
-                tx,
-                DatabaseLedgerInsert {
-                    database_id: &request.database_id,
-                    kind: "cycles_purchase",
-                    amount_cycles: amount_cycles_i64,
-                    balance_after_cycles: next_database_balance,
-                    payment_amount_e8s: Some(payment_amount),
-                    caller,
-                    method: Some("kinic_fund_database_cycles"),
-                    cycles_delta: None,
-                    config: Some(&config),
-                    ledger_block_index: None,
-                    now,
-                },
-            )?;
-            Ok(KinicFundDatabaseCyclesResult {
-                payment_amount_e8s: request.payment_amount_e8s,
-                amount_cycles,
-                database_balance_cycles: u64::try_from(next_database_balance)
-                    .map_err(|error| error.to_string())?,
-                kinic_balance_e8s: u64::try_from(next_kinic_balance)
-                    .map_err(|error| error.to_string())?,
-            })
-        })
-    }
-
-    pub fn begin_kinic_deposit_with_ledger_details(
-        &self,
-        request: KinicDepositWithLedgerDetails<'_>,
-    ) -> Result<KinicDepositStart, String> {
-        require_authenticated_principal(request.caller)?;
-        if request.amount_e8s == 0 {
-            return Err("KINIC deposit amount must be positive".to_string());
-        }
-        let amount_e8s = amount_to_i64(request.amount_e8s)?;
-        let ledger_fee = amount_to_i64(request.ledger.ledger_fee_e8s)?;
-        let ledger_created_at_time = i64::try_from(request.ledger.ledger_created_at_time_ns)
-            .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
-        self.write_index(|tx| {
-            ensure_no_pending_kinic_deposit_for_caller(tx, request.caller)?;
-            let operation_id = insert_pending_kinic_operation(
-                tx,
-                PendingKinicOperationInsert {
-                    kind: KINIC_PENDING_KIND_DEPOSIT,
-                    caller: request.caller,
-                    amount_e8s,
-                    ledger: PendingCyclesLedgerDetails {
-                        from_owner: request.ledger.from_owner,
-                        from_subaccount: request.ledger.from_subaccount,
-                        to_owner: request.ledger.to_owner,
-                        to_subaccount: request.ledger.to_subaccount,
-                        ledger_fee_e8s: ledger_fee,
-                        ledger_created_at_time_ns: ledger_created_at_time,
-                    },
-                    operation_status: KINIC_OPERATION_STATUS_IN_FLIGHT,
-                    now: request.now,
-                },
-            )?;
-            Ok(KinicDepositStart {
-                operation_id,
-                amount_e8s: request.amount_e8s,
-            })
-        })
-    }
-
-    pub fn complete_kinic_deposit_ledger_transfer(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        amount_e8s: u64,
-        ledger_block_index: u64,
-    ) -> Result<(), String> {
-        let amount_e8s = amount_to_i64(amount_e8s)?;
-        let ledger_block_index = i64::try_from(ledger_block_index)
-            .map_err(|_| "ledger block index exceeds i64".to_string())?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_DEPOSIT,
-                    caller,
-                    amount_e8s,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "complete KINIC deposit ledger transfer",
-            )?;
-            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE kinic_pending_operations
-                 SET operation_status = ?2,
-                     external_block_index = ?3
-                 WHERE operation_id = ?1",
-                params![
-                    operation_id,
-                    KINIC_OPERATION_STATUS_COMPLETED,
-                    ledger_block_index
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-    }
-
-    pub fn apply_kinic_deposit(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        amount_e8s: u64,
-        now: i64,
-    ) -> Result<KinicBalance, String> {
-        let amount_i64 = amount_to_i64(amount_e8s)?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_DEPOSIT,
-                    caller,
-                    amount_e8s: amount_i64,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_COMPLETED],
-                "apply KINIC deposit",
-            )?;
-            let block_index = operation
-                .external_block_index
-                .ok_or_else(|| "completed KINIC deposit missing ledger block index".to_string())?;
-            let balance = load_kinic_balance(tx, caller)?;
-            let next_balance = checked_balance_add(balance, amount_i64)?;
-            upsert_kinic_balance(tx, caller, next_balance, now)?;
-            insert_kinic_ledger(
-                tx,
-                KinicLedgerInsert {
-                    principal: caller,
-                    source: KINIC_LEDGER_SOURCE_INTERNAL,
-                    kind: "deposit",
-                    amount_e8s: amount_i64,
-                    balance_after_e8s: next_balance,
-                    counterparty: None,
-                    listing_id: None,
-                    order_id: None,
-                    external_block_index: Some(block_index),
-                    now,
-                },
-            )?;
-            delete_pending_kinic_operation(tx, operation_id)?;
-            Ok(KinicBalance {
-                balance_e8s: u64::try_from(next_balance).map_err(|error| error.to_string())?,
-            })
-        })
-    }
-
-    pub fn mark_kinic_deposit_ambiguous(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        amount_e8s: u64,
-    ) -> Result<(), String> {
-        let amount_i64 = amount_to_i64(amount_e8s)?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_DEPOSIT,
-                    caller,
-                    amount_e8s: amount_i64,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "mark KINIC deposit ambiguous",
-            )?;
-            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE kinic_pending_operations
-                 SET operation_status = ?2
-                 WHERE operation_id = ?1",
-                params![operation_id, KINIC_OPERATION_STATUS_AMBIGUOUS],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-    }
-
-    pub fn cancel_kinic_deposit_after_ledger_error(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        amount_e8s: u64,
-    ) -> Result<(), String> {
-        let amount_i64 = amount_to_i64(amount_e8s)?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_DEPOSIT,
-                    caller,
-                    amount_e8s: amount_i64,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "cancel KINIC deposit",
-            )?;
-            delete_pending_kinic_operation(tx, operation_id)
-        })
-    }
-
-    pub fn begin_kinic_withdraw_with_ledger_details(
-        &self,
-        request: KinicWithdrawWithLedgerDetails<'_>,
-    ) -> Result<KinicWithdrawStart, String> {
-        require_authenticated_principal(request.caller)?;
-        if request.request.amount_e8s == 0 {
-            return Err("KINIC withdraw amount must be positive".to_string());
-        }
-        Principal::from_text(&request.request.to_owner)
-            .map_err(|error| format!("invalid KINIC withdraw recipient principal: {error}"))?;
-        let amount_e8s = amount_to_i64(request.request.amount_e8s)?;
-        let ledger_fee = amount_to_i64(request.request.expected_fee_e8s)?;
-        let total_debit = amount_e8s
-            .checked_add(ledger_fee)
-            .ok_or_else(|| "KINIC withdraw debit overflow".to_string())?;
-        let ledger_created_at_time = i64::try_from(request.ledger.ledger_created_at_time_ns)
-            .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
-        self.write_index(|tx| {
-            ensure_no_pending_kinic_withdraw_for_caller(tx, request.caller)?;
-            let balance = load_kinic_balance(tx, request.caller)?;
-            if balance < total_debit {
-                return Err("insufficient KINIC balance".to_string());
-            }
-            let next_balance = balance
-                .checked_sub(total_debit)
-                .ok_or_else(|| "KINIC withdraw balance underflow".to_string())?;
-            upsert_kinic_balance(tx, request.caller, next_balance, request.now)?;
-            let operation_id = insert_pending_kinic_operation(
-                tx,
-                PendingKinicOperationInsert {
-                    kind: KINIC_PENDING_KIND_WITHDRAW,
-                    caller: request.caller,
-                    amount_e8s,
-                    ledger: PendingCyclesLedgerDetails {
-                        from_owner: request.ledger.from_owner,
-                        from_subaccount: request.ledger.from_subaccount,
-                        to_owner: request.ledger.to_owner,
-                        to_subaccount: request.ledger.to_subaccount,
-                        ledger_fee_e8s: ledger_fee,
-                        ledger_created_at_time_ns: ledger_created_at_time,
-                    },
-                    operation_status: KINIC_OPERATION_STATUS_IN_FLIGHT,
-                    now: request.now,
-                },
-            )?;
-            Ok(KinicWithdrawStart {
-                operation_id,
-                amount_e8s: request.request.amount_e8s,
-                fee_e8s: request.request.expected_fee_e8s,
-                balance_e8s: u64::try_from(next_balance).map_err(|error| error.to_string())?,
-            })
-        })
-    }
-
-    pub fn complete_kinic_withdraw_ledger_transfer(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        request: &KinicWithdrawRequest,
-        ledger_block_index: u64,
-    ) -> Result<(), String> {
-        let amount_e8s = amount_to_i64(request.amount_e8s)?;
-        let ledger_block_index = i64::try_from(ledger_block_index)
-            .map_err(|_| "ledger block index exceeds i64".to_string())?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_WITHDRAW,
-                    caller,
-                    amount_e8s,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "complete KINIC withdraw ledger transfer",
-            )?;
-            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE kinic_pending_operations
-                 SET operation_status = ?2,
-                     external_block_index = ?3
-                 WHERE operation_id = ?1",
-                params![
-                    operation_id,
-                    KINIC_OPERATION_STATUS_COMPLETED,
-                    ledger_block_index
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-    }
-
-    pub fn apply_kinic_withdraw(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        request: &KinicWithdrawRequest,
-        now: i64,
-    ) -> Result<KinicWithdrawResult, String> {
-        let amount_e8s = amount_to_i64(request.amount_e8s)?;
-        let ledger_fee = amount_to_i64(request.expected_fee_e8s)?;
-        let total_debit = amount_e8s
-            .checked_add(ledger_fee)
-            .ok_or_else(|| "KINIC withdraw debit overflow".to_string())?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_WITHDRAW,
-                    caller,
-                    amount_e8s,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_COMPLETED],
-                "apply KINIC withdraw",
-            )?;
-            let block_index = operation
-                .external_block_index
-                .ok_or_else(|| "completed KINIC withdraw missing ledger block index".to_string())?;
-            let balance_after = load_kinic_balance(tx, caller)?;
-            insert_kinic_ledger(
-                tx,
-                KinicLedgerInsert {
-                    principal: caller,
-                    source: KINIC_LEDGER_SOURCE_INTERNAL,
-                    kind: KINIC_PENDING_KIND_WITHDRAW,
-                    amount_e8s: -total_debit,
-                    balance_after_e8s: balance_after,
-                    counterparty: Some(&request.to_owner),
-                    listing_id: None,
-                    order_id: None,
-                    external_block_index: Some(block_index),
-                    now,
-                },
-            )?;
-            delete_pending_kinic_operation(tx, operation_id)?;
-            Ok(KinicWithdrawResult {
-                block_index: u64::try_from(block_index).map_err(|error| error.to_string())?,
-                amount_e8s: request.amount_e8s,
-                fee_e8s: request.expected_fee_e8s,
-                balance_e8s: u64::try_from(balance_after).map_err(|error| error.to_string())?,
-            })
-        })
-    }
-
-    pub fn refund_kinic_withdraw_after_ledger_error(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        request: &KinicWithdrawRequest,
-        now: i64,
-    ) -> Result<KinicBalance, String> {
-        let amount_e8s = amount_to_i64(request.amount_e8s)?;
-        let ledger_fee = amount_to_i64(request.expected_fee_e8s)?;
-        let total_debit = amount_e8s
-            .checked_add(ledger_fee)
-            .ok_or_else(|| "KINIC withdraw debit overflow".to_string())?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_WITHDRAW,
-                    caller,
-                    amount_e8s,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "refund KINIC withdraw",
-            )?;
-            let balance = load_kinic_balance(tx, caller)?;
-            let next_balance = checked_balance_add(balance, total_debit)?;
-            upsert_kinic_balance(tx, caller, next_balance, now)?;
-            delete_pending_kinic_operation(tx, operation_id)?;
-            Ok(KinicBalance {
-                balance_e8s: u64::try_from(next_balance).map_err(|error| error.to_string())?,
-            })
-        })
-    }
-
-    pub fn mark_kinic_withdraw_ambiguous(
-        &self,
-        operation_id: u64,
-        caller: &str,
-        request: &KinicWithdrawRequest,
-    ) -> Result<(), String> {
-        let amount_e8s = amount_to_i64(request.amount_e8s)?;
-        self.write_index(|tx| {
-            let operation = load_required_pending_kinic_operation(
-                tx,
-                PendingKinicOperationMatch {
-                    operation_id,
-                    kind: KINIC_PENDING_KIND_WITHDRAW,
-                    caller,
-                    amount_e8s,
-                },
-            )?;
-            require_pending_kinic_operation_status(
-                &operation,
-                &[KINIC_OPERATION_STATUS_IN_FLIGHT],
-                "mark KINIC withdraw ambiguous",
-            )?;
-            let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
-            tx.execute(
-                "UPDATE kinic_pending_operations
-                 SET operation_status = ?2
-                 WHERE operation_id = ?1",
-                params![operation_id, KINIC_OPERATION_STATUS_AMBIGUOUS],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-    }
-
-    pub fn kinic_list_pending_operations(
-        &self,
-        caller: &str,
-        request: KinicPendingOperationsPageRequest,
-    ) -> Result<KinicPendingOperationsPage, String> {
-        require_authenticated_principal(caller)?;
-        let limit = clamp_kinic_pending_operations_page_limit(request.limit);
-        let config = self.cycles_billing_config()?;
-        self.read_index(|conn| {
-            let show_all = caller == config.billing_authority_id;
-            let raw = load_kinic_pending_operations(
-                conn,
-                caller,
-                show_all,
-                request.cursor_operation_id,
-                limit,
-            )?;
-            let has_next = raw.len() > limit as usize;
-            let operations = raw
-                .into_iter()
-                .take(limit as usize)
-                .map(PendingKinicOperationRaw::into_public)
-                .collect::<Result<Vec<_>, _>>()?;
-            let next_cursor_operation_id = if has_next {
-                operations.last().map(|operation| operation.operation_id)
-            } else {
-                None
-            };
-            Ok(KinicPendingOperationsPage {
-                operations,
-                next_cursor_operation_id,
-            })
         })
     }
 
@@ -2003,8 +1377,6 @@ impl VfsService {
                 listing_id: listing.listing_id.clone(),
                 database_id: listing.database_id.clone(),
                 price_e8s: listing.price_e8s,
-                buyer_balance_e8s: u64::try_from(load_kinic_balance(conn, caller)?)
-                    .map_err(|error| error.to_string())?,
                 already_entitled: has_active_market_entitlement(
                     conn,
                     &listing.database_id,
@@ -2014,12 +1386,13 @@ impl VfsService {
         })
     }
 
-    pub fn market_purchase_access(
+    pub fn begin_market_purchase_with_ledger_details(
         &self,
         caller: &str,
         request: MarketPurchaseRequest,
+        ledger: CyclesPendingLedgerDetailsInput<'_>,
         now: i64,
-    ) -> Result<MarketOrder, String> {
+    ) -> Result<MarketPurchaseStart, String> {
         require_authenticated_principal(caller)?;
         if request.listing_id.trim().is_empty() {
             return Err("market listing id is required".to_string());
@@ -2040,14 +1413,141 @@ impl VfsService {
             if has_active_market_entitlement(tx, &listing.database_id, caller)? {
                 return Err("active entitlement already exists".to_string());
             }
-            let price_i64 = amount_to_i64(request.price_e8s)?;
-            let buyer_balance = load_kinic_balance(tx, caller)?;
-            if buyer_balance < price_i64 {
-                return Err("insufficient KINIC balance".to_string());
+            ensure_no_pending_market_purchase_for_buyer(tx, &listing.listing_id, caller)?;
+            let price_e8s = amount_to_i64(request.price_e8s)?;
+            let ledger_fee_e8s = amount_to_i64(ledger.ledger_fee_e8s)?;
+            let ledger_created_at_time_ns = i64::try_from(ledger.ledger_created_at_time_ns)
+                .map_err(|_| "ledger created_at_time exceeds i64".to_string())?;
+            let operation_id = insert_pending_market_purchase_operation(
+                tx,
+                PendingMarketPurchaseInsert {
+                    listing_id: &listing.listing_id,
+                    database_id: &listing.database_id,
+                    buyer_principal: caller,
+                    seller_principal: &listing.seller_principal,
+                    price_e8s,
+                    ledger: PendingCyclesLedgerDetails {
+                        from_owner: ledger.from_owner,
+                        from_subaccount: ledger.from_subaccount,
+                        to_owner: &listing.seller_principal,
+                        to_subaccount: ledger.to_subaccount,
+                        ledger_fee_e8s,
+                        ledger_created_at_time_ns,
+                    },
+                    operation_status: CYCLES_OPERATION_STATUS_IN_FLIGHT,
+                    now,
+                },
+            )?;
+            Ok(MarketPurchaseStart {
+                operation_id,
+                listing_id: listing.listing_id,
+                database_id: listing.database_id,
+                seller_principal: listing.seller_principal,
+                price_e8s: request.price_e8s,
+            })
+        })
+    }
+
+    pub fn market_purchase_access(
+        &self,
+        caller: &str,
+        request: MarketPurchaseRequest,
+        now: i64,
+    ) -> Result<MarketOrder, String> {
+        let price_e8s = request.price_e8s;
+        let listing_id = request.listing_id.clone();
+        let start = self.begin_market_purchase_with_ledger_details(
+            caller,
+            request,
+            CyclesPendingLedgerDetailsInput {
+                from_owner: caller,
+                from_subaccount: None,
+                to_owner: "",
+                to_subaccount: None,
+                ledger_fee_e8s: 0,
+                ledger_created_at_time_ns: millis_to_nanos(now)?,
+            },
+            now,
+        )?;
+        self.complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            caller,
+            &listing_id,
+            price_e8s,
+            0,
+        )?;
+        self.apply_market_purchase(start.operation_id, caller, &listing_id, price_e8s, now)
+    }
+
+    pub fn complete_market_purchase_ledger_transfer(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        listing_id: &str,
+        price_e8s: u64,
+        ledger_block_index: u64,
+    ) -> Result<(), String> {
+        let price_e8s = amount_to_i64(price_e8s)?;
+        let ledger_block_index = i64::try_from(ledger_block_index)
+            .map_err(|_| "ledger block index exceeds i64".to_string())?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_market_purchase(
+                tx,
+                PendingMarketPurchaseMatch {
+                    operation_id,
+                    buyer_principal: caller,
+                    listing_id,
+                    price_e8s,
+                },
+            )?;
+            require_market_purchase_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
+                "complete market purchase ledger transfer",
+            )?;
+            update_pending_operation_completed(
+                tx,
+                "market_purchase_pending_operations",
+                operation_id,
+                ledger_block_index,
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn apply_market_purchase(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        listing_id: &str,
+        price_e8s: u64,
+        now: i64,
+    ) -> Result<MarketOrder, String> {
+        let price_e8s = amount_to_i64(price_e8s)?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_market_purchase(
+                tx,
+                PendingMarketPurchaseMatch {
+                    operation_id,
+                    buyer_principal: caller,
+                    listing_id,
+                    price_e8s,
+                },
+            )?;
+            require_market_purchase_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_COMPLETED],
+                "apply market purchase",
+            )?;
+            let ledger_block_index = operation
+                .ledger_block_index
+                .ok_or_else(|| "completed market purchase missing ledger block index".to_string())?;
+            let listing = load_market_listing_by_id(tx, listing_id)?
+                .ok_or_else(|| "market listing not found".to_string())?;
+            require_market_listing_purchasable(tx, &listing)?;
+            if has_active_market_entitlement(tx, &listing.database_id, caller)? {
+                return Err("active entitlement already exists".to_string());
             }
-            let seller_balance = load_kinic_balance(tx, &listing.seller_principal)?;
-            let buyer_next = checked_balance_add(buyer_balance, -price_i64)?;
-            let seller_next = checked_balance_add(seller_balance, price_i64)?;
             let order_id = unique_market_id(
                 tx,
                 "market_orders",
@@ -2057,50 +1557,19 @@ impl VfsService {
                 &listing.listing_id,
                 now,
             )?;
-            upsert_kinic_balance(tx, caller, buyer_next, now)?;
-            upsert_kinic_balance(tx, &listing.seller_principal, seller_next, now)?;
-            insert_kinic_ledger(
-                tx,
-                KinicLedgerInsert {
-                    principal: caller,
-                    source: KINIC_LEDGER_SOURCE_INTERNAL,
-                    kind: "purchase",
-                    amount_e8s: -price_i64,
-                    balance_after_e8s: buyer_next,
-                    counterparty: Some(&listing.seller_principal),
-                    listing_id: Some(&listing.listing_id),
-                    order_id: Some(&order_id),
-                    external_block_index: None,
-                    now,
-                },
-            )?;
-            insert_kinic_ledger(
-                tx,
-                KinicLedgerInsert {
-                    principal: &listing.seller_principal,
-                    source: KINIC_LEDGER_SOURCE_INTERNAL,
-                    kind: "sale",
-                    amount_e8s: price_i64,
-                    balance_after_e8s: seller_next,
-                    counterparty: Some(caller),
-                    listing_id: Some(&listing.listing_id),
-                    order_id: Some(&order_id),
-                    external_block_index: None,
-                    now,
-                },
-            )?;
             tx.execute(
                 "INSERT INTO market_orders
                  (order_id, listing_id, database_id, buyer_principal, seller_principal,
-                  price_e8s, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                  price_e8s, ledger_block_index, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     order_id,
                     listing.listing_id,
                     listing.database_id,
                     caller,
                     listing.seller_principal,
-                    price_i64,
+                    price_e8s,
+                    ledger_block_index,
                     now
                 ],
             )
@@ -2127,8 +1596,68 @@ impl VfsService {
                 params![listing.listing_id, now],
             )
             .map_err(|error| error.to_string())?;
-            load_market_order_by_id(tx, &order_id)?
-                .ok_or_else(|| "market order insert failed".to_string())
+            delete_pending_market_purchase(tx, operation_id)?;
+            load_market_order_by_id(tx, &order_id)?.ok_or_else(|| "market order insert failed".to_string())
+        })
+    }
+
+    pub fn cancel_market_purchase(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        listing_id: &str,
+        price_e8s: u64,
+    ) -> Result<(), String> {
+        let price_e8s = amount_to_i64(price_e8s)?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_market_purchase(
+                tx,
+                PendingMarketPurchaseMatch {
+                    operation_id,
+                    buyer_principal: caller,
+                    listing_id,
+                    price_e8s,
+                },
+            )?;
+            require_market_purchase_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
+                "cancel market purchase",
+            )?;
+            delete_pending_market_purchase(tx, operation_id)
+        })
+    }
+
+    pub fn mark_market_purchase_ambiguous(
+        &self,
+        operation_id: u64,
+        caller: &str,
+        listing_id: &str,
+        price_e8s: u64,
+    ) -> Result<(), String> {
+        let price_e8s = amount_to_i64(price_e8s)?;
+        self.write_index(|tx| {
+            let operation = load_required_pending_market_purchase(
+                tx,
+                PendingMarketPurchaseMatch {
+                    operation_id,
+                    buyer_principal: caller,
+                    listing_id,
+                    price_e8s,
+                },
+            )?;
+            require_market_purchase_operation_status(
+                &operation,
+                &[CYCLES_OPERATION_STATUS_IN_FLIGHT],
+                "mark market purchase ambiguous",
+            )?;
+            update_pending_operation_status(
+                tx,
+                "market_purchase_pending_operations",
+                operation_id,
+                CYCLES_OPERATION_STATUS_AMBIGUOUS,
+            )?;
+            Ok(())
         })
     }
 
@@ -2243,7 +1772,7 @@ impl VfsService {
             let mut stmt = conn
                 .prepare(
                     "SELECT order_id, listing_id, database_id, buyer_principal, seller_principal,
-                            price_e8s, created_at_ms
+                            price_e8s, ledger_block_index, created_at_ms
                      FROM market_orders
                      WHERE buyer_principal = ?1 AND order_id > ?2
                      ORDER BY order_id ASC
@@ -3927,8 +3456,9 @@ fn run_index_migrations_in_tx_for_upgrade(
 
 enum IndexSchemaState {
     Latest,
+    DropAppBalanceUpgrade,
+    DirectMarketPurchaseUpgrade,
     MarketplacePreviewUpgrade,
-    KinicExternalBlockIndexesUpgrade,
     MarketplaceCoreUpgrade,
     StorageBillingBatchUpgrade,
     Mainnet011,
@@ -3940,26 +3470,34 @@ fn ensure_existing_index_schema_is_latest(
 ) -> Result<(), String> {
     match classify_existing_index_schema_state(conn)? {
         IndexSchemaState::Latest => validate_index_schema(conn),
-        IndexSchemaState::MarketplacePreviewUpgrade => {
-            apply_marketplace_preview_index_migration(conn)?;
+        IndexSchemaState::DropAppBalanceUpgrade => {
+            apply_drop_app_balance_index_migration(conn)?;
             validate_index_schema(conn)
         }
-        IndexSchemaState::KinicExternalBlockIndexesUpgrade => {
-            apply_kinic_external_block_indexes_migration(conn)?;
+        IndexSchemaState::DirectMarketPurchaseUpgrade => {
+            apply_direct_market_purchase_index_migration(conn)?;
+            apply_drop_app_balance_index_migration(conn)?;
+            validate_index_schema(conn)
+        }
+        IndexSchemaState::MarketplacePreviewUpgrade => {
             apply_marketplace_preview_index_migration(conn)?;
+            apply_direct_market_purchase_index_migration(conn)?;
+            apply_drop_app_balance_index_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::MarketplaceCoreUpgrade => {
             apply_marketplace_core_index_migration(conn)?;
-            apply_kinic_external_block_indexes_migration(conn)?;
             apply_marketplace_preview_index_migration(conn)?;
+            apply_direct_market_purchase_index_migration(conn)?;
+            apply_drop_app_balance_index_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::StorageBillingBatchUpgrade => {
             apply_storage_billing_batch_index_migration(conn)?;
             apply_marketplace_core_index_migration(conn)?;
-            apply_kinic_external_block_indexes_migration(conn)?;
             apply_marketplace_preview_index_migration(conn)?;
+            apply_direct_market_purchase_index_migration(conn)?;
+            apply_drop_app_balance_index_migration(conn)?;
             validate_index_schema(conn)
         }
         IndexSchemaState::Mainnet011 => {
@@ -3998,14 +3536,20 @@ fn classify_existing_index_schema_state(
             "unsupported partial billing index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE)? {
+        return Ok(IndexSchemaState::DropAppBalanceUpgrade);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW)? {
+        return Ok(IndexSchemaState::DirectMarketPurchaseUpgrade);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)? {
         return Ok(IndexSchemaState::MarketplacePreviewUpgrade);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_MARKETPLACE_CORE)? {
-        return Ok(IndexSchemaState::KinicExternalBlockIndexesUpgrade);
+        return Ok(IndexSchemaState::MarketplacePreviewUpgrade);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
         return Ok(IndexSchemaState::MarketplaceCoreUpgrade);
@@ -4067,49 +3611,6 @@ fn apply_storage_billing_batch_index_migration(conn: &Transaction<'_>) -> Result
 fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(
         "
-        CREATE TABLE kinic_accounts (
-          principal TEXT PRIMARY KEY,
-          balance_e8s INTEGER NOT NULL,
-          created_at_ms INTEGER NOT NULL,
-          updated_at_ms INTEGER NOT NULL
-        );
-
-        CREATE TABLE kinic_ledger (
-          entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          principal TEXT NOT NULL,
-          source TEXT NOT NULL,
-          kind TEXT NOT NULL,
-          amount_e8s INTEGER NOT NULL,
-          balance_after_e8s INTEGER NOT NULL,
-          counterparty TEXT,
-          listing_id TEXT,
-          order_id TEXT,
-          external_block_index INTEGER,
-          created_at_ms INTEGER NOT NULL
-        );
-
-        CREATE INDEX kinic_ledger_principal_idx
-          ON kinic_ledger(principal, entry_id);
-
-        CREATE TABLE kinic_pending_operations (
-          operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          kind TEXT NOT NULL,
-          caller TEXT NOT NULL,
-          amount_e8s INTEGER NOT NULL,
-          from_owner TEXT,
-          from_subaccount BLOB,
-          to_owner TEXT,
-          to_subaccount BLOB,
-          ledger_fee_e8s INTEGER,
-          operation_status TEXT NOT NULL,
-          external_block_index INTEGER,
-          ledger_created_at_time_ns INTEGER,
-          created_at_ms INTEGER NOT NULL
-        );
-
-        CREATE INDEX kinic_pending_operations_caller_idx
-          ON kinic_pending_operations(caller, operation_id);
-
         CREATE TABLE market_listings (
           listing_id TEXT PRIMARY KEY,
           seller_principal TEXT NOT NULL,
@@ -4141,11 +3642,33 @@ fn apply_marketplace_core_index_migration(conn: &Transaction<'_>) -> Result<(), 
           buyer_principal TEXT NOT NULL,
           seller_principal TEXT NOT NULL,
           price_e8s INTEGER NOT NULL,
+          ledger_block_index INTEGER NOT NULL,
           created_at_ms INTEGER NOT NULL
         );
 
         CREATE INDEX market_orders_buyer_idx
           ON market_orders(buyer_principal, order_id);
+
+        CREATE TABLE market_purchase_pending_operations (
+          operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          listing_id TEXT NOT NULL,
+          database_id TEXT NOT NULL,
+          buyer_principal TEXT NOT NULL,
+          seller_principal TEXT NOT NULL,
+          price_e8s INTEGER NOT NULL,
+          from_owner TEXT NOT NULL,
+          from_subaccount BLOB,
+          to_owner TEXT NOT NULL,
+          to_subaccount BLOB,
+          ledger_fee_e8s INTEGER NOT NULL,
+          ledger_created_at_time_ns INTEGER NOT NULL,
+          operation_status TEXT NOT NULL,
+          ledger_block_index INTEGER,
+          created_at_ms INTEGER NOT NULL
+        );
+
+        CREATE INDEX market_purchase_pending_buyer_idx
+          ON market_purchase_pending_operations(buyer_principal, listing_id);
 
         CREATE TABLE market_entitlements (
           database_id TEXT NOT NULL,
@@ -4216,20 +3739,81 @@ fn apply_marketplace_preview_index_migration(conn: &Transaction<'_>) -> Result<(
     Ok(())
 }
 
-fn apply_kinic_external_block_indexes_migration(conn: &Transaction<'_>) -> Result<(), String> {
+fn apply_direct_market_purchase_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
     conn.execute_batch(
         "
-        CREATE UNIQUE INDEX kinic_ledger_external_block_idx
-          ON kinic_ledger(external_block_index)
-          WHERE external_block_index IS NOT NULL;
+        DROP TABLE market_entitlements;
+        DROP TABLE market_orders;
 
-        CREATE UNIQUE INDEX kinic_pending_operations_external_block_kind_idx
-          ON kinic_pending_operations(external_block_index, kind)
-          WHERE external_block_index IS NOT NULL;
+        CREATE TABLE market_orders (
+          order_id TEXT PRIMARY KEY,
+          listing_id TEXT NOT NULL,
+          database_id TEXT NOT NULL,
+          buyer_principal TEXT NOT NULL,
+          seller_principal TEXT NOT NULL,
+          price_e8s INTEGER NOT NULL,
+          ledger_block_index INTEGER NOT NULL,
+          created_at_ms INTEGER NOT NULL
+        );
+
+        CREATE INDEX market_orders_buyer_idx
+          ON market_orders(buyer_principal, order_id);
+
+        CREATE TABLE market_purchase_pending_operations (
+          operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          listing_id TEXT NOT NULL,
+          database_id TEXT NOT NULL,
+          buyer_principal TEXT NOT NULL,
+          seller_principal TEXT NOT NULL,
+          price_e8s INTEGER NOT NULL,
+          from_owner TEXT NOT NULL,
+          from_subaccount BLOB,
+          to_owner TEXT NOT NULL,
+          to_subaccount BLOB,
+          ledger_fee_e8s INTEGER NOT NULL,
+          ledger_created_at_time_ns INTEGER NOT NULL,
+          operation_status TEXT NOT NULL,
+          ledger_block_index INTEGER,
+          created_at_ms INTEGER NOT NULL
+        );
+
+        CREATE INDEX market_purchase_pending_buyer_idx
+          ON market_purchase_pending_operations(buyer_principal, listing_id);
+
+        CREATE TABLE market_entitlements (
+          database_id TEXT NOT NULL,
+          buyer_principal TEXT NOT NULL,
+          listing_id TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          purchased_at_ms INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          PRIMARY KEY (database_id, buyer_principal, listing_id),
+          FOREIGN KEY (database_id) REFERENCES databases(database_id)
+        );
+
+        CREATE UNIQUE INDEX market_entitlements_database_buyer_active_idx
+          ON market_entitlements(database_id, buyer_principal)
+          WHERE status = 'active';
+
+        CREATE INDEX market_entitlements_buyer_idx
+          ON market_entitlements(buyer_principal, database_id);
         ",
     )
     .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES)?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE)?;
+    Ok(())
+}
+
+fn apply_drop_app_balance_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(
+        "
+        DROP TABLE IF EXISTS kinic_pending_operations;
+        DROP TABLE IF EXISTS kinic_ledger;
+        DROP TABLE IF EXISTS kinic_accounts;
+        ",
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)?;
     Ok(())
 }
 
@@ -4362,6 +3946,8 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
     INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
     INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
+    INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
+    INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4378,11 +3964,9 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_cycle_pending_operations",
     "cycles_billing_config",
     "storage_billing_state",
-    "kinic_accounts",
-    "kinic_ledger",
-    "kinic_pending_operations",
     "market_listings",
     "market_orders",
+    "market_purchase_pending_operations",
     "market_entitlements",
 ];
 
@@ -4405,6 +3989,8 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
     INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
     INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
+    INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
+    INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -4413,9 +3999,6 @@ const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
     "database_cycle_pending_operations",
     "cycles_billing_config",
     "storage_billing_state",
-    "kinic_accounts",
-    "kinic_ledger",
-    "kinic_pending_operations",
     "market_listings",
     "market_orders",
     "market_entitlements",
@@ -4566,11 +4149,9 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_cycle_pending_operations",
         "cycles_billing_config",
         "storage_billing_state",
-        "kinic_accounts",
-        "kinic_ledger",
-        "kinic_pending_operations",
         "market_listings",
         "market_orders",
+        "market_purchase_pending_operations",
         "market_entitlements",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
@@ -4653,44 +4234,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             &["key", "cursor_mount_id", "billing_now_ms", "updated_at_ms"][..],
         ),
         (
-            "kinic_accounts",
-            &["principal", "balance_e8s", "created_at_ms", "updated_at_ms"][..],
-        ),
-        (
-            "kinic_ledger",
-            &[
-                "entry_id",
-                "principal",
-                "source",
-                "kind",
-                "amount_e8s",
-                "balance_after_e8s",
-                "counterparty",
-                "listing_id",
-                "order_id",
-                "external_block_index",
-                "created_at_ms",
-            ][..],
-        ),
-        (
-            "kinic_pending_operations",
-            &[
-                "operation_id",
-                "kind",
-                "caller",
-                "amount_e8s",
-                "from_owner",
-                "from_subaccount",
-                "to_owner",
-                "to_subaccount",
-                "ledger_fee_e8s",
-                "operation_status",
-                "external_block_index",
-                "ledger_created_at_time_ns",
-                "created_at_ms",
-            ][..],
-        ),
-        (
             "market_listings",
             &[
                 "listing_id",
@@ -4718,6 +4261,27 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "buyer_principal",
                 "seller_principal",
                 "price_e8s",
+                "ledger_block_index",
+                "created_at_ms",
+            ][..],
+        ),
+        (
+            "market_purchase_pending_operations",
+            &[
+                "operation_id",
+                "listing_id",
+                "database_id",
+                "buyer_principal",
+                "seller_principal",
+                "price_e8s",
+                "from_owner",
+                "from_subaccount",
+                "to_owner",
+                "to_subaccount",
+                "ledger_fee_e8s",
+                "ledger_created_at_time_ns",
+                "operation_status",
+                "ledger_block_index",
                 "created_at_ms",
             ][..],
         ),
@@ -4746,13 +4310,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "database_restore_chunks_database_id_idx",
         "database_cycle_ledger_database_idx",
         "database_cycle_pending_operations_database_idx",
-        "kinic_ledger_principal_idx",
-        "kinic_ledger_external_block_idx",
-        "kinic_pending_operations_caller_idx",
-        "kinic_pending_operations_external_block_kind_idx",
         "market_listings_status_idx",
         "market_listings_database_idx",
         "market_orders_buyer_idx",
+        "market_purchase_pending_buyer_idx",
         "market_entitlements_database_buyer_active_idx",
         "market_entitlements_buyer_idx",
     ] {
@@ -5525,90 +5086,50 @@ fn map_pending_cycles_operation(
     })
 }
 
-struct PendingKinicOperation {
-    kind: String,
-    caller: String,
-    amount_e8s: i64,
-    operation_status: String,
-    external_block_index: Option<i64>,
+pub struct MarketPurchaseStart {
+    pub operation_id: u64,
+    pub listing_id: String,
+    pub database_id: String,
+    pub seller_principal: String,
+    pub price_e8s: u64,
 }
 
-struct PendingKinicOperationInsert<'a> {
-    kind: &'a str,
-    caller: &'a str,
-    amount_e8s: i64,
+struct PendingMarketPurchase {
+    listing_id: String,
+    buyer_principal: String,
+    price_e8s: i64,
+    operation_status: String,
+    ledger_block_index: Option<i64>,
+}
+
+struct PendingMarketPurchaseInsert<'a> {
+    listing_id: &'a str,
+    database_id: &'a str,
+    buyer_principal: &'a str,
+    seller_principal: &'a str,
+    price_e8s: i64,
     ledger: PendingCyclesLedgerDetails<'a>,
     operation_status: &'a str,
     now: i64,
 }
 
-struct PendingKinicOperationMatch<'a> {
+struct PendingMarketPurchaseMatch<'a> {
     operation_id: u64,
-    kind: &'a str,
-    caller: &'a str,
-    amount_e8s: i64,
+    buyer_principal: &'a str,
+    listing_id: &'a str,
+    price_e8s: i64,
 }
 
-struct PendingKinicOperationRaw {
-    operation_id: i64,
-    kind: String,
-    caller: String,
-    status: String,
-    amount_e8s: i64,
-    external_block_index: Option<i64>,
-    created_at_ms: i64,
-}
-
-impl PendingKinicOperationRaw {
-    fn into_public(self) -> Result<KinicPendingOperation, String> {
-        let operation_id = u64::try_from(self.operation_id).map_err(|error| error.to_string())?;
-        let amount_e8s = u64::try_from(self.amount_e8s).map_err(|error| error.to_string())?;
-        let ledger_block_index = self
-            .external_block_index
-            .map(u64::try_from)
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        Ok(KinicPendingOperation {
-            operation_id,
-            kind: self.kind,
-            caller: self.caller,
-            status: self.status.clone(),
-            amount_e8s,
-            ledger_block_index,
-            created_at_ms: self.created_at_ms,
-            required_action: pending_kinic_required_action(&self.status).to_string(),
-        })
-    }
-}
-
-struct KinicLedgerInsert<'a> {
-    principal: &'a str,
-    source: &'a str,
-    kind: &'a str,
-    amount_e8s: i64,
-    balance_after_e8s: i64,
-    counterparty: Option<&'a str>,
-    listing_id: Option<&'a str>,
-    order_id: Option<&'a str>,
-    external_block_index: Option<i64>,
-    now: i64,
-}
-
-fn require_authenticated_principal(caller: &str) -> Result<(), String> {
-    if caller == ANONYMOUS_PRINCIPAL {
-        return Err("anonymous caller not allowed".to_string());
-    }
-    Ok(())
-}
-
-fn insert_pending_kinic_operation(
+fn insert_pending_market_purchase_operation(
     conn: &Transaction<'_>,
-    operation: PendingKinicOperationInsert<'_>,
+    operation: PendingMarketPurchaseInsert<'_>,
 ) -> Result<u64, String> {
     let values = vec![
-        crate::sqlite::text_value(operation.kind),
-        crate::sqlite::text_value(operation.caller),
-        crate::sqlite::integer_value(operation.amount_e8s),
+        crate::sqlite::text_value(operation.listing_id),
+        crate::sqlite::text_value(operation.database_id),
+        crate::sqlite::text_value(operation.buyer_principal),
+        crate::sqlite::text_value(operation.seller_principal),
+        crate::sqlite::integer_value(operation.price_e8s),
         crate::sqlite::text_value(operation.ledger.from_owner),
         crate::sqlite::nullable_blob_value(operation.ledger.from_subaccount.map(Vec::from)),
         crate::sqlite::text_value(operation.ledger.to_owner),
@@ -5620,11 +5141,11 @@ fn insert_pending_kinic_operation(
     ];
     crate::sqlite::execute_values(
         conn,
-        "INSERT INTO kinic_pending_operations
-         (kind, caller, amount_e8s, from_owner, from_subaccount, to_owner,
-          to_subaccount, ledger_fee_e8s, ledger_created_at_time_ns,
-          operation_status, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO market_purchase_pending_operations
+         (listing_id, database_id, buyer_principal, seller_principal, price_e8s,
+          from_owner, from_subaccount, to_owner, to_subaccount, ledger_fee_e8s,
+          ledger_created_at_time_ns, operation_status, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         &values,
     )
     .map_err(|error| error.to_string())?;
@@ -5632,47 +5153,47 @@ fn insert_pending_kinic_operation(
     u64::try_from(operation_id).map_err(|error| error.to_string())
 }
 
-fn load_pending_kinic_operation(
+fn load_pending_market_purchase(
     conn: &Connection,
     operation_id: u64,
-) -> Result<PendingKinicOperation, String> {
+) -> Result<PendingMarketPurchase, String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT kind, caller, amount_e8s, operation_status, external_block_index
-         FROM kinic_pending_operations
+        "SELECT listing_id, buyer_principal, price_e8s, operation_status, ledger_block_index
+         FROM market_purchase_pending_operations
          WHERE operation_id = ?1",
         params![operation_id],
         |row| {
-            Ok(PendingKinicOperation {
-                kind: crate::sqlite::row_get(row, 0)?,
-                caller: crate::sqlite::row_get(row, 1)?,
-                amount_e8s: crate::sqlite::row_get(row, 2)?,
+            Ok(PendingMarketPurchase {
+                listing_id: crate::sqlite::row_get(row, 0)?,
+                buyer_principal: crate::sqlite::row_get(row, 1)?,
+                price_e8s: crate::sqlite::row_get(row, 2)?,
                 operation_status: crate::sqlite::row_get(row, 3)?,
-                external_block_index: crate::sqlite::row_get(row, 4)?,
+                ledger_block_index: crate::sqlite::row_get(row, 4)?,
             })
         },
     )
     .optional()
     .map_err(|error| error.to_string())?
-    .ok_or_else(|| "pending KINIC operation not found".to_string())
+    .ok_or_else(|| "pending market purchase not found".to_string())
 }
 
-fn load_required_pending_kinic_operation(
+fn load_required_pending_market_purchase(
     conn: &Transaction<'_>,
-    expected: PendingKinicOperationMatch<'_>,
-) -> Result<PendingKinicOperation, String> {
-    let operation = load_pending_kinic_operation(conn, expected.operation_id)?;
-    if operation.kind != expected.kind
-        || operation.caller != expected.caller
-        || operation.amount_e8s != expected.amount_e8s
+    expected: PendingMarketPurchaseMatch<'_>,
+) -> Result<PendingMarketPurchase, String> {
+    let operation = load_pending_market_purchase(conn, expected.operation_id)?;
+    if operation.buyer_principal != expected.buyer_principal
+        || operation.listing_id != expected.listing_id
+        || operation.price_e8s != expected.price_e8s
     {
-        return Err("pending KINIC operation mismatch".to_string());
+        return Err("pending market purchase mismatch".to_string());
     }
     Ok(operation)
 }
 
-fn require_pending_kinic_operation_status(
-    operation: &PendingKinicOperation,
+fn require_market_purchase_operation_status(
+    operation: &PendingMarketPurchase,
     allowed: &[&str],
     action: &str,
 ) -> Result<(), String> {
@@ -5683,203 +5204,108 @@ fn require_pending_kinic_operation_status(
         return Ok(());
     }
     Err(format!(
-        "cannot {action}; KINIC operation is {}",
+        "cannot {action}; market purchase operation is {}",
         operation.operation_status
     ))
 }
 
-fn delete_pending_kinic_operation(conn: &Transaction<'_>, operation_id: u64) -> Result<(), String> {
+fn ensure_no_pending_market_purchase_for_buyer(
+    conn: &Connection,
+    listing_id: &str,
+    buyer_principal: &str,
+) -> Result<(), String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM market_purchase_pending_operations
+             WHERE listing_id = ?1
+               AND buyer_principal = ?2",
+            params![listing_id, buyer_principal],
+            |row| crate::sqlite::row_get(row, 0),
+        )
+        .map_err(|error| error.to_string())?;
+    if count > 0 {
+        return Err("market purchase already pending for buyer".to_string());
+    }
+    Ok(())
+}
+
+fn delete_pending_market_purchase(
+    conn: &Transaction<'_>,
+    operation_id: u64,
+) -> Result<(), String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.execute(
-        "DELETE FROM kinic_pending_operations WHERE operation_id = ?1",
+        "DELETE FROM market_purchase_pending_operations WHERE operation_id = ?1",
         params![operation_id],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
 }
 
-fn ensure_no_pending_kinic_deposit_for_caller(
-    conn: &Connection,
-    caller: &str,
-) -> Result<(), String> {
-    ensure_no_pending_kinic_operation_for_caller(conn, caller, KINIC_PENDING_KIND_DEPOSIT)
-}
-
-fn ensure_no_pending_kinic_withdraw_for_caller(
-    conn: &Connection,
-    caller: &str,
-) -> Result<(), String> {
-    ensure_no_pending_kinic_operation_for_caller(conn, caller, KINIC_PENDING_KIND_WITHDRAW)
-}
-
-fn ensure_no_pending_kinic_operation_for_caller(
-    conn: &Connection,
-    caller: &str,
-    kind: &str,
-) -> Result<(), String> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*)
-             FROM kinic_pending_operations
-             WHERE caller = ?1
-               AND kind = ?2
-               AND operation_status IN (?3, ?4, ?5)",
-            params![
-                caller,
-                kind,
-                KINIC_OPERATION_STATUS_IN_FLIGHT,
-                KINIC_OPERATION_STATUS_COMPLETED,
-                KINIC_OPERATION_STATUS_AMBIGUOUS
-            ],
-            |row| crate::sqlite::row_get(row, 0),
-        )
-        .map_err(|error| error.to_string())?;
-    if count > 0 {
-        return Err(format!("KINIC {kind} already pending for caller"));
+fn require_authenticated_principal(caller: &str) -> Result<(), String> {
+    if caller == ANONYMOUS_PRINCIPAL {
+        return Err("anonymous caller not allowed".to_string());
     }
     Ok(())
 }
 
-fn load_kinic_pending_operations(
-    conn: &Connection,
-    caller: &str,
-    show_all: bool,
-    cursor_operation_id: Option<u64>,
-    limit: u32,
-) -> Result<Vec<PendingKinicOperationRaw>, String> {
-    let cursor = cursor_operation_id
-        .map(i64::try_from)
-        .transpose()
-        .map_err(|_| "pending KINIC operation cursor is out of range".to_string())?
-        .unwrap_or(0);
-    let fetch_limit = i64::from(limit.saturating_add(1));
-    if show_all {
-        let mut stmt = conn
-            .prepare(
-                "SELECT operation_id, kind, caller, operation_status, amount_e8s,
-                        external_block_index, created_at_ms
-                 FROM kinic_pending_operations
-                 WHERE kind IN (?1, ?2)
-                   AND operation_id > ?3
-                 ORDER BY operation_id ASC
-                 LIMIT ?4",
-            )
-            .map_err(|error| error.to_string())?;
-        crate::sqlite::query_map(
-            &mut stmt,
-            params![
-                KINIC_PENDING_KIND_DEPOSIT,
-                KINIC_PENDING_KIND_WITHDRAW,
-                cursor,
-                fetch_limit
-            ],
-            map_pending_kinic_operation_raw,
-        )
-        .map_err(|error| error.to_string())
-    } else {
-        let mut stmt = conn
-            .prepare(
-                "SELECT operation_id, kind, caller, operation_status, amount_e8s,
-                        external_block_index, created_at_ms
-                 FROM kinic_pending_operations
-                 WHERE kind IN (?1, ?2) AND caller = ?3
-                   AND operation_id > ?4
-                 ORDER BY operation_id ASC
-                 LIMIT ?5",
-            )
-            .map_err(|error| error.to_string())?;
-        crate::sqlite::query_map(
-            &mut stmt,
-            params![
-                KINIC_PENDING_KIND_DEPOSIT,
-                KINIC_PENDING_KIND_WITHDRAW,
-                caller,
-                cursor,
-                fetch_limit
-            ],
-            map_pending_kinic_operation_raw,
-        )
-        .map_err(|error| error.to_string())
-    }
-}
-
-fn clamp_kinic_pending_operations_page_limit(limit: u32) -> u32 {
-    limit.clamp(1, MAX_KINIC_PENDING_OPERATIONS_PAGE_LIMIT)
-}
-
-fn map_pending_kinic_operation_raw(
-    row: &crate::sqlite::Row<'_>,
-) -> crate::sqlite::Result<PendingKinicOperationRaw> {
-    Ok(PendingKinicOperationRaw {
-        operation_id: crate::sqlite::row_get(row, 0)?,
-        kind: crate::sqlite::row_get(row, 1)?,
-        caller: crate::sqlite::row_get(row, 2)?,
-        status: crate::sqlite::row_get(row, 3)?,
-        amount_e8s: crate::sqlite::row_get(row, 4)?,
-        external_block_index: crate::sqlite::row_get(row, 5)?,
-        created_at_ms: crate::sqlite::row_get(row, 6)?,
-    })
-}
-
-fn pending_kinic_required_action(status: &str) -> &'static str {
-    match status {
-        KINIC_OPERATION_STATUS_IN_FLIGHT => "wait_for_ledger_result",
-        KINIC_OPERATION_STATUS_AMBIGUOUS | KINIC_OPERATION_STATUS_COMPLETED => {
-            "billing_authority_review"
-        }
-        _ => "billing_authority_review",
-    }
-}
-
-fn load_kinic_balance(conn: &Connection, principal: &str) -> Result<i64, String> {
-    conn.query_row(
-        "SELECT balance_e8s FROM kinic_accounts WHERE principal = ?1",
-        params![principal],
-        |row| crate::sqlite::row_get(row, 0),
-    )
-    .optional()
-    .map_err(|error| error.to_string())
-    .map(|balance| balance.unwrap_or(0))
-}
-
-fn upsert_kinic_balance(
+fn update_pending_operation_completed(
     conn: &Transaction<'_>,
-    principal: &str,
-    balance_e8s: i64,
-    now: i64,
+    table: &str,
+    operation_id: u64,
+    ledger_block_index: i64,
 ) -> Result<(), String> {
+    let sql = match table {
+        "database_cycle_pending_operations" => {
+            "UPDATE database_cycle_pending_operations
+             SET operation_status = ?2,
+                 ledger_block_index = ?3
+             WHERE operation_id = ?1"
+        }
+        "market_purchase_pending_operations" => {
+            "UPDATE market_purchase_pending_operations
+             SET operation_status = ?2,
+                 ledger_block_index = ?3
+             WHERE operation_id = ?1"
+        }
+        _ => return Err(format!("unsupported pending operation table: {table}")),
+    };
+    let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.execute(
-        "INSERT INTO kinic_accounts (principal, balance_e8s, created_at_ms, updated_at_ms)
-         VALUES (?1, ?2, ?3, ?3)
-         ON CONFLICT(principal) DO UPDATE SET
-           balance_e8s = excluded.balance_e8s,
-           updated_at_ms = excluded.updated_at_ms",
-        params![principal, balance_e8s, now],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn insert_kinic_ledger(conn: &Transaction<'_>, entry: KinicLedgerInsert<'_>) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO kinic_ledger
-         (principal, source, kind, amount_e8s, balance_after_e8s, counterparty,
-          listing_id, order_id, external_block_index, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        sql,
         params![
-            entry.principal,
-            entry.source,
-            entry.kind,
-            entry.amount_e8s,
-            entry.balance_after_e8s,
-            crate::sqlite::nullable_text_value(entry.counterparty.map(str::to_string)),
-            crate::sqlite::nullable_text_value(entry.listing_id.map(str::to_string)),
-            crate::sqlite::nullable_text_value(entry.order_id.map(str::to_string)),
-            crate::sqlite::nullable_integer_value(entry.external_block_index),
-            entry.now
+            operation_id,
+            CYCLES_OPERATION_STATUS_COMPLETED,
+            ledger_block_index
         ],
     )
     .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn update_pending_operation_status(
+    conn: &Transaction<'_>,
+    table: &str,
+    operation_id: u64,
+    status: &str,
+) -> Result<(), String> {
+    let sql = match table {
+        "database_cycle_pending_operations" => {
+            "UPDATE database_cycle_pending_operations
+             SET operation_status = ?2
+             WHERE operation_id = ?1"
+        }
+        "market_purchase_pending_operations" => {
+            "UPDATE market_purchase_pending_operations
+             SET operation_status = ?2
+             WHERE operation_id = ?1"
+        }
+        _ => return Err(format!("unsupported pending operation table: {table}")),
+    };
+    let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
+    conn.execute(sql, params![operation_id, status])
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -5990,7 +5416,7 @@ fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Mar
         database_id: crate::sqlite::row_get(row, 2)?,
         title: crate::sqlite::row_get(row, 3)?,
         description: crate::sqlite::row_get(row, 4)?,
-        llm_summary: crate::sqlite::row_get(row, 5)?,
+        llm_summary: crate::sqlite::row_get::<Option<String>>(row, 5)?,
         tags_json: crate::sqlite::row_get(row, 6)?,
         price_e8s: u64::try_from(price_e8s)
             .map_err(|_| crate::sqlite::integral_value_out_of_range(7, price_e8s))?,
@@ -6012,7 +5438,7 @@ fn load_market_order_by_id(
 ) -> Result<Option<MarketOrder>, String> {
     conn.query_row(
         "SELECT order_id, listing_id, database_id, buyer_principal, seller_principal,
-                price_e8s, created_at_ms
+                price_e8s, ledger_block_index, created_at_ms
          FROM market_orders
          WHERE order_id = ?1",
         params![order_id],
@@ -6024,6 +5450,7 @@ fn load_market_order_by_id(
 
 fn map_market_order(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketOrder> {
     let price_e8s: i64 = crate::sqlite::row_get(row, 5)?;
+    let ledger_block_index: i64 = crate::sqlite::row_get(row, 6)?;
     Ok(MarketOrder {
         order_id: crate::sqlite::row_get(row, 0)?,
         listing_id: crate::sqlite::row_get(row, 1)?,
@@ -6032,7 +5459,9 @@ fn map_market_order(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<Marke
         seller_principal: crate::sqlite::row_get(row, 4)?,
         price_e8s: u64::try_from(price_e8s)
             .map_err(|_| crate::sqlite::integral_value_out_of_range(5, price_e8s))?,
-        created_at_ms: crate::sqlite::row_get(row, 6)?,
+        ledger_block_index: u64::try_from(ledger_block_index)
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(6, ledger_block_index))?,
+        created_at_ms: crate::sqlite::row_get(row, 7)?,
     })
 }
 

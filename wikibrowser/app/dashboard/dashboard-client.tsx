@@ -77,6 +77,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
   const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
   const canManageSettings = canManage || canDeletePendingDatabase;
+  const canViewCyclesHistory = (database?.role === "writer" || database?.role === "owner") && isActiveDatabase;
   const showDashboardTabs = Boolean(databaseId && (database || principal));
 
   const resetCyclesHistoryState = useCallback(() => {
@@ -264,21 +265,26 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
 
   useEffect(() => {
     if (activeTab !== "cycles-history") return;
+    if (!canViewCyclesHistory) return;
     const timer = window.setTimeout(() => {
       void loadCyclesHistory(false, null);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeTab, databaseId, loadCyclesHistory, principal]);
+  }, [activeTab, canViewCyclesHistory, databaseId, loadCyclesHistory, principal]);
 
   useEffect(() => {
     if ((activeTab === "list" || activeTab === "buyers") && !canManage) {
       setActiveTab("access");
       return;
     }
+    if (activeTab === "cycles-history" && !canViewCyclesHistory) {
+      setActiveTab("access");
+      return;
+    }
     if (activeTab === "settings" && !canManageSettings) {
       setActiveTab("access");
     }
-  }, [activeTab, canManage, canManageSettings]);
+  }, [activeTab, canManage, canManageSettings, canViewCyclesHistory]);
 
   async function grantAccess(principalText: string, role: DatabaseRole) {
     if (!authClient || !databaseId) return;
@@ -476,7 +482,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         ) : null}
 
         {databaseId && (database || principal) ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} publicReadable={database?.publicReadable ?? false} /> : null}
-        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} canManageListings={canManage} canManageSettings={canManageSettings} onChange={setActiveTab} /> : null}
+        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} canManageListings={canManage} canManageSettings={canManageSettings} canViewCyclesHistory={canViewCyclesHistory} onChange={setActiveTab} /> : null}
 
         {activeTab === "list" && showDashboardTabs && canManage && database ? (
           <MarketListingsPanel
@@ -498,7 +504,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             nextCursor={marketEntitlementsNextCursor}
             onLoadMore={() => void loadMoreMarketEntitlements()}
           />
-        ) : activeTab === "cycles-history" && showDashboardTabs ? (
+        ) : activeTab === "cycles-history" && showDashboardTabs && canViewCyclesHistory ? (
           <CyclesHistoryPanel
             authenticated={Boolean(principal)}
             entries={cycleEntries}

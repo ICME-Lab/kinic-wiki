@@ -28,7 +28,7 @@ type PageGraphNode = {
 };
 
 export function ListingDetailClient({ canisterId, listingId }: ListingDetailClientProps) {
-  const { authClient, principal, refreshKinicBalance } = useAppSession();
+  const { authClient, principal } = useAppSession();
   const [detail, setDetail] = useState<MarketListingDetail | null>(null);
   const [state, setState] = useState<ActionState>("loading");
   const [purchaseState, setPurchaseState] = useState<ActionState>("idle");
@@ -75,8 +75,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
     try {
       const identity = authClient.getIdentity();
       const order = await marketPurchaseAccess(canisterId, identity, listing.listingId, listing.priceE8s);
-      await refreshKinicBalance();
-      setMessage(`Order ${order.orderId}. KINIC balance updated. Access is ready.`);
+      setMessage(`Order ${order.orderId}. Ledger block ${order.ledgerBlockIndex}. Access is ready.`);
       setPurchaseState("success");
       void loadPurchasePreview();
     } catch (cause) {
@@ -112,7 +111,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                 <div className="grid gap-3">
                   {detail.preview.previewStale ? <span className="w-fit rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold uppercase text-amber-950">Preview stale</span> : null}
                   <h1 className="break-words text-3xl font-semibold leading-tight text-ink">{listing.title}</h1>
-                  <p className="max-w-3xl text-sm leading-6 text-muted">{listing.description}</p>
+                  <p className="max-w-3xl whitespace-pre-wrap text-sm leading-6 text-muted">{listing.description}</p>
                   <Link className="inline-flex max-w-full items-center gap-2 break-all font-mono text-xs text-muted underline-offset-4 hover:text-accent hover:underline" href={marketSellerPath(listing.sellerPrincipal)}>
                     <User aria-hidden className="shrink-0" size={14} />
                     <span>Seller {listing.sellerPrincipal}</span>
@@ -123,38 +122,39 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
 
                 {listing.llmSummary ? (
                   <div className="border-l-2 border-line pl-3">
-                    <p className="text-sm leading-6 text-ink">{listing.llmSummary}</p>
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-ink">{listing.llmSummary}</p>
                   </div>
                 ) : null}
               </div>
 
-              <aside className="grid content-start gap-3 rounded-lg border border-line bg-paper p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3">
+              <aside className="grid content-start gap-4 rounded-lg border border-line bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3 border-b border-line pb-4">
                   <div>
                     <p className="text-xs font-semibold uppercase text-muted">Price</p>
-                    <p className="mt-1 font-mono text-2xl font-semibold text-ink">{formatTokenAmountFromE8s(listing.priceE8s)}</p>
+                    <p className="mt-2 font-mono text-2xl font-semibold text-ink">{formatTokenAmountFromE8s(listing.priceE8s)}</p>
                   </div>
                   {purchaseState === "success" ? <CheckCircle aria-hidden className="mt-1 text-green-700" size={20} /> : null}
                 </div>
-                <button
-                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
-                  disabled={!principal || purchaseState === "loading" || purchaseState === "success"}
-                  type="button"
-                  onClick={() => void purchase()}
-                >
-                  <ShoppingCart aria-hidden size={17} />
-                  <span>{purchaseState === "success" ? "Purchased" : "Purchase access"}</span>
-                </button>
-                {purchaseState === "success" ? (
-                  <Link
-                    className="inline-flex min-h-11 w-full items-center justify-center whitespace-nowrap rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent"
-                    href={hrefForPath(canisterId, listing.databaseId, "/Wiki")}
+                <div className="grid gap-3">
+                  <button
+                    className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
+                    disabled={!principal || purchaseState === "loading" || purchaseState === "success"}
+                    type="button"
+                    onClick={() => void purchase()}
                   >
-                    Open database
-                  </Link>
-                ) : null}
-                {!principal ? <span className="text-sm leading-5 text-muted">Login with Internet Identity to purchase</span> : null}
-                <FactsSidebar listing={listing} stats={detail.verifiedStats} />
+                    <ShoppingCart aria-hidden size={17} />
+                    <span>{purchaseState === "success" ? "Purchased" : "Purchase access"}</span>
+                  </button>
+                  {purchaseState === "success" ? (
+                    <Link
+                      className="inline-flex min-h-11 w-full items-center justify-center whitespace-nowrap rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent"
+                      href={hrefForPath(canisterId, listing.databaseId, "/Wiki")}
+                    >
+                      Open database
+                    </Link>
+                  ) : null}
+                  {!principal ? <span className="text-sm leading-5 text-muted">Login with Internet Identity to purchase</span> : null}
+                </div>
               </aside>
             </section>
 
@@ -166,7 +166,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                 <TabButton active={activeTab === "details"} icon={<Tag aria-hidden size={15} />} label="Details" onClick={() => setActiveTab("details")} />
               </div>
 
-              {activeTab === "overview" ? <OverviewPanel listing={listing} tags={tags} /> : null}
+              {activeTab === "overview" ? <OverviewPanel listing={listing} stats={detail.verifiedStats} /> : null}
               {activeTab === "contents" ? <ContentsPanel excerpts={detail.preview.excerpts} paths={detail.preview.topLevelPaths} /> : null}
               {activeTab === "graph" ? <RelationshipGraph links={detail.preview.graphLinks} /> : null}
               {activeTab === "details" ? <NodeSizeDetails excerpts={detail.preview.excerpts} /> : null}
@@ -196,7 +196,7 @@ function TabButton({ active, icon, label, onClick }: { active: boolean; icon: Re
   );
 }
 
-function FactsSidebar({ listing, stats }: { listing: MarketListing; stats: MarketListingVerifiedStats }) {
+function OverviewPanel({ listing, stats }: { listing: MarketListing; stats: MarketListingVerifiedStats }) {
   const facts = [
     ["Wiki nodes", stats.wikiNodes],
     ["Source nodes", stats.sourceNodes],
@@ -207,23 +207,16 @@ function FactsSidebar({ listing, stats }: { listing: MarketListing; stats: Marke
     ["Purchases", listing.purchaseCount]
   ];
   return (
-    <dl className="grid gap-2 border-t border-line pt-3">
-      {facts.map(([label, value]) => (
-        <div className="flex items-start justify-between gap-3 text-sm" key={label}>
-          <dt className="text-muted">{label}</dt>
-          <dd className="break-all text-right font-mono text-xs font-semibold text-ink">{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
-function OverviewPanel({ listing, tags }: { listing: MarketListing; tags: string[] }) {
-  return (
-    <div className="grid max-w-3xl gap-3">
+    <div className="grid max-w-4xl gap-4">
       <h2 className="text-lg font-semibold text-ink">Overview</h2>
-      <p className="text-sm leading-6 text-muted">{listing.llmSummary ?? listing.description}</p>
-      <TagList tags={tags} />
+      <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {facts.map(([label, value]) => (
+          <div className="rounded-lg border border-line bg-white px-3 py-3 shadow-sm" key={label}>
+            <dt className="text-xs font-semibold uppercase text-muted">{label}</dt>
+            <dd className="mt-1 break-all font-mono text-sm font-semibold text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }

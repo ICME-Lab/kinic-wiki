@@ -569,13 +569,25 @@ export function StatusPanel({ tone, message }: { tone: "error" | "info"; message
   return <AdminNotice tone={tone} message={message} />;
 }
 
-export function DashboardTabs({ activeTab, canManageListings, canManageSettings, onChange }: { activeTab: DashboardTab; canManageListings: boolean; canManageSettings: boolean; onChange: (tab: DashboardTab) => void }) {
+export function DashboardTabs({
+  activeTab,
+  canManageListings,
+  canManageSettings,
+  canViewCyclesHistory,
+  onChange
+}: {
+  activeTab: DashboardTab;
+  canManageListings: boolean;
+  canManageSettings: boolean;
+  canViewCyclesHistory: boolean;
+  onChange: (tab: DashboardTab) => void;
+}) {
   return (
     <nav aria-label="Database dashboard sections" className="flex flex-wrap gap-2 border-b border-line">
       <DashboardTabButton active={activeTab === "access"} label="Access" onClick={() => onChange("access")} />
       {canManageListings ? <DashboardTabButton active={activeTab === "list"} label="List" onClick={() => onChange("list")} /> : null}
       {canManageListings ? <DashboardTabButton active={activeTab === "buyers"} label="Buyers" onClick={() => onChange("buyers")} /> : null}
-      <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} />
+      {canViewCyclesHistory ? <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} /> : null}
       {canManageSettings ? <DashboardTabButton active={activeTab === "settings"} label="Settings" onClick={() => onChange("settings")} /> : null}
     </nav>
   );

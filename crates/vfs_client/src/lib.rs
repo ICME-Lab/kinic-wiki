@@ -18,9 +18,7 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, KinicBalance, KinicDepositRequest, KinicDepositResult,
-    KinicFundDatabaseCyclesRequest, KinicFundDatabaseCyclesResult, KinicPendingOperationsPage,
-    KinicPendingOperationsPageRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
     MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
     MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
     MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
@@ -79,35 +77,6 @@ pub trait VfsApi: Sync {
     ) -> Result<Vec<DatabaseCyclesPendingPurchase>> {
         Err(anyhow!(
             "list_database_cycles_pending_purchases is not implemented by this client"
-        ))
-    }
-    async fn kinic_get_balance(&self) -> Result<KinicBalance> {
-        Err(anyhow!(
-            "kinic_get_balance is not implemented by this client"
-        ))
-    }
-    async fn kinic_deposit_balance(
-        &self,
-        _request: KinicDepositRequest,
-    ) -> Result<KinicDepositResult> {
-        Err(anyhow!(
-            "kinic_deposit_balance is not implemented by this client"
-        ))
-    }
-    async fn kinic_fund_database_cycles(
-        &self,
-        _request: KinicFundDatabaseCyclesRequest,
-    ) -> Result<KinicFundDatabaseCyclesResult> {
-        Err(anyhow!(
-            "kinic_fund_database_cycles is not implemented by this client"
-        ))
-    }
-    async fn kinic_list_pending_operations(
-        &self,
-        _request: KinicPendingOperationsPageRequest,
-    ) -> Result<KinicPendingOperationsPage> {
-        Err(anyhow!(
-            "kinic_list_pending_operations is not implemented by this client"
         ))
     }
     async fn market_create_listing(
@@ -604,39 +573,6 @@ impl VfsApi for CanisterVfsClient {
                 "list_database_cycles_pending_purchases",
                 &database_id.to_string(),
             )
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_get_balance(&self) -> Result<KinicBalance> {
-        let result: Result<KinicBalance, String> = self.query("kinic_get_balance", &()).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_deposit_balance(
-        &self,
-        request: KinicDepositRequest,
-    ) -> Result<KinicDepositResult> {
-        let result: Result<KinicDepositResult, String> =
-            self.update("kinic_deposit_balance", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_fund_database_cycles(
-        &self,
-        request: KinicFundDatabaseCyclesRequest,
-    ) -> Result<KinicFundDatabaseCyclesResult> {
-        let result: Result<KinicFundDatabaseCyclesResult, String> =
-            self.update("kinic_fund_database_cycles", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_list_pending_operations(
-        &self,
-        request: KinicPendingOperationsPageRequest,
-    ) -> Result<KinicPendingOperationsPage> {
-        let result: Result<KinicPendingOperationsPage, String> = self
-            .query("kinic_list_pending_operations", &request)
             .await?;
         result.map_err(|error| anyhow!(error))
     }

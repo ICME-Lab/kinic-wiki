@@ -167,57 +167,6 @@ CREATE TABLE storage_billing_state (
   CHECK (key = 'timer')
 );
 
-CREATE TABLE kinic_accounts (
-  principal TEXT PRIMARY KEY,
-  balance_e8s INTEGER NOT NULL,
-  created_at_ms INTEGER NOT NULL,
-  updated_at_ms INTEGER NOT NULL
-);
-
-CREATE TABLE kinic_ledger (
-  entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  principal TEXT NOT NULL,
-  source TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  amount_e8s INTEGER NOT NULL,
-  balance_after_e8s INTEGER NOT NULL,
-  counterparty TEXT,
-  listing_id TEXT,
-  order_id TEXT,
-  external_block_index INTEGER,
-  created_at_ms INTEGER NOT NULL
-);
-
-CREATE INDEX kinic_ledger_principal_idx
-  ON kinic_ledger(principal, entry_id);
-
-CREATE UNIQUE INDEX kinic_ledger_external_block_idx
-  ON kinic_ledger(external_block_index)
-  WHERE external_block_index IS NOT NULL;
-
-CREATE TABLE kinic_pending_operations (
-  operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL,
-  caller TEXT NOT NULL,
-  amount_e8s INTEGER NOT NULL,
-  from_owner TEXT,
-  from_subaccount BLOB,
-  to_owner TEXT,
-  to_subaccount BLOB,
-  ledger_fee_e8s INTEGER,
-  operation_status TEXT NOT NULL,
-  external_block_index INTEGER,
-  ledger_created_at_time_ns INTEGER,
-  created_at_ms INTEGER NOT NULL
-);
-
-CREATE INDEX kinic_pending_operations_caller_idx
-  ON kinic_pending_operations(caller, operation_id);
-
-CREATE UNIQUE INDEX kinic_pending_operations_external_block_kind_idx
-  ON kinic_pending_operations(external_block_index, kind)
-  WHERE external_block_index IS NOT NULL;
-
 CREATE TABLE market_listings (
   listing_id TEXT PRIMARY KEY,
   seller_principal TEXT NOT NULL,
@@ -249,11 +198,33 @@ CREATE TABLE market_orders (
   buyer_principal TEXT NOT NULL,
   seller_principal TEXT NOT NULL,
   price_e8s INTEGER NOT NULL,
+  ledger_block_index INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL
 );
 
 CREATE INDEX market_orders_buyer_idx
   ON market_orders(buyer_principal, order_id);
+
+CREATE TABLE market_purchase_pending_operations (
+  operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id TEXT NOT NULL,
+  database_id TEXT NOT NULL,
+  buyer_principal TEXT NOT NULL,
+  seller_principal TEXT NOT NULL,
+  price_e8s INTEGER NOT NULL,
+  from_owner TEXT NOT NULL,
+  from_subaccount BLOB,
+  to_owner TEXT NOT NULL,
+  to_subaccount BLOB,
+  ledger_fee_e8s INTEGER NOT NULL,
+  ledger_created_at_time_ns INTEGER NOT NULL,
+  operation_status TEXT NOT NULL,
+  ledger_block_index INTEGER,
+  created_at_ms INTEGER NOT NULL
+);
+
+CREATE INDEX market_purchase_pending_buyer_idx
+  ON market_purchase_pending_operations(buyer_principal, listing_id);
 
 CREATE TABLE market_entitlements (
   database_id TEXT NOT NULL,
