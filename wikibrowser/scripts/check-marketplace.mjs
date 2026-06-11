@@ -8,12 +8,14 @@ const idl = readProjectFile("../lib/vfs-idl.ts");
 
 assert.match(listingDetail, /whitespace-pre-wrap/);
 assert.match(listingDetail, /Ledger block \$\{order\.ledgerBlockIndex\}/);
+assert.match(listingDetail, /purchaseMarketAccessWithWallet/);
 assertNoAppBalanceSurface(listingDetail);
-assert.doesNotMatch(listingDetail, /refreshKinicBalance|KINIC balance updated|buyerBalanceE8s/);
+assert.doesNotMatch(listingDetail, /marketPurchaseAccess|refreshKinicBalance|KINIC balance updated|buyerBalanceE8s/);
 
 assert.match(wallet, /runOisyAllowanceCall[\s\S]*wallet\.approve\(/);
 assert.match(wallet, /runPlugAllowanceCall[\s\S]*icrc2_approve/);
 assert.match(wallet, /market_purchase_access/);
+assert.match(wallet, /purchaseMarketAccessWithWallet/);
 assert.match(types, /ledgerBlockIndex: string;/);
 assertNoAppBalanceSurface(types);
 assert.doesNotMatch(types, /buyerBalanceE8s|KinicDepositResult|KinicFundDatabaseCyclesResult/);

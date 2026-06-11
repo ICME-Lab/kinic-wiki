@@ -13,7 +13,6 @@ import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
 import { databaseCyclesHref, databaseCyclesView } from "@/lib/cycles-state";
 import { purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { walletRuntime } from "@/lib/wallet-runtime";
 import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
 import type { CyclesBillingConfig, DatabaseStatus, DatabaseSummary } from "@/lib/types";
 
@@ -58,15 +57,13 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
   const amountError = typeof parsedAmount === "string" ? parsedAmount : null;
   const busy = status === "running" || walletBusyProvider !== null;
   const selectedProvider = wallet?.provider ?? null;
-  const runtime = walletRuntime();
   const purchaseDisabled =
     parsedTarget === null ||
     typeof parsedTarget === "string" ||
     Boolean(error) ||
     Boolean(amountError) ||
     busy ||
-    !selectedProvider ||
-    !runtime.externalWalletsAvailable;
+    !selectedProvider;
 
   const loadDatabases = useCallback(async () => {
     if (!authClient || !principal || !canisterId) {

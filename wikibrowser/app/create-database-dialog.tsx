@@ -5,29 +5,16 @@
 import { Plus, X } from "lucide-react";
 import type { FormEvent } from "react";
 
-export type CreateDatabasePaymentSource = "wallet";
-
-type PaymentSourceOption = {
-  disabled: boolean;
-  detail: string;
-  label: string;
-  source: CreateDatabasePaymentSource;
-  status: string;
-};
-
 export function CreateDatabaseDialog({
   createDisabled,
   createLabel,
   creating,
   databaseName,
   open,
-  paymentSource,
-  paymentSources,
   requiredBalanceLabel,
   validationError,
   onCancel,
   onChange,
-  onPaymentSourceChange,
   onSubmit
 }: {
   createDisabled: boolean;
@@ -35,13 +22,10 @@ export function CreateDatabaseDialog({
   creating: boolean;
   databaseName: string;
   open: boolean;
-  paymentSource: CreateDatabasePaymentSource;
-  paymentSources: PaymentSourceOption[];
   requiredBalanceLabel: string;
   validationError: string | null;
   onCancel: () => void;
   onChange: (value: string) => void;
-  onPaymentSourceChange: (source: CreateDatabasePaymentSource) => void;
   onSubmit: () => void;
 }) {
   if (!open) return null;
@@ -86,29 +70,6 @@ export function CreateDatabaseDialog({
           />
           <p className="text-xs leading-5 text-muted">Use 1..80 characters. The name can be changed later.</p>
           {databaseName.trim().length > 0 && validationError ? <p className="text-xs text-red-700">{validationError}</p> : null}
-        </div>
-        <div className="mt-5 grid gap-2">
-          <p className="text-xs uppercase tracking-[0.12em] text-muted">Payment source</p>
-          <div className="grid gap-2">
-            {paymentSources.map((option) => (
-              <button
-                key={option.source}
-                className={`grid gap-1 rounded-lg border px-3 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                  paymentSource === option.source ? "border-accent bg-white shadow-sm" : "border-line bg-white hover:border-accent"
-                }`}
-                disabled={creating}
-                type="button"
-                onClick={() => onPaymentSourceChange(option.source)}
-              >
-                <span className="flex items-center justify-between gap-3">
-                  <span className="font-semibold text-ink">{option.label}</span>
-                  <span className={`size-3 rounded-full border ${paymentSource === option.source ? "border-accent bg-accent" : "border-line bg-paper"}`} />
-                </span>
-                <span className="text-sm text-muted">{option.detail}</span>
-                <span className={option.disabled ? "text-xs text-red-700" : "text-xs text-muted"}>{option.status}</span>
-              </button>
-            ))}
-          </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>

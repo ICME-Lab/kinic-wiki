@@ -16,10 +16,10 @@ assert.match(dashboardClient, /setActiveTab\("access"\)/);
 assert.match(dashboardHome, /Create with wallet/);
 assert.match(dashboardHome, /purchaseCyclesWithWallet/);
 assertNoAppBalanceSurface(dashboardHome);
-assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource/);
+assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource|createDialogPaymentSources|paymentSources|onPaymentSourceChange|walletBalanceDetail/);
 assert.match(createDialog, /Wallet approval pays directly from ledger balance/);
 assertNoAppBalanceSurface(createDialog);
-assert.doesNotMatch(createDialog, /app-balance/);
+assert.doesNotMatch(createDialog, /app-balance|Payment source|CreateDatabasePaymentSource|PaymentSourceOption|paymentSource|paymentSources|onPaymentSourceChange/);
 
 assert.match(appSession, /getConnectedWalletKinicBalance/);
 assertNoAppBalanceSurface(appSession);

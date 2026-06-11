@@ -7,9 +7,10 @@ import type { ReactNode } from "react";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { purchaseMarketAccessWithWallet } from "@/lib/kinic-wallet";
 import { hrefForPath } from "@/lib/paths";
 import { marketSellerPath } from "@/lib/marketplace-routes";
-import { marketGetListing, marketPreviewPurchase, marketPurchaseAccess } from "@/lib/vfs-client";
+import { marketGetListing, marketPreviewPurchase } from "@/lib/vfs-client";
 import type { LinkEdge, MarketListing, MarketListingDetail, MarketListingVerifiedStats, MarketPreviewExcerpt } from "@/lib/types";
 
 const GRAPH_LIMIT = 100;
@@ -28,7 +29,7 @@ type PageGraphNode = {
 };
 
 export function ListingDetailClient({ canisterId, listingId }: ListingDetailClientProps) {
-  const { authClient, principal } = useAppSession();
+  const { authClient, principal, refreshWalletBalance, wallet, walletBusyProvider } = useAppSession();
   const [detail, setDetail] = useState<MarketListingDetail | null>(null);
   const [state, setState] = useState<ActionState>("loading");
   const [purchaseState, setPurchaseState] = useState<ActionState>("idle");
@@ -70,12 +71,17 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       setPurchaseState("error");
       return;
     }
+    if (!wallet) {
+      setMessage("Connect OISY or Plug first");
+      setPurchaseState("error");
+      return;
+    }
     setPurchaseState("loading");
     setMessage(null);
     try {
-      const identity = authClient.getIdentity();
-      const order = await marketPurchaseAccess(canisterId, identity, listing.listingId, listing.priceE8s);
+      const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s) }, wallet);
       setMessage(`Order ${order.orderId}. Ledger block ${order.ledgerBlockIndex}. Access is ready.`);
+      await refreshWalletBalance(wallet);
       setPurchaseState("success");
       void loadPurchasePreview();
     } catch (cause) {
@@ -138,7 +144,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                 <div className="grid gap-3">
                   <button
                     className="inline-flex min-h-11 w-full items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-action bg-action px-3 py-2 text-sm font-semibold text-white hover:bg-accent disabled:opacity-60"
-                    disabled={!principal || purchaseState === "loading" || purchaseState === "success"}
+                    disabled={!principal || !wallet || walletBusyProvider !== null || purchaseState === "loading" || purchaseState === "success"}
                     type="button"
                     onClick={() => void purchase()}
                   >
@@ -154,6 +160,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                     </Link>
                   ) : null}
                   {!principal ? <span className="text-sm leading-5 text-muted">Login with Internet Identity to purchase</span> : null}
+                  {principal && !wallet ? <span className="text-sm leading-5 text-muted">Connect OISY or Plug to approve payment</span> : null}
                 </div>
               </aside>
             </section>

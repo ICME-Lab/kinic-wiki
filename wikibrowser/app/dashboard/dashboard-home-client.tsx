@@ -15,7 +15,6 @@ import { purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
-import { walletRuntime } from "@/lib/wallet-runtime";
 import type { DatabaseRow } from "../home-ui";
 
 type LoadState = "idle" | "loading" | "ready" | "error";
@@ -131,8 +130,7 @@ export function DashboardHomeClient() {
   }, [principal]);
 
   const walletReadyToFundCreate = balanceCanFundCreate(walletBalance, createDatabaseWalletRequiredBalanceE8s());
-  const runtime = walletRuntime();
-  const walletPaymentAvailable = runtime.externalWalletsAvailable && walletReadyToFundCreate;
+  const walletPaymentAvailable = walletReadyToFundCreate;
 
   async function createDatabase() {
     if (!authClient || !canisterId) return;
@@ -195,18 +193,6 @@ export function DashboardHomeClient() {
     iiConnected: Boolean(principal),
     loading: loadState === "loading"
   });
-  const createDialogPaymentSources = useMemo(
-    () => [
-      {
-        disabled: !walletPaymentAvailable,
-        detail: walletBalanceDetail(wallet?.provider ?? null, walletBalance, walletBalanceLoading, walletBalanceError),
-        label: "External wallet",
-        source: "wallet" as const,
-        status: walletPaymentAvailable ? "Ready" : wallet ? `Needs ${formatTokenAmountFromE8s(createDatabaseWalletRequiredBalanceE8s())}` : "Connect OISY or Plug"
-      }
-    ],
-    [wallet, walletBalance, walletBalanceError, walletBalanceLoading, walletPaymentAvailable]
-  );
   const fundingSuccessMessage = dashboardFundingSuccessMessage(searchParams);
   const createDatabaseAction = (
     <button
@@ -234,8 +220,6 @@ export function DashboardHomeClient() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
-          paymentSource="wallet"
-          paymentSources={createDialogPaymentSources}
           requiredBalanceLabel={formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
@@ -244,7 +228,6 @@ export function DashboardHomeClient() {
             setNewDatabaseName("");
           }}
           onChange={setNewDatabaseName}
-          onPaymentSourceChange={() => undefined}
           onSubmit={() => void createDatabase()}
         />
 
@@ -339,14 +322,6 @@ function databaseCreateButtonLabel({
   if (!iiConnected) return "Connect Internet Identity";
   if (loading) return "Loading databases...";
   return "Create database";
-}
-
-function walletBalanceDetail(provider: "oisy" | "plug" | null, balanceE8s: string | null, loading: boolean, error: string | null): string {
-  if (!provider) return "OISY / Plug ledger approval required";
-  if (loading) return `Checking ${fundingProviderLabel(provider)} balance`;
-  if (error) return `${fundingProviderLabel(provider)} balance unavailable`;
-  if (balanceE8s && /^\d+$/.test(balanceE8s)) return `${fundingProviderLabel(provider)} ledger wallet has ${formatTokenAmountFromE8s(balanceE8s)}`;
-  return `${fundingProviderLabel(provider)} ledger wallet connected`;
 }
 
 function dashboardFundingSuccessMessage(params: { get(name: string): string | null }): string | null {

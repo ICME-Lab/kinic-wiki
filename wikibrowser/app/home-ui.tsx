@@ -26,7 +26,6 @@ export function WalletControls({
   connectedLabel,
   connectedProvider,
   disabled,
-  externalWalletsAvailable,
   onConnect,
   onDisconnect
 }: {
@@ -36,15 +35,11 @@ export function WalletControls({
   connectedLabel: string | null;
   connectedProvider: HeaderWalletProvider | null;
   disabled: boolean;
-  externalWalletsAvailable: boolean;
   onConnect: (provider: HeaderWalletProvider) => void;
   onDisconnect: (provider: HeaderWalletProvider) => void;
 }) {
   const oisyConnected = connectedProvider === "oisy";
   const plugConnected = connectedProvider === "plug";
-  const externalWalletDisabled = !externalWalletsAvailable;
-  const oisyDisabled = !oisyConnected && externalWalletDisabled;
-  const plugDisabled = !plugConnected && externalWalletDisabled;
   return (
     <div className="flex flex-wrap gap-2">
       <WalletConnectButton
@@ -54,7 +49,7 @@ export function WalletControls({
         balanceLoading={oisyConnected && balanceLoading}
         connected={oisyConnected}
         connectedLabel={oisyConnected ? connectedLabel : null}
-        disabled={disabled || busyProvider !== null || oisyDisabled}
+        disabled={disabled || busyProvider !== null}
         hoverIcon={oisyConnected ? <PowerOff aria-hidden size={15} /> : null}
         icon={<Wallet aria-hidden size={15} />}
         label="OISY"
@@ -67,7 +62,7 @@ export function WalletControls({
         balanceLoading={plugConnected && balanceLoading}
         connected={plugConnected}
         connectedLabel={plugConnected ? connectedLabel : null}
-        disabled={disabled || busyProvider !== null || plugDisabled}
+        disabled={disabled || busyProvider !== null}
         hoverIcon={plugConnected ? <PowerOff aria-hidden size={15} /> : null}
         icon={<PlugZap aria-hidden size={15} />}
         label="Plug"

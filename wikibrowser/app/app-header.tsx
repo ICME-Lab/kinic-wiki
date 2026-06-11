@@ -6,7 +6,6 @@
 import { usePathname } from "next/navigation";
 import { AdminHeader } from "@/components/admin-header";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { walletRuntime } from "@/lib/wallet-runtime";
 import { WalletControls } from "./home-ui";
 import { connectedWalletPrincipal, useAppSession } from "./app-session-provider";
 
@@ -31,8 +30,6 @@ export function AppHeader() {
 
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
-  const runtime = walletRuntime();
-
   return (
     <div className="px-6 pt-4">
       <section className="max-w-none">
@@ -47,7 +44,6 @@ export function AppHeader() {
               connectedProvider={wallet?.provider ?? null}
               balanceLoading={walletBalanceLoading}
               disabled={walletControlsLocked}
-              externalWalletsAvailable={runtime.externalWalletsAvailable}
               onConnect={(provider) => {
                 void connectWallet(provider);
               }}

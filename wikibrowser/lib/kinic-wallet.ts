@@ -276,6 +276,12 @@ export async function purchaseCyclesWithWallet(request: CyclesPurchaseRequest, w
     : purchaseCyclesWithPlug(request, wallet.connection);
 }
 
+export async function purchaseMarketAccessWithWallet(request: MarketPurchaseRequest, wallet: ConnectedKinicWallet): Promise<MarketPurchaseResult> {
+  return wallet.provider === "oisy"
+    ? purchaseMarketAccessWithOisy(request, wallet.connection)
+    : purchaseMarketAccessWithPlug(request, wallet.connection);
+}
+
 export async function purchaseCyclesWithOisy(request: CyclesPurchaseRequest, connection: ConnectedOisyWallet): Promise<CyclesPurchaseResult> {
   const prepared = await prepareCyclesPurchase(request, connection.owner);
   const { value: purchase, approveBlockIndex } = await runOisyAllowanceCall(prepared, request.canisterId, connection.owner, (wallet) =>

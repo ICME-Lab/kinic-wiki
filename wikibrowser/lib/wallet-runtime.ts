@@ -1,11 +1,10 @@
 // Where: wikibrowser wallet runtime policy.
-// What: centralizes IC host and external wallet availability decisions.
-// Why: local replica wallet behavior must be explicit and consistent across UI and wallet calls.
+// What: centralizes IC host and wallet runtime decisions.
+// Why: wallet calls need one host source across UI and approval flows.
 
 export type WalletRuntime = {
   icHost: string;
   localReplica: boolean;
-  externalWalletsAvailable: boolean;
 };
 
 export function configuredIcHost(): string {
@@ -26,7 +25,6 @@ export function walletRuntime(): WalletRuntime {
   const localReplica = isLocalIcHost(icHost);
   return {
     icHost,
-    localReplica,
-    externalWalletsAvailable: !localReplica
+    localReplica
   };
 }
