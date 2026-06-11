@@ -40,7 +40,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
+  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -203,13 +203,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [refreshWalletBalance, wallet]);
-
-  useEffect(() => {
-    const stored = readStoredWallet();
-    if (stored) {
-      setWallet(stored);
-    }
-  }, [clearStoredWallet]);
 
   return (
     <AppSession.Provider

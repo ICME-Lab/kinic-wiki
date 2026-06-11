@@ -273,17 +273,20 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   }, [activeTab, canViewCyclesHistory, databaseId, loadCyclesHistory, principal]);
 
   useEffect(() => {
-    if ((activeTab === "list" || activeTab === "buyers") && !canManage) {
-      setActiveTab("access");
-      return;
-    }
-    if (activeTab === "cycles-history" && !canViewCyclesHistory) {
-      setActiveTab("access");
-      return;
-    }
-    if (activeTab === "settings" && !canManageSettings) {
-      setActiveTab("access");
-    }
+    const timer = window.setTimeout(() => {
+      if ((activeTab === "list" || activeTab === "buyers") && !canManage) {
+        setActiveTab("access");
+        return;
+      }
+      if (activeTab === "cycles-history" && !canViewCyclesHistory) {
+        setActiveTab("access");
+        return;
+      }
+      if (activeTab === "settings" && !canManageSettings) {
+        setActiveTab("access");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [activeTab, canManage, canManageSettings, canViewCyclesHistory]);
 
   async function grantAccess(principalText: string, role: DatabaseRole) {

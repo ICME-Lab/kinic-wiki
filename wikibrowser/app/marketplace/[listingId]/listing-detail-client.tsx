@@ -111,7 +111,10 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   }, [load]);
 
   useEffect(() => {
-    void loadPurchasePreview();
+    const timer = window.setTimeout(() => {
+      void loadPurchasePreview();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [loadPurchasePreview]);
 
   return (
