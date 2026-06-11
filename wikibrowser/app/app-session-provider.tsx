@@ -40,7 +40,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
+  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -170,6 +170,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const storedWallet = readStoredWallet();
+      if (storedWallet) setWallet(storedWallet);
+    });
 
     AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
       .then(async (client) => {

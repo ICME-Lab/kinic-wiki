@@ -9,6 +9,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminField, AdminIconButton, AdminNotice, AdminPanel } from "@/components/admin-ui";
+import { KINIC_LEDGER_FEE_E8S, kinicBaseUnitsPerToken } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { getPrincipalKinicLedgerBalance, transferKinicFromIdentity } from "@/lib/kinic-wallet";
@@ -31,9 +32,11 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
   const [transferAmount, setTransferAmount] = useState("");
   const [transferStatus, setTransferStatus] = useState<TransferStatus>("idle");
   const [transferMessage, setTransferMessage] = useState<string | null>(null);
+  const amountTouched = transferAmount.trim().length > 0;
   const parsedTransferAmount = useMemo(() => parseKinicAmountE8sInput(transferAmount), [transferAmount]);
   const recipientError = recipientPrincipal.trim() && !isValidPrincipal(recipientPrincipal) ? "Recipient principal is invalid" : null;
-  const amountError = typeof parsedTransferAmount === "string" ? parsedTransferAmount : null;
+  const amountError = amountTouched && typeof parsedTransferAmount === "string" ? parsedTransferAmount : null;
+  const maxTransferAmount = useMemo(() => transferableBalanceE8s(ledgerBalance), [ledgerBalance]);
   const transferDisabled =
     transferStatus === "running" ||
     !authClient ||
@@ -105,13 +108,25 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
         toPrincipal: recipientPrincipal.trim(),
         amountE8s: parsedTransferAmount
       });
-      setLedgerBalance(await getPrincipalKinicLedgerBalance(canisterId, principal));
       setTransferMessage(`Transfer complete. Ledger block ${blockIndex}.`);
       setTransferStatus("success");
     } catch (cause) {
       setTransferMessage(errorMessage(cause));
       setTransferStatus("error");
+      return;
     }
+    try {
+      setLedgerError(null);
+      setLedgerBalance(await getPrincipalKinicLedgerBalance(canisterId, principal));
+    } catch (cause) {
+      setLedgerBalance(null);
+      setLedgerError(errorMessage(cause));
+    }
+  }
+
+  function useMaxTransferAmount() {
+    if (maxTransferAmount <= 0n) return;
+    setTransferAmount(formatKinicInputFromE8s(maxTransferAmount));
   }
 
   const balanceLabel = ledgerLoading ? "Loading" : ledgerBalance !== null ? formatTokenAmountFromE8s(ledgerBalance) : "-";
@@ -163,12 +178,22 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
                 </label>
                 <label className="grid gap-1 text-sm">
                   <span className="text-xs uppercase text-muted">KINIC amount</span>
-                  <input
-                    className="min-h-11 rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent"
-                    inputMode="decimal"
-                    value={transferAmount}
-                    onChange={(event) => setTransferAmount(event.target.value)}
-                  />
+                  <div className="flex gap-2">
+                    <input
+                      className="min-h-11 min-w-0 flex-1 rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent"
+                      inputMode="decimal"
+                      value={transferAmount}
+                      onChange={(event) => setTransferAmount(event.target.value)}
+                    />
+                    <button
+                      className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-line bg-paper px-3 text-sm font-semibold text-ink hover:border-accent disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={ledgerLoading || maxTransferAmount <= 0n || transferStatus === "running"}
+                      type="button"
+                      onClick={useMaxTransferAmount}
+                    >
+                      Max
+                    </button>
+                  </div>
                   {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
                 </label>
                 <button
@@ -249,6 +274,18 @@ async function loadSellerStats(canisterId: string, principal: string): Promise<S
 
 function parseNonNegativeBigInt(value: string): bigint {
   return /^\d+$/.test(value) ? BigInt(value) : 0n;
+}
+
+function transferableBalanceE8s(value: string | null): bigint {
+  const balance = parseNonNegativeBigInt(value ?? "");
+  return balance > KINIC_LEDGER_FEE_E8S ? balance - KINIC_LEDGER_FEE_E8S : 0n;
+}
+
+function formatKinicInputFromE8s(value: bigint): string {
+  const units = kinicBaseUnitsPerToken();
+  const whole = value / units;
+  const fraction = (value % units).toString().padStart(8, "0").replace(/0+$/, "");
+  return fraction ? `${whole.toString()}.${fraction}` : whole.toString();
 }
 
 function isValidPrincipal(value: string): boolean {
