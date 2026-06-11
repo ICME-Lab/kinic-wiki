@@ -79,6 +79,7 @@ export function SellerProfileClient({ canisterId, principal }: SellerProfileClie
                 <div className="grid gap-1">
                   <h2 className="line-clamp-2 text-base font-semibold">{listing.title}</h2>
                   <p className="line-clamp-3 text-sm text-muted">{listing.description}</p>
+                  <p className="break-all font-mono text-xs text-muted">Payout {listing.payoutPrincipal}</p>
                 </div>
                 <div className="mt-auto flex items-center justify-between gap-3 text-sm">
                   <span className="font-mono font-semibold">{formatTokenAmountFromE8s(listing.priceE8s)}</span>

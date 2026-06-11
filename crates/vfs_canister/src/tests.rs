@@ -179,6 +179,7 @@ fn cycles_purchase_request(
 fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
+        payout_principal: Principal::management_canister().to_text(),
         title: "Private market DB".to_string(),
         description: "Paid reader access".to_string(),
         llm_summary: None,
@@ -1216,6 +1217,10 @@ fn icrc21_market_purchase_access_returns_consent_message() {
     assert!(message.contains("Payment: `2.5` KINIC"));
     assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
     assert!(message.contains(&format!("Seller principal: `{}`", seller.to_text())));
+    assert!(message.contains(&format!(
+        "Seller payout principal: `{}`",
+        Principal::management_canister().to_text()
+    )));
     assert!(message.contains(&format!("Payer wallet principal: `{}`", payer.to_text())));
     assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
     assert!(message.contains("read-only marketplace entitlement"));
@@ -1597,6 +1602,7 @@ fn market_listing_description_allows_newlines() {
         let updated = market_update_listing(MarketUpdateListingRequest {
             listing_id: listing.listing_id,
             expected_revision: listing.revision,
+            payout_principal: Principal::management_canister().to_text(),
             title: "Updated market DB".to_string(),
             description: "Updated one\nUpdated two".to_string(),
             llm_summary: Some("Updated summary\nSecond line".to_string()),
@@ -1661,6 +1667,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     let owner = Principal::management_canister();
     let buyer = Principal::self_authenticating(b"market buyer");
     let wallet = Principal::self_authenticating(b"market wallet payer");
+    let payout = Principal::self_authenticating(b"market seller payout");
     let database_id;
     let listing_id;
 
@@ -1686,8 +1693,9 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
             expected_etag: None,
         })
         .expect("market database content should write");
-        let listing = market_create_listing(market_listing_request(&database_id, 500))
-            .expect("listing should create");
+        let mut request = market_listing_request(&database_id, 500);
+        request.payout_principal = payout.to_text();
+        let listing = market_create_listing(request).expect("listing should create");
         assert!(!listing.listing_id.starts_with("listing_"));
         assert_eq!(listing.status, MarketListingStatus::Active);
         listing_id = listing.listing_id;
@@ -1703,6 +1711,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         )))
         .expect("wallet should pay for buyer access");
         assert_eq!(order.buyer_principal, buyer.to_text());
+        assert_eq!(order.payout_principal, payout.to_text());
         assert_eq!(order.ledger_block_index, 202);
         assert_eq!(
             last_ledger_from_for_test()
@@ -1714,7 +1723,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
             last_ledger_to_for_test()
                 .expect("market recipient should record")
                 .owner,
-            owner
+            payout
         );
     }
 

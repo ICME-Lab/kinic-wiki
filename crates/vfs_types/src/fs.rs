@@ -140,6 +140,7 @@ pub enum MarketListingStatus {
 pub struct MarketListing {
     pub listing_id: String,
     pub seller_principal: String,
+    pub payout_principal: String,
     pub database_id: String,
     pub title: String,
     pub description: String,
@@ -219,6 +220,7 @@ pub struct MarketListingPage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct MarketCreateListingRequest {
     pub database_id: String,
+    pub payout_principal: String,
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
@@ -230,6 +232,7 @@ pub struct MarketCreateListingRequest {
 pub struct MarketUpdateListingRequest {
     pub listing_id: String,
     pub expected_revision: u64,
+    pub payout_principal: String,
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
@@ -259,6 +262,7 @@ pub struct MarketOrder {
     pub database_id: String,
     pub buyer_principal: String,
     pub seller_principal: String,
+    pub payout_principal: String,
     pub price_e8s: u64,
     pub ledger_block_index: u64,
     pub created_at_ms: i64,

@@ -4,11 +4,15 @@
 // What: shows the signed-in principal and marketplace account summary.
 // Why: profile should reflect canister marketplace access and seller activity, not token custody.
 import { RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Principal } from "@icp-sdk/core/principal";
 import { useAppSession } from "@/app/app-session-provider";
 import { AdminContent } from "@/components/admin-shell";
 import { AdminField, AdminIconButton, AdminNotice, AdminPanel } from "@/components/admin-ui";
-import { marketListEntitlements, marketListListings } from "@/lib/vfs-client";
+import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
+import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { getPrincipalKinicLedgerBalance, transferKinicFromIdentity } from "@/lib/kinic-wallet";
+import { marketListEntitlements, marketListSellerListings } from "@/lib/vfs-client";
 import { errorMessage } from "@/lib/wiki-helpers";
 
 type ProfileClientProps = {
@@ -18,18 +22,40 @@ type ProfileClientProps = {
 export function ProfileClient({ canisterId }: ProfileClientProps) {
   const { authClient, authLoading, authReady, login, principal } = useAppSession();
   const [profileStats, setProfileStats] = useState<ProfileStats | null>(null);
+  const [ledgerBalance, setLedgerBalance] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [recipientPrincipal, setRecipientPrincipal] = useState("");
+  const [transferAmount, setTransferAmount] = useState("");
+  const [transferStatus, setTransferStatus] = useState<TransferStatus>("idle");
+  const [transferMessage, setTransferMessage] = useState<string | null>(null);
+  const parsedTransferAmount = useMemo(() => parseKinicAmountE8sInput(transferAmount), [transferAmount]);
+  const recipientError = recipientPrincipal.trim() && !isValidPrincipal(recipientPrincipal) ? "Recipient principal is invalid" : null;
+  const amountError = typeof parsedTransferAmount === "string" ? parsedTransferAmount : null;
+  const transferDisabled =
+    transferStatus === "running" ||
+    !authClient ||
+    !principal ||
+    !recipientPrincipal.trim() ||
+    Boolean(recipientError) ||
+    typeof parsedTransferAmount !== "bigint";
 
   const loadProfile = useCallback(async () => {
     if (!authClient || !principal) {
       setProfileStats(null);
+      setLedgerBalance(null);
       setProfileError(null);
+      setLedgerError(null);
       setProfileLoading(false);
+      setLedgerLoading(false);
       return;
     }
     setProfileLoading(true);
+    setLedgerLoading(true);
     setProfileError(null);
+    setLedgerError(null);
     try {
       const identity = authClient.getIdentity();
       const [purchasedDatabases, sales] = await Promise.all([
@@ -47,6 +73,14 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
     } finally {
       setProfileLoading(false);
     }
+    try {
+      setLedgerBalance(await getPrincipalKinicLedgerBalance(canisterId, principal));
+    } catch (cause) {
+      setLedgerBalance(null);
+      setLedgerError(errorMessage(cause));
+    } finally {
+      setLedgerLoading(false);
+    }
   }, [authClient, canisterId, principal]);
 
   useEffect(() => {
@@ -59,6 +93,28 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
       cancelled = true;
     };
   }, [loadProfile]);
+
+  async function sendKinic() {
+    if (!authClient || !principal || typeof parsedTransferAmount !== "bigint" || recipientError) return;
+    setTransferStatus("running");
+    setTransferMessage(null);
+    try {
+      const blockIndex = await transferKinicFromIdentity({
+        canisterId,
+        identity: authClient.getIdentity(),
+        toPrincipal: recipientPrincipal.trim(),
+        amountE8s: parsedTransferAmount
+      });
+      setLedgerBalance(await getPrincipalKinicLedgerBalance(canisterId, principal));
+      setTransferMessage(`Transfer complete. Ledger block ${blockIndex}.`);
+      setTransferStatus("success");
+    } catch (cause) {
+      setTransferMessage(errorMessage(cause));
+      setTransferStatus("error");
+    }
+  }
+
+  const balanceLabel = ledgerLoading ? "Loading" : ledgerBalance !== null ? formatTokenAmountFromE8s(ledgerBalance) : "-";
 
   return (
     <AdminContent>
@@ -89,6 +145,41 @@ export function ProfileClient({ canisterId }: ProfileClientProps) {
             <div className="grid gap-4">
               <section className="grid gap-3">
                 <AdminField breakAll mono label="Principal" value={principal} />
+                <AdminField mono label="Ledger KINIC balance" value={balanceLabel} />
+              </section>
+
+              {ledgerError ? <AdminNotice tone="error" message={`Ledger balance unavailable: ${ledgerError}`} /> : null}
+
+              <section className="grid gap-3">
+                <h2 className="text-sm font-semibold uppercase text-muted">Send KINIC</h2>
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs uppercase text-muted">Recipient principal</span>
+                  <input
+                    className="min-h-11 rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent"
+                    value={recipientPrincipal}
+                    onChange={(event) => setRecipientPrincipal(event.target.value)}
+                  />
+                  {recipientError ? <span className="text-xs text-red-700">{recipientError}</span> : null}
+                </label>
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs uppercase text-muted">KINIC amount</span>
+                  <input
+                    className="min-h-11 rounded-lg border border-line bg-white px-3 py-2 font-mono text-sm outline-none focus:border-accent"
+                    inputMode="decimal"
+                    value={transferAmount}
+                    onChange={(event) => setTransferAmount(event.target.value)}
+                  />
+                  {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
+                </label>
+                <button
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-action bg-action px-4 text-sm font-semibold text-white hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={transferDisabled}
+                  type="button"
+                  onClick={() => void sendKinic()}
+                >
+                  {transferStatus === "running" ? "Sending..." : "Send KINIC"}
+                </button>
+                {transferMessage ? <AdminNotice tone={transferStatus === "success" ? "success" : "error"} message={transferMessage} /> : null}
               </section>
 
               <section className="grid gap-3">
@@ -124,6 +215,8 @@ type SellerStats = {
   totalSales: string;
 };
 
+type TransferStatus = "idle" | "running" | "success" | "error";
+
 type IdentityLike = Parameters<typeof marketListEntitlements>[1];
 
 const PROFILE_PAGE_LIMIT = 100;
@@ -144,9 +237,8 @@ async function loadSellerStats(canisterId: string, principal: string): Promise<S
   let sellerListings = 0;
   let totalSales = 0n;
   do {
-    const page = await marketListListings(canisterId, cursor, PROFILE_PAGE_LIMIT);
+    const page = await marketListSellerListings(canisterId, principal, cursor, PROFILE_PAGE_LIMIT);
     for (const listing of page.listings) {
-      if (listing.sellerPrincipal !== principal) continue;
       sellerListings += 1;
       totalSales += parseNonNegativeBigInt(listing.purchaseCount);
     }
@@ -157,6 +249,15 @@ async function loadSellerStats(canisterId: string, principal: string): Promise<S
 
 function parseNonNegativeBigInt(value: string): bigint {
   return /^\d+$/.test(value) ? BigInt(value) : 0n;
+}
+
+function isValidPrincipal(value: string): boolean {
+  try {
+    Principal.fromText(value.trim());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function ProfileStat({ label, value }: { label: string; value: string }) {

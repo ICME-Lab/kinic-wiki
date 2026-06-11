@@ -1116,13 +1116,14 @@ impl VfsService {
             )?;
             tx.execute(
                 "INSERT INTO market_listings
-                 (listing_id, seller_principal, database_id, title, description,
+                 (listing_id, seller_principal, payout_principal, database_id, title, description,
                   llm_summary, tags_json, price_e8s, status,
                   revision, purchase_count, report_count, created_at_ms, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 0, 0, ?10, ?10)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 0, 0, 0, ?11, ?11)",
                 params![
                     listing_id,
                     caller,
+                    request.payout_principal,
                     request.database_id,
                     request.title,
                     request.description,
@@ -1165,6 +1166,7 @@ impl VfsService {
                      llm_summary = ?4,
                      tags_json = ?5,
                      price_e8s = ?6,
+                     payout_principal = ?9,
                      revision = revision + 1,
                      updated_at_ms = ?8
                  WHERE listing_id = ?1
@@ -1177,7 +1179,8 @@ impl VfsService {
                     request.tags_json,
                     i64::try_from(request.price_e8s).map_err(|error| error.to_string())?,
                     i64::try_from(request.expected_revision).map_err(|error| error.to_string())?,
-                    now
+                    now,
+                    request.payout_principal
                 ],
             )
             .map_err(|error| error.to_string())?;
@@ -1254,7 +1257,7 @@ impl VfsService {
         self.read_index(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT l.listing_id, l.seller_principal, l.database_id, l.title, l.description,
+                    "SELECT l.listing_id, l.seller_principal, l.payout_principal, l.database_id, l.title, l.description,
                             l.llm_summary, l.tags_json, l.price_e8s, l.status,
                             l.revision, l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
                      FROM market_listings l
@@ -1306,7 +1309,7 @@ impl VfsService {
         self.read_index(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT l.listing_id, l.seller_principal, l.database_id, l.title, l.description,
+                    "SELECT l.listing_id, l.seller_principal, l.payout_principal, l.database_id, l.title, l.description,
                             l.llm_summary, l.tags_json, l.price_e8s, l.status,
                             l.revision, l.purchase_count, l.report_count, l.created_at_ms, l.updated_at_ms
                      FROM market_listings l
@@ -1365,7 +1368,7 @@ impl VfsService {
             }
             let mut stmt = conn
                 .prepare(
-                    "SELECT listing_id, seller_principal, database_id, title, description,
+                    "SELECT listing_id, seller_principal, payout_principal, database_id, title, description,
                             llm_summary, tags_json, price_e8s, status,
                             revision, purchase_count, report_count, created_at_ms, updated_at_ms
                      FROM market_listings
@@ -1471,7 +1474,7 @@ impl VfsService {
                     ledger: PendingCyclesLedgerDetails {
                         from_owner: ledger.from_owner,
                         from_subaccount: ledger.from_subaccount,
-                        to_owner: &listing.seller_principal,
+                        to_owner: &listing.payout_principal,
                         to_subaccount: ledger.to_subaccount,
                         ledger_fee_e8s,
                         ledger_created_at_time_ns,
@@ -1485,6 +1488,7 @@ impl VfsService {
                 listing_id: listing.listing_id,
                 database_id: listing.database_id,
                 seller_principal: listing.seller_principal,
+                payout_principal: listing.payout_principal,
                 price_e8s: request.price_e8s,
                 access_principal: request.access_principal,
             })
@@ -1608,10 +1612,7 @@ impl VfsService {
             let ledger_block_index = operation.ledger_block_index.ok_or_else(|| {
                 "completed market purchase missing ledger block index".to_string()
             })?;
-            let listing = load_market_listing_by_id(tx, listing_id)?
-                .ok_or_else(|| "market listing not found".to_string())?;
-            require_market_listing_purchasable(tx, &listing)?;
-            if has_active_market_entitlement(tx, &listing.database_id, access_principal)? {
+            if has_active_market_entitlement(tx, &operation.database_id, access_principal)? {
                 return Err("active entitlement already exists".to_string());
             }
             let order_id = unique_market_id(
@@ -1620,20 +1621,21 @@ impl VfsService {
                 "order_id",
                 GENERATED_ORDER_ID_PREFIX,
                 access_principal,
-                &listing.listing_id,
+                &operation.listing_id,
                 now,
             )?;
             tx.execute(
                 "INSERT INTO market_orders
                  (order_id, listing_id, database_id, buyer_principal, seller_principal,
-                  price_e8s, ledger_block_index, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                  payout_principal, price_e8s, ledger_block_index, created_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     order_id,
-                    listing.listing_id,
-                    listing.database_id,
+                    operation.listing_id,
+                    operation.database_id,
                     access_principal,
-                    listing.seller_principal,
+                    operation.seller_principal,
+                    operation.payout_principal,
                     price_e8s,
                     ledger_block_index,
                     now
@@ -1643,11 +1645,11 @@ impl VfsService {
             tx.execute(
                 "INSERT INTO market_entitlements
                  (database_id, buyer_principal, listing_id, order_id, purchased_at_ms, status)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
-                    listing.database_id,
+                    operation.database_id,
                     access_principal,
-                    listing.listing_id,
+                    operation.listing_id,
                     order_id,
                     now,
                     MARKET_ENTITLEMENT_STATUS_ACTIVE
@@ -1659,7 +1661,7 @@ impl VfsService {
                  SET purchase_count = purchase_count + 1,
                      updated_at_ms = ?2
                  WHERE listing_id = ?1",
-                params![listing.listing_id, now],
+                params![operation.listing_id, now],
             )
             .map_err(|error| error.to_string())?;
             delete_pending_market_purchase(tx, operation_id)?;
@@ -1839,7 +1841,7 @@ impl VfsService {
             let mut stmt = conn
                 .prepare(
                     "SELECT order_id, listing_id, database_id, buyer_principal, seller_principal,
-                            price_e8s, ledger_block_index, created_at_ms
+                            payout_principal, price_e8s, ledger_block_index, created_at_ms
                      FROM market_orders
                      WHERE buyer_principal = ?1 AND order_id > ?2
                      ORDER BY order_id ASC
@@ -4028,6 +4030,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             &[
                 "listing_id",
                 "seller_principal",
+                "payout_principal",
                 "database_id",
                 "title",
                 "description",
@@ -4050,6 +4053,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "database_id",
                 "buyer_principal",
                 "seller_principal",
+                "payout_principal",
                 "price_e8s",
                 "ledger_block_index",
                 "created_at_ms",
@@ -4881,13 +4885,17 @@ pub struct MarketPurchaseStart {
     pub listing_id: String,
     pub database_id: String,
     pub seller_principal: String,
+    pub payout_principal: String,
     pub price_e8s: u64,
     pub access_principal: String,
 }
 
 struct PendingMarketPurchase {
     listing_id: String,
+    database_id: String,
     buyer_principal: String,
+    seller_principal: String,
+    payout_principal: String,
     price_e8s: i64,
     operation_status: String,
     ledger_block_index: Option<i64>,
@@ -4950,17 +4958,21 @@ fn load_pending_market_purchase(
 ) -> Result<PendingMarketPurchase, String> {
     let operation_id = i64::try_from(operation_id).map_err(|error| error.to_string())?;
     conn.query_row(
-        "SELECT listing_id, buyer_principal, price_e8s, operation_status, ledger_block_index
+        "SELECT listing_id, database_id, buyer_principal, seller_principal, to_owner,
+                price_e8s, operation_status, ledger_block_index
          FROM market_purchase_pending_operations
          WHERE operation_id = ?1",
         params![operation_id],
         |row| {
             Ok(PendingMarketPurchase {
                 listing_id: crate::sqlite::row_get(row, 0)?,
-                buyer_principal: crate::sqlite::row_get(row, 1)?,
-                price_e8s: crate::sqlite::row_get(row, 2)?,
-                operation_status: crate::sqlite::row_get(row, 3)?,
-                ledger_block_index: crate::sqlite::row_get(row, 4)?,
+                database_id: crate::sqlite::row_get(row, 1)?,
+                buyer_principal: crate::sqlite::row_get(row, 2)?,
+                seller_principal: crate::sqlite::row_get(row, 3)?,
+                payout_principal: crate::sqlite::row_get(row, 4)?,
+                price_e8s: crate::sqlite::row_get(row, 5)?,
+                operation_status: crate::sqlite::row_get(row, 6)?,
+                ledger_block_index: crate::sqlite::row_get(row, 7)?,
             })
         },
     )
@@ -5205,7 +5217,7 @@ fn load_market_listing_by_id(
     listing_id: &str,
 ) -> Result<Option<MarketListing>, String> {
     conn.query_row(
-        "SELECT listing_id, seller_principal, database_id, title, description,
+        "SELECT listing_id, seller_principal, payout_principal, database_id, title, description,
                 llm_summary, tags_json, price_e8s, status,
                 revision, purchase_count, report_count, created_at_ms, updated_at_ms
          FROM market_listings
@@ -5218,29 +5230,30 @@ fn load_market_listing_by_id(
 }
 
 fn map_market_listing(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketListing> {
-    let price_e8s: i64 = crate::sqlite::row_get(row, 7)?;
-    let revision: i64 = crate::sqlite::row_get(row, 9)?;
-    let purchase_count: i64 = crate::sqlite::row_get(row, 10)?;
-    let report_count: i64 = crate::sqlite::row_get(row, 11)?;
+    let price_e8s: i64 = crate::sqlite::row_get(row, 8)?;
+    let revision: i64 = crate::sqlite::row_get(row, 10)?;
+    let purchase_count: i64 = crate::sqlite::row_get(row, 11)?;
+    let report_count: i64 = crate::sqlite::row_get(row, 12)?;
     Ok(MarketListing {
         listing_id: crate::sqlite::row_get(row, 0)?,
         seller_principal: crate::sqlite::row_get(row, 1)?,
-        database_id: crate::sqlite::row_get(row, 2)?,
-        title: crate::sqlite::row_get(row, 3)?,
-        description: crate::sqlite::row_get(row, 4)?,
-        llm_summary: crate::sqlite::row_get::<Option<String>>(row, 5)?,
-        tags_json: crate::sqlite::row_get(row, 6)?,
+        payout_principal: crate::sqlite::row_get(row, 2)?,
+        database_id: crate::sqlite::row_get(row, 3)?,
+        title: crate::sqlite::row_get(row, 4)?,
+        description: crate::sqlite::row_get(row, 5)?,
+        llm_summary: crate::sqlite::row_get::<Option<String>>(row, 6)?,
+        tags_json: crate::sqlite::row_get(row, 7)?,
         price_e8s: u64::try_from(price_e8s)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(7, price_e8s))?,
-        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 8)?)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(8, price_e8s))?,
+        status: market_listing_status_from_db(&crate::sqlite::row_get::<String>(row, 9)?)?,
         revision: u64::try_from(revision)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(9, revision))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(10, revision))?,
         purchase_count: u64::try_from(purchase_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(10, purchase_count))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(11, purchase_count))?,
         report_count: u64::try_from(report_count)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(11, report_count))?,
-        created_at_ms: crate::sqlite::row_get(row, 12)?,
-        updated_at_ms: crate::sqlite::row_get(row, 13)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(12, report_count))?,
+        created_at_ms: crate::sqlite::row_get(row, 13)?,
+        updated_at_ms: crate::sqlite::row_get(row, 14)?,
     })
 }
 
@@ -5250,7 +5263,7 @@ fn load_market_order_by_id(
 ) -> Result<Option<MarketOrder>, String> {
     conn.query_row(
         "SELECT order_id, listing_id, database_id, buyer_principal, seller_principal,
-                price_e8s, ledger_block_index, created_at_ms
+                payout_principal, price_e8s, ledger_block_index, created_at_ms
          FROM market_orders
          WHERE order_id = ?1",
         params![order_id],
@@ -5261,19 +5274,20 @@ fn load_market_order_by_id(
 }
 
 fn map_market_order(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<MarketOrder> {
-    let price_e8s: i64 = crate::sqlite::row_get(row, 5)?;
-    let ledger_block_index: i64 = crate::sqlite::row_get(row, 6)?;
+    let price_e8s: i64 = crate::sqlite::row_get(row, 6)?;
+    let ledger_block_index: i64 = crate::sqlite::row_get(row, 7)?;
     Ok(MarketOrder {
         order_id: crate::sqlite::row_get(row, 0)?,
         listing_id: crate::sqlite::row_get(row, 1)?,
         database_id: crate::sqlite::row_get(row, 2)?,
         buyer_principal: crate::sqlite::row_get(row, 3)?,
         seller_principal: crate::sqlite::row_get(row, 4)?,
+        payout_principal: crate::sqlite::row_get(row, 5)?,
         price_e8s: u64::try_from(price_e8s)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(5, price_e8s))?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(6, price_e8s))?,
         ledger_block_index: u64::try_from(ledger_block_index)
-            .map_err(|_| crate::sqlite::integral_value_out_of_range(6, ledger_block_index))?,
-        created_at_ms: crate::sqlite::row_get(row, 7)?,
+            .map_err(|_| crate::sqlite::integral_value_out_of_range(7, ledger_block_index))?,
+        created_at_ms: crate::sqlite::row_get(row, 8)?,
     })
 }
 
@@ -5329,6 +5343,7 @@ fn validate_market_create_listing_request(
     request: &MarketCreateListingRequest,
 ) -> Result<(), String> {
     validate_database_id(&request.database_id)?;
+    validate_principal_text(&request.payout_principal)?;
     validate_market_listing_metadata(MarketListingMetadataValidation {
         title: &request.title,
         description: &request.description,
@@ -5341,6 +5356,7 @@ fn validate_market_create_listing_request(
 fn validate_market_update_listing_request(
     request: &MarketUpdateListingRequest,
 ) -> Result<(), String> {
+    validate_principal_text(&request.payout_principal)?;
     validate_market_listing_metadata(MarketListingMetadataValidation {
         title: &request.title,
         description: &request.description,

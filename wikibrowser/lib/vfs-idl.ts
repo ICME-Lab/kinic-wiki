@@ -59,6 +59,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     title: idl.Text,
     description: idl.Text,
     database_id: idl.Text,
+    payout_principal: idl.Text,
     price_e8s: idl.Nat64,
     tags_json: idl.Text
   });
@@ -84,6 +85,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     updated_at_ms: idl.Int64,
     created_at_ms: idl.Int64,
     seller_principal: idl.Text,
+    payout_principal: idl.Text,
     purchase_count: idl.Nat64,
     database_id: idl.Text,
     listing_id: idl.Text,
@@ -113,6 +115,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const MarketOrder = idl.Record({
     created_at_ms: idl.Int64,
     seller_principal: idl.Text,
+    payout_principal: idl.Text,
     database_id: idl.Text,
     buyer_principal: idl.Text,
     order_id: idl.Text,
@@ -163,6 +166,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     description: idl.Text,
     listing_id: idl.Text,
     expected_revision: idl.Nat64,
+    payout_principal: idl.Text,
     price_e8s: idl.Nat64,
     tags_json: idl.Text
   });

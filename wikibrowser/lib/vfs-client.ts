@@ -130,6 +130,7 @@ type RawMarketListingStatus = Variant;
 type RawMarketListing = {
   listing_id: string;
   seller_principal: string;
+  payout_principal: string;
   database_id: string;
   title: string;
   description: string;
@@ -200,6 +201,7 @@ type RawMarketListingPage = {
 
 type RawMarketCreateListingRequest = {
   database_id: string;
+  payout_principal: string;
   title: string;
   description: string;
   llm_summary: [] | [string];
@@ -231,6 +233,7 @@ type RawMarketOrder = {
   database_id: string;
   buyer_principal: string;
   seller_principal: string;
+  payout_principal: string;
   price_e8s: bigint;
   ledger_block_index: bigint;
   created_at_ms: bigint;
@@ -1289,6 +1292,7 @@ function normalizeMarketListing(raw: RawMarketListing): MarketListing {
   return {
     listingId: raw.listing_id,
     sellerPrincipal: raw.seller_principal,
+    payoutPrincipal: raw.payout_principal,
     databaseId: raw.database_id,
     title: raw.title,
     description: raw.description,
@@ -1371,6 +1375,7 @@ function normalizeMarketOrder(raw: RawMarketOrder): MarketOrder {
     databaseId: raw.database_id,
     buyerPrincipal: raw.buyer_principal,
     sellerPrincipal: raw.seller_principal,
+    payoutPrincipal: raw.payout_principal,
     priceE8s: raw.price_e8s.toString(),
     ledgerBlockIndex: raw.ledger_block_index.toString(),
     createdAtMs: raw.created_at_ms.toString()
@@ -1398,6 +1403,7 @@ function normalizeMarketEntitlement(raw: RawMarketEntitlement) {
 function rawMarketCreateListingRequest(request: MarketCreateListingRequest): RawMarketCreateListingRequest {
   return {
     database_id: request.databaseId,
+    payout_principal: request.payoutPrincipal,
     title: request.title,
     description: request.description,
     llm_summary: rawOptionalText(request.llmSummary),
@@ -1414,7 +1420,8 @@ function rawMarketUpdateListingRequest(request: MarketUpdateListingRequest): Raw
     tags_json: request.tagsJson,
     price_e8s: BigInt(request.priceE8s),
     listing_id: request.listingId,
-    expected_revision: BigInt(request.expectedRevision)
+    expected_revision: BigInt(request.expectedRevision),
+    payout_principal: request.payoutPrincipal
   };
 }
 

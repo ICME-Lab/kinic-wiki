@@ -1,7 +1,7 @@
 import { IcrcWallet } from "@dfinity/oisy-wallet-signer/icrc-wallet";
 import { base64ToUint8Array, uint8ArrayToBase64 } from "@dfinity/utils";
 import type { ApproveParams } from "@icp-sdk/canisters/ledger/icrc";
-import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf } from "@icp-sdk/core/agent";
+import { Actor, AnonymousIdentity, Cbor, Certificate, HttpAgent, lookupResultToBuffer, requestIdOf, type Identity } from "@icp-sdk/core/agent";
 import { IDL } from "@icp-sdk/core/candid";
 import { Principal } from "@icp-sdk/core/principal";
 import { getCyclesBillingConfig, type DatabaseCyclesPurchaseRequest } from "@/lib/vfs-client";
@@ -45,6 +45,7 @@ type MarketPurchaseResult = {
   databaseId: string;
   buyerPrincipal: string;
   sellerPrincipal: string;
+  payoutPrincipal: string;
   priceE8s: string;
   ledgerBlockIndex: string;
   createdAtMs: string;
@@ -54,6 +55,13 @@ type MarketPurchaseCanisterRequest = {
   listing_id: string;
   price_e8s: bigint;
   access_principal: string;
+};
+
+type KinicTransferRequest = {
+  canisterId: string;
+  identity: Identity;
+  toPrincipal: string;
+  amountE8s: bigint;
 };
 
 export class KinicAfterApproveError extends Error {
@@ -130,6 +138,7 @@ type RawMarketOrder = {
   database_id: string;
   buyer_principal: string;
   seller_principal: string;
+  payout_principal: string;
   price_e8s: bigint;
   ledger_block_index: bigint;
   created_at_ms: bigint;
@@ -137,6 +146,7 @@ type RawMarketOrder = {
 
 type LedgerActor = {
   icrc1_balance_of: (request: LedgerAccount) => Promise<bigint>;
+  icrc1_transfer: (request: LedgerTransferArgs) => Promise<{ Ok: bigint } | { Err: LedgerTransferError }>;
   icrc2_allowance: (request: LedgerAllowanceArgs) => Promise<LedgerAllowance>;
   icrc2_approve: (request: LedgerApproveArgs) => Promise<{ Ok: bigint } | { Err: unknown }>;
 };
@@ -163,6 +173,17 @@ type LedgerApproveArgs = {
   expires_at: [] | [bigint];
   spender: LedgerAccount;
 };
+
+type LedgerTransferArgs = {
+  from_subaccount: [] | [Uint8Array];
+  to: LedgerAccount;
+  amount: bigint;
+  fee: [] | [bigint];
+  memo: [] | [Uint8Array];
+  created_at_time: [] | [bigint];
+};
+
+type LedgerTransferError = object;
 
 type LedgerAccount = {
   owner: Principal;
@@ -270,6 +291,23 @@ export async function getPrincipalKinicLedgerBalance(canisterId: string, princip
   const config = await getCyclesBillingConfig(canisterId);
   const balance = await getLedgerBalance(config.kinicLedgerCanisterId, principal);
   return balance.toString();
+}
+
+export async function transferKinicFromIdentity(request: KinicTransferRequest): Promise<string> {
+  assertConfiguredCyclesCanister(request.canisterId);
+  assertCanisterPaymentAmountE8s(request.amountE8s);
+  const config = await getCyclesBillingConfig(request.canisterId);
+  const actor = await createLedgerActor(config.kinicLedgerCanisterId, request.identity);
+  const transfer = await actor.icrc1_transfer({
+    from_subaccount: [],
+    to: defaultAccount(request.toPrincipal),
+    amount: request.amountE8s,
+    fee: [KINIC_LEDGER_FEE_E8S],
+    memo: [],
+    created_at_time: []
+  });
+  if ("Err" in transfer) throw new Error(`ledger transfer failed: ${formatLedgerTransferError(transfer.Err)}`);
+  return transfer.Ok.toString();
 }
 
 export async function purchaseCyclesWithWallet(request: CyclesPurchaseRequest, wallet: ConnectedKinicWallet): Promise<CyclesPurchaseResult> {
@@ -527,6 +565,16 @@ async function getLedgerBalance(ledgerCanisterId: string, owner: string): Promis
   return actor.icrc1_balance_of(defaultAccount(owner));
 }
 
+async function createLedgerActor(ledgerCanisterId: string, identity: Identity): Promise<LedgerActor> {
+  const host = process.env.NEXT_PUBLIC_WIKI_IC_HOST ?? "https://icp0.io";
+  const agent = HttpAgent.createSync({ identity, host });
+  if (agent.isLocal()) await agent.fetchRootKey();
+  return Actor.createActor<LedgerActor>(ledgerIdlFactory, {
+    agent,
+    canisterId: Principal.fromText(ledgerCanisterId)
+  });
+}
+
 function allowanceArgs(owner: string, spender: string): LedgerAllowanceArgs {
   return {
     account: defaultAccount(owner),
@@ -749,6 +797,7 @@ function marketPurchaseResultType() {
     database_id: IDL.Text,
     buyer_principal: IDL.Text,
     seller_principal: IDL.Text,
+    payout_principal: IDL.Text,
     price_e8s: IDL.Nat64,
     ledger_block_index: IDL.Nat64,
     created_at_ms: IDL.Int64
@@ -777,6 +826,7 @@ function normalizeMarketOrder(raw: RawMarketOrder, provider: WalletProvider, app
     databaseId: raw.database_id,
     buyerPrincipal: raw.buyer_principal,
     sellerPrincipal: raw.seller_principal,
+    payoutPrincipal: raw.payout_principal,
     priceE8s: raw.price_e8s.toString(),
     ledgerBlockIndex: raw.ledger_block_index.toString(),
     createdAtMs: raw.created_at_ms.toString()
@@ -786,6 +836,42 @@ function normalizeMarketOrder(raw: RawMarketOrder, provider: WalletProvider, app
 function formatLedgerApproveError(error: unknown): string {
   const known = formatKnownLedgerApproveError(error);
   return known ?? safeJsonWithBigInts(error);
+}
+
+function formatLedgerTransferError(error: LedgerTransferError): string {
+  const known = formatKnownLedgerTransferError(error);
+  return known ?? safeJsonWithBigInts(error);
+}
+
+function formatKnownLedgerTransferError(error: unknown): string | null {
+  if (!isObject(error)) return null;
+  if (hasOwn(error, "InsufficientFunds")) {
+    return formatApproveErrorField(error, "InsufficientFunds", "balance", "kinic");
+  }
+  if (hasOwn(error, "BadFee")) {
+    return formatApproveErrorField(error, "BadFee", "expected_fee", "kinic");
+  }
+  if (hasOwn(error, "Duplicate")) {
+    return formatApproveErrorField(error, "Duplicate", "duplicate_of", null);
+  }
+  if (hasOwn(error, "CreatedInFuture")) {
+    return formatApproveErrorField(error, "CreatedInFuture", "ledger_time", null);
+  }
+  if (hasOwn(error, "BadBurn")) {
+    return formatApproveErrorField(error, "BadBurn", "min_burn_amount", "kinic");
+  }
+  if (hasOwn(error, "GenericError")) {
+    const generic = Reflect.get(error, "GenericError");
+    if (!isObject(generic)) return "GenericError";
+    const message = Reflect.get(generic, "message");
+    const errorCode = Reflect.get(generic, "error_code");
+    const messageText = typeof message === "string" ? message : "unknown ledger error";
+    const codeText = scalarText(errorCode);
+    return codeText ? `GenericError: ${messageText} (code ${codeText})` : `GenericError: ${messageText}`;
+  }
+  if (hasOwn(error, "TemporarilyUnavailable")) return "TemporarilyUnavailable";
+  if (hasOwn(error, "TooOld")) return "TooOld";
+  return null;
 }
 
 function formatKnownLedgerApproveError(error: unknown): string | null {
@@ -869,6 +955,7 @@ function isRawMarketOrder(value: unknown): value is RawMarketOrder {
     typeof Reflect.get(value, "database_id") === "string" &&
     typeof Reflect.get(value, "buyer_principal") === "string" &&
     typeof Reflect.get(value, "seller_principal") === "string" &&
+    typeof Reflect.get(value, "payout_principal") === "string" &&
     typeof Reflect.get(value, "price_e8s") === "bigint" &&
     typeof Reflect.get(value, "ledger_block_index") === "bigint" &&
     typeof Reflect.get(value, "created_at_ms") === "bigint"
@@ -883,6 +970,24 @@ const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const account = idl.Record({ owner: idl.Principal, subaccount: idl.Opt(idl.Vec(idl.Nat8)) });
   const allowanceArgs = idl.Record({ account, spender: account });
   const allowance = idl.Record({ allowance: idl.Nat, expires_at: idl.Opt(idl.Nat64) });
+  const transferArgs = idl.Record({
+    from_subaccount: idl.Opt(idl.Vec(idl.Nat8)),
+    to: account,
+    amount: idl.Nat,
+    fee: idl.Opt(idl.Nat),
+    memo: idl.Opt(idl.Vec(idl.Nat8)),
+    created_at_time: idl.Opt(idl.Nat64)
+  });
+  const transferError = idl.Variant({
+    GenericError: idl.Record({ message: idl.Text, error_code: idl.Nat }),
+    TemporarilyUnavailable: idl.Null,
+    BadBurn: idl.Record({ min_burn_amount: idl.Nat }),
+    Duplicate: idl.Record({ duplicate_of: idl.Nat }),
+    BadFee: idl.Record({ expected_fee: idl.Nat }),
+    CreatedInFuture: idl.Record({ ledger_time: idl.Nat64 }),
+    TooOld: idl.Null,
+    InsufficientFunds: idl.Record({ balance: idl.Nat })
+  });
   const approveArgs = idl.Record({
     fee: idl.Opt(idl.Nat),
     memo: idl.Opt(idl.Vec(idl.Nat8)),
@@ -906,6 +1011,7 @@ const ledgerIdlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   return idl.Service({
     icrc1_balance_of: idl.Func([account], [idl.Nat], ["query"]),
+    icrc1_transfer: idl.Func([transferArgs], [idl.Variant({ Ok: idl.Nat, Err: transferError })], []),
     icrc2_allowance: idl.Func([allowanceArgs], [allowance], ["query"]),
     icrc2_approve: idl.Func([approveArgs], [idl.Variant({ Ok: idl.Nat, Err: approveError })], [])
   });

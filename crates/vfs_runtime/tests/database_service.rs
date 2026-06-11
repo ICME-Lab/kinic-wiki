@@ -44,6 +44,7 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
 fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
+        payout_principal: "aaaaa-aa".to_string(),
         title: "Team database".to_string(),
         description: "Reusable team knowledge base".to_string(),
         llm_summary: None,
@@ -568,6 +569,25 @@ fn market_row_count(root: &std::path::Path, table: &str, database_id: &str) -> i
         |row| row.get(0),
     )
     .expect("market row count should load")
+}
+
+fn market_pending_operation_count(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM market_purchase_pending_operations WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("market pending operation count should load")
+}
+
+fn delete_market_listing_row(root: &std::path::Path, listing_id: &str) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "DELETE FROM market_listings WHERE listing_id = ?1",
+        params![listing_id],
+    )
+    .expect("market listing row should delete");
 }
 
 fn database_cycles_balance(root: &std::path::Path, database_id: &str) -> i64 {
@@ -4335,6 +4355,7 @@ fn market_purchase_creates_order_with_ledger_block_and_entitlement() {
 
     assert_eq!(order.buyer_principal, "buyer");
     assert_eq!(order.seller_principal, "seller");
+    assert_eq!(order.payout_principal, "aaaaa-aa");
     assert_eq!(order.ledger_block_index, 42);
     assert_eq!(
         service
@@ -4360,6 +4381,52 @@ fn market_purchase_creates_order_with_ledger_block_and_entitlement() {
 }
 
 #[test]
+fn market_listing_payout_principal_is_saved_updated_and_validated() {
+    let service = service();
+    service
+        .create_database("payout-market", "seller", 1)
+        .expect("database should create");
+    let mut create = market_listing_request("payout-market", 100);
+    create.payout_principal = "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string();
+    let listing = service
+        .market_create_listing("seller", create, 2)
+        .expect("listing should create with payout principal");
+    assert_eq!(listing.payout_principal, "ryjl3-tyaaa-aaaaa-aaaba-cai");
+
+    let updated = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id.clone(),
+                expected_revision: listing.revision,
+                payout_principal: "aaaaa-aa".to_string(),
+                title: listing.title,
+                description: listing.description,
+                llm_summary: listing.llm_summary,
+                tags_json: listing.tags_json,
+                price_e8s: listing.price_e8s,
+            },
+            3,
+        )
+        .expect("seller should update payout principal");
+    assert_eq!(updated.payout_principal, "aaaaa-aa");
+
+    let mut invalid_create = market_listing_request("payout-market", 100);
+    invalid_create.payout_principal = "not-a-principal".to_string();
+    let invalid_error = service
+        .market_create_listing("seller", invalid_create, 4)
+        .expect_err("invalid payout principal should reject");
+    assert!(invalid_error.contains("principal text is invalid"));
+
+    let mut anonymous_create = market_listing_request("payout-market", 100);
+    anonymous_create.payout_principal = "2vxsx-fae".to_string();
+    let anonymous_error = service
+        .market_create_listing("seller", anonymous_create, 5)
+        .expect_err("anonymous payout principal should reject");
+    assert!(anonymous_error.contains("principal must not be anonymous"));
+}
+
+#[test]
 fn market_purchase_payer_can_grant_access_to_ii_principal() {
     let service = service();
     service
@@ -4376,6 +4443,13 @@ fn market_purchase_payer_can_grant_access_to_ii_principal() {
             6,
         )
         .expect("wallet payer should begin purchase");
+    let pending = service
+        .query_index_sql_json(
+            "SELECT json_object('to_owner', to_owner) FROM market_purchase_pending_operations",
+            10,
+        )
+        .expect("pending operation should be queryable");
+    assert_eq!(pending.rows, vec![r#"{"to_owner":"aaaaa-aa"}"#]);
     service
         .complete_market_purchase_ledger_transfer(
             start.operation_id,
@@ -4418,6 +4492,128 @@ fn market_purchase_payer_can_grant_access_to_ii_principal() {
 }
 
 #[test]
+fn market_purchase_applies_when_listing_pauses_during_ledger_transfer() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("paused-after-pay-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("paused-after-pay-market", 250),
+            2,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, "buyer"),
+            ledger_details("buyer", "seller", 100_000, 3),
+            3,
+        )
+        .expect("purchase should begin while listing is active");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            "buyer",
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete");
+    service
+        .market_pause_listing("seller", &listing.listing_id, 4)
+        .expect("seller may pause listing while ledger transfer is awaited");
+
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            "buyer",
+            &listing.listing_id,
+            listing.price_e8s,
+            5,
+        )
+        .expect("ledger-completed purchase should apply from pending snapshot");
+
+    assert_eq!(order.database_id, "paused-after-pay-market");
+    assert_eq!(order.seller_principal, "seller");
+    assert_eq!(order.payout_principal, "aaaaa-aa");
+    assert_eq!(order.ledger_block_index, 42);
+    assert_eq!(
+        market_row_count(&root, "market_entitlements", "paused-after-pay-market"),
+        1
+    );
+    assert_eq!(
+        market_pending_operation_count(&root, "paused-after-pay-market"),
+        0
+    );
+}
+
+#[test]
+fn market_purchase_applies_from_snapshot_when_listing_row_disappears_during_ledger_transfer() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("deleted-after-pay-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("deleted-after-pay-market", 250),
+            2,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, "buyer"),
+            ledger_details("buyer", "seller", 100_000, 3),
+            3,
+        )
+        .expect("purchase should begin while listing exists");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            "buyer",
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete");
+    delete_market_listing_row(&root, &listing.listing_id);
+
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            "buyer",
+            &listing.listing_id,
+            listing.price_e8s,
+            5,
+        )
+        .expect("ledger-completed purchase should apply from pending snapshot without listing row");
+
+    assert_eq!(order.database_id, "deleted-after-pay-market");
+    assert_eq!(order.seller_principal, "seller");
+    assert_eq!(order.payout_principal, "aaaaa-aa");
+    assert_eq!(order.ledger_block_index, 42);
+    assert_eq!(
+        market_row_count(&root, "market_listings", "deleted-after-pay-market"),
+        0
+    );
+    assert_eq!(
+        market_row_count(&root, "market_orders", "deleted-after-pay-market"),
+        1
+    );
+    assert_eq!(
+        market_row_count(&root, "market_entitlements", "deleted-after-pay-market"),
+        1
+    );
+    assert_eq!(
+        market_pending_operation_count(&root, "deleted-after-pay-market"),
+        0
+    );
+}
+
+#[test]
 fn market_listing_description_allows_newlines() {
     let service = service();
     service
@@ -4442,6 +4638,7 @@ fn market_listing_description_allows_newlines() {
             MarketUpdateListingRequest {
                 listing_id: listing.listing_id,
                 expected_revision: listing.revision,
+                payout_principal: "aaaaa-aa".to_string(),
                 title: "Updated market DB".to_string(),
                 description: "Updated one\nUpdated two".to_string(),
                 llm_summary: Some("Updated summary\nSecond line".to_string()),
@@ -4627,6 +4824,7 @@ fn market_listing_owner_policy_and_database_listing_query() {
             MarketUpdateListingRequest {
                 listing_id: listing.listing_id.clone(),
                 expected_revision: listing.revision,
+                payout_principal: "aaaaa-aa".to_string(),
                 title: "Updated team database".to_string(),
                 description: "Updated reusable team knowledge base".to_string(),
                 llm_summary: None,
@@ -4643,6 +4841,7 @@ fn market_listing_owner_policy_and_database_listing_query() {
             MarketUpdateListingRequest {
                 listing_id: listing.listing_id,
                 expected_revision: 0,
+                payout_principal: "aaaaa-aa".to_string(),
                 title: "Stale team database".to_string(),
                 description: "Stale reusable team knowledge base".to_string(),
                 llm_summary: None,

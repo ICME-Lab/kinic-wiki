@@ -76,6 +76,7 @@ if (!canister) {
   throw new Error("missing --canister-id or NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID");
 }
 const ledgerCanister = options.ledgerCanisterId ?? process.env.KINIC_LEDGER_CANISTER_ID ?? readWikiLedgerCanisterId();
+const payoutPrincipal = options.payoutPrincipal ?? readCurrentPrincipal();
 approveCyclesAllowance(ledgerCanister);
 
 for (const fixture of FIXTURES) {
@@ -88,6 +89,7 @@ for (const fixture of FIXTURES) {
     "market_create_listing",
     candidRecord({
       database_id: candidText(databaseId),
+      payout_principal: candidText(payoutPrincipal),
       title: candidText(fixture.title),
       description: candidText(fixture.description),
       llm_summary: `opt ${candidText(fixture.summary)}`,
@@ -113,6 +115,14 @@ function fundDatabase(databaseId) {
 function readWikiLedgerCanisterId() {
   const config = callOk("get_cycles_billing_config", "");
   return extractTextField(config, "kinic_ledger_canister_id");
+}
+
+function readCurrentPrincipal() {
+  const result = spawnSync("icp", ["identity", "get-principal"], { encoding: "utf8" });
+  if (result.status !== 0) {
+    throw new Error(`identity principal command failed\n${result.stderr || result.stdout}`);
+  }
+  return result.stdout.trim();
 }
 
 function approveCyclesAllowance(ledgerCanisterId) {
@@ -217,6 +227,9 @@ function parseArgs(args) {
       index += 1;
     } else if (arg === "--ledger-canister-id") {
       parsed.ledgerCanisterId = readArgValue(args, index, arg);
+      index += 1;
+    } else if (arg === "--payout-principal") {
+      parsed.payoutPrincipal = readArgValue(args, index, arg);
       index += 1;
     } else {
       throw new Error(`unknown argument: ${arg}`);

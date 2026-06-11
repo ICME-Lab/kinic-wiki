@@ -140,6 +140,8 @@ export function MarketplaceClient({ canisterId }: MarketplaceClientProps) {
           ))}
         </section>
 
+        {state !== "loading" && !filtered.length && cursor ? <p className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-muted">Load more may reveal additional matches.</p> : null}
+
         {cursor ? (
           <button
             className="mx-auto min-h-11 rounded-lg border border-line px-4 text-sm font-semibold hover:border-accent disabled:opacity-60"
@@ -181,6 +183,7 @@ function MarketplaceFilterBar({
         <label className="sr-only" htmlFor="market-max-price">Max price</label>
         <Input id="market-max-price" className="h-10 rounded-lg bg-white font-mono text-xs lg:w-36" inputMode="decimal" placeholder="0.5 KINIC" value={max} onChange={onMaxChange} />
       </form>
+      <p className="text-xs text-muted">Filters and sorting apply to loaded listings only.</p>
 
       <div className="flex flex-wrap gap-2">
         {QUICK_FILTERS.map((filter) => {

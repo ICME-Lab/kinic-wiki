@@ -170,6 +170,7 @@ CREATE TABLE storage_billing_state (
 CREATE TABLE market_listings (
   listing_id TEXT PRIMARY KEY,
   seller_principal TEXT NOT NULL,
+  payout_principal TEXT NOT NULL,
   database_id TEXT NOT NULL,
   title TEXT NOT NULL,
   description TEXT NOT NULL,
@@ -197,6 +198,7 @@ CREATE TABLE market_orders (
   database_id TEXT NOT NULL,
   buyer_principal TEXT NOT NULL,
   seller_principal TEXT NOT NULL,
+  payout_principal TEXT NOT NULL,
   price_e8s INTEGER NOT NULL,
   ledger_block_index INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL

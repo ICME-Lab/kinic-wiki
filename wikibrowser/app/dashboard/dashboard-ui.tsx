@@ -280,6 +280,7 @@ export function MarketListingsPanel(props: {
   databaseName: string;
   error: string | null;
   listings: MarketListing[];
+  principal: string | null;
   onCreate: (request: MarketCreateListingRequest) => void;
   onPause: (listingId: string) => void;
   onPublish: (listingId: string) => void;
@@ -288,16 +289,18 @@ export function MarketListingsPanel(props: {
   const [selectedListingId, setSelectedListingId] = useState("");
   const [title, setTitle] = useState(props.databaseName);
   const [description, setDescription] = useState("");
+  const [payoutPrincipal, setPayoutPrincipal] = useState(props.principal ?? "");
   const [price, setPrice] = useState("1");
   const [tags, setTags] = useState<string[]>([]);
   const selected = props.listings.find((listing) => listing.listingId === selectedListingId) ?? null;
   const priceE8s = parseKinicInput(price);
-  const submitDisabled = props.busy || !title.trim() || !description.trim() || !priceE8s;
+  const submitDisabled = props.busy || !title.trim() || !description.trim() || !payoutPrincipal.trim() || !priceE8s;
 
   function selectListing(listing: MarketListing) {
     setSelectedListingId(listing.listingId);
     setTitle(listing.title);
     setDescription(listing.description);
+    setPayoutPrincipal(listing.payoutPrincipal);
     setPrice(decimalFromE8s(listing.priceE8s));
     setTags(tagsFromJson(listing.tagsJson));
   }
@@ -308,6 +311,7 @@ export function MarketListingsPanel(props: {
     const base = {
       title: title.trim(),
       description: description.trim(),
+      payoutPrincipal: payoutPrincipal.trim(),
       llmSummary: null,
       tagsJson: tagsJsonFromTags(tags),
       priceE8s
@@ -363,6 +367,7 @@ export function MarketListingsPanel(props: {
                 <p className="font-mono text-xs text-muted">
                   {listing.status} / {formatTokenAmountFromE8s(listing.priceE8s)} / {listing.purchaseCount} purchases
                 </p>
+                <p className="break-all font-mono text-xs text-muted">Payout {listing.payoutPrincipal}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <ActionButton disabled={props.busy} onClick={() => selectListing(listing)} variant="secondary">
@@ -397,6 +402,10 @@ export function MarketListingsPanel(props: {
           <span className="text-xs uppercase text-muted">Description</span>
           <textarea className="min-h-24 rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={description} onChange={(event) => setDescription(event.target.value)} />
         </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xs uppercase text-muted">Payout principal</span>
+          <input className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent" value={payoutPrincipal} onChange={(event) => setPayoutPrincipal(event.target.value)} />
+        </label>
         <div className="grid gap-2 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs uppercase text-muted">Tags</span>
@@ -428,6 +437,7 @@ export function MarketListingsPanel(props: {
                 setSelectedListingId("");
                 setTitle(props.databaseName);
                 setDescription("");
+                setPayoutPrincipal(props.principal ?? "");
                 setPrice("1");
                 setTags([]);
               }}

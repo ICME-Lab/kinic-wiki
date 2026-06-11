@@ -234,7 +234,9 @@ function OverviewPanel({ listing, stats }: { listing: MarketListing; stats: Mark
     ["Link edges", stats.linkEdges],
     ["Logical size", formatBytes(stats.logicalSizeBytes)],
     ["Last updated", formatDate(stats.lastContentUpdatedAtMs)],
-    ["Purchases", listing.purchaseCount]
+    ["Purchases", listing.purchaseCount],
+    ["Seller principal", listing.sellerPrincipal],
+    ["Seller payout principal", listing.payoutPrincipal]
   ];
   return (
     <div className="grid max-w-4xl gap-4">

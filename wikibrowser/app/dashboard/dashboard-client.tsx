@@ -494,6 +494,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             databaseName={database.name}
             error={marketError}
             listings={marketListings}
+            principal={principal}
             onCreate={createMarketListing}
             onPause={pauseMarketListing}
             onPublish={publishMarketListing}

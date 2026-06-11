@@ -64,6 +64,7 @@ export const expectedTypes = {
       title: "text",
       description: "text",
       database_id: "text",
+      payout_principal: "text",
       price_e8s: "nat64",
       tags_json: "text"
     }
@@ -94,6 +95,7 @@ export const expectedTypes = {
       updated_at_ms: "int64",
       created_at_ms: "int64",
       seller_principal: "text",
+      payout_principal: "text",
       purchase_count: "nat64",
       database_id: "text",
       listing_id: "text",
@@ -159,6 +161,7 @@ export const expectedTypes = {
     fields: {
       created_at_ms: "int64",
       seller_principal: "text",
+      payout_principal: "text",
       database_id: "text",
       buyer_principal: "text",
       order_id: "text",
@@ -196,6 +199,7 @@ export const expectedTypes = {
       description: "text",
       listing_id: "text",
       expected_revision: "nat64",
+      payout_principal: "text",
       price_e8s: "nat64",
       tags_json: "text"
     }

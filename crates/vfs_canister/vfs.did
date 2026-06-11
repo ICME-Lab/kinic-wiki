@@ -263,6 +263,7 @@ type MarketCreateListingRequest = record {
   title : text;
   description : text;
   database_id : text;
+  payout_principal : text;
   price_e8s : nat64;
   tags_json : text;
 };
@@ -289,6 +290,7 @@ type MarketListing = record {
   seller_principal : text;
   purchase_count : nat64;
   database_id : text;
+  payout_principal : text;
   listing_id : text;
   price_e8s : nat64;
   revision : nat64;
@@ -327,6 +329,7 @@ type MarketOrder = record {
   seller_principal : text;
   ledger_block_index : nat64;
   database_id : text;
+  payout_principal : text;
   buyer_principal : text;
   order_id : text;
   listing_id : text;
@@ -357,6 +360,7 @@ type MarketUpdateListingRequest = record {
   llm_summary : opt text;
   title : text;
   description : text;
+  payout_principal : text;
   listing_id : text;
   price_e8s : nat64;
   expected_revision : nat64;

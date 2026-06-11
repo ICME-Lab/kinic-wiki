@@ -178,6 +178,7 @@ export type MarketListingStatus = "Active" | "Paused";
 export type MarketListing = {
   listingId: string;
   sellerPrincipal: string;
+  payoutPrincipal: string;
   databaseId: string;
   title: string;
   description: string;
@@ -248,6 +249,7 @@ export type MarketListingPage = {
 
 export type MarketCreateListingRequest = {
   databaseId: string;
+  payoutPrincipal: string;
   title: string;
   description: string;
   llmSummary: string | null;
@@ -273,6 +275,7 @@ export type MarketOrder = {
   databaseId: string;
   buyerPrincipal: string;
   sellerPrincipal: string;
+  payoutPrincipal: string;
   priceE8s: string;
   ledgerBlockIndex: string;
   createdAtMs: string;

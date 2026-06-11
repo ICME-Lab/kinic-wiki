@@ -31,7 +31,8 @@ assert.doesNotMatch(appSession, /kinicBalance|refreshKinicBalance/);
 assertNoAppBalanceSurface(adminShell);
 assert.match(profile, /Marketplace access/);
 assert.match(profile, /Purchased databases/);
+assert.match(profile, /Ledger KINIC balance/);
 assertNoAppBalanceSurface(profile);
-assert.doesNotMatch(profile, /Ledger KINIC balance|Deposit|Withdraw/);
+assert.doesNotMatch(profile, /Deposit|Withdraw/);
 
 console.log("Dashboard direct funding checks passed");

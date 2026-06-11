@@ -478,12 +478,13 @@ fn icrc21_canister_call_consent_message(
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-                    "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
+                    "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nSeller payout principal: `{payout}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
                     listing_title = listing.title,
                     database_id = listing.database_id,
                     payment = format_e8s(purchase.price_e8s),
                     fee = format_e8s(KINIC_LEDGER_FEE_E8S),
                     seller = listing.seller_principal,
+                    payout = listing.payout_principal,
                     payer = payer,
                     access = purchase.access_principal,
                 )),
@@ -841,8 +842,8 @@ async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<Market
             now,
         )
     })?;
-    let seller = Principal::from_text(&purchase_start.seller_principal)
-        .map_err(|error| format!("invalid market seller principal: {error}"))?;
+    let payout = Principal::from_text(&purchase_start.payout_principal)
+        .map_err(|error| format!("invalid market payout principal: {error}"))?;
     let operation_id = purchase_start.operation_id;
     run_transfer_from_saga(
         TransferFromSaga {
@@ -853,7 +854,7 @@ async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<Market
                 subaccount: None,
             },
             to: IcrcAccount {
-                owner: seller,
+                owner: payout,
                 subaccount: None,
             },
             amount_e8s: purchase_start.price_e8s,
