@@ -3249,7 +3249,7 @@ impl VfsService {
         database_id: &str,
         meta: &DatabaseMeta,
     ) -> Result<(), String> {
-        let size = self.database_size(&meta)?;
+        let size = self.database_size(meta)?;
         self.write_index(|conn| {
             conn.execute(
                 "UPDATE databases
