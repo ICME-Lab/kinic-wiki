@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { BookOpen, PlugZap, PowerOff, Settings, Share2, TerminalSquare, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
+import { AdminNotice } from "@/components/admin-ui";
 import { formatCycles as formatCycleBalance } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref, type DatabaseCycleView } from "@/lib/cycles-state";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
@@ -82,6 +83,7 @@ function WalletConnectButton({
   hoverIcon,
   icon,
   label,
+  title,
   onClick
 }: {
   ariaLabel?: string;
@@ -94,6 +96,7 @@ function WalletConnectButton({
   hoverIcon: ReactNode | null;
   icon: ReactNode;
   label: string;
+  title?: string;
   onClick: () => void;
 }) {
   const classes = connected
@@ -106,6 +109,7 @@ function WalletConnectButton({
       aria-label={ariaLabel}
       className={`group inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-60 ${classes}`}
       disabled={disabled}
+      title={title}
       type="button"
       onClick={onClick}
     >
@@ -166,7 +170,8 @@ export function DatabaseBody({
   myDatabases,
   principal,
   publicError,
-  publicDatabases
+  publicDatabases,
+  purchasedDatabases
 }: {
   createDatabaseAction?: ReactNode;
   cyclesConfig: CyclesBillingConfig | null;
@@ -175,15 +180,17 @@ export function DatabaseBody({
   principal: string | null;
   publicError: string | null;
   publicDatabases: DatabaseRow[];
+  purchasedDatabases: DatabaseRow[];
 }) {
   if (loading) return <div className="p-6 text-sm text-muted">Loading databases...</div>;
   if (!principal) {
-    return <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} description="Readable without login." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
+    return <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} showTitle={false} title="Public databases" />;
   }
   return (
     <div className="grid gap-5">
       <DatabaseSection action={createDatabaseAction} cyclesConfig={cyclesConfig} emptyMessage="No databases are linked to this principal." mode="member" rows={myDatabases} title="My databases" />
-      <DatabaseSection cyclesConfig={cyclesConfig} description="Readable without login." emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} emptyMessage="No purchased databases are linked to this principal." mode="member" rows={purchasedDatabases} title="Purchased databases" />
+      <DatabaseSection cyclesConfig={cyclesConfig} emptyMessage="No public databases are available." mode="public" publicError={publicError} rows={publicDatabases} title="Public databases" />
     </div>
   );
 }
@@ -434,8 +441,7 @@ function DatabaseCardMeta({ label, value }: { label: string; value: string }) {
 }
 
 export function StatusPanel({ tone, message }: { tone: "error" | "info"; message: string }) {
-  const toneClass = tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-paper text-ink";
-  return <div className={`rounded-lg border px-4 py-3 text-sm ${toneClass}`}>{message}</div>;
+  return <AdminNotice tone={tone} message={message} />;
 }
 
 export function CreatedDatabasePanel({ databaseId, name }: { databaseId: string; name: string }) {

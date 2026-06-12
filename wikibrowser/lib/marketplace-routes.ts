@@ -5,3 +5,7 @@
 export function marketListingPath(listingId: string): string {
   return `/marketplace/${listingId}`;
 }
+
+export function marketSellerPath(principal: string): string {
+  return `/marketplace/seller/${encodeURIComponent(principal)}`;
+}

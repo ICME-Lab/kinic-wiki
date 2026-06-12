@@ -16,6 +16,20 @@ II_RELEASE="${II_RELEASE:-release-2026-05-08}"
 II_BACKEND_WASM_URL="${II_BACKEND_WASM_URL:-https://github.com/dfinity/internet-identity/releases/download/$II_RELEASE/internet_identity_dev.wasm.gz}"
 II_FRONTEND_WASM_URL="${II_FRONTEND_WASM_URL:-https://github.com/dfinity/internet-identity/releases/download/$II_RELEASE/internet_identity_frontend.wasm.gz}"
 II_BACKEND_INIT_ARGS='(opt record { captcha_config = opt record { max_unsolved_captchas= 50:nat64; captcha_trigger = variant {Static = variant {CaptchaDisabled}}}; dummy_auth = opt opt record { prompt_for_index = false }; is_production = opt false })'
+DEPLOY_WIKI=0
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --deploy-wiki)
+      DEPLOY_WIKI=1
+      shift
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 mkdir -p "$ARTIFACT_DIR"
 
@@ -125,8 +139,11 @@ elif canister_has_module "$WIKI_CANISTER_ID" >/dev/null 2>&1; then
   if [ "$CURRENT_LEDGER_CANISTER_ID" != "$KINIC_LEDGER_CANISTER_ID" ]; then
     echo "wiki ledger mismatch (${CURRENT_LEDGER_CANISTER_ID:-missing}); reinstalling wiki for $KINIC_LEDGER_CANISTER_ID" >&2
     deploy_wiki --mode reinstall
-  else
+  elif [ "$DEPLOY_WIKI" -eq 1 ]; then
+    echo "existing wiki canister $WIKI_CANISTER_ID matches ledger; upgrading wiki because --deploy-wiki was specified" >&2
     deploy_wiki
+  else
+    echo "existing wiki canister $WIKI_CANISTER_ID matches ledger; skipping wiki deploy" >&2
   fi
 else
   echo "local wiki canister $WIKI_CANISTER_ID missing installed module; deploying wiki to local-wiki" >&2
@@ -185,4 +202,4 @@ printf 'Wrote %s\n' "$ENV_FILE"
 printf 'NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=%s\n' "$WIKI_CANISTER_ID"
 printf 'NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1\n'
 printf 'NEXT_PUBLIC_II_PROVIDER_URL=http://%s.raw.localhost:8011\n' "$II_FRONTEND_CANISTER_ID"
-printf 'For manual localhost testing, run: cp wikibrowser/.env.e2e.local wikibrowser/.env.local && pnpm -C wikibrowser dev -p 3010\n'
+printf 'For manual localhost testing, run: cp wikibrowser/.env.e2e.local wikibrowser/.env.local && pnpm -C wikibrowser dev\n'

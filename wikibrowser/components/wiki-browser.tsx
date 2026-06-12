@@ -1348,7 +1348,7 @@ function TopBar({
           href="/dashboard"
           aria-label="Back to database dashboard"
         >
-          <Image className="h-5 w-5 rounded-md" src="/icon.png" alt="" width={20} height={20} unoptimized />
+          <Image className="h-6 w-6 rounded-md" src="/kinic-mark.png" alt="" width={24} height={24} unoptimized />
           Kinic Wiki
         </Link>
         <div className="flex min-w-0 shrink-0 items-center gap-1 text-xs text-muted">

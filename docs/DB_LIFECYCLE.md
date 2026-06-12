@@ -58,9 +58,11 @@ KINIC cycles uses one internal DB-scoped balance:
 
 DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
 
-External ledger calls are limited to DB cycles purchase:
+External ledger calls are used for DB cycles purchase and App KINIC balance movement:
 
 - `purchase_database_cycles(DatabaseCyclesPurchaseRequest)` pulls the KINIC payment from the caller through ICRC-2 `approve` + `icrc2_transfer_from` and mints cycles into that DB cycles balance. The request includes `payment_amount_e8s` and `min_expected_cycles`; credited cycles are computed from the current `cycles_per_kinic` before the ledger call and must be at least `min_expected_cycles`. The approved allowance must cover `payment_amount_e8s + ledger_fee_e8s`.
+- `kinic_deposit_balance(KinicDepositRequest)` credits App KINIC only after the canister pulls KINIC through ICRC-2 `approve` + `icrc2_transfer_from`.
+- `kinic_withdraw_balance(KinicWithdrawRequest)` sends KINIC from the canister to the requested ledger account with ICRC-1 `icrc1_transfer`. App balance is debited by `amount_e8s + expected_fee_e8s`. Direct ledger transfers to a principal are not credited to App KINIC balance.
 
 Any authenticated caller can cycle purchase an existing DB that still has an owner, including callers with no DB role. The payer is recorded in the DB ledger entry. Reader and writer cycles history redacts payer/caller principals, while DB owner and billing authority can read full payer/caller details. Once the ledger call starts, normal completion or explicit ledger-error cancellation resolves the started operation even if membership changes during the await. Ambiguous ledger results keep the pending operation as `ambiguous` for billing-authority review. If ledger transfer succeeds but local activation or cycles apply fails, the completed pending operation remains for billing-authority review. Owner, billing authority, and payer can inspect pending purchase status through `list_database_cycles_pending_purchases(database_id)` or CLI `database cycles-pending <database-id>`.
 

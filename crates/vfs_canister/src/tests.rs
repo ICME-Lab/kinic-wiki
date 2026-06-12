@@ -13,13 +13,13 @@ use vfs_types::{
     DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KinicDepositRequest,
-    KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketPurchaseRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
-    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
+    WriteNodesRequest,
 };
 
 use super::{
@@ -29,22 +29,22 @@ use super::{
     cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
     clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
-    fail_next_apply_kinic_deposit_for_test, fail_next_mount_database_file_for_test, fetch_updates,
-    finalize_database_archive, finalize_database_restore, get_cycles_billing_config, glob_nodes,
-    grant_database_access, graph_links, graph_neighborhood, icrc21_canister_call_consent_message,
-    incoming_links, kinic_deposit_balance, kinic_fund_database_cycles, kinic_get_balance,
-    kinic_list_pending_operations, last_ledger_from_for_test, last_ledger_memo_for_test,
+    fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
+    finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
+    graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
+    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
     ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
     list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
-    market_create_listing, market_publish_listing, market_purchase_access, memory_manifest,
-    mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_context,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, revoke_database_access, search_node_paths, search_nodes,
-    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
-    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    write_database_restore_chunk, write_node, write_nodes,
+    market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
+    market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
+    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
+    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
+    read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
+    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
+    set_test_caller_principal_for_test, set_update_charge_units_for_test,
+    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
+    update_charge_cycles, update_cycles_billing_config, write_database_restore_chunk, write_node,
+    write_nodes,
 };
 
 fn install_test_service() {
@@ -134,60 +134,23 @@ fn pending_cycle_purchase_state(database_id: &str) -> String {
     })
 }
 
-fn pending_kinic_deposit_state() -> String {
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .query_index_sql_json(
-                "SELECT json_object('status', operation_status, 'block', external_block_index) FROM kinic_pending_operations WHERE kind = 'deposit' LIMIT 1",
-                1,
-            )
-            .expect("pending operation should query")
-            .rows
-            .into_iter()
-            .next()
-            .expect("pending operation should exist")
-    })
-}
-
-fn kinic_deposit_ledger_count(principal: &str) -> String {
+fn pending_database_activation_state(database_id: &str) -> String {
     SERVICE.with(|slot| {
         slot.borrow()
             .as_ref()
             .expect("service should be installed")
             .query_index_sql_json(
                 &format!(
-                    "SELECT json_object('count', COUNT(*)) FROM kinic_ledger WHERE principal = '{}' AND kind = 'deposit' LIMIT 1",
-                    principal
-                ),
-                1,
-            )
-            .expect("KINIC ledger should query")
-            .rows
-            .into_iter()
-            .next()
-            .expect("KINIC ledger count should exist")
-    })
-}
-
-fn database_cycles_balance_json(database_id: &str) -> String {
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .query_index_sql_json(
-                &format!(
-                    "SELECT json_object('balance', balance_cycles) FROM database_cycle_accounts WHERE database_id = '{}' LIMIT 1",
+                    "SELECT json_object('status', status, 'mount_id', mount_id, 'active_mount_id', active_mount_id, 'has_db_file_name', db_file_name <> '') FROM databases WHERE database_id = '{}' LIMIT 1",
                     database_id
                 ),
                 1,
             )
-            .expect("database cycles account should query")
+            .expect("database activation state should query")
             .rows
             .into_iter()
             .next()
-            .expect("database cycles account should exist")
+            .expect("database row should exist")
     })
 }
 
@@ -233,34 +196,27 @@ fn cycles_purchase_request(
     }
 }
 
-fn kinic_deposit_request(amount_e8s: u64) -> KinicDepositRequest {
-    KinicDepositRequest {
-        amount_e8s,
-        expected_fee_e8s: KINIC_LEDGER_FEE_E8S,
-    }
-}
-
-fn kinic_fund_request(
-    database_id: &str,
-    payment_amount_e8s: u64,
-) -> KinicFundDatabaseCyclesRequest {
-    KinicFundDatabaseCyclesRequest {
-        database_id: database_id.to_string(),
-        payment_amount_e8s,
-        min_expected_cycles: 1,
-    }
-}
-
 fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
+        payout_principal: Principal::management_canister().to_text(),
         title: "Private market DB".to_string(),
         description: "Paid reader access".to_string(),
         llm_summary: None,
-        summary_snapshot_revision: None,
-        sample_excerpts_json: "[]".to_string(),
         tags_json: "[]".to_string(),
         price_e8s,
+    }
+}
+
+fn market_purchase_request(
+    listing_id: &str,
+    price_e8s: u64,
+    access_principal: Principal,
+) -> MarketPurchaseRequest {
+    MarketPurchaseRequest {
+        listing_id: listing_id.to_string(),
+        price_e8s,
+        access_principal: access_principal.to_text(),
     }
 }
 
@@ -440,15 +396,9 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
                 1_700_000_000_000,
             )
             .expect("database cycle purchase should begin");
-        if service
-            .activate_pending_database_for_cycles_purchase(database_id, 1_700_000_000_000)
-            .expect("pending database activation should prepare")
-            .is_some()
-        {
-            service
-                .run_pending_database_migrations(database_id)
-                .expect("pending database migrations should run");
-        }
+        service
+            .prepare_pending_database_activation(database_id, 1_700_000_000_000)
+            .expect("pending database activation should prepare");
         let cycles = super::cycles_for_payment_amount_e8s(
             payment_amount_e8s,
             &service
@@ -481,16 +431,6 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
 fn test_billing_authority_principal() -> Principal {
     Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
         .expect("billing authority principal should parse")
-}
-
-fn pending_operations_request(
-    cursor_operation_id: Option<u64>,
-    limit: u32,
-) -> KinicPendingOperationsPageRequest {
-    KinicPendingOperationsPageRequest {
-        cursor_operation_id,
-        limit,
-    }
 }
 
 struct AuthenticatedCallerGuard;
@@ -607,6 +547,13 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
     assert_eq!(result.amount_cycles, 1_172_500);
     assert_eq!(result.balance_cycles, 1_172_500);
     assert_eq!(
+        last_ledger_to_for_test()
+            .expect("ledger recipient should record")
+            .owner
+            .to_text(),
+        "isz6c-6c4pl-oba7w-ikjex-472yu-rf3fe-valdh-lfazm-5f3ep-v474i-qae"
+    );
+    assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
     );
@@ -675,251 +622,6 @@ fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].kind, "cycles_purchase");
     assert_eq!(entries[0].ledger_block_index, Some(77));
-}
-
-#[test]
-fn kinic_fund_database_cycles_uses_internal_balance_without_ledger_call() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    let database_id = "internal-funding-active";
-    SERVICE.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .expect("service should be installed")
-            .create_database(database_id, &Principal::management_canister().to_text(), 1)
-            .expect("active database should create");
-    });
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(90));
-    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000)))
-        .expect("deposit should credit internal KINIC balance");
-    clear_last_ledger_memo_for_test();
-
-    let result = kinic_fund_database_cycles(kinic_fund_request(database_id, 500))
-        .expect("internal balance should fund database cycles");
-
-    assert_eq!(result.payment_amount_e8s, 500);
-    assert_eq!(result.amount_cycles, 1_172_500);
-    assert_eq!(result.database_balance_cycles, 1_172_500);
-    assert_eq!(result.kinic_balance_e8s, 500);
-    assert_eq!(last_ledger_memo_for_test(), None);
-    let entries = list_database_cycle_entries(database_id.to_string(), None, 10)
-        .expect("database ledger should load")
-        .entries;
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].kind, "cycles_purchase");
-    assert_eq!(
-        entries[0].method.as_deref(),
-        Some("kinic_fund_database_cycles")
-    );
-    assert_eq!(entries[0].ledger_block_index, None);
-}
-
-#[test]
-fn kinic_fund_database_cycles_rejects_unallocated_pending_without_state_change() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    let database = create_database(CreateDatabaseRequest {
-        name: "Pending internal funding".to_string(),
-    })
-    .expect("pending database should create");
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(91));
-    block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000)))
-        .expect("deposit should credit internal KINIC balance");
-    clear_last_ledger_memo_for_test();
-    assert_eq!(
-        database_status_and_mount(&database.database_id),
-        (DatabaseStatus::Pending, None)
-    );
-    assert_eq!(
-        database_cycles_balance_json(&database.database_id),
-        "{\"balance\":0}"
-    );
-    let balance_before = kinic_get_balance()
-        .expect("KINIC balance should load")
-        .balance_e8s;
-
-    let error = kinic_fund_database_cycles(kinic_fund_request(&database.database_id, 500))
-        .expect_err("unallocated pending database should reject");
-
-    assert!(error.contains("pending database has no activation mount"));
-    assert_eq!(
-        database_status_and_mount(&database.database_id),
-        (DatabaseStatus::Pending, None)
-    );
-    assert_eq!(
-        database_cycles_balance_json(&database.database_id),
-        "{\"balance\":0}"
-    );
-    assert_eq!(
-        kinic_get_balance()
-            .expect("KINIC balance should load")
-            .balance_e8s,
-        balance_before
-    );
-    assert_eq!(last_ledger_memo_for_test(), None);
-    assert!(
-        list_database_cycle_entries(database.database_id, None, 10)
-            .expect("database ledger should load")
-            .entries
-            .is_empty()
-    );
-}
-
-#[test]
-fn kinic_deposit_balance_credits_wallet_after_completed_transfer() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
-
-    let result = block_on_ready(kinic_deposit_balance(kinic_deposit_request(500)))
-        .expect("completed transfer-from should credit KINIC balance");
-
-    assert_eq!(result.block_index, 42);
-    assert_eq!(result.amount_e8s, 500);
-    assert_eq!(result.balance_e8s, 500);
-    assert_eq!(
-        kinic_get_balance()
-            .expect("KINIC balance should load")
-            .balance_e8s,
-        500
-    );
-    assert!(
-        kinic_list_pending_operations(pending_operations_request(None, 100))
-            .expect("pending operations should load")
-            .operations
-            .is_empty()
-    );
-}
-
-#[test]
-fn kinic_deposit_duplicate_transfer_is_success_without_double_credit() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    set_next_ledger_transfer_from_outcome_for_test(transfer_from_error_outcome(
-        TransferFromError::Duplicate {
-            duplicate_of: Nat::from(77_u64),
-        },
-    ));
-
-    let result = block_on_ready(kinic_deposit_balance(kinic_deposit_request(700)))
-        .expect("duplicate transfer-from should credit KINIC balance");
-
-    assert_eq!(result.block_index, 77);
-    assert_eq!(result.balance_e8s, 700);
-    assert_eq!(
-        kinic_deposit_ledger_count(&Principal::management_canister().to_text()),
-        r#"{"count":1}"#
-    );
-    assert!(
-        kinic_list_pending_operations(pending_operations_request(None, 100))
-            .expect("pending operations should load")
-            .operations
-            .is_empty()
-    );
-}
-
-#[test]
-fn kinic_deposit_completed_local_apply_failure_keeps_pending_for_review() {
-    install_empty_test_service();
-    let caller = Principal::management_canister();
-    let _caller = AuthenticatedCallerGuard::install_principal(caller);
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(44));
-    fail_next_apply_kinic_deposit_for_test();
-
-    let error = block_on_ready(kinic_deposit_balance(kinic_deposit_request(600)))
-        .expect_err("local apply failure should keep completed pending deposit");
-
-    assert!(error.contains("test KINIC deposit apply failure"));
-    assert!(error.contains("remains completed for billing authority review"));
-    assert_eq!(
-        pending_kinic_deposit_state(),
-        r#"{"status":"completed","block":44}"#
-    );
-    let caller_view = kinic_list_pending_operations(pending_operations_request(None, 100))
-        .expect("caller should view own pending");
-    assert_eq!(caller_view.operations.len(), 1);
-    assert_eq!(caller_view.operations[0].status, "completed");
-    assert_eq!(
-        caller_view.operations[0].required_action,
-        "billing_authority_review"
-    );
-    drop(_caller);
-
-    let _authority =
-        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
-    let authority_view = kinic_list_pending_operations(pending_operations_request(None, 100))
-        .expect("billing authority should view all pending");
-    assert_eq!(authority_view.operations.len(), 1);
-    assert_eq!(authority_view.operations[0].caller, caller.to_text());
-}
-
-#[test]
-fn kinic_deposit_ambiguous_transfer_keeps_pending_for_review() {
-    install_empty_test_service();
-    let _caller = AuthenticatedCallerGuard::install();
-    set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-        "icrc2_transfer_from timeout".to_string(),
-    ));
-
-    let error = block_on_ready(kinic_deposit_balance(kinic_deposit_request(800)))
-        .expect_err("ambiguous transfer-from should keep pending deposit");
-
-    assert!(error.contains("result ambiguous"));
-    assert!(error.contains("billing authority review required"));
-    assert_eq!(
-        pending_kinic_deposit_state(),
-        r#"{"status":"ambiguous","block":null}"#
-    );
-    let pending = kinic_list_pending_operations(pending_operations_request(None, 100))
-        .expect("caller should view own pending");
-    assert_eq!(pending.operations.len(), 1);
-    assert_eq!(pending.operations[0].status, "ambiguous");
-    assert_eq!(
-        pending.operations[0].required_action,
-        "billing_authority_review"
-    );
-}
-
-#[test]
-fn kinic_list_pending_operations_paginates_authority_view() {
-    install_empty_test_service();
-    for index in 0..3 {
-        let caller = Principal::self_authenticating([index as u8]);
-        let _caller = AuthenticatedCallerGuard::install_principal(caller);
-        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
-            format!("ambiguous deposit {index}"),
-        ));
-        block_on_ready(kinic_deposit_balance(kinic_deposit_request(800 + index)))
-            .expect_err("ambiguous transfer should keep pending operation");
-    }
-
-    let _authority =
-        AuthenticatedCallerGuard::install_principal(test_billing_authority_principal());
-    let first = kinic_list_pending_operations(pending_operations_request(None, 2))
-        .expect("first pending page should load");
-    assert_eq!(first.operations.len(), 2);
-    assert_eq!(first.next_cursor_operation_id, Some(2));
-
-    let second = kinic_list_pending_operations(pending_operations_request(
-        first.next_cursor_operation_id,
-        2,
-    ))
-    .expect("second pending page should load");
-    assert_eq!(second.operations.len(), 1);
-    assert_eq!(second.operations[0].operation_id, 3);
-    assert_eq!(second.next_cursor_operation_id, None);
-}
-
-#[test]
-fn kinic_balance_queries_reject_anonymous_caller() {
-    install_empty_test_service();
-    set_test_caller_principal_for_test(Principal::anonymous());
-
-    let balance_error = kinic_get_balance().expect_err("anonymous balance query should reject");
-    assert!(balance_error.contains("anonymous caller not allowed"));
-    let pending_error = kinic_list_pending_operations(pending_operations_request(None, 100))
-        .expect_err("anonymous pending query should reject");
-    assert!(pending_error.contains("anonymous caller not allowed"));
 }
 
 #[test]
@@ -1321,8 +1023,12 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1363,8 +1069,12 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1470,62 +1180,6 @@ fn icrc21_purchase_database_cycles_rejects_missing_database() {
 }
 
 #[test]
-fn icrc21_kinic_deposit_balance_returns_consent_message() {
-    install_empty_test_service();
-    let request = kinic_deposit_request(150_000_000);
-    let arg = Encode!(&request).expect("arg should encode");
-
-    let response =
-        icrc21_canister_call_consent_message(consent_request("kinic_deposit_balance", arg));
-
-    let message = match response {
-        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
-            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
-        },
-        Icrc21ConsentMessageResponse::Err(error) => {
-            panic!("KINIC deposit consent message should succeed: {error:?}");
-        }
-    };
-    assert!(message.contains("Deposit KINIC to KINIC balance"));
-    assert!(message.contains("Amount: `1.5` KINIC"));
-    assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
-    assert!(message.contains("Spender canister:"));
-    assert!(message.contains("canister-held KINIC balance"));
-}
-
-#[test]
-fn icrc21_kinic_deposit_balance_rejects_zero_amount() {
-    install_empty_test_service();
-    let arg = Encode!(&kinic_deposit_request(0)).expect("arg should encode");
-
-    let response =
-        icrc21_canister_call_consent_message(consent_request("kinic_deposit_balance", arg));
-
-    match response {
-        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
-            assert!(info.description.contains("amount must be positive"));
-        }
-        other => panic!("zero deposit consent should reject: {other:?}"),
-    }
-}
-
-#[test]
-fn icrc21_kinic_deposit_balance_rejects_overflow_amount() {
-    install_empty_test_service();
-    let arg = Encode!(&kinic_deposit_request(u64::MAX)).expect("arg should encode");
-
-    let response =
-        icrc21_canister_call_consent_message(consent_request("kinic_deposit_balance", arg));
-
-    match response {
-        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
-            assert!(info.description.contains("amount exceeds i64"));
-        }
-        other => panic!("overflow deposit consent should reject: {other:?}"),
-    }
-}
-
-#[test]
 fn icrc21_rejects_unsupported_cycle_consent_method() {
     install_empty_test_service();
     let response = icrc21_canister_call_consent_message(consent_request("write_node", Vec::new()));
@@ -1551,15 +1205,216 @@ fn icrc21_rejects_malformed_cycle_consent_arg() {
 }
 
 #[test]
-fn icrc21_rejects_malformed_kinic_deposit_consent_arg() {
+fn icrc21_market_purchase_access_returns_consent_message() {
     install_empty_test_service();
-    let response =
-        icrc21_canister_call_consent_message(consent_request("kinic_deposit_balance", Vec::new()));
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s,
+        access,
+    ))
+    .expect("arg should encode");
 
-    assert!(matches!(
-        response,
-        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::ConsentMessageUnavailable(_))
-    ));
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains("Purchase marketplace database access"));
+    assert!(message.contains("Listing: `Private market DB`"));
+    assert!(message.contains("Payment: `2.5` KINIC"));
+    assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
+    assert!(message.contains(&format!("Seller principal: `{}`", seller.to_text())));
+    assert!(message.contains(&format!(
+        "Seller payout principal: `{}`",
+        Principal::management_canister().to_text()
+    )));
+    assert!(message.contains(&format!("Payer wallet principal: `{}`", payer.to_text())));
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(message.contains("read-only marketplace entitlement"));
+}
+
+#[test]
+fn icrc21_market_purchase_access_canonicalizes_access_principal() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market canonical consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&MarketPurchaseRequest {
+        listing_id: listing.listing_id.clone(),
+        price_e8s: listing.price_e8s,
+        access_principal: access.to_text().to_ascii_uppercase(),
+    })
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(!message.contains(&format!(
+        "Access principal: `{}`",
+        access.to_text().to_ascii_uppercase()
+    )));
+}
+
+#[test]
+fn icrc21_market_purchase_access_rejects_price_mismatch() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Price mismatch".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 302);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s + 1,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("market listing price mismatch"));
+        }
+        other => panic!("price mismatch consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn icrc21_market_purchase_access_rejects_inactive_listing() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Inactive listing".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 303);
+        let listing = market_create_listing(market_listing_request(&database.database_id, 250))
+            .expect("listing should create");
+        market_pause_listing(listing.listing_id.clone()).expect("listing should pause");
+        listing
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("market listing is not active"));
+        }
+        other => panic!("inactive listing consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn market_list_seller_listings_filters_by_seller_and_pages() {
+    install_empty_test_service();
+    let seller_a = test_billing_authority_principal();
+    let seller_b = Principal::management_canister();
+    {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller_a);
+        let first = create_database(CreateDatabaseRequest {
+            name: "Seller A first".to_string(),
+        })
+        .expect("first database should create");
+        fund_database(&first.database_id, 1_000_000, 304);
+        market_create_listing(market_listing_request(&first.database_id, 100))
+            .expect("first listing should create");
+        let second = create_database(CreateDatabaseRequest {
+            name: "Seller A second".to_string(),
+        })
+        .expect("second database should create");
+        fund_database(&second.database_id, 1_000_000, 305);
+        market_create_listing(market_listing_request(&second.database_id, 200))
+            .expect("second listing should create");
+    }
+    {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller_b);
+        let other = create_database(CreateDatabaseRequest {
+            name: "Seller B listing".to_string(),
+        })
+        .expect("other database should create");
+        fund_database(&other.database_id, 1_000_000, 306);
+        market_create_listing(market_listing_request(&other.database_id, 300))
+            .expect("other listing should create");
+    }
+
+    let first_page = market_list_seller_listings(seller_a.to_text(), None, 1)
+        .expect("first seller page should load");
+    assert_eq!(first_page.listings.len(), 1);
+    assert_eq!(first_page.listings[0].seller_principal, seller_a.to_text());
+    assert!(first_page.next_cursor.is_some());
+
+    let second_page = market_list_seller_listings(seller_a.to_text(), first_page.next_cursor, 10)
+        .expect("second seller page should load");
+    assert_eq!(second_page.listings.len(), 1);
+    assert_eq!(second_page.listings[0].seller_principal, seller_a.to_text());
+    assert!(second_page.next_cursor.is_none());
 }
 
 #[test]
@@ -1786,10 +1641,104 @@ fn canister_list_databases_hides_deleted_databases() {
 }
 
 #[test]
+fn market_listing_description_allows_newlines() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Multiline market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(220));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        let mut create = market_listing_request(&database_id, 500);
+        create.description = "Line one\nLine two\r\n\tIndented".to_string();
+        create.llm_summary = Some("Summary one\nSummary two".to_string());
+        let listing = market_create_listing(create).expect("multiline description should create");
+        assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
+        assert_eq!(
+            listing.llm_summary,
+            Some("Summary one\nSummary two".to_string())
+        );
+
+        let updated = market_update_listing(MarketUpdateListingRequest {
+            listing_id: listing.listing_id,
+            expected_revision: listing.revision,
+            payout_principal: Principal::management_canister().to_text(),
+            title: "Updated market DB".to_string(),
+            description: "Updated one\nUpdated two".to_string(),
+            llm_summary: Some("Updated summary\nSecond line".to_string()),
+            tags_json: "[]".to_string(),
+            price_e8s: 600,
+        })
+        .expect("multiline description should update");
+        assert_eq!(updated.description, "Updated one\nUpdated two");
+        assert_eq!(
+            updated.llm_summary,
+            Some("Updated summary\nSecond line".to_string())
+        );
+    }
+}
+
+#[test]
+fn market_listing_description_rejects_non_whitespace_control_characters() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Control market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(221));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        let mut bad_description = market_listing_request(&database_id, 500);
+        bad_description.description = "bad\0description".to_string();
+        let description_error = market_create_listing(bad_description)
+            .expect_err("NUL in description should be rejected");
+        assert!(
+            description_error
+                .contains("market listing description may not contain control characters")
+        );
+
+        let mut bad_title = market_listing_request(&database_id, 500);
+        bad_title.title = "bad\ntitle".to_string();
+        let title_error =
+            market_create_listing(bad_title).expect_err("title newline should be rejected");
+        assert!(title_error.contains("market listing title may not contain control characters"));
+
+        let mut bad_tags = market_listing_request(&database_id, 500);
+        bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
+        let tags_error =
+            market_create_listing(bad_tags).expect_err("tags newline should be rejected");
+        assert!(tags_error.contains("market listing tags may not contain control characters"));
+    }
+}
+
+#[test]
 fn canister_list_databases_includes_market_entitlements_as_reader_access() {
     install_empty_test_service();
     let owner = Principal::management_canister();
     let buyer = Principal::self_authenticating(b"market buyer");
+    let wallet = Principal::self_authenticating(b"market wallet payer");
+    let payout = Principal::self_authenticating(b"market seller payout");
     let database_id;
     let listing_id;
 
@@ -1815,24 +1764,42 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
             expected_etag: None,
         })
         .expect("market database content should write");
-        let listing = market_create_listing(market_listing_request(&database_id, 500))
-            .expect("listing should create");
+        let mut request = market_listing_request(&database_id, 500);
+        request.payout_principal = payout.to_text();
+        let listing = market_create_listing(request).expect("listing should create");
         assert!(!listing.listing_id.starts_with("listing_"));
-        let active = market_publish_listing(listing.listing_id).expect("listing should publish");
-        listing_id = active.listing_id;
+        assert_eq!(listing.status, MarketListingStatus::Active);
+        listing_id = listing.listing_id;
+    }
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(wallet);
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(202));
+        let order = block_on_ready(market_purchase_access(market_purchase_request(
+            &listing_id,
+            500,
+            buyer,
+        )))
+        .expect("wallet should pay for buyer access");
+        assert_eq!(order.buyer_principal, buyer.to_text());
+        assert_eq!(order.payout_principal, payout.to_text());
+        assert_eq!(order.ledger_block_index, 202);
+        assert_eq!(
+            last_ledger_from_for_test()
+                .expect("market payer should record")
+                .owner,
+            wallet
+        );
+        assert_eq!(
+            last_ledger_to_for_test()
+                .expect("market recipient should record")
+                .owner,
+            payout
+        );
     }
 
     {
         let _caller = AuthenticatedCallerGuard::install_principal(buyer);
-        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(202));
-        block_on_ready(kinic_deposit_balance(kinic_deposit_request(1_000)))
-            .expect("buyer should deposit KINIC");
-        market_purchase_access(MarketPurchaseRequest {
-            listing_id: listing_id.clone(),
-            price_e8s: 500,
-        })
-        .expect("buyer should purchase access");
-
         let summaries = list_databases().expect("buyer database summaries should load");
         let summary = summaries
             .iter()
@@ -1874,6 +1841,79 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].role, DatabaseRole::Writer);
     }
+}
+
+#[test]
+fn marketplace_listing_detail_includes_wiki_node_character_counts() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+    let listing_id;
+    let japanese_content = "# 日本語\n\nabc";
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market character counts".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(211));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Wiki/japanese.md".to_string(),
+            kind: NodeKind::File,
+            content: japanese_content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("wiki node should write");
+        for path in ["/Sources", "/Sources/raw", "/Sources/raw/test"] {
+            mkdir_node(MkdirNodeRequest {
+                database_id: database_id.clone(),
+                path: path.to_string(),
+            })
+            .expect("source parent folder should create");
+        }
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Sources/raw/test/source.md".to_string(),
+            kind: NodeKind::Source,
+            content: "source text should not appear in marketplace node sizes".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("source node should write");
+        let listing = market_create_listing(market_listing_request(&database_id, 500))
+            .expect("listing should create");
+        assert_eq!(listing.status, MarketListingStatus::Active);
+        listing_id = listing.listing_id;
+    }
+
+    let detail = market_get_listing(listing_id).expect("listing detail should load");
+    let excerpt = detail
+        .preview
+        .excerpts
+        .iter()
+        .find(|excerpt| excerpt.path == "/Wiki/japanese.md")
+        .expect("wiki file should appear in marketplace node size details");
+    assert_eq!(
+        excerpt.content_chars,
+        japanese_content.chars().count() as u64
+    );
+    assert_eq!(excerpt.excerpt, japanese_content);
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .all(|excerpt| !excerpt.path.starts_with("/Sources/"))
+    );
 }
 
 #[test]

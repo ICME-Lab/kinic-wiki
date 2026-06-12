@@ -7,7 +7,6 @@ import { AuthClient } from "@icp-sdk/auth/client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
-import { kinicGetBalance } from "@/lib/vfs-client";
 import type { HeaderWalletProvider } from "./home-ui";
 
 type AppSessionContext = {
@@ -16,9 +15,6 @@ type AppSessionContext = {
   authLoading: boolean;
   authReady: boolean;
   principal: string | null;
-  kinicBalance: string | null;
-  kinicBalanceError: string | null;
-  kinicBalanceLoading: boolean;
   wallet: ConnectedKinicWallet | null;
   walletBalance: string | null;
   walletBalanceError: string | null;
@@ -29,7 +25,6 @@ type AppSessionContext = {
   disconnectWallet: (provider: HeaderWalletProvider) => void;
   logout: () => Promise<void>;
   login: () => Promise<void>;
-  refreshKinicBalance: () => Promise<void>;
   refreshWalletBalance: (wallet: ConnectedKinicWallet) => Promise<void>;
   setWalletControlsLocked: (locked: boolean) => void;
 };
@@ -39,17 +34,13 @@ const AppSession = createContext<AppSessionContext | null>(null);
 
 export function AppSessionProvider({ children }: { children: ReactNode }) {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
-  const kinicBalanceSeqRef = useRef(0);
   const walletBalanceSeqRef = useRef(0);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
-  const [kinicBalance, setKinicBalance] = useState<string | null>(null);
-  const [kinicBalanceError, setKinicBalanceError] = useState<string | null>(null);
-  const [kinicBalanceLoading, setKinicBalanceLoading] = useState(false);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
+  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -83,36 +74,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     setWalletBusyProvider(null);
     clearStoredWallet();
   }, [clearStoredWallet]);
-
-  const clearKinicBalance = useCallback(() => {
-    kinicBalanceSeqRef.current += 1;
-    setKinicBalance(null);
-    setKinicBalanceLoading(false);
-    setKinicBalanceError(null);
-  }, []);
-
-  const refreshKinicBalance = useCallback(async () => {
-    const balanceSeq = (kinicBalanceSeqRef.current += 1);
-    const isCurrentBalance = () => balanceSeq === kinicBalanceSeqRef.current;
-    if (!authClient || !principal) {
-      clearKinicBalance();
-      return;
-    }
-    setKinicBalanceLoading(true);
-    setKinicBalanceError(null);
-    try {
-      const balance = await kinicGetBalance(canisterId, authClient.getIdentity());
-      if (!isCurrentBalance()) return;
-      setKinicBalance(balance.balanceE8s);
-    } catch (cause) {
-      if (!isCurrentBalance()) return;
-      setKinicBalance(null);
-      setKinicBalanceError(`KINIC balance unavailable: ${errorMessage(cause)}`);
-    } finally {
-      if (!isCurrentBalance()) return;
-      setKinicBalanceLoading(false);
-    }
-  }, [authClient, canisterId, clearKinicBalance, principal]);
 
   const refreshWalletBalance = useCallback(
     async (nextWallet: ConnectedKinicWallet) => {
@@ -172,9 +133,8 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
       const authenticated = await client.isAuthenticated();
       const nextPrincipal = authenticated ? client.getIdentity().getPrincipal().toText() : null;
       setPrincipal(nextPrincipal);
-      if (!nextPrincipal) clearKinicBalance();
     },
-    [clearKinicBalance]
+    []
   );
 
   const login = useCallback(async () => {
@@ -200,17 +160,22 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     try {
       await authClient.logout();
       setPrincipal(null);
-      clearKinicBalance();
       clearWallet();
     } catch (cause) {
       setAuthError(errorMessage(cause));
     } finally {
       setAuthLoading(false);
     }
-  }, [authClient, clearKinicBalance, clearWallet]);
+  }, [authClient, clearWallet]);
 
   useEffect(() => {
     let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const storedWallet = readStoredWallet();
+      if (storedWallet) setWallet(storedWallet);
+    });
 
     AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
       .then(async (client) => {
@@ -234,18 +199,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   }, [syncAuth]);
 
   useEffect(() => {
-    if (!authClient || !principal) return;
-    let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      void refreshKinicBalance();
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [authClient, principal, refreshKinicBalance]);
-
-  useEffect(() => {
     if (!wallet) return;
     let cancelled = false;
     queueMicrotask(() => {
@@ -265,9 +218,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         authLoading,
         authReady,
         principal,
-        kinicBalance,
-        kinicBalanceError,
-        kinicBalanceLoading,
         wallet,
         walletBalance,
         walletBalanceError,
@@ -278,7 +228,6 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
         disconnectWallet,
         login,
         logout,
-        refreshKinicBalance,
         refreshWalletBalance,
         setWalletControlsLocked
       }}

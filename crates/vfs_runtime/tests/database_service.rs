@@ -8,19 +8,21 @@ use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCyclesPurchaseWithLedgerDetails, KinicDepositWithLedgerDetails,
-    MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES, MAX_RESTORE_CHUNK_BYTES, VfsService,
-    cycles_for_payment_amount_e8s,
+    DatabaseCyclesPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
+    MAX_RESTORE_CHUNK_BYTES, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
-    KinicFundDatabaseCyclesRequest, KinicPendingOperationsPageRequest, MarketCreateListingRequest,
-    MarketPurchaseRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
     SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
+
+const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
+const MARKET_SECOND_BUYER_PRINCIPAL: &str = "rrkah-fqaaa-aaaaa-aaaaq-cai";
 
 fn service() -> VfsService {
     service_with_root().0
@@ -45,123 +47,40 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
 fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
     MarketCreateListingRequest {
         database_id: database_id.to_string(),
+        payout_principal: "aaaaa-aa".to_string(),
         title: "Team database".to_string(),
         description: "Reusable team knowledge base".to_string(),
         llm_summary: None,
-        summary_snapshot_revision: None,
-        sample_excerpts_json: "[]".to_string(),
         tags_json: "[]".to_string(),
         price_e8s,
     }
 }
 
-fn excerpt_json(path: &str, etag: &str, excerpt: &str) -> String {
-    format!("[{}]", excerpt_object(path, etag, excerpt))
-}
-
-fn excerpt_object(path: &str, etag: &str, excerpt: &str) -> String {
-    format!(r#"{{"path":"{path}","etag":"{etag}","excerpt":"{excerpt}"}}"#)
-}
-
-fn credit_kinic_balance(
-    service: &VfsService,
-    caller: &str,
-    amount_e8s: u64,
-    block_index: u64,
-    now: i64,
-) {
-    let start = service
-        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
-            caller,
-            amount_e8s,
-            ledger: CyclesPendingLedgerDetailsInput {
-                from_owner: caller,
-                from_subaccount: None,
-                to_owner: "canister",
-                to_subaccount: None,
-                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                ledger_created_at_time_ns: u64::try_from(now).expect("now should fit u64"),
-            },
-            now,
-        })
-        .expect("deposit should begin");
-    service
-        .complete_kinic_deposit_ledger_transfer(start.operation_id, caller, amount_e8s, block_index)
-        .expect("ledger transfer should complete");
-    service
-        .apply_kinic_deposit(start.operation_id, caller, amount_e8s, now + 1)
-        .expect("deposit should credit balance");
-}
-
-fn kinic_fund_request(
-    database_id: &str,
-    payment_amount_e8s: u64,
-) -> KinicFundDatabaseCyclesRequest {
-    KinicFundDatabaseCyclesRequest {
-        database_id: database_id.to_string(),
-        payment_amount_e8s,
-        min_expected_cycles: 0,
+fn market_purchase_request(
+    listing: &MarketListing,
+    access_principal: &str,
+) -> MarketPurchaseRequest {
+    MarketPurchaseRequest {
+        listing_id: listing.listing_id.clone(),
+        price_e8s: listing.price_e8s,
+        access_principal: access_principal.to_string(),
     }
 }
 
-fn database_status_text(root: &std::path::Path, database_id: &str) -> String {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT status FROM databases WHERE database_id = ?1",
-        params![database_id],
-        |row| row.get(0),
-    )
-    .expect("database status should load")
-}
-
-fn database_cycle_ledger_row(
-    root: &std::path::Path,
-    database_id: &str,
-) -> (String, i64, Option<i64>, String, Option<i64>) {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT kind, amount_cycles, payment_amount_e8s, method, ledger_block_index
-         FROM database_cycle_ledger
-         WHERE database_id = ?1
-         ORDER BY entry_id DESC
-         LIMIT 1",
-        params![database_id],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        },
-    )
-    .expect("database cycle ledger row should load")
-}
-
-fn kinic_ledger_row(
-    root: &std::path::Path,
-    principal: &str,
-) -> (String, String, i64, i64, Option<String>) {
-    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
-    conn.query_row(
-        "SELECT source, kind, amount_e8s, balance_after_e8s, counterparty
-         FROM kinic_ledger
-         WHERE principal = ?1
-         ORDER BY entry_id DESC
-         LIMIT 1",
-        params![principal],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        },
-    )
-    .expect("KINIC ledger row should load")
+fn ledger_details<'a>(
+    from_owner: &'a str,
+    to_owner: &'a str,
+    ledger_fee_e8s: u64,
+    now: i64,
+) -> CyclesPendingLedgerDetailsInput<'a> {
+    CyclesPendingLedgerDetailsInput {
+        from_owner,
+        from_subaccount: None,
+        to_owner,
+        to_subaccount: None,
+        ledger_fee_e8s,
+        ledger_created_at_time_ns: u64::try_from(now).expect("now should fit u64") * 1_000_000,
+    }
 }
 
 #[test]
@@ -265,11 +184,10 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:028_kinic_external_block_indexes"),
         1
     );
-    assert!(index_exists(&root, "kinic_ledger_external_block_idx"));
-    assert!(index_exists(
-        &root,
-        "kinic_pending_operations_external_block_kind_idx"
-    ));
+    assert_eq!(
+        schema_migration_count(&root, "database_index:031_drop_app_balance"),
+        1
+    );
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
@@ -425,7 +343,30 @@ fn partial_billing_index_schema_is_rejected() {
         .run_index_migrations()
         .expect_err("partial billing schema should reject");
 
-    assert!(error.contains("unsupported partial billing index schema"));
+    assert!(error.contains("unsupported partial index schema"));
+}
+
+#[test]
+fn partial_marketplace_index_schema_is_rejected() {
+    let dir = tempdir().expect("tempdir should create");
+    let root = dir.keep();
+    let index_path = root.join("index.sqlite3");
+    write_mainnet_011_index_schema(&index_path, "hot");
+    let conn = Connection::open(&index_path).expect("index should reopen");
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+        params!["database_index:027_marketplace_core"],
+    )
+    .expect("partial marketplace marker should insert");
+    drop(conn);
+
+    let service = VfsService::new(index_path, root.join("databases"));
+    let error = service
+        .run_index_migrations()
+        .expect_err("partial marketplace schema should reject");
+
+    assert!(error.contains("unsupported partial index schema"));
+    assert!(error.contains("database_index:027_marketplace_core"));
 }
 
 #[test]
@@ -531,7 +472,7 @@ fn cycles_per_cycle_ledger_schema_is_rejected() {
         )
         .expect("ledger cycles column count should load");
 
-    assert!(error.contains("unsupported partial billing index schema"));
+    assert!(error.contains("unsupported partial index schema"));
     assert_eq!(ledger_cycles_column_count, 1);
 }
 
@@ -573,6 +514,30 @@ fn database_index_row(
         },
     )
     .expect("database index row should exist")
+}
+
+fn pending_database_activation_row(
+    root: &std::path::Path,
+    database_id: &str,
+) -> (String, u16, Option<u16>, bool) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT status, mount_id, active_mount_id, db_file_name <> ''
+         FROM databases WHERE database_id = ?1",
+        params![database_id],
+        |row| {
+            let mount_id: i64 = row.get(1)?;
+            let active_mount_id: Option<i64> = row.get(2)?;
+            let has_db_file_name: i64 = row.get(3)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                mount_id as u16,
+                active_mount_id.map(|value| value as u16),
+                has_db_file_name != 0,
+            ))
+        },
+    )
+    .expect("database activation row should exist")
 }
 
 fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool {
@@ -631,6 +596,25 @@ fn market_row_count(root: &std::path::Path, table: &str, database_id: &str) -> i
         |row| row.get(0),
     )
     .expect("market row count should load")
+}
+
+fn market_pending_operation_count(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM market_purchase_pending_operations WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("market pending operation count should load")
+}
+
+fn delete_market_listing_row(root: &std::path::Path, listing_id: &str) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute(
+        "DELETE FROM market_listings WHERE listing_id = ?1",
+        params![listing_id],
+    )
+    .expect("market listing row should delete");
 }
 
 fn database_cycles_balance(root: &std::path::Path, database_id: &str) -> i64 {
@@ -739,10 +723,10 @@ fn schema_migration_count(root: &std::path::Path, version: &str) -> i64 {
     .expect("migration count should load")
 }
 
-fn index_exists(root: &std::path::Path, name: &str) -> bool {
+fn table_exists(root: &std::path::Path, name: &str) -> bool {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
         params![name],
         |row| row.get::<_, i64>(0),
     )
@@ -752,17 +736,22 @@ fn index_exists(root: &std::path::Path, name: &str) -> bool {
 }
 
 #[test]
-fn fresh_index_schema_contains_kinic_external_block_unique_indexes() {
+fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
     let (_service, root) = service_with_root();
-    assert!(index_exists(&root, "kinic_ledger_external_block_idx"));
-    assert!(index_exists(
-        &root,
-        "kinic_pending_operations_external_block_kind_idx"
-    ));
     assert_eq!(
-        schema_migration_count(&root, "database_index:028_kinic_external_block_indexes"),
+        schema_migration_count(&root, "database_index:031_drop_app_balance"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:027_marketplace_core"),
+        1
+    );
+    assert!(table_exists(&root, "market_listings"));
+    assert!(table_exists(&root, "market_purchase_pending_operations"));
+    assert!(table_exists(&root, "market_entitlements"));
+    assert!(!table_exists(&root, "kinic_accounts"));
+    assert!(!table_exists(&root, "kinic_ledger"));
+    assert!(!table_exists(&root, "kinic_pending_operations"));
 }
 
 fn mount_history_row(root: &std::path::Path, mount_id: u16) -> (String, String) {
@@ -1780,13 +1769,14 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         ("pending".to_string(), None, 0, None)
     );
     let meta = service
-        .activate_pending_database_for_cycles_purchase(&pending.database_id, 2)
+        .prepare_pending_database_activation(&pending.database_id, 2)
         .expect("pending activation should prepare")
         .expect("pending activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
-    service
-        .run_pending_database_migrations(&pending.database_id)
-        .expect("pending migrations should run");
+    assert_eq!(
+        pending_database_activation_row(&root, &pending.database_id),
+        ("pending".to_string(), 11, None, true)
+    );
     let purchased_cycles = default_cycles_for_payment(1_000_000);
     service
         .complete_database_cycles_purchase_ledger_transfer(
@@ -1813,6 +1803,14 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     assert_eq!(row.0, "active");
     assert_eq!(row.1, Some(11));
     assert!(row.2 > 0);
+    assert_eq!(
+        database_cycles_balance(&root, &pending.database_id),
+        purchased_cycles as i64
+    );
+    assert_eq!(
+        database_pending_operation_count(&root, &pending.database_id),
+        0
+    );
     assert_eq!(
         mount_history_row(&root, 11),
         (pending.database_id.clone(), "activate".to_string())
@@ -1897,7 +1895,7 @@ fn pending_database_creation_preserves_activation_started_reservations_during_cl
         .reserve_pending_generated_database("Activating", "owner", 0)
         .expect("pending database should create");
     service
-        .activate_pending_database_for_cycles_purchase(&activated.database_id, 1)
+        .prepare_pending_database_activation(&activated.database_id, 1)
         .expect("pending activation should start")
         .expect("pending activation should allocate mount");
     for offset in 0..2 {
@@ -1911,10 +1909,14 @@ fn pending_database_creation_preserves_activation_started_reservations_during_cl
         .expect("unactivated expired pending databases should be purged");
 
     assert!(database_index_row_exists(&root, &activated.database_id));
+    let row = database_index_row(&root, &activated.database_id);
+    assert_eq!(row.0, "pending");
+    assert_eq!(row.1, None);
     assert_eq!(
-        database_index_row(&root, &activated.database_id),
-        ("pending".to_string(), Some(11), 0, None)
+        pending_database_activation_row(&root, &activated.database_id),
+        ("pending".to_string(), 11, None, true)
     );
+    assert_eq!(row.3, None);
 }
 
 #[test]
@@ -1959,7 +1961,7 @@ fn cleanup_database_cycles_purchase_discards_started_pending_activation() {
         .expect("cycle purchase should begin");
     let purchased_cycles = default_cycles_for_payment(500);
     let meta = service
-        .activate_pending_database_for_cycles_purchase(&pending.database_id, 4)
+        .prepare_pending_database_activation(&pending.database_id, 4)
         .expect("pending activation should prepare")
         .expect("activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
@@ -2301,7 +2303,7 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
 }
 
 #[test]
-fn cycles_history_redacts_principals_for_non_owner_readers() {
+fn cycles_history_requires_writer_and_redacts_principals_for_non_owners() {
     let (service, _root) = service_with_root();
     service
         .create_database("alpha", "owner", 1)
@@ -2314,13 +2316,10 @@ fn cycles_history_redacts_principals_for_non_owner_readers() {
         .expect("reader should be granted");
     cycle_database(&service, "alpha", "payer-principal", 500, 42, 3);
 
-    let reader_entry = service
+    let reader_error = service
         .list_database_cycle_entries("alpha", "reader", None, 10)
-        .expect("reader should list history")
-        .entries
-        .remove(0);
-    assert_eq!(reader_entry.caller, "redacted");
-    assert_eq!(reader_entry.ledger_block_index, Some(42));
+        .expect_err("reader should not list history");
+    assert!(reader_error.contains("principal lacks required database role"));
 
     let writer_entry = service
         .list_database_cycle_entries("alpha", "writer", None, 10)
@@ -4361,264 +4360,7 @@ fn move_node_validates_source_target_path() {
 }
 
 #[test]
-fn kinic_fund_database_cycles_moves_internal_balance_to_database_balance() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("fund-db", "owner", 1)
-        .expect("database should create");
-    credit_kinic_balance(&service, "buyer", 1_000, 10, 2);
-    let config = service
-        .cycles_billing_config()
-        .expect("cycles billing config should load");
-    let expected_cycles =
-        cycles_for_payment_amount_e8s(250, &config).expect("cycles quote should compute");
-
-    let result = service
-        .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-db", 250), 3)
-        .expect("internal balance funding should succeed");
-
-    assert_eq!(result.payment_amount_e8s, 250);
-    assert_eq!(result.amount_cycles, expected_cycles);
-    assert_eq!(result.database_balance_cycles, expected_cycles);
-    assert_eq!(result.kinic_balance_e8s, 750);
-    assert_eq!(
-        service
-            .kinic_get_balance("buyer")
-            .expect("buyer balance should load")
-            .balance_e8s,
-        750
-    );
-    assert_eq!(
-        database_cycles_balance(&root, "fund-db"),
-        expected_cycles as i64
-    );
-    assert_eq!(
-        kinic_ledger_row(&root, "buyer"),
-        (
-            "canister_internal".to_string(),
-            "fund_database_cycles".to_string(),
-            -250,
-            750,
-            Some("fund-db".to_string())
-        )
-    );
-    assert_eq!(
-        database_cycle_ledger_row(&root, "fund-db"),
-        (
-            "cycles_purchase".to_string(),
-            expected_cycles as i64,
-            Some(250),
-            "kinic_fund_database_cycles".to_string(),
-            None
-        )
-    );
-}
-
-#[test]
-fn kinic_deposit_external_block_indexes_reject_duplicate_pending_and_ledger_blocks() {
-    let service = service();
-    let first = service
-        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
-            caller: "alice",
-            amount_e8s: 100,
-            ledger: CyclesPendingLedgerDetailsInput {
-                from_owner: "alice",
-                from_subaccount: None,
-                to_owner: "canister",
-                to_subaccount: None,
-                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                ledger_created_at_time_ns: 1,
-            },
-            now: 1,
-        })
-        .expect("first deposit should begin");
-    service
-        .complete_kinic_deposit_ledger_transfer(first.operation_id, "alice", 100, 77)
-        .expect("first pending transfer should complete");
-    let second = service
-        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
-            caller: "bob",
-            amount_e8s: 100,
-            ledger: CyclesPendingLedgerDetailsInput {
-                from_owner: "bob",
-                from_subaccount: None,
-                to_owner: "canister",
-                to_subaccount: None,
-                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                ledger_created_at_time_ns: 2,
-            },
-            now: 2,
-        })
-        .expect("second deposit should begin");
-    let pending_duplicate = service
-        .complete_kinic_deposit_ledger_transfer(second.operation_id, "bob", 100, 77)
-        .expect_err("duplicate pending external block should reject");
-    assert!(pending_duplicate.contains("UNIQUE constraint failed"));
-
-    service
-        .apply_kinic_deposit(first.operation_id, "alice", 100, 3)
-        .expect("first deposit should apply");
-    let third = service
-        .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
-            caller: "carol",
-            amount_e8s: 100,
-            ledger: CyclesPendingLedgerDetailsInput {
-                from_owner: "carol",
-                from_subaccount: None,
-                to_owner: "canister",
-                to_subaccount: None,
-                ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                ledger_created_at_time_ns: 4,
-            },
-            now: 4,
-        })
-        .expect("third deposit should begin");
-    service
-        .complete_kinic_deposit_ledger_transfer(third.operation_id, "carol", 100, 77)
-        .expect("ledger duplicate is checked when applying after pending is deleted");
-    let ledger_duplicate = service
-        .apply_kinic_deposit(third.operation_id, "carol", 100, 5)
-        .expect_err("duplicate ledger external block should reject");
-    assert!(ledger_duplicate.contains("UNIQUE constraint failed"));
-    assert_eq!(
-        service
-            .kinic_get_balance("carol")
-            .expect("failed duplicate should not credit")
-            .balance_e8s,
-        0
-    );
-}
-
-#[test]
-fn kinic_list_pending_operations_paginates_and_clamps_limits() {
-    let service = service();
-    for index in 0..3 {
-        let caller = format!("caller-{index}");
-        service
-            .begin_kinic_deposit_with_ledger_details(KinicDepositWithLedgerDetails {
-                caller: &caller,
-                amount_e8s: 100 + index,
-                ledger: CyclesPendingLedgerDetailsInput {
-                    from_owner: &caller,
-                    from_subaccount: None,
-                    to_owner: "canister",
-                    to_subaccount: None,
-                    ledger_fee_e8s: KINIC_LEDGER_FEE_E8S,
-                    ledger_created_at_time_ns: index,
-                },
-                now: i64::try_from(index).expect("index should fit"),
-            })
-            .expect("deposit should begin");
-    }
-
-    let first = service
-        .kinic_list_pending_operations(
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            KinicPendingOperationsPageRequest {
-                cursor_operation_id: None,
-                limit: 2,
-            },
-        )
-        .expect("first page should load");
-    assert_eq!(first.operations.len(), 2);
-    assert_eq!(first.next_cursor_operation_id, Some(2));
-
-    let second = service
-        .kinic_list_pending_operations(
-            "rrkah-fqaaa-aaaaa-aaaaq-cai",
-            KinicPendingOperationsPageRequest {
-                cursor_operation_id: first.next_cursor_operation_id,
-                limit: 0,
-            },
-        )
-        .expect("zero limit should clamp to one");
-    assert_eq!(second.operations.len(), 1);
-    assert_eq!(second.operations[0].operation_id, 3);
-    assert_eq!(second.next_cursor_operation_id, None);
-}
-
-#[test]
-fn kinic_fund_database_cycles_can_activate_pending_database_after_mount_allocation() {
-    let (service, root) = service_with_root();
-    let pending = service
-        .reserve_pending_generated_database("Fund pending", "owner", 1)
-        .expect("pending database should reserve");
-    service
-        .activate_pending_database_for_cycles_purchase(&pending.database_id, 2)
-        .expect("pending activation should start")
-        .expect("pending activation should allocate mount");
-    credit_kinic_balance(&service, "owner", 1_000, 20, 3);
-
-    let result = service
-        .kinic_fund_database_cycles("owner", kinic_fund_request(&pending.database_id, 400), 4)
-        .expect("pending database funding should succeed");
-
-    assert!(result.amount_cycles > 0);
-    assert_eq!(result.kinic_balance_e8s, 600);
-    assert_eq!(database_status_text(&root, &pending.database_id), "active");
-}
-
-#[test]
-fn kinic_fund_database_cycles_rejects_invalid_payment_or_database_state() {
-    let (service, root) = service_with_root();
-    service
-        .create_database("fund-active", "owner", 1)
-        .expect("active database should create");
-    credit_kinic_balance(&service, "buyer", 100, 10, 2);
-
-    let insufficient = service
-        .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-active", 101), 3)
-        .expect_err("insufficient KINIC balance should reject");
-    assert!(insufficient.contains("insufficient KINIC balance"));
-
-    let config = service
-        .cycles_billing_config()
-        .expect("cycles billing config should load");
-    let quoted = cycles_for_payment_amount_e8s(50, &config).expect("quote should compute");
-    let min_mismatch = service
-        .kinic_fund_database_cycles(
-            "buyer",
-            KinicFundDatabaseCyclesRequest {
-                database_id: "fund-active".to_string(),
-                payment_amount_e8s: 50,
-                min_expected_cycles: quoted + 1,
-            },
-            4,
-        )
-        .expect_err("quote mismatch should reject");
-    assert!(min_mismatch.contains("cycles purchase quote changed"));
-
-    let pending = service
-        .reserve_pending_generated_database("Unallocated", "owner", 5)
-        .expect("pending database should reserve");
-    let pending_error = service
-        .kinic_fund_database_cycles("buyer", kinic_fund_request(&pending.database_id, 50), 6)
-        .expect_err("unallocated pending database should reject");
-    assert!(pending_error.contains("pending database has no activation mount"));
-    assert_eq!(database_status_text(&root, &pending.database_id), "pending");
-    assert_eq!(database_cycles_balance(&root, &pending.database_id), 0);
-    assert_eq!(
-        service
-            .kinic_get_balance("buyer")
-            .expect("buyer balance should load")
-            .balance_e8s,
-        100
-    );
-
-    service
-        .create_database("fund-archive", "owner", 7)
-        .expect("archive database should create");
-    service
-        .begin_database_archive("fund-archive", "owner", 8)
-        .expect("archive should begin");
-    let archived = service
-        .kinic_fund_database_cycles("buyer", kinic_fund_request("fund-archive", 50), 9)
-        .expect_err("archiving database should reject");
-    assert!(archived.contains("database is archiving"));
-}
-
-#[test]
-fn market_purchase_moves_internal_balance_and_creates_entitlement() {
+fn market_purchase_creates_order_with_ledger_block_and_entitlement() {
     let service = service();
     service
         .create_database("market-db", "seller", 1)
@@ -4627,41 +4369,39 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
         .market_create_listing("seller", market_listing_request("market-db", 250), 2)
         .expect("listing should create");
     assert!(!listing.listing_id.starts_with("listing_"));
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
-    credit_kinic_balance(&service, "buyer", 1_000, 10, 5);
-
+    assert_eq!(listing.status, MarketListingStatus::Active);
     let order = service
-        .market_purchase_access(
+        .begin_market_purchase_with_ledger_details(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "aaaaa-aa", 100_000, 6),
             6,
         )
+        .and_then(|start| {
+            service.complete_market_purchase_ledger_transfer(
+                start.operation_id,
+                MARKET_BUYER_PRINCIPAL,
+                &listing.listing_id,
+                listing.price_e8s,
+                42,
+            )?;
+            service.apply_market_purchase(
+                start.operation_id,
+                MARKET_BUYER_PRINCIPAL,
+                &listing.listing_id,
+                listing.price_e8s,
+                7,
+            )
+        })
         .expect("purchase should succeed");
 
-    assert_eq!(order.buyer_principal, "buyer");
+    assert_eq!(order.buyer_principal, MARKET_BUYER_PRINCIPAL);
     assert_eq!(order.seller_principal, "seller");
+    assert_eq!(order.payout_principal, "aaaaa-aa");
+    assert_eq!(order.ledger_block_index, 42);
     assert_eq!(
         service
-            .kinic_get_balance("buyer")
-            .expect("buyer balance should load")
-            .balance_e8s,
-        750
-    );
-    assert_eq!(
-        service
-            .kinic_get_balance("seller")
-            .expect("seller balance should load")
-            .balance_e8s,
-        250
-    );
-    assert_eq!(
-        service
-            .market_list_entitlements("buyer", None, 10)
+            .market_list_entitlements(MARKET_BUYER_PRINCIPAL, None, 10)
             .expect("entitlements should load")
             .entitlements
             .len(),
@@ -4670,17 +4410,11 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
     let second_listing = service
         .market_create_listing("seller", market_listing_request("market-db", 300), 7)
         .expect("second listing should create");
-    let second_listing = service
-        .market_publish_listing("seller", &second_listing.listing_id, 8)
-        .expect("second listing should publish");
     assert!(
         service
             .market_purchase_access(
                 "buyer",
-                MarketPurchaseRequest {
-                    listing_id: second_listing.listing_id,
-                    price_e8s: second_listing.price_e8s,
-                },
+                market_purchase_request(&second_listing, MARKET_BUYER_PRINCIPAL),
                 9,
             )
             .is_err(),
@@ -4689,42 +4423,489 @@ fn market_purchase_moves_internal_balance_and_creates_entitlement() {
 }
 
 #[test]
-fn market_purchase_rejects_seller_self_purchase() {
+fn market_listing_payout_principal_is_saved_updated_and_validated() {
     let service = service();
     service
-        .create_database("self-market", "seller", 1)
+        .create_database("payout-market", "seller", 1)
         .expect("database should create");
+    let mut create = market_listing_request("payout-market", 100);
+    create.payout_principal = "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string();
     let listing = service
-        .market_create_listing("seller", market_listing_request("self-market", 250), 2)
-        .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
-    credit_kinic_balance(&service, "seller", 1_000, 10, 4);
+        .market_create_listing("seller", create, 2)
+        .expect("listing should create with payout principal");
+    assert_eq!(listing.payout_principal, "ryjl3-tyaaa-aaaaa-aaaba-cai");
 
-    let error = service
-        .market_purchase_access(
+    let updated = service
+        .market_update_listing(
             "seller",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id.clone(),
+                expected_revision: listing.revision,
+                payout_principal: "aaaaa-aa".to_string(),
+                title: listing.title,
+                description: listing.description,
+                llm_summary: listing.llm_summary,
+                tags_json: listing.tags_json,
                 price_e8s: listing.price_e8s,
             },
-            5,
+            3,
         )
-        .expect_err("seller must not buy their own listing");
+        .expect("seller should update payout principal");
+    assert_eq!(updated.payout_principal, "aaaaa-aa");
 
-    assert!(error.contains("seller cannot purchase own listing"));
-    assert_eq!(
+    let mut invalid_create = market_listing_request("payout-market", 100);
+    invalid_create.payout_principal = "not-a-principal".to_string();
+    let invalid_error = service
+        .market_create_listing("seller", invalid_create, 4)
+        .expect_err("invalid payout principal should reject");
+    assert!(invalid_error.contains("principal text is invalid"));
+
+    let mut anonymous_create = market_listing_request("payout-market", 100);
+    anonymous_create.payout_principal = "2vxsx-fae".to_string();
+    let anonymous_error = service
+        .market_create_listing("seller", anonymous_create, 5)
+        .expect_err("anonymous payout principal should reject");
+    assert!(anonymous_error.contains("principal must not be anonymous"));
+}
+
+#[test]
+fn market_purchase_payer_can_grant_access_to_ii_principal() {
+    let service = service();
+    service
+        .create_database("market-access-db", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("market-access-db", 250), 2)
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "wallet",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("wallet", "aaaaa-aa", 100_000, 6),
+            6,
+        )
+        .expect("wallet payer should begin purchase");
+    let pending = service
+        .query_index_sql_json(
+            "SELECT json_object('to_owner', to_owner) FROM market_purchase_pending_operations",
+            10,
+        )
+        .expect("pending operation should be queryable");
+    assert_eq!(pending.rows, vec![r#"{"to_owner":"aaaaa-aa"}"#]);
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete for access principal");
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            7,
+        )
+        .expect("purchase should grant II access");
+
+    assert_eq!(order.buyer_principal, MARKET_BUYER_PRINCIPAL);
+    assert!(
         service
-            .kinic_get_balance("seller")
-            .expect("seller balance should load")
-            .balance_e8s,
-        1_000
+            .list_database_summaries_for_caller(MARKET_BUYER_PRINCIPAL)
+            .expect("II principal should list purchased database")
+            .iter()
+            .any(|database| database.database_id == "market-access-db")
+    );
+    assert!(
+        service
+            .market_preview_purchase(MARKET_BUYER_PRINCIPAL, &listing.listing_id)
+            .expect("II principal should preview purchase")
+            .already_entitled
+    );
+    assert!(
+        !service
+            .market_preview_purchase("wallet", &listing.listing_id)
+            .expect("wallet payer should preview purchase")
+            .already_entitled
     );
 }
 
 #[test]
-fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_price_mismatch() {
+fn market_purchase_begin_records_listing_payout_for_empty_ledger_recipient() {
+    let service = service();
+    service
+        .create_database("market-access-pending-payout", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("market-access-pending-payout", 250),
+            2,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "", 100_000, 6),
+            6,
+        )
+        .expect("purchase should begin");
+    assert_eq!(start.payout_principal, "aaaaa-aa");
+    let pending = service
+        .query_index_sql_json(
+            "SELECT json_object('to_owner', to_owner) FROM market_purchase_pending_operations",
+            10,
+        )
+        .expect("pending operation should be queryable");
+
+    assert_eq!(pending.rows, vec![r#"{"to_owner":"aaaaa-aa"}"#]);
+}
+
+#[test]
+fn market_purchase_rejects_ledger_recipient_mismatch() {
+    let service = service();
+    service
+        .create_database("recipient-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("recipient-market", 250), 2)
+        .expect("listing should create");
+    let result = service.begin_market_purchase_with_ledger_details(
+        "buyer",
+        market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+        ledger_details("buyer", "ryjl3-tyaaa-aaaaa-aaaba-cai", 100_000, 6),
+        6,
+    );
+    let error = match result {
+        Ok(_) => panic!("mismatched ledger recipient should reject"),
+        Err(error) => error,
+    };
+
+    assert!(error.contains("ledger recipient must match listing payout principal"));
+}
+
+#[test]
+fn market_purchase_rejects_invalid_and_anonymous_access_principal() {
+    let service = service();
+    service
+        .create_database("principal-reject-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("principal-reject-market", 250),
+            2,
+        )
+        .expect("listing should create");
+
+    for (principal, expected) in [
+        ("not-a-principal", "principal text is invalid"),
+        ("2vxsx-fae", "principal must not be anonymous"),
+    ] {
+        let result = service.begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, principal),
+            ledger_details("buyer", "aaaaa-aa", 100_000, 6),
+            6,
+        );
+        let error = match result {
+            Ok(_) => panic!("invalid access principal should reject"),
+            Err(error) => error,
+        };
+        assert!(error.contains(expected));
+    }
+}
+
+#[test]
+fn market_purchase_canonicalizes_access_principal() {
+    let service = service();
+    service
+        .create_database("principal-canonical-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("principal-canonical-market", 250),
+            2,
+        )
+        .expect("listing should create");
+    let non_canonical = MARKET_BUYER_PRINCIPAL.to_ascii_uppercase();
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, &non_canonical),
+            ledger_details("buyer", "aaaaa-aa", 100_000, 6),
+            6,
+        )
+        .expect("non-canonical access principal should canonicalize");
+    assert_eq!(start.access_principal, MARKET_BUYER_PRINCIPAL);
+    let pending = service
+        .query_index_sql_json(
+            "SELECT json_object('buyer_principal', buyer_principal) FROM market_purchase_pending_operations",
+            10,
+        )
+        .expect("pending operation should be queryable");
+    assert_eq!(
+        pending.rows,
+        vec![format!(
+            r#"{{"buyer_principal":"{}"}}"#,
+            MARKET_BUYER_PRINCIPAL
+        )]
+    );
+
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete");
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            7,
+        )
+        .expect("purchase should apply");
+
+    assert_eq!(order.buyer_principal, MARKET_BUYER_PRINCIPAL);
+    assert!(
+        service
+            .market_preview_purchase(MARKET_BUYER_PRINCIPAL, &listing.listing_id)
+            .expect("canonical principal should preview entitlement")
+            .already_entitled
+    );
+}
+
+#[test]
+fn market_purchase_applies_when_listing_pauses_during_ledger_transfer() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("paused-after-pay-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("paused-after-pay-market", 250),
+            2,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "aaaaa-aa", 100_000, 3),
+            3,
+        )
+        .expect("purchase should begin while listing is active");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete");
+    service
+        .market_pause_listing("seller", &listing.listing_id, 4)
+        .expect("seller may pause listing while ledger transfer is awaited");
+
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            5,
+        )
+        .expect("ledger-completed purchase should apply from pending snapshot");
+
+    assert_eq!(order.database_id, "paused-after-pay-market");
+    assert_eq!(order.seller_principal, "seller");
+    assert_eq!(order.payout_principal, "aaaaa-aa");
+    assert_eq!(order.ledger_block_index, 42);
+    assert_eq!(
+        market_row_count(&root, "market_entitlements", "paused-after-pay-market"),
+        1
+    );
+    assert_eq!(
+        market_pending_operation_count(&root, "paused-after-pay-market"),
+        0
+    );
+}
+
+#[test]
+fn market_purchase_applies_from_snapshot_when_listing_row_disappears_during_ledger_transfer() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("deleted-after-pay-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("deleted-after-pay-market", 250),
+            2,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "aaaaa-aa", 100_000, 3),
+            3,
+        )
+        .expect("purchase should begin while listing exists");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            42,
+        )
+        .expect("ledger transfer should complete");
+    delete_market_listing_row(&root, &listing.listing_id);
+
+    let order = service
+        .apply_market_purchase(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            5,
+        )
+        .expect("ledger-completed purchase should apply from pending snapshot without listing row");
+
+    assert_eq!(order.database_id, "deleted-after-pay-market");
+    assert_eq!(order.seller_principal, "seller");
+    assert_eq!(order.payout_principal, "aaaaa-aa");
+    assert_eq!(order.ledger_block_index, 42);
+    assert_eq!(
+        market_row_count(&root, "market_listings", "deleted-after-pay-market"),
+        0
+    );
+    assert_eq!(
+        market_row_count(&root, "market_orders", "deleted-after-pay-market"),
+        1
+    );
+    assert_eq!(
+        market_row_count(&root, "market_entitlements", "deleted-after-pay-market"),
+        1
+    );
+    assert_eq!(
+        market_pending_operation_count(&root, "deleted-after-pay-market"),
+        0
+    );
+}
+
+#[test]
+fn market_listing_description_allows_newlines() {
+    let service = service();
+    service
+        .create_database("multiline-market", "seller", 1)
+        .expect("database should create");
+
+    let mut create = market_listing_request("multiline-market", 250);
+    create.description = "Line one\nLine two\r\n\tIndented".to_string();
+    create.llm_summary = Some("Summary one\nSummary two".to_string());
+    let listing = service
+        .market_create_listing("seller", create, 2)
+        .expect("multiline description should create");
+    assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
+    assert_eq!(
+        listing.llm_summary,
+        Some("Summary one\nSummary two".to_string())
+    );
+
+    let updated = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id,
+                expected_revision: listing.revision,
+                payout_principal: "aaaaa-aa".to_string(),
+                title: "Updated market DB".to_string(),
+                description: "Updated one\nUpdated two".to_string(),
+                llm_summary: Some("Updated summary\nSecond line".to_string()),
+                tags_json: "[]".to_string(),
+                price_e8s: 300,
+            },
+            3,
+        )
+        .expect("multiline description should update");
+    assert_eq!(updated.description, "Updated one\nUpdated two");
+    assert_eq!(
+        updated.llm_summary,
+        Some("Updated summary\nSecond line".to_string())
+    );
+}
+
+#[test]
+fn market_listing_description_rejects_non_whitespace_control_characters() {
+    let service = service();
+    service
+        .create_database("control-market", "seller", 1)
+        .expect("database should create");
+
+    let mut bad_description = market_listing_request("control-market", 250);
+    bad_description.description = "bad\0description".to_string();
+    let description_error = service
+        .market_create_listing("seller", bad_description, 2)
+        .expect_err("NUL in description should be rejected");
+    assert!(
+        description_error.contains("market listing description may not contain control characters")
+    );
+
+    let mut bad_title = market_listing_request("control-market", 250);
+    bad_title.title = "bad\ntitle".to_string();
+    let title_error = service
+        .market_create_listing("seller", bad_title, 3)
+        .expect_err("title newline should be rejected");
+    assert!(title_error.contains("market listing title may not contain control characters"));
+
+    let mut bad_tags = market_listing_request("control-market", 250);
+    bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
+    let tags_error = service
+        .market_create_listing("seller", bad_tags, 4)
+        .expect_err("tags newline should be rejected");
+    assert!(tags_error.contains("market listing tags may not contain control characters"));
+}
+
+#[test]
+fn market_purchase_rejects_seller_self_purchase() {
+    let service = service();
+    service
+        .create_database("self-market", MARKET_SECOND_BUYER_PRINCIPAL, 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            MARKET_SECOND_BUYER_PRINCIPAL,
+            market_listing_request("self-market", 250),
+            2,
+        )
+        .expect("listing should create");
+    let error = service
+        .market_purchase_access(
+            "buyer",
+            market_purchase_request(&listing, MARKET_SECOND_BUYER_PRINCIPAL),
+            5,
+        )
+        .expect_err("seller access principal must not buy their own listing");
+
+    assert!(error.contains("seller cannot purchase own listing"));
+}
+
+#[test]
+fn market_purchase_rejects_existing_entitlement_and_price_mismatch() {
     let service = service();
     service
         .create_database("reject-market", "seller", 1)
@@ -4732,63 +4913,99 @@ fn market_purchase_rejects_insufficient_balance_existing_entitlement_and_price_m
     let listing = service
         .market_create_listing("seller", market_listing_request("reject-market", 100), 2)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
 
-    let insufficient = service
-        .market_purchase_access(
-            "low-buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
-            4,
-        )
-        .expect_err("insufficient balance should reject");
-    assert!(insufficient.contains("insufficient KINIC balance"));
-
-    credit_kinic_balance(&service, "buyer", 500, 10, 5);
     let price_mismatch = service
         .market_purchase_access(
             "buyer",
             MarketPurchaseRequest {
                 listing_id: listing.listing_id.clone(),
                 price_e8s: listing.price_e8s + 1,
+                access_principal: MARKET_BUYER_PRINCIPAL.to_string(),
             },
             6,
         )
         .expect_err("price mismatch should reject");
     assert!(price_mismatch.contains("market listing price mismatch"));
-    assert_eq!(
-        service
-            .kinic_get_balance("buyer")
-            .expect("buyer balance should remain")
-            .balance_e8s,
-        500
-    );
 
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
             7,
         )
         .expect("first purchase should succeed");
     let duplicate = service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
             8,
         )
         .expect_err("existing entitlement should reject");
     assert!(duplicate.contains("active entitlement already exists"));
+}
+
+#[test]
+fn market_database_entitlements_are_owner_readonly_and_paged() {
+    let service = service();
+    service
+        .create_database("buyer-list-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("buyer-list-market", 100),
+            2,
+        )
+        .expect("listing should create");
+
+    for (buyer, block_index) in [
+        (MARKET_BUYER_PRINCIPAL, 10),
+        (MARKET_SECOND_BUYER_PRINCIPAL, 11),
+    ] {
+        service
+            .market_purchase_access(
+                buyer,
+                market_purchase_request(&listing, buyer),
+                block_index as i64 + 10,
+            )
+            .expect("purchase should succeed");
+    }
+
+    let first_page = service
+        .market_list_database_entitlements("seller", "buyer-list-market", None, 1)
+        .expect("owner should list database entitlements");
+    assert_eq!(first_page.entitlements.len(), 1);
+    assert_eq!(
+        first_page.entitlements[0].buyer_principal,
+        MARKET_BUYER_PRINCIPAL
+    );
+    assert_eq!(
+        first_page.next_cursor.as_deref(),
+        Some(MARKET_BUYER_PRINCIPAL)
+    );
+
+    let second_page = service
+        .market_list_database_entitlements("seller", "buyer-list-market", first_page.next_cursor, 1)
+        .expect("owner should load next page");
+    assert_eq!(second_page.entitlements.len(), 1);
+    assert_eq!(
+        second_page.entitlements[0].buyer_principal,
+        MARKET_SECOND_BUYER_PRINCIPAL
+    );
+    assert_eq!(second_page.next_cursor, None);
+
+    assert_eq!(
+        service
+            .market_list_entitlements(MARKET_BUYER_PRINCIPAL, None, 10)
+            .expect("buyer entitlement query should remain buyer-scoped")
+            .entitlements
+            .len(),
+        1
+    );
+    let forbidden = service
+        .market_list_database_entitlements(MARKET_BUYER_PRINCIPAL, "buyer-list-market", None, 10)
+        .expect_err("buyer must not inspect seller database entitlements");
+    assert!(forbidden.contains("database owner or admin required"));
 }
 
 #[test]
@@ -4821,6 +5038,163 @@ fn market_listing_owner_policy_and_database_listing_query() {
         .expect("owner should list database listings");
     assert_eq!(listings.len(), 1);
     assert_eq!(listings[0].listing_id, listing.listing_id);
+    assert_eq!(listings[0].revision, 0);
+
+    let updated = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id.clone(),
+                expected_revision: listing.revision,
+                payout_principal: "aaaaa-aa".to_string(),
+                title: "Updated team database".to_string(),
+                description: "Updated reusable team knowledge base".to_string(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+                price_e8s: 150,
+            },
+            5,
+        )
+        .expect("current revision should update listing");
+    assert_eq!(updated.revision, 1);
+    let stale = service
+        .market_update_listing(
+            "seller",
+            MarketUpdateListingRequest {
+                listing_id: listing.listing_id,
+                expected_revision: 0,
+                payout_principal: "aaaaa-aa".to_string(),
+                title: "Stale team database".to_string(),
+                description: "Stale reusable team knowledge base".to_string(),
+                llm_summary: None,
+                tags_json: "[]".to_string(),
+                price_e8s: 200,
+            },
+            6,
+        )
+        .expect_err("stale revision should reject listing update");
+    assert!(stale.contains("market listing revision mismatch"));
+}
+
+#[test]
+fn market_publish_listing_reactivates_paused_listing() {
+    let service = service();
+    service
+        .create_database("republish-market", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing("seller", market_listing_request("republish-market", 100), 2)
+        .expect("listing should create active");
+    assert_eq!(listing.status, MarketListingStatus::Active);
+
+    let paused = service
+        .market_pause_listing("seller", &listing.listing_id, 3)
+        .expect("listing should pause");
+    assert_eq!(paused.status, MarketListingStatus::Paused);
+    assert!(
+        service
+            .market_list_listings(None, 10)
+            .expect("paused listings should load")
+            .listings
+            .is_empty(),
+        "paused listing should leave public marketplace"
+    );
+
+    let active = service
+        .market_publish_listing("seller", &listing.listing_id, 4)
+        .expect("paused listing should republish");
+    assert_eq!(active.status, MarketListingStatus::Active);
+    assert_eq!(
+        service
+            .market_list_listings(None, 10)
+            .expect("active listings should load")
+            .listings
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn market_list_seller_listings_filters_by_seller_and_pages() {
+    let service = service();
+    for (database_id, seller, price) in [
+        ("seller-a-one", "seller-a", 100),
+        ("seller-a-two", "seller-a", 200),
+        ("seller-b-one", "seller-b", 300),
+        ("seller-a-paused", "seller-a", 400),
+    ] {
+        service
+            .create_database(database_id, seller, 1)
+            .expect("database should create");
+        let listing = service
+            .market_create_listing(seller, market_listing_request(database_id, price), 2)
+            .expect("listing should create");
+        if database_id == "seller-a-paused" {
+            service
+                .market_pause_listing(seller, &listing.listing_id, 3)
+                .expect("listing should pause");
+        }
+    }
+    service
+        .create_database("seller-a-stale-owner", "seller-a", 4)
+        .expect("stale owner database should create");
+    let stale = service
+        .market_create_listing(
+            "seller-a",
+            market_listing_request("seller-a-stale-owner", 500),
+            5,
+        )
+        .expect("stale owner listing should create");
+    service
+        .grant_database_access(
+            "seller-a-stale-owner",
+            "seller-a",
+            "successor",
+            DatabaseRole::Owner,
+            6,
+        )
+        .expect("successor should become owner");
+    service
+        .revoke_database_access("seller-a-stale-owner", "successor", "seller-a")
+        .expect("seller-a should lose owner role");
+
+    let first = service
+        .market_list_seller_listings("seller-a", None, 1)
+        .expect("seller listings should load");
+    assert_eq!(first.listings.len(), 1);
+    assert_eq!(first.listings[0].seller_principal, "seller-a");
+    assert!(first.next_cursor.is_some());
+
+    let second = service
+        .market_list_seller_listings("seller-a", first.next_cursor, 10)
+        .expect("second seller page should load");
+    assert_eq!(second.listings.len(), 1);
+    assert_eq!(second.listings[0].seller_principal, "seller-a");
+    assert_ne!(second.listings[0].listing_id, stale.listing_id);
+    assert!(second.next_cursor.is_none());
+
+    let all = [first.listings, second.listings].concat();
+    assert_eq!(all.len(), 2);
+    assert!(
+        all.iter()
+            .all(|listing| listing.seller_principal == "seller-a")
+    );
+    assert!(
+        all.iter()
+            .all(|listing| listing.status == MarketListingStatus::Active)
+    );
+    assert!(
+        !all.iter()
+            .any(|listing| listing.database_id == "seller-b-one")
+    );
+    assert!(
+        !all.iter()
+            .any(|listing| listing.database_id == "seller-a-paused")
+    );
+    assert!(
+        !all.iter()
+            .any(|listing| listing.database_id == "seller-a-stale-owner")
+    );
 }
 
 #[test]
@@ -4838,7 +5212,7 @@ fn market_listing_detail_returns_verified_preview() {
         "/Sources/raw/web/source.md",
         2,
     );
-    let alpha = service
+    service
         .write_node(
             "seller",
             WriteNodeRequest {
@@ -4881,15 +5255,9 @@ fn market_listing_detail_returns_verified_preview() {
         )
         .expect("source node should write");
 
-    let mut request = market_listing_request("preview-market", 100);
-    request.sample_excerpts_json =
-        excerpt_json("/Wiki/alpha/a.md", &alpha.node.etag, "paid insight links");
     let listing = service
-        .market_create_listing("seller", request, 5)
+        .market_create_listing("seller", market_listing_request("preview-market", 100), 5)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 6)
-        .expect("listing should publish");
     let detail = service
         .market_get_listing("2vxsx-fae", &listing.listing_id)
         .expect("anonymous should read public listing preview");
@@ -4902,8 +5270,26 @@ fn market_listing_detail_returns_verified_preview() {
     assert!(detail.verified_stats.markdown_chars >= 64);
     assert_eq!(detail.verified_stats.source_chars, 15);
     assert_eq!(detail.verified_stats.link_edges, 1);
-    assert_eq!(detail.preview.excerpts.len(), 1);
-    assert_eq!(detail.preview.excerpts[0].excerpt, "paid insight links");
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .any(|excerpt| excerpt.path == "/Wiki/alpha/a.md"
+                && excerpt.excerpt == "Alpha paid insight links to [beta](/Wiki/beta/b.md).")
+    );
+    assert!(detail
+        .preview
+        .excerpts
+        .iter()
+        .any(|excerpt| excerpt.path == "/Wiki/beta/b.md" && excerpt.excerpt == "Beta paid body"));
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .all(|excerpt| !excerpt.path.starts_with("/Sources/"))
+    );
     assert!(!detail.preview.preview_stale);
     assert!(
         detail
@@ -4935,103 +5321,9 @@ fn market_listing_detail_returns_verified_preview() {
                 && edge.target_category == "/Wiki/beta"
                 && edge.link_count == 1)
     );
-
-    service
-        .write_node(
-            "seller",
-            WriteNodeRequest {
-                database_id: "preview-market".to_string(),
-                path: "/Wiki/alpha/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "Alpha body changed".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: Some(alpha.node.etag),
-            },
-            7,
-        )
-        .expect("alpha node should update");
-    let stale_detail = service
-        .market_get_listing("2vxsx-fae", &listing.listing_id)
-        .expect("anonymous should still read stale public listing preview");
-    assert!(stale_detail.preview.excerpts.is_empty());
-    assert!(stale_detail.preview.preview_stale);
-}
-
-#[test]
-fn market_listing_sample_excerpts_must_be_verified_wiki_substrings() {
-    let service = service();
-    service
-        .create_database("verified-excerpts", "seller", 1)
-        .expect("database should create");
-    ensure_parent_folders(
-        &service,
-        "seller",
-        "verified-excerpts",
-        "/Wiki/alpha/a.md",
-        2,
-    );
-    ensure_parent_folders(
-        &service,
-        "seller",
-        "verified-excerpts",
-        "/Sources/raw/web/source.md",
-        2,
-    );
-    let node = service
-        .write_node(
-            "seller",
-            WriteNodeRequest {
-                database_id: "verified-excerpts".to_string(),
-                path: "/Wiki/alpha/a.md".to_string(),
-                kind: NodeKind::File,
-                content: "Verified paid excerpt body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            2,
-        )
-        .expect("wiki node should write");
-    service
-        .write_node(
-            "seller",
-            WriteNodeRequest {
-                database_id: "verified-excerpts".to_string(),
-                path: "/Sources/raw/web/source.md".to_string(),
-                kind: NodeKind::Source,
-                content: "Verified paid excerpt body".to_string(),
-                metadata_json: "{}".to_string(),
-                expected_etag: None,
-            },
-            3,
-        )
-        .expect("source node should write");
-
-    for sample_excerpts_json in [
-        excerpt_json("/Wiki/alpha/a.md", "wrong-etag", "paid excerpt"),
-        excerpt_json("/Wiki/alpha/a.md", &node.node.etag, "missing text"),
-        excerpt_json(
-            "/Sources/raw/web/source.md",
-            &node.node.etag,
-            "paid excerpt",
-        ),
-        format!(
-            "[{},{},{},{},{},{}]",
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt"),
-            excerpt_object("/Wiki/alpha/a.md", &node.node.etag, "paid excerpt")
-        ),
-        excerpt_json("/Wiki/alpha/a.md", &node.node.etag, &"x".repeat(401)),
-    ] {
-        let mut request = market_listing_request("verified-excerpts", 100);
-        request.sample_excerpts_json = sample_excerpts_json;
-        assert!(
-            service.market_create_listing("seller", request, 4).is_err(),
-            "invalid sample excerpt must reject"
-        );
-    }
+    assert!(detail.preview.graph_links.iter().any(
+        |edge| edge.source_path == "/Wiki/alpha/a.md" && edge.target_path == "/Wiki/beta/b.md"
+    ));
 }
 
 #[test]
@@ -5047,9 +5339,6 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
             2,
         )
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 3)
-        .expect("listing should publish");
     service
         .grant_database_access(
             "stale-owner-market",
@@ -5062,7 +5351,6 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
     service
         .revoke_database_access("stale-owner-market", "successor", "seller")
         .expect("seller should lose owner access");
-    credit_kinic_balance(&service, "buyer", 100, 30, 5);
 
     assert!(
         service
@@ -5088,30 +5376,12 @@ fn market_listing_leaves_public_surface_when_seller_loses_owner_role() {
         service
             .market_purchase_access(
                 "buyer",
-                MarketPurchaseRequest {
-                    listing_id: listing.listing_id.clone(),
-                    price_e8s: listing.price_e8s,
-                },
+                market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
                 6,
             )
             .expect_err("purchase should reject stale seller")
             .contains("principal has no access to database")
     );
-    assert_eq!(
-        service
-            .kinic_get_balance("buyer")
-            .expect("buyer balance should remain")
-            .balance_e8s,
-        100
-    );
-    assert_eq!(
-        service
-            .kinic_get_balance("seller")
-            .expect("seller balance should remain")
-            .balance_e8s,
-        0
-    );
-
     service
         .market_get_listing("seller", &listing.listing_id)
         .expect("original seller should still manage stale listing");
@@ -5142,9 +5412,6 @@ fn market_listing_requires_active_database() {
     let listing = service
         .market_create_listing("owner", market_listing_request("archive-market", 100), 4)
         .expect("active database listing should create");
-    let listing = service
-        .market_publish_listing("owner", &listing.listing_id, 5)
-        .expect("active database listing should publish");
     assert_eq!(
         service
             .market_list_listings(None, 10)
@@ -5180,7 +5447,6 @@ fn market_listing_requires_active_database() {
     service
         .finalize_database_archive("archive-market", "owner", snapshot_hash.clone(), 7)
         .expect("archive should finalize");
-    credit_kinic_balance(&service, "buyer", 100, 21, 8);
     let preview_error = service
         .market_preview_purchase("buyer", &listing.listing_id)
         .expect_err("archived database preview should reject");
@@ -5188,29 +5454,11 @@ fn market_listing_requires_active_database() {
     let purchase_error = service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id.clone(),
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
             9,
         )
         .expect_err("archived database purchase should reject");
     assert!(purchase_error.contains("database is archived"));
-    assert_eq!(
-        service
-            .kinic_get_balance("buyer")
-            .expect("buyer balance should remain")
-            .balance_e8s,
-        100
-    );
-    assert_eq!(
-        service
-            .kinic_get_balance("owner")
-            .expect("seller balance should remain")
-            .balance_e8s,
-        0
-    );
-
     service
         .begin_database_restore(
             "archive-market",
@@ -5245,10 +5493,7 @@ fn market_listing_requires_active_database() {
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
             12,
         )
         .expect("restored active database purchase should succeed");
@@ -5277,22 +5522,15 @@ fn delete_database_removes_marketplace_rows() {
     let listing = service
         .market_create_listing("seller", market_listing_request("market-delete", 100), 3)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 4)
-        .expect("listing should publish");
-    credit_kinic_balance(&service, "buyer", 100, 10, 5);
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
             6,
         )
         .expect("purchase should succeed");
     service
-        .read_node("market-delete", "buyer", "/Wiki/private.md")
+        .read_node("market-delete", MARKET_BUYER_PRINCIPAL, "/Wiki/private.md")
         .expect("entitled buyer should read before delete");
     assert_eq!(
         market_row_count(&root, "market_listings", "market-delete"),
@@ -5318,14 +5556,14 @@ fn delete_database_removes_marketplace_rows() {
     );
     assert_eq!(
         service
-            .market_list_orders("buyer", None, 10)
+            .market_list_orders(MARKET_BUYER_PRINCIPAL, None, 10)
             .expect("buyer order history should remain")
             .orders
             .len(),
         1
     );
     let deleted_read = service
-        .read_node("market-delete", "buyer", "/Wiki/private.md")
+        .read_node("market-delete", MARKET_BUYER_PRINCIPAL, "/Wiki/private.md")
         .expect_err("deleted database should not remain readable");
     assert!(deleted_read.contains("database not found"));
 }
@@ -5353,23 +5591,16 @@ fn market_entitlement_allows_read_surface_but_not_export() {
     let listing = service
         .market_create_listing("seller", market_listing_request("read-market", 100), 3)
         .expect("listing should create");
-    let listing = service
-        .market_publish_listing("seller", &listing.listing_id, 4)
-        .expect("listing should publish");
-    credit_kinic_balance(&service, "buyer", 100, 20, 6);
     service
         .market_purchase_access(
             "buyer",
-            MarketPurchaseRequest {
-                listing_id: listing.listing_id,
-                price_e8s: listing.price_e8s,
-            },
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
             7,
         )
         .expect("purchase should succeed");
 
     let node = service
-        .read_node("read-market", "buyer", "/Wiki/private.md")
+        .read_node("read-market", MARKET_BUYER_PRINCIPAL, "/Wiki/private.md")
         .expect("entitled buyer should read")
         .expect("node should exist");
     assert_eq!(node.content, "paid body");

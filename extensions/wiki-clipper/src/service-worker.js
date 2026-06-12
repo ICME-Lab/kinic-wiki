@@ -35,6 +35,8 @@ const MAX_MESSAGE_CONTENT_CHARS = 200_000;
 const MAX_RAW_SOURCE_CHARS = 1_500_000;
 const SETTINGS_OPEN_THROTTLE_MS = 2_000;
 const SETTINGS_MENU_ID = "kinic-wiki-clipper-settings";
+const CREATE_WIKI_MENU_ID = "kinic-wiki-clipper-create-wiki";
+const SAVE_RAW_MENU_ID = "kinic-wiki-clipper-save-raw";
 const URL_INGEST_IN_FLIGHT_KEY = "kinic-url-ingest-in-flight-v1";
 const URL_INGEST_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
 let offscreenBridge = defaultOffscreenBridge;
@@ -69,10 +71,11 @@ if (globalThis.chrome?.runtime?.onInstalled) {
 }
 
 if (globalThis.chrome?.contextMenus?.onClicked) {
-  chrome.contextMenus.onClicked.addListener((info) => {
-    if (info?.menuItemId === SETTINGS_MENU_ID) {
-      chrome.runtime.openOptionsPage();
-    }
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    handleContextMenuClick(info, tab).catch((error) => {
+      writeLatestUrlIngestStatus(errorStatus(error instanceof Error ? error.message : String(error), tab?.url || ""));
+      setActionBadge("ERR", "#b42318");
+    });
   });
   createSettingsContextMenu().catch((error) => {
     console.warn("failed to create settings context menu", error);
@@ -117,7 +120,8 @@ export async function handleMessage(message, sender) {
   return { ok: false, error: `unknown message type: ${describeMessageType(message)}` };
 }
 
-export async function handleActionClick(tab, deps = defaultActionDeps()) {
+export async function handleActionClick(tab, deps = defaultActionDeps(), options = {}) {
+  const queueGeneration = options.queueGeneration !== false;
   let inFlightKey = null;
   let reservedInFlight = false;
   try {
@@ -155,25 +159,32 @@ export async function handleActionClick(tab, deps = defaultActionDeps()) {
       }
       return { ok: false, error };
     }
-    const triggerResponse = await deps.sendOffscreen({
-      target: "offscreen",
-      type: "trigger-source-generation",
-      sourcePath: saveResponse.result.path,
-      sourceEtag: saveResponse.result.etag,
-      sessionNonce: saveResponse.result.sourceRunSessionNonce,
-      config
-    });
+    const triggerResponse = queueGeneration
+      ? await deps.sendOffscreen({
+          target: "offscreen",
+          type: "trigger-source-generation",
+          sourcePath: saveResponse.result.path,
+          sourceEtag: saveResponse.result.etag,
+          sessionNonce: saveResponse.result.sourceRunSessionNonce,
+          config
+        })
+      : null;
     const result = {
       url,
       title: tab?.title || "",
       sourcePath: saveResponse.result.path,
       sourceEtag: saveResponse.result.etag,
       sourceCreated: saveResponse.result.created,
-      generationQueued: Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false),
+      generationQueued: queueGeneration ? Boolean(triggerResponse?.ok && triggerResponse.result?.triggered !== false) : false,
+      generationSkipped: !queueGeneration,
       generationError: triggerResponse?.ok ? triggerResponse.result?.triggerError || null : triggerResponse?.error || "generation queue failed"
     };
     const status = sourceCaptureStatus(result);
     await deps.writeStatus(status);
+    if (result.generationSkipped) {
+      await deps.setBadge("RAW", "#5f6368");
+      return { ok: true, result };
+    }
     if (!result.generationQueued) {
       await deps.setBadge("SRC", "#5f6368");
       return { ok: true, result };
@@ -329,6 +340,16 @@ async function writeLatestUrlIngestStatus(status) {
 }
 
 function sourceCaptureStatus(result) {
+  if (result?.generationSkipped === true) {
+    return {
+      status: "source_saved",
+      url: result?.url || "",
+      title: result?.title || "",
+      sourcePath: result?.sourcePath || "",
+      message: "Raw source saved.",
+      updatedAt: new Date().toISOString()
+    };
+  }
   const queued = result?.generationQueued === true;
   return {
     status: queued ? "ok" : "source_saved",
@@ -405,8 +426,18 @@ async function captureTabSource(tab, url) {
 async function createSettingsContextMenu() {
   if (!globalThis.chrome?.contextMenus) return;
   if (typeof chrome.contextMenus.remove === "function") {
-    await chrome.contextMenus.remove(SETTINGS_MENU_ID).catch(() => {});
+    await Promise.all([CREATE_WIKI_MENU_ID, SAVE_RAW_MENU_ID, SETTINGS_MENU_ID].map((id) => chrome.contextMenus.remove(id).catch(() => {})));
   }
+  chrome.contextMenus.create({
+    id: CREATE_WIKI_MENU_ID,
+    title: "Create Kinic wiki page",
+    contexts: ["action"]
+  });
+  chrome.contextMenus.create({
+    id: SAVE_RAW_MENU_ID,
+    title: "Save raw",
+    contexts: ["action"]
+  });
   chrome.contextMenus.create({
     id: SETTINGS_MENU_ID,
     title: "Settings",
@@ -418,10 +449,22 @@ export function createSettingsContextMenuForTest() {
   return createSettingsContextMenu();
 }
 
-export function handleContextMenuClickForTest(info) {
+async function handleContextMenuClick(info, tab) {
   if (info?.menuItemId === SETTINGS_MENU_ID) {
     chrome.runtime.openOptionsPage();
+    return;
   }
+  if (info?.menuItemId === CREATE_WIKI_MENU_ID) {
+    await handleActionClick(tab);
+    return;
+  }
+  if (info?.menuItemId === SAVE_RAW_MENU_ID) {
+    await handleActionClick(tab, defaultActionDeps(), { queueGeneration: false });
+  }
+}
+
+export function handleContextMenuClickForTest(info, tab) {
+  return handleContextMenuClick(info, tab);
 }
 
 export function resetUrlIngestInFlightForTest() {

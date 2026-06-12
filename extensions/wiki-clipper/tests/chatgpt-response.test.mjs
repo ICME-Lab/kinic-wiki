@@ -46,6 +46,21 @@ test("captureFromChatGptResponse normalizes title, roles, and empty content", ()
   ]);
 });
 
+test("messagesFromMapping caps captured content before later huge messages", () => {
+  const mapping = {
+    root: node(null, null),
+    user1: node("root", message("user", "a".repeat(400_000))),
+    assistant1: node("user1", message("assistant", "SHOULD_NOT_BE_CAPTURED"))
+  };
+
+  const messages = messagesFromMapping(mapping, "assistant1");
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].content.length, 320_000);
+  assert.doesNotMatch(messages.map((entry) => entry.content).join("\n"), /SHOULD_NOT_BE_CAPTURED/);
+});
+
 function node(parent, messageValue) {
   return { parent, children: [], message: messageValue };
 }

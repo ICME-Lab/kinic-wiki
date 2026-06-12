@@ -370,11 +370,65 @@ test("context menu opens settings without starting URL ingest", async () => {
   });
   try {
     await createSettingsContextMenuForTest();
-    handleContextMenuClickForTest({ menuItemId: "kinic-wiki-clipper-settings" });
+    await handleContextMenuClickForTest({ menuItemId: "kinic-wiki-clipper-settings" });
 
-    assert.deepEqual(createdMenus, [{ id: "kinic-wiki-clipper-settings", title: "Settings", contexts: ["action"] }]);
+    assert.deepEqual(createdMenus, [
+      { id: "kinic-wiki-clipper-create-wiki", title: "Create Kinic wiki page", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-save-raw", title: "Save raw", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-settings", title: "Settings", contexts: ["action"] }
+    ]);
     assert.equal(optionsOpened, 1);
   } finally {
+    restore();
+  }
+});
+
+test("action click can save browser source without queueing generation", async () => {
+  const calls = [];
+  const messages = [];
+  const response = await handleActionClick(
+    { url: "https://example.com/#section", title: "Example" },
+    actionDeps({
+      sendOffscreen: async (message) => {
+        messages.push(message);
+        return {
+          ok: true,
+          result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+        };
+      },
+      writeStatus: async (status) => calls.push(["status", status.status, status.message]),
+      setBadge: async (text) => calls.push(["badge", text])
+    }),
+    { queueGeneration: false }
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].type, "save-raw-source");
+  assert.equal(response.result.generationSkipped, true);
+  assert.equal(response.result.generationQueued, false);
+  assert.deepEqual(calls, [
+    ["badge", "..."],
+    ["status", "source_saved", "Raw source saved."],
+    ["badge", "RAW"]
+  ]);
+});
+
+test("context menu raw save skips generation trigger", async () => {
+  resetUrlIngestInFlightForTest();
+  const restore = installChromeForAction();
+  try {
+    const response = await handleContextMenuClickForTest(
+      { menuItemId: "kinic-wiki-clipper-save-raw" },
+      { id: 1, url: "https://example.com/", title: "Example" }
+    );
+
+    assert.equal(response, undefined);
+    assert.equal(restore.messages.length, 1);
+    assert.equal(restore.messages[0].type, "save-raw-source");
+    assert.ok(restore.badges.some((badge) => badge.text === "RAW"));
+  } finally {
+    resetUrlIngestInFlightForTest();
     restore();
   }
 });
@@ -441,8 +495,8 @@ test("action click allows a different URL while another URL is in flight", async
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
     assert.equal(restore.messages.length, 3);
-    assert.match(restore.messages[0].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
-    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[0].rawSource.path, /^\/Sources\/raw\/web\/Example-[a-f0-9]{8}\.md$/);
+    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/Example-[a-f0-9]{8}\.md$/);
     assert.notEqual(restore.messages[0].rawSource.path, restore.messages[1].rawSource.path);
 
     deferred.resolve({

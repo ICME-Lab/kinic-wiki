@@ -1,96 +1,49 @@
-// Where: wikibrowser/scripts/check-marketplace.mjs
-// What: guards marketplace UI wiring with a small static and parser harness.
-// Why: marketplace balance ownership must stay II-principal scoped.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { assertNoAppBalanceSurface, readProjectFile } from "./check-helpers.mjs";
 
-const require = createRequire(import.meta.url);
-const ts = require("typescript");
+const listingDetail = readProjectFile("../app/marketplace/[listingId]/listing-detail-client.tsx");
+const wallet = readProjectFile("../lib/kinic-wallet.ts");
+const client = readProjectFile("../lib/vfs-client.ts");
+const types = readProjectFile("../lib/types.ts");
+const idl = readProjectFile("../lib/vfs-idl.ts");
 
-const appHeader = readFileSync(new URL("../app/app-header.tsx", import.meta.url), "utf8");
-const listingDetail = readFileSync(new URL("../app/marketplace/[listingId]/listing-detail-client.tsx", import.meta.url), "utf8");
-const marketplaceLayout = readFileSync(new URL("../app/marketplace/layout.tsx", import.meta.url), "utf8");
-const marketplace = readFileSync(new URL("../app/marketplace/marketplace-client.tsx", import.meta.url), "utf8");
-const marketplaceSeed = readFileSync(new URL("../scripts/seed-marketplace-fixtures.mjs", import.meta.url), "utf8");
-const setupIiE2e = readFileSync(new URL("../../scripts/setup-wikibrowser-ii-e2e.sh", import.meta.url), "utf8");
-const kinicDeposit = await importTs("../lib/kinic-deposit.ts");
-const marketplaceRoutes = await importTs("../lib/marketplace-routes.ts");
+assert.match(listingDetail, /whitespace-pre-wrap/);
+assert.match(listingDetail, /Purchase complete\. Ledger block \$\{order\.ledgerBlockIndex\}\./);
+assert.doesNotMatch(listingDetail, /Order \$\{order\.orderId\}/);
+assert.match(listingDetail, /setPurchaseState\(preview\.alreadyEntitled \? "success" : "idle"\)/);
+assert.doesNotMatch(listingDetail, /setPurchaseState\("success"\);[\s\S]{0,120}void loadPurchasePreview\(\);/);
+assert.match(listingDetail, /purchaseMarketAccessWithWallet/);
+assert.match(listingDetail, /marketPreviewPurchase\(canisterId, authClient\.getIdentity\(\), listing\.listingId\)/);
+assert.match(listingDetail, /Listing price changed\. Reload the listing before purchasing\./);
+assert.match(listingDetail, /accessPrincipal: principal/);
+assert.doesNotMatch(listingDetail, /localStorage|storeMarketPurchase|readStoredMarketPurchase|PURCHASED_MARKET_LISTING/);
+assert.doesNotMatch(listingDetail, /connectedWalletPrincipal|walletPrincipal|order\.buyerPrincipal/);
+assert.doesNotMatch(listingDetail, /String\(cause\)/);
+assertNoAppBalanceSurface(listingDetail);
+assert.doesNotMatch(listingDetail, /marketPurchaseAccess|refreshKinicBalance|KINIC balance updated|buyerBalanceE8s/);
 
-assert.match(appHeader, /depositKinicBalanceWithIdentity/);
-assert.match(appHeader, /authClient\.getIdentity\(\)/);
-assert.match(appHeader, /Login with Internet Identity first/);
-assert.match(appHeader, /Enter an amount greater than 0 KINIC/);
-assert.match(appHeader, /Deposit KINIC/);
-assert.match(appHeader, /aria-label="KINIC balance"/);
-assert.doesNotMatch(appHeader, /: "KINIC balance"/);
-assert.doesNotMatch(appHeader, /depositKinicBalanceWithOisy|depositKinicBalanceWithPlug/);
-assert.doesNotMatch(appHeader, /Connect OISY or Plug first/);
+assert.match(wallet, /runOisyAllowanceCall[\s\S]*wallet\.approve\(/);
+assert.match(wallet, /runPlugAllowanceCall[\s\S]*icrc2_approve/);
+assert.match(wallet, /market_purchase_access/);
+assert.match(wallet, /purchaseMarketAccessWithWallet/);
+assert.match(wallet, /access_principal: request\.accessPrincipal/);
+assert.match(wallet, /payout_principal/);
+assert.match(wallet, /Purchase did not complete after KINIC approval/);
+assert.match(wallet, /temporary allowance may remain until expiry/);
+assert.doesNotMatch(client, /export async function marketPurchaseAccess/);
+assert.match(client, /market_purchase_access: \(request: RawMarketPurchaseRequest\)/);
+assert.match(client, /market_list_seller_listings: \(sellerPrincipal: string, cursor: \[\] \| \[string\], limit: number\)/);
+assert.match(client, /export async function marketListSellerListings/);
+assert.match(client, /access_principal: string/);
+assert.match(client, /payout_principal: request\.payoutPrincipal/);
+assert.match(types, /ledgerBlockIndex: string;/);
+assert.match(types, /payoutPrincipal: string;/);
+assertNoAppBalanceSurface(types);
+assert.doesNotMatch(types, /buyerBalanceE8s|KinicDepositResult|KinicFundDatabaseCyclesResult/);
+assert.match(idl, /ledger_block_index: idl\.Nat64/);
+assert.match(idl, /payout_principal: idl\.Text/);
+assert.match(idl, /market_list_seller_listings: idl\.Func\(\[idl\.Text, idl\.Opt\(idl\.Text\), idl\.Nat32\]/);
+assertNoAppBalanceSurface(idl);
+assert.doesNotMatch(idl, /buyer_balance_e8s/);
 
-assert.match(listingDetail, /marketPurchaseAccess/);
-assert.match(listingDetail, /marketPurchaseAccess\(canisterId, identity, listing\.listingId, listing\.priceE8s\)/);
-assert.match(listingDetail, /refreshKinicBalance/);
-assert.match(listingDetail, /hrefForPath\(canisterId, listing\.databaseId, "\/Wiki"\)/);
-assert.match(listingDetail, /Open database/);
-assert.match(listingDetail, /Verified stats/);
-assert.match(listingDetail, /Contents sample/);
-assert.match(listingDetail, /Relationship graph/);
-assert.match(listingDetail, /Sample excerpts/);
-assert.match(listingDetail, /Login with Internet Identity first/);
-assert.doesNotMatch(listingDetail, /Questions/);
-assert.doesNotMatch(listingDetail, /sampleQuestionsJson|sample_questions_json/);
-assert.doesNotMatch(listingDetail, /kinicGetBalance/);
-assert.doesNotMatch(listingDetail, /purchaseMarketAccessWithOisy|purchaseMarketAccessWithPlug|marketPreviewPurchase/);
-assert.doesNotMatch(listingDetail, /revision \{listing\.revision\}/);
-
-assert.match(marketplaceLayout, /data-tid="marketplace-sidebar"/);
-assert.match(marketplaceLayout, /Filter loaded listings/);
-assert.match(marketplaceLayout, /Sort loaded listings/);
-assert.match(marketplaceLayout, /Max price/);
-assert.match(marketplaceLayout, /inputMode="decimal"/);
-assert.match(marketplaceLayout, /normalizeKinicDecimalInput/);
-assert.doesNotMatch(marketplaceLayout, /top-36/);
-assert.doesNotMatch(marketplaceLayout, /SidebarProvider|SidebarInset|SidebarTrigger/);
-
-assert.match(marketplace, /matching loaded listings/);
-assert.match(marketplace, /parseKinicDecimalToE8s/);
-assert.match(marketplace, /marketListingPath\(listing\.listingId\)/);
-assert.doesNotMatch(marketplace, /parseOptionalBigInt/);
-assert.doesNotMatch(marketplace, /\/kinic\/wallet/);
-assert.doesNotMatch(marketplace, /href=\{`\/marketplace\/\$\{listing\.listingId\}`\}/);
-assert.doesNotMatch(marketplace, /placeholder="Search"/);
-
-assert.match(marketplaceSeed, /purchase_database_cycles/);
-assert.match(marketplaceSeed, /market_create_listing/);
-assert.match(marketplaceSeed, /market_publish_listing/);
-assert.match(marketplaceSeed, /--canister-id/);
-assert.match(marketplaceSeed, /DEFAULT_PAYMENT_E8S/);
-assert.match(marketplaceSeed, /DEFAULT_ALLOWANCE_E8S/);
-assert.match(marketplaceSeed, /icrc2_approve/);
-
-assert.match(setupIiE2e, /scripts\/local\/setup_kinic_ledger\.sh/);
-assert.match(setupIiE2e, /scripts\/local\/deploy_wiki\.sh/);
-assert.match(setupIiE2e, /wiki ledger mismatch/);
-assert.match(setupIiE2e, /conflicts with reserved local canister/);
-
-assert.equal(marketplaceRoutes.marketListingPath("ftjtrdothm6fauh"), "/marketplace/ftjtrdothm6fauh");
-
-assert.equal(kinicDeposit.parseDepositAmount("1"), "100000000");
-assert.equal(kinicDeposit.parseDepositAmount("0.00000001"), "1");
-assert.equal(kinicDeposit.parseDepositAmount("0"), null);
-assert.equal(kinicDeposit.parseDepositAmount("0.00000000"), null);
-assert.equal(kinicDeposit.parseDepositAmount("1.000000001"), null);
-
-console.log("Marketplace checks OK");
-
-async function importTs(relativePath) {
-  const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022
-    }
-  }).outputText;
-  const moduleUrl = `data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`;
-  return import(moduleUrl);
-}
+console.log("Marketplace direct purchase checks passed");

@@ -17,8 +17,8 @@ export default function MarketplacePage() {
 
 function MarketplaceLoadingState() {
   return (
-    <main className="min-w-0 text-ink">
-      <section className="flex max-w-none flex-col gap-5">
+    <div className="min-w-0 text-ink">
+      <section className="flex flex-col gap-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="grid gap-2">
             <div className="h-8 w-40 rounded-lg bg-white" />
@@ -32,6 +32,6 @@ function MarketplaceLoadingState() {
           <div className="min-h-48 rounded-lg border border-line bg-white" />
         </section>
       </section>
-    </main>
+    </div>
   );
 }

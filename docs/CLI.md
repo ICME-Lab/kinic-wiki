@@ -98,10 +98,31 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefi
 `database cycles <database-id>` prints and opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. The database ID must match `[a-zA-Z0-9_-]+`, matching the browser `/cycles` route. This command does not use the CLI identity or contact the canister, so it can still print the payment URL when the local replica is stopped. Pass `--browser-origin` or set `KINIC_WIKI_BROWSER_ORIGIN` for local or staging browser hosts. The purchase amount is entered in the browser flow. The browser flow is limited to the configured canonical wiki canister, approves `payment_amount_e8s + ledger_fee_e8s` with a 30 minute expiry, and purchases cycles using the current canister config. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.
 `database cycles-pending <database-id> [--json]` lists pending purchase operations visible to the DB owner, billing authority, or payer. Output includes `operation_id`, `status`, and `required_action`.
-`database list` prints databases attached to the caller principal, including DB cycles balance and suspension time.
+`database list` prints databases attached to the caller principal, including marketplace-purchased databases as `reader`, DB cycles balance, and suspension time.
 Successful DB updates consume DB cycles balance. CLI write commands use the canister `check_database_write_cycles` preflight before mutation. Browser write surfaces disable writes when the DB is suspended, below `min_update_cycles`, or cycles config cannot be loaded. URL ingest and query-answer sessions are checked again before external Worker or DeepSeek execution, so a session issued before suspension can still fail after DB cycles balance changes.
 
 Database names are a breaking index-schema change. Existing local or canister index databases from older builds must be recreated; no automatic backfill is provided.
+
+## Marketplace Entitlements
+
+Use `market entitlements` to list databases purchased through the marketplace by the current identity. The command is authenticated and does not require `--database-id` because it discovers database IDs.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- market entitlements
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- market entitlements --limit 50 --json
+```
+
+Text output is tab-separated: `database_id`, `listing_id`, `order_id`, `status`, and `purchased_at_ms`. If more results are available, the final line prints `next_cursor	<cursor>`; pass it back with `--cursor`.
+
+Purchased databases also appear in `database list` as `reader`. After selecting a purchased database ID, use `database link <database-id>` or pass `--database-id` to the existing database-scoped read commands:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link <database-id>
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> list-nodes --prefix /Wiki
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> read-node --path /Wiki/index.md
+```
+
+The CLI v1 marketplace surface is intentionally read-only. Marketplace purchase, listing creation, listing publication, and deposit flows are not CLI commands.
 
 For public browser reads, grant anonymous reader access explicitly:
 

@@ -18,9 +18,7 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, KinicBalance, KinicDepositRequest, KinicDepositResult,
-    KinicFundDatabaseCyclesRequest, KinicFundDatabaseCyclesResult, KinicPendingOperationsPage,
-    KinicPendingOperationsPageRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
     MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
     MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
     MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
@@ -81,35 +79,6 @@ pub trait VfsApi: Sync {
             "list_database_cycles_pending_purchases is not implemented by this client"
         ))
     }
-    async fn kinic_get_balance(&self) -> Result<KinicBalance> {
-        Err(anyhow!(
-            "kinic_get_balance is not implemented by this client"
-        ))
-    }
-    async fn kinic_deposit_balance(
-        &self,
-        _request: KinicDepositRequest,
-    ) -> Result<KinicDepositResult> {
-        Err(anyhow!(
-            "kinic_deposit_balance is not implemented by this client"
-        ))
-    }
-    async fn kinic_fund_database_cycles(
-        &self,
-        _request: KinicFundDatabaseCyclesRequest,
-    ) -> Result<KinicFundDatabaseCyclesResult> {
-        Err(anyhow!(
-            "kinic_fund_database_cycles is not implemented by this client"
-        ))
-    }
-    async fn kinic_list_pending_operations(
-        &self,
-        _request: KinicPendingOperationsPageRequest,
-    ) -> Result<KinicPendingOperationsPage> {
-        Err(anyhow!(
-            "kinic_list_pending_operations is not implemented by this client"
-        ))
-    }
     async fn market_create_listing(
         &self,
         _request: MarketCreateListingRequest,
@@ -143,6 +112,16 @@ pub trait VfsApi: Sync {
     ) -> Result<MarketListingPage> {
         Err(anyhow!(
             "market_list_listings is not implemented by this client"
+        ))
+    }
+    async fn market_list_seller_listings(
+        &self,
+        _seller_principal: &str,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<MarketListingPage> {
+        Err(anyhow!(
+            "market_list_seller_listings is not implemented by this client"
         ))
     }
     async fn market_list_database_listings(
@@ -608,39 +587,6 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn kinic_get_balance(&self) -> Result<KinicBalance> {
-        let result: Result<KinicBalance, String> = self.query("kinic_get_balance", &()).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_deposit_balance(
-        &self,
-        request: KinicDepositRequest,
-    ) -> Result<KinicDepositResult> {
-        let result: Result<KinicDepositResult, String> =
-            self.update("kinic_deposit_balance", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_fund_database_cycles(
-        &self,
-        request: KinicFundDatabaseCyclesRequest,
-    ) -> Result<KinicFundDatabaseCyclesResult> {
-        let result: Result<KinicFundDatabaseCyclesResult, String> =
-            self.update("kinic_fund_database_cycles", &request).await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
-    async fn kinic_list_pending_operations(
-        &self,
-        request: KinicPendingOperationsPageRequest,
-    ) -> Result<KinicPendingOperationsPage> {
-        let result: Result<KinicPendingOperationsPage, String> = self
-            .query("kinic_list_pending_operations", &request)
-            .await?;
-        result.map_err(|error| anyhow!(error))
-    }
-
     async fn market_create_listing(
         &self,
         request: MarketCreateListingRequest,
@@ -680,6 +626,23 @@ impl VfsApi for CanisterVfsClient {
     ) -> Result<MarketListingPage> {
         let result: Result<MarketListingPage, String> =
             self.query2("market_list_listings", &cursor, &limit).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_seller_listings(
+        &self,
+        seller_principal: &str,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketListingPage> {
+        let result: Result<MarketListingPage, String> = self
+            .query3(
+                "market_list_seller_listings",
+                &seller_principal.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
         result.map_err(|error| anyhow!(error))
     }
 

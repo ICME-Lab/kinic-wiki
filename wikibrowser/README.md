@@ -14,7 +14,7 @@ pnpm dev
 Open a database with:
 
 ```text
-http://localhost:3000/<database-id>/Wiki
+http://localhost:3010/<database-id>/Wiki
 ```
 
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
@@ -106,7 +106,7 @@ icp network start -d -e local-wiki
 cd wikibrowser
 pnpm e2e:ii:setup
 cp .env.e2e.local .env.local
-pnpm dev -p 3010
+pnpm dev
 ```
 
 Run E2E in another terminal from `wikibrowser/` while the dev server is running:
@@ -132,7 +132,7 @@ pnpm dev
 Run the browser smoke against an existing file node:
 
 ```bash
-pnpm smoke -- --url http://127.0.0.1:3000/<database-id>/Wiki/<existing-file>.md
+pnpm smoke -- --url http://127.0.0.1:3010/<database-id>/Wiki/<existing-file>.md
 ```
 
 The URL must point to a readable file node. Directory paths and missing files intentionally fail.
@@ -146,7 +146,7 @@ pnpm smoke:errors -- --database-id <database-id>
 Optional base URL:
 
 ```bash
-pnpm smoke:errors -- --base-url http://127.0.0.1:3000 --database-id <database-id>
+pnpm smoke:errors -- --base-url http://127.0.0.1:3010 --database-id <database-id>
 ```
 
 ## Candid Surface
@@ -193,7 +193,7 @@ Cloudflare settings:
 - Framework Preset: Next.js
 - Root Directory: `wikibrowser`
 - Install Command: `pnpm install --frozen-lockfile`
-- Build Command: `pnpm deploy`
+- Build Command: `pnpm deploy:production`
 - Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai` for Preview and Production
 - Runtime: Cloudflare Workers via `@opennextjs/cloudflare`
 
@@ -203,7 +203,7 @@ CLI deploy from this directory:
 
 ```bash
 pnpm wrangler whoami
-pnpm deploy
+pnpm deploy:production
 ```
 
 Pre-deploy checklist:

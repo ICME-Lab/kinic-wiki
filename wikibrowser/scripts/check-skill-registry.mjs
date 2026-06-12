@@ -23,6 +23,8 @@ assert.match(route, /params: Promise<\{ databaseId: string \}>/);
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
 assert.match(client, /SkillRegistryClient/);
 assert.match(adminHeader, /export function AdminHeader/);
+assert.match(adminHeader, /src="\/kinic-mark\.png"/);
+assert.doesNotMatch(adminHeader, /src="\/icon\.png"/);
 assert.match(client, /<AdminHeader/);
 assert.doesNotMatch(client, /Database dashboard/);
 assert.match(client, /hrefForPath\(canisterId, databaseId, "\/Wiki"\)/);

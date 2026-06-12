@@ -7,6 +7,7 @@ import type { FormEvent } from "react";
 
 export function CreateDatabaseDialog({
   createDisabled,
+  createLabel,
   creating,
   databaseName,
   open,
@@ -17,6 +18,7 @@ export function CreateDatabaseDialog({
   onSubmit
 }: {
   createDisabled: boolean;
+  createLabel: string;
   creating: boolean;
   databaseName: string;
   open: boolean;
@@ -46,7 +48,7 @@ export function CreateDatabaseDialog({
           <div>
             <h3 className="text-lg font-semibold text-ink">Create database</h3>
             <p className="mt-2 text-sm leading-6 text-muted">
-              Connect a wallet with at least {requiredBalanceLabel} before creating. New databases are created pending, not active, until the first purchase completes.
+              Create requires {requiredBalanceLabel}. Wallet approval pays directly from ledger balance.
             </p>
           </div>
           <button aria-label="Close" className="rounded-lg border border-line bg-white p-2 text-muted hover:border-accent hover:text-ink disabled:cursor-not-allowed disabled:opacity-60" disabled={creating} type="button" onClick={onCancel}>
@@ -80,7 +82,7 @@ export function CreateDatabaseDialog({
             type="submit"
           >
             <Plus aria-hidden size={15} />
-            <span>{creating ? "Creating..." : "Create"}</span>
+            <span>{creating ? "Creating..." : createLabel}</span>
           </button>
         </div>
       </form>

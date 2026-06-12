@@ -1,15 +1,15 @@
 "use client";
 
-import { AuthClient } from "@icp-sdk/auth/client";
+import type { AuthClient } from "@icp-sdk/auth/client";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil } from "lucide-react";
 import type { BusyAction } from "./access-control";
-import { AuthControls, CyclesHistoryPanel, DashboardTabs, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
-import { AdminHeader } from "@/components/admin-header";
+import { BuyersPanel, CyclesHistoryPanel, DashboardSettingsPanel, DashboardTabs, MarketListingsPanel, OwnerPanel, PendingDatabasePanel, ReadonlyMembersPanel, RenameDatabaseDialog, StatusPanel, SummaryPanel, type DashboardTab } from "./dashboard-ui";
+import { useAppSession } from "../app-session-provider";
+import { AdminContent } from "@/components/admin-shell";
 import { CycleBattery } from "@/components/cycle-battery";
-import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import {
   deleteDatabaseAuthenticated,
   getCyclesBillingConfig,
@@ -22,6 +22,7 @@ import {
   listDatabasesPublic,
   marketCountActiveEntitlements,
   marketCreateListing,
+  marketListDatabaseEntitlements,
   marketListDatabaseListings,
   marketPauseListing,
   marketPublishListing,
@@ -33,18 +34,18 @@ import {
 type LoadState = "idle" | "loading" | "ready" | "error";
 type DatabaseAccessSummary = DatabaseSummary & { publicReadable: boolean };
 const CYCLES_HISTORY_LIMIT = 100;
+const MARKET_ENTITLEMENTS_LIMIT = 100;
 
 export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const router = useRouter();
   const refreshSeqRef = useRef(0);
   const cyclesHistorySeqRef = useRef(0);
-  const [authClient, setAuthClient] = useState<AuthClient | null>(null);
-  const [principal, setPrincipal] = useState<string | null>(null);
+  const { authClient, authReady, principal } = useAppSession();
   const [databases, setDatabases] = useState<DatabaseAccessSummary[]>([]);
   const [cyclesConfig, setCyclesBillingConfig] = useState<CyclesBillingConfig | null>(null);
   const [members, setMembers] = useState<DatabaseMember[]>([]);
-  const [loadState, setLoadState] = useState<LoadState>("idle");
+  const [loadState, setLoadState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
@@ -64,6 +65,10 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const [pendingPurchasesLoading, setPendingPurchasesLoading] = useState(false);
   const [marketListings, setMarketListings] = useState<MarketListing[]>([]);
   const [marketError, setMarketError] = useState<string | null>(null);
+  const [marketEntitlements, setMarketEntitlements] = useState<MarketEntitlement[]>([]);
+  const [marketEntitlementsError, setMarketEntitlementsError] = useState<string | null>(null);
+  const [marketEntitlementsLoading, setMarketEntitlementsLoading] = useState(false);
+  const [marketEntitlementsNextCursor, setMarketEntitlementsNextCursor] = useState<string | null>(null);
   const [activeEntitlementCount, setActiveEntitlementCount] = useState<string | null>(null);
   const [marketBusy, setMarketBusy] = useState(false);
 
@@ -71,6 +76,8 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   const isActiveDatabase = database?.status === "active";
   const canManage = database?.role === "owner" && isActiveDatabase && !memberError;
   const canDeletePendingDatabase = database?.role === "owner" && database.status === "pending";
+  const canManageSettings = canManage || canDeletePendingDatabase;
+  const canViewCyclesHistory = (database?.role === "writer" || database?.role === "owner") && isActiveDatabase;
   const showDashboardTabs = Boolean(databaseId && (database || principal));
 
   const resetCyclesHistoryState = useCallback(() => {
@@ -93,12 +100,15 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         return;
       }
       if (!nextDatabaseId) {
-        setPrincipal(client?.getIdentity().getPrincipal().toText() ?? null);
         setDatabases([]);
         setCyclesBillingConfig(null);
         setMembers([]);
         setMarketListings([]);
         setMarketError(null);
+        setMarketEntitlements([]);
+        setMarketEntitlementsError(null);
+        setMarketEntitlementsLoading(false);
+        setMarketEntitlementsNextCursor(null);
         setActiveEntitlementCount(null);
         setError(null);
         setWarning(null);
@@ -129,12 +139,15 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         const nextDatabases = mergeDatabaseRows(memberDatabases, publicDatabases);
         if (!isCurrentRefresh()) return;
         const nextDatabase = nextDatabases.find((item) => item.databaseId === nextDatabaseId) ?? null;
-        setPrincipal(identity?.getPrincipal().toText() ?? null);
         setDatabases(nextDatabases);
         setCyclesBillingConfig(cyclesResult.status === "fulfilled" ? cyclesResult.value : null);
         setMembers([]);
         setMarketListings([]);
         setMarketError(null);
+        setMarketEntitlements([]);
+        setMarketEntitlementsError(null);
+        setMarketEntitlementsLoading(false);
+        setMarketEntitlementsNextCursor(null);
         setActiveEntitlementCount(null);
         if (publicResult.status === "rejected") {
           setWarning(`Public database list unavailable: ${errorMessage(publicResult.reason)}`);
@@ -144,10 +157,11 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
         }
         if (identity && nextDatabase?.role === "owner") {
           if (nextDatabase.status === "active") {
-            const [membersResult, listingsResult, entitlementCountResult] = await Promise.allSettled([
+            const [membersResult, listingsResult, entitlementCountResult, entitlementsResult] = await Promise.allSettled([
               listDatabaseMembersAuthenticated(canisterId, identity, nextDatabaseId),
               marketListDatabaseListings(canisterId, identity, nextDatabaseId),
-              marketCountActiveEntitlements(canisterId, identity, nextDatabaseId)
+              marketCountActiveEntitlements(canisterId, identity, nextDatabaseId),
+              marketListDatabaseEntitlements(canisterId, identity, nextDatabaseId, null, MARKET_ENTITLEMENTS_LIMIT)
             ]);
             if (!isCurrentRefresh()) return;
             if (membersResult.status === "fulfilled") {
@@ -164,6 +178,12 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
               setActiveEntitlementCount(entitlementCountResult.value);
             } else {
               setMarketError((current) => [current, errorMessage(entitlementCountResult.reason)].filter(Boolean).join("; "));
+            }
+            if (entitlementsResult.status === "fulfilled") {
+              setMarketEntitlements(entitlementsResult.value.entitlements);
+              setMarketEntitlementsNextCursor(entitlementsResult.value.nextCursor);
+            } else {
+              setMarketEntitlementsError(errorMessage(entitlementsResult.reason));
             }
           }
         } else if (nextDatabase?.publicReadable && nextDatabase.status === "active") {
@@ -236,70 +256,38 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
   );
 
   useEffect(() => {
-    let cancelled = false;
-    AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
-      .then(async (client) => {
-        if (cancelled) return;
-        setAuthClient(client);
-        if (await client.isAuthenticated()) {
-          await refresh(client, databaseId);
-        } else {
-          await refresh(null, databaseId);
-        }
-      })
-      .catch((cause) => {
-        if (cancelled) return;
-        setError(errorMessage(cause));
-        setLoadState("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [databaseId, refresh]);
+    if (!authReady) return;
+    const timer = window.setTimeout(() => {
+      void refresh(principal && authClient ? authClient : null, databaseId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [authClient, authReady, databaseId, principal, refresh]);
 
   useEffect(() => {
     if (activeTab !== "cycles-history") return;
+    if (!canViewCyclesHistory) return;
     const timer = window.setTimeout(() => {
       void loadCyclesHistory(false, null);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeTab, databaseId, loadCyclesHistory, principal]);
+  }, [activeTab, canViewCyclesHistory, databaseId, loadCyclesHistory, principal]);
 
-  async function login() {
-    if (!authClient) return;
-    setError(null);
-    await authClient.login({
-      ...authLoginOptions(),
-      onSuccess: () => {
-        void refresh(authClient, databaseId);
-      },
-      onError: (cause) => {
-        setError(errorMessage(cause));
-        setLoadState("error");
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if ((activeTab === "list" || activeTab === "buyers") && !canManage) {
+        setActiveTab("access");
+        return;
       }
-    });
-  }
-
-  async function logout() {
-    if (!authClient) return;
-    refreshSeqRef.current += 1;
-    cyclesHistorySeqRef.current += 1;
-    await authClient.logout();
-    setPrincipal(null);
-    setDatabases([]);
-    setCyclesBillingConfig(null);
-    setMembers([]);
-    setMarketListings([]);
-    setMarketError(null);
-    setActiveEntitlementCount(null);
-    setError(null);
-    setWarning(null);
-    setMemberError(null);
-    setRenameOpen(false);
-    setRenameDraft("");
-    resetCyclesHistoryState();
-    await refresh(null, databaseId);
-  }
+      if (activeTab === "cycles-history" && !canViewCyclesHistory) {
+        setActiveTab("access");
+        return;
+      }
+      if (activeTab === "settings" && !canManageSettings) {
+        setActiveTab("access");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, canManage, canManageSettings, canViewCyclesHistory]);
 
   async function grantAccess(principalText: string, role: DatabaseRole) {
     if (!authClient || !databaseId) return;
@@ -402,7 +390,7 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     try {
       await marketCreateListing(canisterId, authClient.getIdentity(), request);
       setActionTone("info");
-      setActionMessage("Listing created.");
+      setActionMessage("Listing published.");
       await refresh(authClient, databaseId);
     } catch (cause) {
       setMarketError(errorMessage(cause));
@@ -459,30 +447,26 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
     }
   }
 
+  async function loadMoreMarketEntitlements() {
+    if (!authClient || !databaseId || !marketEntitlementsNextCursor) return;
+    setMarketEntitlementsLoading(true);
+    setMarketEntitlementsError(null);
+    try {
+      const page = await marketListDatabaseEntitlements(canisterId, authClient.getIdentity(), databaseId, marketEntitlementsNextCursor, MARKET_ENTITLEMENTS_LIMIT);
+      setMarketEntitlements((current) => [...current, ...page.entitlements]);
+      setMarketEntitlementsNextCursor(page.nextCursor);
+    } catch (cause) {
+      setMarketEntitlementsError(errorMessage(cause));
+    } finally {
+      setMarketEntitlementsLoading(false);
+    }
+  }
+
   return (
-    <main className="min-h-screen px-6 py-8">
-      <section className="mx-auto flex max-w-6xl flex-col gap-6">
-        <AdminHeader
+    <AdminContent>
+        <DatabaseDetailHeader
           title={database?.name ?? "Database access"}
-          titleAction={
-            canManage ? (
-              <button
-                aria-label="Rename database"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-white text-muted hover:border-accent hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                title="Rename database"
-                type="button"
-                onClick={openRenameDialog}
-              >
-                <Pencil aria-hidden size={15} />
-              </button>
-            ) : null
-          }
-          actions={
-            <>
-              {canisterId ? <CycleBattery canisterId={canisterId} /> : null}
-              <AuthControls authReady={Boolean(authClient)} loading={loadState === "loading"} principal={principal} onLogin={login} onLogout={logout} />
-            </>
-          }
+          actions={<CycleBattery cyclesBalance={database?.cyclesBalance ?? null} />}
         />
 
         {error ? <StatusPanel tone="error" message={error} /> : null}
@@ -500,10 +484,31 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
           />
         ) : null}
 
-        {databaseId && (database || principal) ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} principal={principal ?? "anonymous"} publicReadable={database?.publicReadable ?? false} /> : null}
-        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} onChange={setActiveTab} /> : null}
+        {databaseId && (database || principal) ? <SummaryPanel cyclesConfig={cyclesConfig} database={database} databaseId={databaseId} publicReadable={database?.publicReadable ?? false} /> : null}
+        {showDashboardTabs ? <DashboardTabs activeTab={activeTab} canManageListings={canManage} canManageSettings={canManageSettings} canViewCyclesHistory={canViewCyclesHistory} onChange={setActiveTab} /> : null}
 
-        {activeTab === "cycles-history" && showDashboardTabs ? (
+        {activeTab === "list" && showDashboardTabs && canManage && database ? (
+          <MarketListingsPanel
+            busy={marketBusy}
+            databaseId={databaseId}
+            databaseName={database.name}
+            error={marketError}
+            listings={marketListings}
+            principal={principal}
+            onCreate={createMarketListing}
+            onPause={pauseMarketListing}
+            onPublish={publishMarketListing}
+            onUpdate={updateMarketListing}
+          />
+        ) : activeTab === "buyers" && showDashboardTabs && canManage ? (
+          <BuyersPanel
+            entitlements={marketEntitlements}
+            error={marketEntitlementsError}
+            loading={marketEntitlementsLoading}
+            nextCursor={marketEntitlementsNextCursor}
+            onLoadMore={() => void loadMoreMarketEntitlements()}
+          />
+        ) : activeTab === "cycles-history" && showDashboardTabs && canViewCyclesHistory ? (
           <CyclesHistoryPanel
             authenticated={Boolean(principal)}
             entries={cycleEntries}
@@ -516,29 +521,29 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             onLoadMore={() => void loadCyclesHistory(true, cycleNextCursor)}
             onRefresh={() => void loadCyclesHistory(false, null)}
           />
+        ) : activeTab === "settings" && showDashboardTabs && canManageSettings && database ? (
+          <DashboardSettingsPanel
+            activeEntitlementCount={activeEntitlementCount}
+            busy={busy}
+            busyAction={busyAction}
+            canRename={canManage}
+            cyclesBalance={database.cyclesBalance}
+            databaseId={databaseId}
+            databaseName={database.name}
+            onDelete={deleteDatabase}
+            onRename={openRenameDialog}
+          />
         ) : database ? (
           canDeletePendingDatabase ? (
-            <PendingDatabasePanel busy={busy} busyAction={busyAction} databaseId={databaseId} databaseName={database.name} onDelete={deleteDatabase} />
+            <PendingDatabasePanel />
           ) : canManage ? (
             <OwnerPanel
-              cyclesBalance={database.cyclesBalance}
               busy={busy}
               busyAction={busyAction}
-              databaseId={databaseId}
-              databaseName={database.name}
-              activeEntitlementCount={activeEntitlementCount}
-              marketBusy={marketBusy}
-              marketError={marketError}
-              marketListings={marketListings}
               members={members}
               principal={principal ?? "anonymous"}
-              onCreateListing={createMarketListing}
-              onDelete={deleteDatabase}
               onGrant={grantAccess}
-              onPauseListing={pauseMarketListing}
-              onPublishListing={publishMarketListing}
               onRevoke={revokeAccess}
-              onUpdateListing={updateMarketListing}
             />
           ) : database.publicReadable ? (
             <ReadonlyMembersPanel memberError={memberError} members={members} principal={principal ?? "anonymous"} />
@@ -554,8 +559,19 @@ export function DashboardDatabaseClient({ databaseId }: { databaseId: string }) 
             <p className="text-sm leading-6 text-muted">Public anonymous read is not available for this database. Login with Internet Identity to manage database access.</p>
           </section>
         )}
-      </section>
-    </main>
+    </AdminContent>
+  );
+}
+
+function DatabaseDetailHeader({ actions, title, titleAction }: { actions: ReactNode; title: string; titleAction?: ReactNode }) {
+  return (
+    <header className="flex flex-col gap-3 border-b border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex min-w-0 items-center gap-2">
+        <h1 className="min-w-0 truncate text-3xl font-semibold text-ink">{title}</h1>
+        {titleAction ? <div className="shrink-0">{titleAction}</div> : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">{actions}</div>
+    </header>
   );
 }
 

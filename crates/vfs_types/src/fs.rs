@@ -127,68 +127,9 @@ pub struct DatabaseCyclesPendingPurchase {
     pub required_action: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicBalance {
-    pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicPendingOperation {
-    pub operation_id: u64,
-    pub kind: String,
-    pub caller: String,
-    pub status: String,
-    pub amount_e8s: u64,
-    pub ledger_block_index: Option<u64>,
-    pub created_at_ms: i64,
-    pub required_action: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicPendingOperationsPageRequest {
-    pub cursor_operation_id: Option<u64>,
-    pub limit: u32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicPendingOperationsPage {
-    pub operations: Vec<KinicPendingOperation>,
-    pub next_cursor_operation_id: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicDepositRequest {
-    pub amount_e8s: u64,
-    pub expected_fee_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicDepositResult {
-    pub block_index: u64,
-    pub amount_e8s: u64,
-    pub balance_e8s: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicFundDatabaseCyclesRequest {
-    pub database_id: String,
-    pub payment_amount_e8s: u64,
-    pub min_expected_cycles: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct KinicFundDatabaseCyclesResult {
-    pub payment_amount_e8s: u64,
-    pub amount_cycles: u64,
-    pub database_balance_cycles: u64,
-    pub kinic_balance_e8s: u64,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 #[serde(rename_all = "snake_case")]
 pub enum MarketListingStatus {
-    #[serde(alias = "Draft")]
-    Draft,
     #[serde(alias = "Active")]
     Active,
     #[serde(alias = "Paused")]
@@ -199,12 +140,11 @@ pub enum MarketListingStatus {
 pub struct MarketListing {
     pub listing_id: String,
     pub seller_principal: String,
+    pub payout_principal: String,
     pub database_id: String,
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
-    pub summary_snapshot_revision: Option<String>,
-    pub sample_excerpts_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
     pub status: MarketListingStatus,
@@ -233,6 +173,7 @@ pub struct MarketPreviewExcerpt {
     pub path: String,
     pub etag: String,
     pub excerpt: String,
+    pub content_chars: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -259,6 +200,7 @@ pub struct MarketListingPreview {
     pub top_level_paths: Vec<String>,
     pub excerpts: Vec<MarketPreviewExcerpt>,
     pub category_graph: MarketCategoryGraph,
+    pub graph_links: Vec<LinkEdge>,
     pub preview_stale: bool,
 }
 
@@ -278,11 +220,10 @@ pub struct MarketListingPage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct MarketCreateListingRequest {
     pub database_id: String,
+    pub payout_principal: String,
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
-    pub summary_snapshot_revision: Option<String>,
-    pub sample_excerpts_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
 }
@@ -291,11 +232,10 @@ pub struct MarketCreateListingRequest {
 pub struct MarketUpdateListingRequest {
     pub listing_id: String,
     pub expected_revision: u64,
+    pub payout_principal: String,
     pub title: String,
     pub description: String,
     pub llm_summary: Option<String>,
-    pub summary_snapshot_revision: Option<String>,
-    pub sample_excerpts_json: String,
     pub tags_json: String,
     pub price_e8s: u64,
 }
@@ -304,6 +244,7 @@ pub struct MarketUpdateListingRequest {
 pub struct MarketPurchaseRequest {
     pub listing_id: String,
     pub price_e8s: u64,
+    pub access_principal: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -311,7 +252,6 @@ pub struct MarketPurchasePreview {
     pub listing_id: String,
     pub database_id: String,
     pub price_e8s: u64,
-    pub buyer_balance_e8s: u64,
     pub already_entitled: bool,
 }
 
@@ -322,8 +262,9 @@ pub struct MarketOrder {
     pub database_id: String,
     pub buyer_principal: String,
     pub seller_principal: String,
+    pub payout_principal: String,
     pub price_e8s: u64,
-    pub listing_revision: u64,
+    pub ledger_block_index: u64,
     pub created_at_ms: i64,
 }
 

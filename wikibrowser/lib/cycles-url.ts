@@ -9,9 +9,9 @@ export type CyclesTarget = {
 
 const KINIC_AMOUNT_PATTERN = new RegExp(`^([0-9]+)(?:\\.([0-9]{1,${KINIC_DECIMALS}}))?$`);
 
-export function parseCyclesTarget(input: URLSearchParams): CyclesTarget | string {
+export function parseCyclesTarget(input: URLSearchParams): CyclesTarget | string | null {
   const databaseId = input.get("database_id") ?? input.get("databaseId") ?? "";
-  if (!databaseId.trim()) return "database_id is required";
+  if (!databaseId.trim()) return null;
   if (!/^[a-zA-Z0-9_-]+$/.test(databaseId)) return "database_id contains unsupported characters";
   return { databaseId };
 }

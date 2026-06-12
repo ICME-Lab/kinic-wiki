@@ -173,37 +173,16 @@ export type DatabaseCyclesPendingPurchase = {
   requiredAction: string;
 };
 
-export type KinicBalance = {
-  balanceE8s: string;
-};
-
-export type KinicPendingOperation = {
-  operationId: string;
-  kind: string;
-  caller: string;
-  status: string;
-  amountE8s: string;
-  ledgerBlockIndex: string | null;
-  createdAtMs: string;
-  requiredAction: string;
-};
-
-export type KinicPendingOperationsPage = {
-  operations: KinicPendingOperation[];
-  nextCursorOperationId: string | null;
-};
-
-export type MarketListingStatus = "Draft" | "Active" | "Paused";
+export type MarketListingStatus = "Active" | "Paused";
 
 export type MarketListing = {
   listingId: string;
   sellerPrincipal: string;
+  payoutPrincipal: string;
   databaseId: string;
   title: string;
   description: string;
   llmSummary: string | null;
-  summarySnapshotRevision: string | null;
-  sampleExcerptsJson: string;
   tagsJson: string;
   priceE8s: string;
   status: MarketListingStatus;
@@ -230,6 +209,7 @@ export type MarketPreviewExcerpt = {
   path: string;
   etag: string;
   excerpt: string;
+  contentChars: string;
 };
 
 export type MarketCategoryGraphNode = {
@@ -252,6 +232,7 @@ export type MarketListingPreview = {
   topLevelPaths: string[];
   excerpts: MarketPreviewExcerpt[];
   categoryGraph: MarketCategoryGraph;
+  graphLinks: LinkEdge[];
   previewStale: boolean;
 };
 
@@ -268,11 +249,10 @@ export type MarketListingPage = {
 
 export type MarketCreateListingRequest = {
   databaseId: string;
+  payoutPrincipal: string;
   title: string;
   description: string;
   llmSummary: string | null;
-  summarySnapshotRevision: string | null;
-  sampleExcerptsJson: string;
   tagsJson: string;
   priceE8s: string;
 };
@@ -282,24 +262,10 @@ export type MarketUpdateListingRequest = Omit<MarketCreateListingRequest, "datab
   expectedRevision: string;
 };
 
-export type KinicDepositResult = {
-  blockIndex: string;
-  amountE8s: string;
-  balanceE8s: string;
-};
-
-export type KinicFundDatabaseCyclesResult = {
-  paymentAmountE8s: string;
-  amountCycles: string;
-  databaseBalanceCycles: string;
-  kinicBalanceE8s: string;
-};
-
 export type MarketPurchasePreview = {
   listingId: string;
   databaseId: string;
   priceE8s: string;
-  buyerBalanceE8s: string;
   alreadyEntitled: boolean;
 };
 
@@ -309,8 +275,9 @@ export type MarketOrder = {
   databaseId: string;
   buyerPrincipal: string;
   sellerPrincipal: string;
+  payoutPrincipal: string;
   priceE8s: string;
-  listingRevision: string;
+  ledgerBlockIndex: string;
   createdAtMs: string;
 };
 

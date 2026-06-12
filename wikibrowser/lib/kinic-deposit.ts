@@ -1,7 +1,7 @@
 // Where: shared KINIC deposit input helpers.
 // What: parses decimal KINIC input into ledger e8s.
-// Why: header deposit modal and marketplace checks must enforce the same positive amount rule.
-export function parseDepositAmount(value: string): string | null {
+// Why: deposit and withdraw forms must enforce the same positive amount rule.
+export function parseKinicAmount(value: string): string | null {
   const trimmed = value.trim();
   if (!/^\d+(\.\d{0,8})?$/.test(trimmed)) return null;
   const [whole, fraction = ""] = trimmed.split(".");
