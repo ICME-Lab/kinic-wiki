@@ -39,6 +39,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     amount_cycles: idl.Nat64,
     balance_cycles: idl.Nat64
   });
+  const CyclesTopUpLauncherError = idl.Variant({
+    Unauthorized: idl.Null,
+    TooSoon: idl.Null,
+    LauncherBalanceTooLow: idl.Null,
+    TopUpFailed: idl.Text
+  });
+  const CyclesTopUpLauncherResult = idl.Variant({ Ok: idl.Null, Err: CyclesTopUpLauncherError });
+  const CyclesTopUpCheckResult = idl.Record({
+    balance_cycles: idl.Nat,
+    threshold_cycles: idl.Nat,
+    called_launcher: idl.Bool,
+    launcher_result: idl.Opt(CyclesTopUpLauncherResult)
+  });
   const DatabaseCyclesPendingPurchase = idl.Record({
     operation_id: idl.Nat64,
     database_id: idl.Text,
@@ -387,6 +400,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultStorageBillingBatch = idl.Variant({ Ok: StorageBillingBatchResult, Err: idl.Text });
+  const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
@@ -422,6 +436,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [ResultUnit], []),
     canister_health: idl.Func([], [CanisterHealth], ["query"]),
     check_database_write_cycles: idl.Func([idl.Text], [ResultUnit], ["query"]),
+    check_cycles_top_up: idl.Func([], [ResultCyclesTopUpCheck], []),
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),

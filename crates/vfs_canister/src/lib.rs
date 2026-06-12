@@ -77,6 +77,9 @@ const UPDATE_ACCOUNTING_OVERHEAD_CYCLES: u128 = 15_000_000;
 const DB_PAYMENT_RECIPIENT_PRINCIPAL: &str =
     "isz6c-6c4pl-oba7w-ikjex-472yu-rf3fe-valdh-lfazm-5f3ep-v474i-qae";
 #[cfg(target_arch = "wasm32")]
+const CYCLES_TOP_UP_LAUNCHER_PRINCIPAL: &str = "xfug4-5qaaa-aaaak-afowa-cai";
+const CYCLES_TOP_UP_THRESHOLD: u128 = 2_000_000_000_000;
+#[cfg(target_arch = "wasm32")]
 const STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE: u32 = 6;
 #[cfg(target_arch = "wasm32")]
 const STORAGE_BILLING_CONTINUATION_DELAY_MS: u64 = 1;
@@ -115,6 +118,28 @@ enum LedgerTransferFromOutcome {
     BadFee { expected_fee_e8s: u64 },
     LedgerErr(String),
     Ambiguous(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum CyclesTopUpLauncherError {
+    Unauthorized,
+    TooSoon,
+    LauncherBalanceTooLow,
+    TopUpFailed(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum CyclesTopUpLauncherResult {
+    Ok,
+    Err(CyclesTopUpLauncherError),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct CyclesTopUpCheckResult {
+    balance_cycles: Nat,
+    threshold_cycles: Nat,
+    called_launcher: bool,
+    launcher_result: Option<CyclesTopUpLauncherResult>,
 }
 
 #[allow(dead_code)]
@@ -212,6 +237,24 @@ enum Icrc21ConsentMessageResponse {
 struct Icrc10SupportedStandard {
     name: String,
     url: String,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType)]
+struct CanisterStatusRequest {
+    canister_id: Principal,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct CanisterStatusResponse {
+    settings: DefiniteCanisterSettings,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, CandidType, Deserialize)]
+struct DefiniteCanisterSettings {
+    controllers: Vec<Principal>,
 }
 
 #[allow(dead_code)]
@@ -640,6 +683,12 @@ fn settle_database_storage_charges_batch(
             now_millis(),
         )
     })
+}
+
+#[update]
+async fn check_cycles_top_up() -> Result<CyclesTopUpCheckResult, String> {
+    require_controller_caller_via_canister_status().await?;
+    run_cycles_top_up_check().await
 }
 
 fn activate_pending_database_after_cycles_purchase_ledger_success(
@@ -1321,9 +1370,30 @@ fn schedule_storage_billing_timer() {
     #[cfg(target_arch = "wasm32")]
     {
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
+        set_timer(Duration::ZERO, || async {
+            run_cycles_top_up_check_from_timer().await;
+        });
         set_timer_interval(Duration::from_millis(interval_ms), || async {
+            run_cycles_top_up_check_from_timer().await;
             run_storage_billing_timer_batches();
         });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn run_cycles_top_up_check_from_timer() {
+    match run_cycles_top_up_check().await {
+        Ok(result) => {
+            if result.called_launcher {
+                ic_cdk::println!(
+                    "cycles top-up check called launcher: {:?}",
+                    result.launcher_result
+                );
+            }
+        }
+        Err(error) => {
+            ic_cdk::println!("cycles top-up check failed: {error}");
+        }
     }
 }
 
@@ -1668,6 +1738,86 @@ fn require_controller_caller() -> Result<(), String> {
         }
     }
     Err("caller is not a canister controller".to_string())
+}
+
+async fn require_controller_caller_via_canister_status() -> Result<(), String> {
+    #[cfg(test)]
+    {
+        let caller = caller_principal();
+        if caller == Principal::management_canister() {
+            return Ok(());
+        }
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let caller = caller_principal();
+        let status = management_canister_status(canister_principal()).await?;
+        if status.settings.controllers.contains(&caller) {
+            return Ok(());
+        }
+    }
+    Err("caller is not a canister controller".to_string())
+}
+
+async fn run_cycles_top_up_check() -> Result<CyclesTopUpCheckResult, String> {
+    let balance = canister_balance_cycles();
+    if balance > CYCLES_TOP_UP_THRESHOLD {
+        return Ok(CyclesTopUpCheckResult {
+            balance_cycles: Nat::from(balance),
+            threshold_cycles: Nat::from(CYCLES_TOP_UP_THRESHOLD),
+            called_launcher: false,
+            launcher_result: None,
+        });
+    }
+    let launcher_result = request_cycles_from_launcher().await?;
+    Ok(CyclesTopUpCheckResult {
+        balance_cycles: Nat::from(balance),
+        threshold_cycles: Nat::from(CYCLES_TOP_UP_THRESHOLD),
+        called_launcher: true,
+        launcher_result: Some(launcher_result),
+    })
+}
+
+fn canister_balance_cycles() -> u128 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        ic_cdk::api::canister_balance()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        u128::MAX
+    }
+}
+
+async fn request_cycles_from_launcher() -> Result<CyclesTopUpLauncherResult, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let launcher = Principal::from_text(CYCLES_TOP_UP_LAUNCHER_PRINCIPAL)
+            .map_err(|error| format!("invalid cycles launcher principal: {error}"))?;
+        let response = Call::bounded_wait(launcher, "request_cycles")
+            .await
+            .map_err(|error| format!("request_cycles call failed: {error:?}"))?;
+        response
+            .candid()
+            .map_err(|error| format!("request_cycles decode failed: {error}"))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(CyclesTopUpLauncherResult::Ok)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn management_canister_status(
+    canister_id: Principal,
+) -> Result<CanisterStatusResponse, String> {
+    let response = Call::bounded_wait(Principal::management_canister(), "canister_status")
+        .with_arg(CanisterStatusRequest { canister_id })
+        .await
+        .map_err(|error| format!("canister_status call failed: {error:?}"))?;
+    response
+        .candid()
+        .map_err(|error| format!("canister_status decode failed: {error}"))
 }
 
 #[allow(dead_code)]
