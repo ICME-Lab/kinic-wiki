@@ -7,12 +7,15 @@ use std::task::{Context, Poll, Waker};
 use candid::{Encode, Nat, Principal};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
-use vfs_runtime::{DEFAULT_LLM_WRITER_PRINCIPAL, VfsService};
+use vfs_runtime::{
+    DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL, DEFAULT_CYCLES_TOP_UP_THRESHOLD,
+    DEFAULT_LLM_WRITER_PRINCIPAL, VfsService,
+};
 use vfs_types::{
     AppendNodeRequest, CreateDatabaseRequest, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseStatus,
-    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
-    FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
+    CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole,
+    DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
+    ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
     MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
@@ -23,11 +26,14 @@ use vfs_types::{
 };
 
 use super::{
+    CyclesTopUpCheckStatus, CyclesTopUpLauncherError, CyclesTopUpLauncherResult,
     Icrc21ConsentMessage, Icrc21ConsentMessageMetadata, Icrc21ConsentMessageRequest,
     Icrc21ConsentMessageResponse, Icrc21ConsentMessageSpec, IcrcAccount, LedgerTransferFromOutcome,
     SERVICE, TransferFromError, append_node, begin_database_archive, begin_database_restore,
-    cancel_database_archive, check_database_write_cycles, clear_last_ledger_memo_for_test,
-    clear_ledger_transactions_for_test, create_database, delete_node, edit_node, export_snapshot,
+    cancel_database_archive, check_cycles_top_up, check_database_write_cycles,
+    clear_cycles_top_up_state_for_test, clear_last_ledger_memo_for_test,
+    clear_ledger_transactions_for_test, create_database,
+    cycles_top_up_launcher_call_count_for_test, delete_node, edit_node, export_snapshot,
     fail_next_apply_database_cycles_purchase_apply_for_test,
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
@@ -40,11 +46,12 @@ use super::{
     multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
     purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
     read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
-    search_nodes, set_next_ledger_transfer_from_outcome_for_test,
-    set_test_caller_principal_for_test, set_update_charge_units_for_test,
-    settle_database_storage_charges_batch, source_evidence, status, transfer_from_error_outcome,
-    update_charge_cycles, update_cycles_billing_config, write_database_restore_chunk, write_node,
-    write_nodes,
+    search_nodes, set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
+    set_next_cycles_top_up_launcher_result_for_test,
+    set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
+    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
+    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
+    write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -220,6 +227,15 @@ fn explicit_cycles_billing_config() -> CyclesBillingConfig {
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         cycles_per_kinic: 1_000,
         min_update_cycles: 1_000_000,
+        top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
+    }
+}
+
+fn test_cycles_top_up_config(enabled: bool, threshold_cycles: u128) -> CyclesTopUpConfig {
+    CyclesTopUpConfig {
+        enabled,
+        launcher_principal: DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL.to_string(),
+        threshold_cycles,
     }
 }
 
@@ -255,6 +271,131 @@ fn controller_can_query_index_sql_json() {
         result.rows,
         vec![r#"{"cycles_purchase_cycles":2345000000}"#.to_string()]
     );
+}
+
+#[test]
+fn controller_can_check_cycles_top_up() {
+    install_empty_test_service();
+    clear_cycles_top_up_state_for_test();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    set_cycles_balance_for_test(DEFAULT_CYCLES_TOP_UP_THRESHOLD + 1);
+
+    let result = block_on_ready(check_cycles_top_up()).expect("controller should check top-up");
+
+    assert_eq!(result.status, CyclesTopUpCheckStatus::SkippedAboveThreshold);
+    assert_eq!(cycles_top_up_launcher_call_count_for_test(), 0);
+}
+
+#[test]
+fn cycles_top_up_skips_when_disabled() {
+    install_empty_test_service();
+    clear_cycles_top_up_state_for_test();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    set_cycles_balance_for_test(1);
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .update_cycles_billing_config(
+                CyclesBillingConfigUpdate {
+                    cycles_per_kinic: 1_000,
+                    min_update_cycles: 1,
+                    top_up: test_cycles_top_up_config(false, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
+                },
+                &test_billing_authority_principal().to_text(),
+            )
+            .expect("top-up config should update");
+    });
+
+    let result = block_on_ready(check_cycles_top_up()).expect("disabled check should succeed");
+
+    assert_eq!(result.status, CyclesTopUpCheckStatus::SkippedDisabled);
+    assert!(!result.called_launcher);
+    assert_eq!(cycles_top_up_launcher_call_count_for_test(), 0);
+}
+
+#[test]
+fn cycles_top_up_skips_above_threshold() {
+    install_empty_test_service();
+    clear_cycles_top_up_state_for_test();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    set_cycles_balance_for_test(DEFAULT_CYCLES_TOP_UP_THRESHOLD + 1);
+
+    let result = block_on_ready(check_cycles_top_up()).expect("top-up check should succeed");
+
+    assert_eq!(result.status, CyclesTopUpCheckStatus::SkippedAboveThreshold);
+    assert!(!result.called_launcher);
+    assert_eq!(cycles_top_up_launcher_call_count_for_test(), 0);
+}
+
+#[test]
+fn cycles_top_up_calls_launcher_at_threshold() {
+    install_empty_test_service();
+    clear_cycles_top_up_state_for_test();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    set_cycles_balance_for_test(DEFAULT_CYCLES_TOP_UP_THRESHOLD);
+
+    let result = block_on_ready(check_cycles_top_up()).expect("top-up check should succeed");
+
+    assert_eq!(result.status, CyclesTopUpCheckStatus::LauncherOk);
+    assert!(result.called_launcher);
+    assert_eq!(cycles_top_up_launcher_call_count_for_test(), 1);
+}
+
+#[test]
+fn cycles_top_up_calls_launcher_once_below_threshold() {
+    install_empty_test_service();
+    clear_cycles_top_up_state_for_test();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    set_cycles_balance_for_test(DEFAULT_CYCLES_TOP_UP_THRESHOLD - 1);
+
+    let result = block_on_ready(check_cycles_top_up()).expect("top-up check should succeed");
+
+    assert_eq!(result.status, CyclesTopUpCheckStatus::LauncherOk);
+    assert_eq!(cycles_top_up_launcher_call_count_for_test(), 1);
+}
+
+#[test]
+fn cycles_top_up_skips_when_request_in_progress() {
+    install_empty_test_service();
+    clear_cycles_top_up_state_for_test();
+    set_test_caller_principal_for_test(Principal::management_canister());
+    set_cycles_balance_for_test(DEFAULT_CYCLES_TOP_UP_THRESHOLD - 1);
+    set_cycles_top_up_in_progress_for_test();
+
+    let result = block_on_ready(check_cycles_top_up()).expect("top-up check should succeed");
+
+    assert_eq!(result.status, CyclesTopUpCheckStatus::SkippedInProgress);
+    assert!(!result.called_launcher);
+    assert_eq!(cycles_top_up_launcher_call_count_for_test(), 0);
+}
+
+#[test]
+fn cycles_top_up_launcher_error_stays_outer_ok() {
+    for error in [
+        CyclesTopUpLauncherError::TooSoon,
+        CyclesTopUpLauncherError::Unauthorized,
+        CyclesTopUpLauncherError::LauncherBalanceTooLow,
+        CyclesTopUpLauncherError::TopUpFailed("rejected".to_string()),
+    ] {
+        install_empty_test_service();
+        clear_cycles_top_up_state_for_test();
+        set_test_caller_principal_for_test(Principal::management_canister());
+        set_cycles_balance_for_test(DEFAULT_CYCLES_TOP_UP_THRESHOLD - 1);
+        set_next_cycles_top_up_launcher_result_for_test(Ok(CyclesTopUpLauncherResult::Err(
+            error.clone(),
+        )));
+
+        let result =
+            block_on_ready(check_cycles_top_up()).expect("launcher Err should stay outer Ok");
+
+        assert_eq!(result.status, CyclesTopUpCheckStatus::LauncherErr);
+        assert_eq!(
+            result.launcher_result,
+            Some(CyclesTopUpLauncherResult::Err(error))
+        );
+        assert_eq!(cycles_top_up_launcher_call_count_for_test(), 1);
+    }
 }
 
 #[test]
@@ -441,6 +582,7 @@ fn update_cycles_billing_config_accepts_record_argument() {
     update_cycles_billing_config(CyclesBillingConfigUpdate {
         cycles_per_kinic: 469_000_000_000,
         min_update_cycles: 2_000_000,
+        top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
     })
     .expect("cycles config update should accept record argument");
 
@@ -798,6 +940,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
                 CyclesBillingConfigUpdate {
                     cycles_per_kinic: 100_000_000,
                     min_update_cycles: 1,
+                    top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
                 },
                 &test_billing_authority_principal().to_text(),
             )
@@ -834,6 +977,7 @@ fn purchase_database_cycles_uses_current_config_amount() {
                 CyclesBillingConfigUpdate {
                     cycles_per_kinic: 234_500_000_000,
                     min_update_cycles: 2,
+                    top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
                 },
                 &test_billing_authority_principal().to_text(),
             )
@@ -1484,6 +1628,7 @@ fn install_low_balance_default_service() {
             CyclesBillingConfigUpdate {
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 3_000_000_000,
+                top_up: test_cycles_top_up_config(true, DEFAULT_CYCLES_TOP_UP_THRESHOLD),
             },
             &test_billing_authority_principal().to_text(),
         )

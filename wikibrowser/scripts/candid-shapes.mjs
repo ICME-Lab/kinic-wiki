@@ -21,6 +21,7 @@ export const expectedTypes = {
     fields: {
       cycles_per_kinic: "nat64",
       min_update_cycles: "nat64",
+      top_up: "CyclesTopUpConfig",
       kinic_ledger_canister_id: "text",
       billing_authority_id: "text"
     }
@@ -29,8 +30,13 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       cycles_per_kinic: "nat64",
-      min_update_cycles: "nat64"
+      min_update_cycles: "nat64",
+      top_up: "CyclesTopUpConfig"
     }
+  },
+  CyclesTopUpConfig: {
+    kind: "record",
+    fields: { enabled: "bool", threshold_cycles: "nat", launcher_principal: "text" }
   },
   CyclesPurchaseResult: {
     kind: "record",
@@ -47,10 +53,22 @@ export const expectedTypes = {
   CyclesTopUpCheckResult: {
     kind: "record",
     fields: {
-      balance_cycles: "nat",
+      balance_cycles_before: "nat",
       threshold_cycles: "nat",
       called_launcher: "bool",
+      status: "CyclesTopUpCheckStatus",
       launcher_result: "opt CyclesTopUpLauncherResult"
+    }
+  },
+  CyclesTopUpCheckStatus: {
+    kind: "variant",
+    cases: {
+      SkippedDisabled: "null",
+      CallErr: "null",
+      LauncherErr: "null",
+      SkippedInProgress: "null",
+      LauncherOk: "null",
+      SkippedAboveThreshold: "null"
     }
   },
   DatabaseCyclesPendingPurchase: {

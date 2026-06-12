@@ -28,10 +28,12 @@ type CreateDatabaseResult = record { name : text; database_id : text };
 type CyclesBillingConfig = record {
   billing_authority_id : text;
   kinic_ledger_canister_id : text;
+  top_up : CyclesTopUpConfig;
   cycles_per_kinic : nat64;
   min_update_cycles : nat64;
 };
 type CyclesBillingConfigUpdate = record {
+  top_up : CyclesTopUpConfig;
   cycles_per_kinic : nat64;
   min_update_cycles : nat64;
 };
@@ -41,10 +43,24 @@ type CyclesPurchaseResult = record {
   amount_cycles : nat64;
 };
 type CyclesTopUpCheckResult = record {
+  status : CyclesTopUpCheckStatus;
   called_launcher : bool;
-  balance_cycles : nat;
+  balance_cycles_before : nat;
   threshold_cycles : nat;
   launcher_result : opt CyclesTopUpLauncherResult;
+};
+type CyclesTopUpCheckStatus = variant {
+  SkippedDisabled;
+  CallErr;
+  LauncherErr;
+  SkippedInProgress;
+  LauncherOk;
+  SkippedAboveThreshold;
+};
+type CyclesTopUpConfig = record {
+  enabled : bool;
+  threshold_cycles : nat;
+  launcher_principal : text;
 };
 type CyclesTopUpLauncherError = variant {
   TooSoon;

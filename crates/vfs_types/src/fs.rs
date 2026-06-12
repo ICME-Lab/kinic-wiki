@@ -71,12 +71,21 @@ pub struct CyclesBillingConfig {
     pub billing_authority_id: String,
     pub cycles_per_kinic: u64,
     pub min_update_cycles: u64,
+    pub top_up: CyclesTopUpConfig,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CyclesBillingConfigUpdate {
     pub cycles_per_kinic: u64,
     pub min_update_cycles: u64,
+    pub top_up: CyclesTopUpConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct CyclesTopUpConfig {
+    pub enabled: bool,
+    pub launcher_principal: String,
+    pub threshold_cycles: u128,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

@@ -30,8 +30,13 @@ const expectedTypes = {
       kinic_ledger_canister_id: "text",
       billing_authority_id: "text",
       cycles_per_kinic: "nat64",
-      min_update_cycles: "nat64"
+      min_update_cycles: "nat64",
+      top_up: "CyclesTopUpConfig"
     }
+  },
+  CyclesTopUpConfig: {
+    kind: "record",
+    fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
@@ -204,6 +209,7 @@ function normalizeActorShape(value) {
     .replace(/^idl\./, "")
     .replace(/^Text$/, "text")
     .replace(/^Int64$/, "int64")
+    .replace(/^Nat$/, "nat")
     .replace(/^Nat64$/, "nat64")
     .replace(/^Bool$/, "bool")
     .replace(/^Null$/, "null")

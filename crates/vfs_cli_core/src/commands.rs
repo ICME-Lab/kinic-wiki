@@ -12,7 +12,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfig, DatabaseCyclesPurchaseRequest,
+    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
     DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
@@ -983,6 +983,7 @@ struct CyclesBillingConfigOutput {
     billing_authority_id: String,
     cycles_per_kinic: u64,
     min_update_cycles: u64,
+    top_up: CyclesTopUpConfig,
     ledger_fee_e8s: u64,
 }
 
@@ -993,6 +994,7 @@ impl CyclesBillingConfigOutput {
             billing_authority_id: config.billing_authority_id,
             cycles_per_kinic: config.cycles_per_kinic,
             min_update_cycles: config.min_update_cycles,
+            top_up: config.top_up,
             ledger_fee_e8s,
         }
     }
@@ -1007,6 +1009,15 @@ fn cycles_config_lines(config: &CyclesBillingConfig, ledger_fee_e8s: u64) -> Vec
         format!("billing_authority_id\t{}", config.billing_authority_id),
         format!("cycles_per_kinic\t{}", config.cycles_per_kinic),
         format!("min_update_cycles\t{}", config.min_update_cycles),
+        format!("top_up_enabled\t{}", config.top_up.enabled),
+        format!(
+            "top_up_launcher_principal\t{}",
+            config.top_up.launcher_principal
+        ),
+        format!(
+            "top_up_threshold_cycles\t{}",
+            config.top_up.threshold_cycles
+        ),
         format!("ledger_fee_e8s\t{ledger_fee_e8s}"),
     ]
 }
@@ -1436,6 +1447,14 @@ mod tests {
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    fn test_cycles_top_up_config() -> CyclesTopUpConfig {
+        CyclesTopUpConfig {
+            enabled: true,
+            launcher_principal: "xfug4-5qaaa-aaaak-afowa-cai".to_string(),
+            threshold_cycles: 2_000_000_000_000,
+        }
+    }
+
     #[derive(Default)]
     struct MockClient {
         nodes: Vec<Node>,
@@ -1619,6 +1638,7 @@ mod tests {
                 billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 1,
+                top_up: test_cycles_top_up_config(),
             })
         }
         async fn check_database_write_cycles(&self, database_id: &str) -> Result<()> {
@@ -2487,6 +2507,7 @@ mod tests {
                 billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
                 cycles_per_kinic: 1_000,
                 min_update_cycles: 1,
+                top_up: test_cycles_top_up_config(),
             },
             KINIC_LEDGER_FEE_E8S,
         );

@@ -134,6 +134,11 @@ export type CyclesBillingConfig = {
   billingAuthorityId: string;
   cyclesPerKinic: string;
   minUpdateCycles: string;
+  topUp: {
+    enabled: boolean;
+    launcherPrincipal: string;
+    thresholdCycles: string;
+  };
 };
 
 export type CyclesPurchaseResult = {

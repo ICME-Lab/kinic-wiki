@@ -35,11 +35,17 @@ function idlFactory({ IDL: idl }) {
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
+  const CyclesTopUpConfig = idl.Record({
+    enabled: idl.Bool,
+    launcher_principal: idl.Text,
+    threshold_cycles: idl.Nat
+  });
   const CyclesBillingConfig = idl.Record({
     kinic_ledger_canister_id: idl.Text,
     billing_authority_id: idl.Text,
     cycles_per_kinic: idl.Nat64,
-    min_update_cycles: idl.Nat64
+    min_update_cycles: idl.Nat64,
+    top_up: CyclesTopUpConfig
   });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });

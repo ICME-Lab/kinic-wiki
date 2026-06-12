@@ -7,7 +7,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    CyclesBillingConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus, kinic_base_units_per_token,
+    CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus,
+    kinic_base_units_per_token,
 };
 
 #[derive(Debug)]
@@ -140,6 +141,12 @@ fn expected_cycles_config() -> Result<CyclesBillingConfig> {
         billing_authority_id: required_env("BILLING_AUTHORITY_ID")?,
         cycles_per_kinic: env_u64("CYCLES_PER_KINIC", 234_500_000_000)?,
         min_update_cycles: env_u64("MIN_UPDATE_CYCLES", 1_000_000)?,
+        top_up: CyclesTopUpConfig {
+            enabled: env_bool("CYCLES_TOP_UP_ENABLED", true)?,
+            launcher_principal: env::var("CYCLES_TOP_UP_LAUNCHER_PRINCIPAL")
+                .unwrap_or_else(|_| "xfug4-5qaaa-aaaak-afowa-cai".to_string()),
+            threshold_cycles: env_u128("CYCLES_TOP_UP_THRESHOLD", 2_000_000_000_000)?,
+        },
     })
 }
 
@@ -165,6 +172,28 @@ fn env_u64(name: &str, default: u64) -> Result<u64> {
                 Ok(parsed)
             }
         })
+}
+
+fn env_u128(name: &str, default: u128) -> Result<u128> {
+    match env::var(name) {
+        Ok(value) => value
+            .parse()
+            .with_context(|| format!("{name} must be a u128 integer")),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error).with_context(|| format!("failed to read {name}")),
+    }
+}
+
+fn env_bool(name: &str, default: bool) -> Result<bool> {
+    match env::var(name) {
+        Ok(value) => match value.as_str() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(anyhow!("{name} must be true or false")),
+        },
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(error) => Err(error).with_context(|| format!("failed to read {name}")),
+    }
 }
 
 async fn assert_cycles_config(

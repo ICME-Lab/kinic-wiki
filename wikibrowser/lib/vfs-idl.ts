@@ -27,13 +27,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
+  const CyclesTopUpConfig = idl.Record({ enabled: idl.Bool, threshold_cycles: idl.Nat, launcher_principal: idl.Text });
   const CyclesBillingConfig = idl.Record({
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64,
+    top_up: CyclesTopUpConfig,
     kinic_ledger_canister_id: idl.Text,
     billing_authority_id: idl.Text
   });
-  const CyclesBillingConfigUpdate = idl.Record({ cycles_per_kinic: idl.Nat64, min_update_cycles: idl.Nat64 });
+  const CyclesBillingConfigUpdate = idl.Record({
+    cycles_per_kinic: idl.Nat64,
+    min_update_cycles: idl.Nat64,
+    top_up: CyclesTopUpConfig
+  });
   const CyclesPurchaseResult = idl.Record({
     block_index: idl.Nat64,
     amount_cycles: idl.Nat64,
@@ -46,10 +52,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     TopUpFailed: idl.Text
   });
   const CyclesTopUpLauncherResult = idl.Variant({ Ok: idl.Null, Err: CyclesTopUpLauncherError });
+  const CyclesTopUpCheckStatus = idl.Variant({
+    SkippedDisabled: idl.Null,
+    CallErr: idl.Null,
+    LauncherErr: idl.Null,
+    SkippedInProgress: idl.Null,
+    LauncherOk: idl.Null,
+    SkippedAboveThreshold: idl.Null
+  });
   const CyclesTopUpCheckResult = idl.Record({
-    balance_cycles: idl.Nat,
+    balance_cycles_before: idl.Nat,
     threshold_cycles: idl.Nat,
     called_launcher: idl.Bool,
+    status: CyclesTopUpCheckStatus,
     launcher_result: idl.Opt(CyclesTopUpLauncherResult)
   });
   const DatabaseCyclesPendingPurchase = idl.Record({
