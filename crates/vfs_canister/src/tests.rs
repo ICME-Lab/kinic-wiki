@@ -134,6 +134,26 @@ fn pending_cycle_purchase_state(database_id: &str) -> String {
     })
 }
 
+fn pending_database_activation_state(database_id: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_object('status', status, 'mount_id', mount_id, 'active_mount_id', active_mount_id, 'has_db_file_name', db_file_name <> '') FROM databases WHERE database_id = '{}' LIMIT 1",
+                    database_id
+                ),
+                1,
+            )
+            .expect("database activation state should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("database row should exist")
+    })
+}
+
 fn cycles_for_test_payment(service: &VfsService, payment_amount_e8s: u64) -> u64 {
     super::cycles_for_payment_amount_e8s(
         payment_amount_e8s,
@@ -1003,8 +1023,12 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1045,8 +1069,12 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)

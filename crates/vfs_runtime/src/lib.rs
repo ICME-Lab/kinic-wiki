@@ -685,8 +685,8 @@ impl VfsService {
     ) -> Result<Option<DatabaseMeta>, String> {
         let activation = self
             .write_index(|tx| self.activate_pending_database_mount_for_tx(tx, database_id, now))?;
-        if activation.is_some() {
-            self.run_pending_database_migrations(database_id)?;
+        if let Some(meta) = &activation {
+            self.run_database_migrations_for_meta(database_id, meta)?;
         }
         Ok(activation)
     }
@@ -701,15 +701,31 @@ impl VfsService {
         if status != DatabaseStatus::Pending {
             return Ok(None);
         }
-        let active_mount_id: Option<i64> = tx
+        let (db_file_name, mount_id, active_mount_id): (String, i64, Option<i64>) = tx
             .query_row(
-                "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+                "SELECT db_file_name, mount_id, active_mount_id
+                 FROM databases
+                 WHERE database_id = ?1",
                 params![database_id],
-                |row| crate::sqlite::row_get(row, 0),
+                |row| {
+                    Ok((
+                        crate::sqlite::row_get(row, 0)?,
+                        crate::sqlite::row_get(row, 1)?,
+                        crate::sqlite::row_get(row, 2)?,
+                    ))
+                },
             )
             .map_err(|error| error.to_string())?;
         if active_mount_id.is_some() {
             return load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending]);
+        }
+        if mount_id != i64::from(PENDING_DATABASE_MOUNT_ID) {
+            if db_file_name.is_empty() {
+                return Err(format!(
+                    "pending database activation is staged without a db file name: {database_id}"
+                ));
+            }
+            return load_pending_database_activation_meta(tx, database_id);
         }
         let mount_id = allocate_mount_id(tx)?;
         let db_file_name = self.database_file_name(database_id, mount_id)?;
@@ -718,13 +734,12 @@ impl VfsService {
             "UPDATE databases
              SET db_file_name = ?2,
                  mount_id = ?3,
-                 active_mount_id = ?3,
                  updated_at_ms = ?4
              WHERE database_id = ?1 AND status = 'pending'",
             params![database_id, db_file_name, i64::from(mount_id), now],
         )
         .map_err(|error| error.to_string())?;
-        load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])
+        load_pending_database_activation_meta(tx, database_id)
     }
 
     pub fn validate_database_cycles_purchase(
@@ -4483,6 +4498,7 @@ fn purge_expired_unstarted_pending_databases(
                  JOIN database_members m ON m.database_id = d.database_id
                  WHERE d.status = 'pending'
                    AND d.active_mount_id IS NULL
+                   AND d.mount_id = ?3
                    AND d.created_at_ms <= ?2
                    AND m.principal = ?1
                    AND m.role = 'owner'
@@ -4494,9 +4510,11 @@ fn purge_expired_unstarted_pending_databases(
                  ORDER BY d.created_at_ms ASC",
             )
             .map_err(|error| error.to_string())?;
-        crate::sqlite::query_map(&mut stmt, params![caller, expires_before], |row| {
-            crate::sqlite::row_get::<String>(row, 0)
-        })
+        crate::sqlite::query_map(
+            &mut stmt,
+            params![caller, expires_before, i64::from(PENDING_DATABASE_MOUNT_ID)],
+            |row| crate::sqlite::row_get::<String>(row, 0),
+        )
         .map_err(|error| error.to_string())?
     };
     for database_id in expired_database_ids {
@@ -4512,9 +4530,10 @@ fn pending_database_count_for_caller(conn: &Connection, caller: &str) -> Result<
          JOIN database_members m ON m.database_id = d.database_id
          WHERE d.status = 'pending'
            AND d.active_mount_id IS NULL
+           AND d.mount_id = ?2
            AND m.principal = ?1
            AND m.role = 'owner'",
-        params![caller],
+        params![caller, i64::from(PENDING_DATABASE_MOUNT_ID)],
         |row| crate::sqlite::row_get(row, 0),
     )
     .map_err(|error| error.to_string())
@@ -4529,24 +4548,34 @@ fn complete_pending_database_activation(
     if status != DatabaseStatus::Pending {
         return Ok(());
     }
-    let active_mount_id: Option<i64> = conn
+    let (db_file_name, mount_id, active_mount_id): (String, i64, Option<i64>) = conn
         .query_row(
-            "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+            "SELECT db_file_name, mount_id, active_mount_id
+             FROM databases
+             WHERE database_id = ?1",
             params![database_id],
-            |row| crate::sqlite::row_get(row, 0),
+            |row| {
+                Ok((
+                    crate::sqlite::row_get(row, 0)?,
+                    crate::sqlite::row_get(row, 1)?,
+                    crate::sqlite::row_get(row, 2)?,
+                ))
+            },
         )
         .map_err(|error| error.to_string())?;
-    if active_mount_id.is_none() {
+    if mount_id == i64::from(PENDING_DATABASE_MOUNT_ID) || db_file_name.is_empty() {
         return Err(format!(
             "pending database has no activation mount: {database_id}"
         ));
     }
+    let active_mount_id = active_mount_id.unwrap_or(mount_id);
     conn.execute(
         "UPDATE databases
          SET status = 'active',
-             updated_at_ms = ?2
+             active_mount_id = ?2,
+             updated_at_ms = ?3
          WHERE database_id = ?1 AND status = 'pending'",
-        params![database_id, now],
+        params![database_id, active_mount_id, now],
     )
     .map_err(|error| error.to_string())?;
     conn.execute(
@@ -6933,6 +6962,21 @@ fn load_database_with_statuses(
          WHERE database_id = ?1",
         params![database_id],
         |row| map_database_meta_with_statuses(row, statuses),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn load_pending_database_activation_meta(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<Option<DatabaseMeta>, String> {
+    conn.query_row(
+        "SELECT database_id, name, db_file_name, mount_id, schema_version, logical_size_bytes, status
+         FROM databases
+         WHERE database_id = ?1",
+        params![database_id],
+        |row| map_database_meta_with_statuses(row, &[DatabaseStatus::Pending]),
     )
     .optional()
     .map_err(|error| error.to_string())

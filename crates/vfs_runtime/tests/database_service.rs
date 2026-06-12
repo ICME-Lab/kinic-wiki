@@ -516,6 +516,30 @@ fn database_index_row(
     .expect("database index row should exist")
 }
 
+fn pending_database_activation_row(
+    root: &std::path::Path,
+    database_id: &str,
+) -> (String, u16, Option<u16>, bool) {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT status, mount_id, active_mount_id, db_file_name <> ''
+         FROM databases WHERE database_id = ?1",
+        params![database_id],
+        |row| {
+            let mount_id: i64 = row.get(1)?;
+            let active_mount_id: Option<i64> = row.get(2)?;
+            let has_db_file_name: i64 = row.get(3)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                mount_id as u16,
+                active_mount_id.map(|value| value as u16),
+                has_db_file_name != 0,
+            ))
+        },
+    )
+    .expect("database activation row should exist")
+}
+
 fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool {
     let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
     conn.query_row(
@@ -1749,6 +1773,10 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
         .expect("pending activation should prepare")
         .expect("pending activation should allocate mount");
     assert_eq!(meta.mount_id, 11);
+    assert_eq!(
+        pending_database_activation_row(&root, &pending.database_id),
+        ("pending".to_string(), 11, None, true)
+    );
     let purchased_cycles = default_cycles_for_payment(1_000_000);
     service
         .complete_database_cycles_purchase_ledger_transfer(
@@ -1774,7 +1802,14 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     let row = database_index_row(&root, &pending.database_id);
     assert_eq!(row.0, "active");
     assert_eq!(row.1, Some(11));
-    assert!(row.2 > 0);
+    assert_eq!(
+        database_cycles_balance(&root, &pending.database_id),
+        purchased_cycles as i64
+    );
+    assert_eq!(
+        database_pending_operation_count(&root, &pending.database_id),
+        0
+    );
     assert_eq!(
         mount_history_row(&root, 11),
         (pending.database_id.clone(), "activate".to_string())
@@ -1875,8 +1910,11 @@ fn pending_database_creation_preserves_activation_started_reservations_during_cl
     assert!(database_index_row_exists(&root, &activated.database_id));
     let row = database_index_row(&root, &activated.database_id);
     assert_eq!(row.0, "pending");
-    assert_eq!(row.1, Some(11));
-    assert!(row.2 > 0);
+    assert_eq!(row.1, None);
+    assert_eq!(
+        pending_database_activation_row(&root, &activated.database_id),
+        ("pending".to_string(), 11, None, true)
+    );
     assert_eq!(row.3, None);
 }
 
