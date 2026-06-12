@@ -1451,15 +1451,16 @@ impl VfsService {
         now: i64,
     ) -> Result<MarketPurchaseStart, String> {
         require_authenticated_principal(caller)?;
-        require_authenticated_principal(&request.access_principal)?;
-        if request.listing_id.trim().is_empty() {
-            return Err("market listing id is required".to_string());
-        }
-        if request.price_e8s == 0 {
-            return Err("market listing price must be positive".to_string());
-        }
         self.write_index(|tx| {
-            let listing = validate_market_purchase_request(tx, &request)?;
+            let validation = validate_market_purchase_input(tx, request)?;
+            let request = validation.request;
+            let listing = validation.listing;
+            if !ledger.to_owner.is_empty() && ledger.to_owner != listing.payout_principal {
+                return Err(
+                    "market purchase ledger recipient must match listing payout principal"
+                        .to_string(),
+                );
+            }
             let price_e8s = amount_to_i64(request.price_e8s)?;
             let ledger_fee_e8s = amount_to_i64(ledger.ledger_fee_e8s)?;
             let ledger_created_at_time_ns = i64::try_from(ledger.ledger_created_at_time_ns)
@@ -1500,16 +1501,9 @@ impl VfsService {
         &self,
         payer: &str,
         request: &MarketPurchaseRequest,
-    ) -> Result<MarketListing, String> {
+    ) -> Result<MarketPurchaseValidation, String> {
         require_authenticated_principal(payer)?;
-        require_authenticated_principal(&request.access_principal)?;
-        if request.listing_id.trim().is_empty() {
-            return Err("market listing id is required".to_string());
-        }
-        if request.price_e8s == 0 {
-            return Err("market listing price must be positive".to_string());
-        }
-        self.read_index(|conn| validate_market_purchase_request(conn, request))
+        self.read_index(|conn| validate_market_purchase_input(conn, request.clone()))
     }
 
     pub fn market_purchase_access(
@@ -1520,7 +1514,6 @@ impl VfsService {
     ) -> Result<MarketOrder, String> {
         let price_e8s = request.price_e8s;
         let listing_id = request.listing_id.clone();
-        let access_principal = request.access_principal.clone();
         let start = self.begin_market_purchase_with_ledger_details(
             caller,
             request,
@@ -1536,14 +1529,14 @@ impl VfsService {
         )?;
         self.complete_market_purchase_ledger_transfer(
             start.operation_id,
-            &access_principal,
+            &start.access_principal,
             &listing_id,
             price_e8s,
             0,
         )?;
         self.apply_market_purchase(
             start.operation_id,
-            &access_principal,
+            &start.access_principal,
             &listing_id,
             price_e8s,
             now,
@@ -4937,6 +4930,11 @@ pub struct MarketPurchaseStart {
     pub access_principal: String,
 }
 
+pub struct MarketPurchaseValidation {
+    pub request: MarketPurchaseRequest,
+    pub listing: MarketListing,
+}
+
 struct PendingMarketPurchase {
     listing_id: String,
     database_id: String,
@@ -5097,6 +5095,28 @@ fn require_authenticated_principal(caller: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_authenticated_principal_text(value: &str) -> Result<String, String> {
+    let principal = Principal::from_text(value)
+        .map_err(|error| format!("principal text is invalid: {error}"))?;
+    if principal == Principal::anonymous() {
+        return Err("principal must not be anonymous".to_string());
+    }
+    Ok(principal.to_text())
+}
+
+fn normalize_market_purchase_request(
+    mut request: MarketPurchaseRequest,
+) -> Result<MarketPurchaseRequest, String> {
+    request.access_principal = normalize_authenticated_principal_text(&request.access_principal)?;
+    if request.listing_id.trim().is_empty() {
+        return Err("market listing id is required".to_string());
+    }
+    if request.price_e8s == 0 {
+        return Err("market listing price must be positive".to_string());
+    }
+    Ok(request)
+}
+
 fn update_pending_operation_completed(
     conn: &Transaction<'_>,
     table: &str,
@@ -5235,6 +5255,15 @@ fn validate_market_purchase_request(
         &request.access_principal,
     )?;
     Ok(listing)
+}
+
+fn validate_market_purchase_input(
+    conn: &Connection,
+    request: MarketPurchaseRequest,
+) -> Result<MarketPurchaseValidation, String> {
+    let request = normalize_market_purchase_request(request)?;
+    let listing = validate_market_purchase_request(conn, &request)?;
+    Ok(MarketPurchaseValidation { request, listing })
 }
 
 fn has_active_market_entitlement(

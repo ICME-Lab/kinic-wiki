@@ -1227,6 +1227,49 @@ fn icrc21_market_purchase_access_returns_consent_message() {
 }
 
 #[test]
+fn icrc21_market_purchase_access_canonicalizes_access_principal() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market canonical consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&MarketPurchaseRequest {
+        listing_id: listing.listing_id.clone(),
+        price_e8s: listing.price_e8s,
+        access_principal: access.to_text().to_ascii_uppercase(),
+    })
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(!message.contains(&format!(
+        "Access principal: `{}`",
+        access.to_text().to_ascii_uppercase()
+    )));
+}
+
+#[test]
 fn icrc21_market_purchase_access_rejects_price_mismatch() {
     install_empty_test_service();
     let seller = test_billing_authority_principal();
