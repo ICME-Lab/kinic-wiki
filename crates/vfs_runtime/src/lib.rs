@@ -101,6 +101,7 @@ const GENERATED_DATABASE_ID_PREFIX: &str = "db_";
 const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
 const FRESH_INDEX_SCHEMA_SQL: &str = include_str!("../migrations/index_db/fresh_index_schema.sql");
 const INDEX_011_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/011_to_latest.sql");
+const INDEX_026_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/026_to_latest.sql");
 pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
@@ -3526,6 +3527,7 @@ fn run_index_migrations_in_tx_for_upgrade(
 enum IndexSchemaState {
     Latest,
     Mainnet011,
+    Mainnet026,
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -3540,6 +3542,10 @@ fn ensure_existing_index_schema_is_latest(
             validate_cycles_billing_config(config)?;
             validate_pre_billing_index_schema(conn)?;
             apply_mainnet_011_to_latest_index_migration(conn, config)?;
+            validate_index_schema(conn)
+        }
+        IndexSchemaState::Mainnet026 => {
+            apply_mainnet_026_to_latest_index_migration(conn)?;
             validate_index_schema(conn)
         }
     }
@@ -3573,6 +3579,23 @@ fn classify_existing_index_schema_state(
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
         return Ok(IndexSchemaState::Latest);
     }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
+        for &version in POST_026_INDEX_SCHEMA_VERSIONS {
+            if migration_applied_tx(conn, version)? {
+                return Err(format!(
+                    "unsupported partial index schema: migration {version} is already applied"
+                ));
+            }
+        }
+        for table in POST_026_INDEX_SCHEMA_TABLES {
+            if tx_sqlite_master_entry_exists(conn, "table", table)? {
+                return Err(format!(
+                    "unsupported partial index schema: table {table} already exists"
+                ));
+            }
+        }
+        return Ok(IndexSchemaState::Mainnet026);
+    }
     if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS)? {
         return Err(format!(
             "unsupported index schema: missing migration {INDEX_SCHEMA_VERSION_SOURCE_RUN_SESSIONS}"
@@ -3603,6 +3626,15 @@ fn apply_mainnet_011_to_latest_index_migration(
         .map_err(|error| error.to_string())?;
     insert_cycles_billing_config(conn, config)?;
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
+        insert_schema_migration_now(conn, version)?;
+    }
+    Ok(())
+}
+
+fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute_batch(INDEX_026_TO_LATEST_SQL)
+        .map_err(|error| error.to_string())?;
+    for &version in POST_026_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
     Ok(())
@@ -3790,6 +3822,21 @@ const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
     "database_cycle_pending_operations",
     "cycles_billing_config",
     "storage_billing_state",
+    "market_listings",
+    "market_orders",
+    "market_purchase_pending_operations",
+    "market_entitlements",
+];
+
+const POST_026_INDEX_SCHEMA_VERSIONS: &[&str] = &[
+    INDEX_SCHEMA_VERSION_MARKETPLACE_CORE,
+    INDEX_SCHEMA_VERSION_KINIC_EXTERNAL_BLOCK_INDEXES,
+    INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
+    INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
+    INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
+];
+
+const POST_026_INDEX_SCHEMA_TABLES: &[&str] = &[
     "market_listings",
     "market_orders",
     "market_purchase_pending_operations",
@@ -7386,6 +7433,92 @@ mod tests {
         .expect("pre-cycles schema should write");
     }
 
+    fn write_mainnet_026_schema(index_path: &Path, config: &CyclesBillingConfig) {
+        write_pre_cycles_schema(index_path);
+        let mut conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.execute_batch(
+            "CREATE TABLE database_cycle_accounts (
+               database_id TEXT PRIMARY KEY,
+               balance_cycles INTEGER NOT NULL,
+               suspended_at_ms INTEGER,
+               storage_charged_at_ms INTEGER,
+               created_at_ms INTEGER NOT NULL,
+               updated_at_ms INTEGER NOT NULL,
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE TABLE database_cycle_ledger (
+               entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+               database_id TEXT NOT NULL,
+               kind TEXT NOT NULL,
+               amount_cycles INTEGER NOT NULL,
+               balance_after_cycles INTEGER NOT NULL,
+               payment_amount_e8s INTEGER,
+               caller TEXT NOT NULL,
+               method TEXT,
+               cycles_delta INTEGER,
+               cycles_per_kinic INTEGER,
+               ledger_block_index INTEGER,
+               created_at_ms INTEGER NOT NULL
+             );
+             CREATE INDEX database_cycle_ledger_database_idx
+               ON database_cycle_ledger(database_id, entry_id);
+             CREATE TABLE database_cycle_pending_operations (
+               operation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+               database_id TEXT NOT NULL,
+               kind TEXT NOT NULL,
+               caller TEXT NOT NULL,
+               cycles INTEGER NOT NULL,
+               payment_amount_e8s INTEGER NOT NULL,
+               from_owner TEXT,
+               from_subaccount BLOB,
+               to_owner TEXT,
+               to_subaccount BLOB,
+               ledger_fee_e8s INTEGER,
+               ledger_created_at_time_ns INTEGER,
+               operation_status TEXT NOT NULL,
+               ledger_block_index INTEGER,
+               created_at_ms INTEGER NOT NULL,
+               FOREIGN KEY (database_id) REFERENCES databases(database_id)
+             );
+             CREATE INDEX database_cycle_pending_operations_database_idx
+               ON database_cycle_pending_operations(database_id);
+             CREATE TABLE cycles_billing_config (
+               key TEXT PRIMARY KEY,
+               value TEXT NOT NULL
+             );
+             CREATE TABLE storage_billing_state (
+               key TEXT PRIMARY KEY,
+               cursor_mount_id INTEGER,
+               billing_now_ms INTEGER NOT NULL,
+               updated_at_ms INTEGER NOT NULL,
+               CHECK (key = 'timer')
+             );",
+        )
+        .expect("mainnet 026 tables should write");
+        let tx = conn.transaction().expect("transaction should start");
+        insert_cycles_billing_config(&tx, config).expect("config should insert");
+        for &version in &[
+            INDEX_SCHEMA_VERSION_BILLING_INITIAL,
+            INDEX_SCHEMA_VERSION_BILLING_PENDING,
+            INDEX_SCHEMA_VERSION_BILLING_LEDGER_BLOCK_INDEX,
+            INDEX_SCHEMA_VERSION_BILLING_PENDING_LEDGER_DETAILS,
+            INDEX_SCHEMA_VERSION_ACTIVE_STATUS,
+            INDEX_SCHEMA_VERSION_HARD_DELETE_DATABASES,
+            INDEX_SCHEMA_VERSION_CYCLES_LEDGER_ONLY,
+            INDEX_SCHEMA_VERSION_FIXED_CYCLES_ACCOUNTING,
+            INDEX_SCHEMA_VERSION_CYCLES_BILLING_CONFIG_VERSION,
+            INDEX_SCHEMA_VERSION_CYCLES_PENDING_OPERATION_STATUS,
+            INDEX_SCHEMA_VERSION_CYCLES,
+            INDEX_SCHEMA_VERSION_STORAGE_BILLING,
+            INDEX_SCHEMA_VERSION_DIRECT_CYCLES,
+            INDEX_SCHEMA_VERSION_CYCLES_PENDING_LEDGER_BLOCK_INDEX,
+            INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH,
+        ] {
+            insert_schema_migration_now(&tx, version).expect("026 marker should insert");
+        }
+        tx.commit().expect("mainnet 026 schema should commit");
+    }
+
     #[test]
     fn old_upgrade_migrations_require_config() {
         let dir = tempdir().expect("tempdir should create");
@@ -7457,6 +7590,44 @@ mod tests {
             service.cycles_billing_config().expect("config should load"),
             config
         );
+    }
+
+    #[test]
+    fn upgrade_migrations_apply_mainnet_026_to_latest_without_config() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let config = test_cycles_billing_config();
+        write_mainnet_026_schema(&index_path, &config);
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("mainnet 026 index should upgrade");
+
+        assert_eq!(
+            service.cycles_billing_config().expect("config should load"),
+            config
+        );
+        let conn = Connection::open(&index_path).expect("index DB should reopen");
+        let marker: String = conn
+            .query_row(
+                "SELECT version FROM schema_migrations
+                 WHERE version = 'database_index:031_drop_app_balance'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("latest marker should exist");
+        let market_tables: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name IN ('market_listings', 'market_orders', 'market_purchase_pending_operations', 'market_entitlements')",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("market table count should load");
+        assert_eq!(marker, "database_index:031_drop_app_balance");
+        assert_eq!(market_tables, 4);
     }
 
     #[test]

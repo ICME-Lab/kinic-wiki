@@ -193,7 +193,7 @@ Cloudflare settings:
 - Framework Preset: Next.js
 - Root Directory: `wikibrowser`
 - Install Command: `pnpm install --frozen-lockfile`
-- Build Command: `pnpm deploy`
+- Build Command: `pnpm deploy:production`
 - Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai` for Preview and Production
 - Runtime: Cloudflare Workers via `@opennextjs/cloudflare`
 
@@ -203,7 +203,7 @@ CLI deploy from this directory:
 
 ```bash
 pnpm wrangler whoami
-pnpm deploy
+pnpm deploy:production
 ```
 
 Pre-deploy checklist:
