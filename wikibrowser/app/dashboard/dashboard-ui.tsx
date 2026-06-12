@@ -290,17 +290,20 @@ export function MarketListingsPanel(props: {
   const [title, setTitle] = useState(props.databaseName);
   const [description, setDescription] = useState("");
   const [payoutPrincipal, setPayoutPrincipal] = useState(props.principal ?? "");
+  const [payoutPrincipalEdited, setPayoutPrincipalEdited] = useState(false);
   const [price, setPrice] = useState("1");
   const [tags, setTags] = useState<string[]>([]);
   const selected = props.listings.find((listing) => listing.listingId === selectedListingId) ?? null;
   const priceE8s = parseKinicInput(price);
-  const submitDisabled = props.busy || !title.trim() || !description.trim() || !payoutPrincipal.trim() || !priceE8s;
+  const payoutPrincipalInput = selected || payoutPrincipalEdited ? payoutPrincipal : props.principal ?? "";
+  const submitDisabled = props.busy || !title.trim() || !description.trim() || !payoutPrincipalInput.trim() || !priceE8s;
 
   function selectListing(listing: MarketListing) {
     setSelectedListingId(listing.listingId);
     setTitle(listing.title);
     setDescription(listing.description);
     setPayoutPrincipal(listing.payoutPrincipal);
+    setPayoutPrincipalEdited(false);
     setPrice(decimalFromE8s(listing.priceE8s));
     setTags(tagsFromJson(listing.tagsJson));
   }
@@ -311,7 +314,7 @@ export function MarketListingsPanel(props: {
     const base = {
       title: title.trim(),
       description: description.trim(),
-      payoutPrincipal: payoutPrincipal.trim(),
+      payoutPrincipal: payoutPrincipalInput.trim(),
       llmSummary: null,
       tagsJson: tagsJsonFromTags(tags),
       priceE8s
@@ -404,7 +407,14 @@ export function MarketListingsPanel(props: {
         </label>
         <label className="grid gap-1 text-sm">
           <span className="text-xs uppercase text-muted">Payout principal</span>
-          <input className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent" value={payoutPrincipal} onChange={(event) => setPayoutPrincipal(event.target.value)} />
+          <input
+            className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent"
+            value={payoutPrincipalInput}
+            onChange={(event) => {
+              setPayoutPrincipalEdited(true);
+              setPayoutPrincipal(event.target.value);
+            }}
+          />
         </label>
         <div className="grid gap-2 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -438,6 +448,7 @@ export function MarketListingsPanel(props: {
                 setTitle(props.databaseName);
                 setDescription("");
                 setPayoutPrincipal(props.principal ?? "");
+                setPayoutPrincipalEdited(false);
                 setPrice("1");
                 setTags([]);
               }}

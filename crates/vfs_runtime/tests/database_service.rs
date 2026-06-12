@@ -4534,6 +4534,38 @@ fn market_purchase_payer_can_grant_access_to_ii_principal() {
 }
 
 #[test]
+fn market_purchase_begin_records_listing_payout_for_empty_ledger_recipient() {
+    let service = service();
+    service
+        .create_database("market-access-pending-payout", "seller", 1)
+        .expect("database should create");
+    let listing = service
+        .market_create_listing(
+            "seller",
+            market_listing_request("market-access-pending-payout", 250),
+            2,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "", 100_000, 6),
+            6,
+        )
+        .expect("purchase should begin");
+    assert_eq!(start.payout_principal, "aaaaa-aa");
+    let pending = service
+        .query_index_sql_json(
+            "SELECT json_object('to_owner', to_owner) FROM market_purchase_pending_operations",
+            10,
+        )
+        .expect("pending operation should be queryable");
+
+    assert_eq!(pending.rows, vec![r#"{"to_owner":"aaaaa-aa"}"#]);
+}
+
+#[test]
 fn market_purchase_rejects_ledger_recipient_mismatch() {
     let service = service();
     service
