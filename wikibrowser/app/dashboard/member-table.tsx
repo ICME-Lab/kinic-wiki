@@ -66,9 +66,10 @@ function MemberRow(props: {
   const revokeBusy = isBusyRevoke(props.busyAction, props.member.principal);
   const roleBusy = isBusyGrant(props.busyAction, props.member.principal, role);
   const changed = role !== props.member.role;
+  const principalLabel = `${principalDisplayName(props.member.principal)}${ownMember ? " (you)" : ""}`;
   return (
     <tr className={`border-t border-line ${revokeBusy || roleBusy ? "bg-accentSoft/70" : ""}`}>
-      <td className="px-4 py-3 font-mono text-xs text-ink">{principalDisplayName(props.member.principal)}</td>
+      <td className="px-4 py-3 font-mono text-xs text-ink">{principalLabel}</td>
       <td className="px-4 py-3">
         {props.readOnly ? (
           <span className="text-sm text-ink">{props.member.role}</span>

@@ -11,6 +11,7 @@ import { EmptyState, SkillCard, StatusPanel, SummaryStrip } from "@/app/skills/s
 import { AdminHeader } from "@/components/admin-header";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCanWrite } from "@/lib/cycles-state";
+import { hrefForPath } from "@/lib/paths";
 import { filterSkills, loadSkillCatalog, summarizeSkills, type CatalogSkill, type StatusFilter } from "@/lib/skill-registry-catalog";
 import { loadSkillCatalogDetails } from "@/lib/skill-registry-details";
 import { applyProposalDiff, previewApplyProposalDiff, type ProposalDiffPreview } from "@/lib/skill-registry-diff";
@@ -215,7 +216,7 @@ export function SkillRegistryClient({ databaseId }: { databaseId: string }) {
         <AdminHeader
           title="Skill Registry"
           nav={
-            <Link className="text-accent no-underline hover:underline" href={`/${encodeURIComponent(databaseId)}/Wiki`}>
+            <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, "/Wiki")}>
               Wiki
             </Link>
           }

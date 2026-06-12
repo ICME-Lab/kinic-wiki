@@ -18,7 +18,8 @@ import {
   AUTH_SESSION_TTL_NS,
   MAINNET_II_PROVIDER_URL,
   WIKI_CANISTER_DERIVATION_ORIGIN,
-  derivationOriginForLocation
+  derivationOriginForLocation,
+  identityProviderUrlForLocation
 } from "../../../shared/ii-auth/index.js";
 
 test("settings popup omits fixed runtime inputs", () => {
@@ -210,7 +211,14 @@ test("Internet Identity options use 29 day TTL and derivation origin", () => {
   assert.equal(AUTH_OPTIONS.createOptions.idleOptions.disableDefaultIdleCallback, true);
 });
 
-test("CLI login derivation origin uses local origin only for local development", () => {
+test("CLI login helpers use mainnet Internet Identity and canonical derivation origin", () => {
+  assert.equal(
+    identityProviderUrlForLocation({
+      hostname: "localhost",
+      origin: "http://localhost:4943"
+    }),
+    MAINNET_II_PROVIDER_URL
+  );
   assert.equal(
     derivationOriginForLocation({
       hostname: "wiki.kinic.xyz",
@@ -230,7 +238,7 @@ test("CLI login derivation origin uses local origin only for local development",
       hostname: "localhost",
       origin: "http://localhost:4943"
     }),
-    "http://localhost:4943"
+    WIKI_CANISTER_DERIVATION_ORIGIN
   );
 });
 

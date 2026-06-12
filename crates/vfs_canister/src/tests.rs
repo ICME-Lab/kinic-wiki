@@ -14,7 +14,8 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, ExportSnapshotRequest,
     FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
     NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
     RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
     SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
@@ -31,9 +32,11 @@ use super::{
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
     graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    last_ledger_from_for_test, last_ledger_memo_for_test, ledger_transfer_fees_for_test,
-    list_children, list_database_cycle_entries, list_database_cycles_pending_purchases,
-    list_database_members, list_databases, list_nodes, memory_manifest, mkdir_node, move_node,
+    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
+    ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
+    list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
+    market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
+    market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
     multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
     purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
     read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
@@ -131,6 +134,26 @@ fn pending_cycle_purchase_state(database_id: &str) -> String {
     })
 }
 
+fn pending_database_activation_state(database_id: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_object('status', status, 'mount_id', mount_id, 'active_mount_id', active_mount_id, 'has_db_file_name', db_file_name <> '') FROM databases WHERE database_id = '{}' LIMIT 1",
+                    database_id
+                ),
+                1,
+            )
+            .expect("database activation state should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("database row should exist")
+    })
+}
+
 fn cycles_for_test_payment(service: &VfsService, payment_amount_e8s: u64) -> u64 {
     super::cycles_for_payment_amount_e8s(
         payment_amount_e8s,
@@ -170,6 +193,30 @@ fn cycles_purchase_request(
         database_id: database_id.to_string(),
         payment_amount_e8s,
         min_expected_cycles: 1,
+    }
+}
+
+fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
+    MarketCreateListingRequest {
+        database_id: database_id.to_string(),
+        payout_principal: Principal::management_canister().to_text(),
+        title: "Private market DB".to_string(),
+        description: "Paid reader access".to_string(),
+        llm_summary: None,
+        tags_json: "[]".to_string(),
+        price_e8s,
+    }
+}
+
+fn market_purchase_request(
+    listing_id: &str,
+    price_e8s: u64,
+    access_principal: Principal,
+) -> MarketPurchaseRequest {
+    MarketPurchaseRequest {
+        listing_id: listing_id.to_string(),
+        price_e8s,
+        access_principal: access_principal.to_text(),
     }
 }
 
@@ -349,15 +396,9 @@ fn fund_database(database_id: &str, payment_amount_e8s: u64, ledger_block_index:
                 1_700_000_000_000,
             )
             .expect("database cycle purchase should begin");
-        if service
-            .activate_pending_database_for_cycles_purchase(database_id, 1_700_000_000_000)
-            .expect("pending database activation should prepare")
-            .is_some()
-        {
-            service
-                .run_pending_database_migrations(database_id)
-                .expect("pending database migrations should run");
-        }
+        service
+            .prepare_pending_database_activation(database_id, 1_700_000_000_000)
+            .expect("pending database activation should prepare");
         let cycles = super::cycles_for_payment_amount_e8s(
             payment_amount_e8s,
             &service
@@ -505,6 +546,13 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
     assert_eq!(result.block_index, 42);
     assert_eq!(result.amount_cycles, 1_172_500);
     assert_eq!(result.balance_cycles, 1_172_500);
+    assert_eq!(
+        last_ledger_to_for_test()
+            .expect("ledger recipient should record")
+            .owner
+            .to_text(),
+        "isz6c-6c4pl-oba7w-ikjex-472yu-rf3fe-valdh-lfazm-5f3ep-v474i-qae"
+    );
     assert_eq!(
         database_status_and_mount(&database.database_id).0,
         DatabaseStatus::Active
@@ -975,8 +1023,12 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1017,8 +1069,12 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1146,6 +1202,219 @@ fn icrc21_rejects_malformed_cycle_consent_arg() {
         response,
         Icrc21ConsentMessageResponse::Err(super::Icrc21Error::ConsentMessageUnavailable(_))
     ));
+}
+
+#[test]
+fn icrc21_market_purchase_access_returns_consent_message() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains("Purchase marketplace database access"));
+    assert!(message.contains("Listing: `Private market DB`"));
+    assert!(message.contains("Payment: `2.5` KINIC"));
+    assert!(message.contains("Ledger transfer fee in allowance: `0.001` KINIC"));
+    assert!(message.contains(&format!("Seller principal: `{}`", seller.to_text())));
+    assert!(message.contains(&format!(
+        "Seller payout principal: `{}`",
+        Principal::management_canister().to_text()
+    )));
+    assert!(message.contains(&format!("Payer wallet principal: `{}`", payer.to_text())));
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(message.contains("read-only marketplace entitlement"));
+}
+
+#[test]
+fn icrc21_market_purchase_access_canonicalizes_access_principal() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market canonical consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&MarketPurchaseRequest {
+        listing_id: listing.listing_id.clone(),
+        price_e8s: listing.price_e8s,
+        access_principal: access.to_text().to_ascii_uppercase(),
+    })
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(!message.contains(&format!(
+        "Access principal: `{}`",
+        access.to_text().to_ascii_uppercase()
+    )));
+}
+
+#[test]
+fn icrc21_market_purchase_access_rejects_price_mismatch() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Price mismatch".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 302);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s + 1,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("market listing price mismatch"));
+        }
+        other => panic!("price mismatch consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn icrc21_market_purchase_access_rejects_inactive_listing() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Inactive listing".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 303);
+        let listing = market_create_listing(market_listing_request(&database.database_id, 250))
+            .expect("listing should create");
+        market_pause_listing(listing.listing_id.clone()).expect("listing should pause");
+        listing
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&market_purchase_request(
+        &listing.listing_id,
+        listing.price_e8s,
+        access,
+    ))
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    match response {
+        Icrc21ConsentMessageResponse::Err(super::Icrc21Error::UnsupportedCanisterCall(info)) => {
+            assert!(info.description.contains("market listing is not active"));
+        }
+        other => panic!("inactive listing consent should reject: {other:?}"),
+    }
+}
+
+#[test]
+fn market_list_seller_listings_filters_by_seller_and_pages() {
+    install_empty_test_service();
+    let seller_a = test_billing_authority_principal();
+    let seller_b = Principal::management_canister();
+    {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller_a);
+        let first = create_database(CreateDatabaseRequest {
+            name: "Seller A first".to_string(),
+        })
+        .expect("first database should create");
+        fund_database(&first.database_id, 1_000_000, 304);
+        market_create_listing(market_listing_request(&first.database_id, 100))
+            .expect("first listing should create");
+        let second = create_database(CreateDatabaseRequest {
+            name: "Seller A second".to_string(),
+        })
+        .expect("second database should create");
+        fund_database(&second.database_id, 1_000_000, 305);
+        market_create_listing(market_listing_request(&second.database_id, 200))
+            .expect("second listing should create");
+    }
+    {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller_b);
+        let other = create_database(CreateDatabaseRequest {
+            name: "Seller B listing".to_string(),
+        })
+        .expect("other database should create");
+        fund_database(&other.database_id, 1_000_000, 306);
+        market_create_listing(market_listing_request(&other.database_id, 300))
+            .expect("other listing should create");
+    }
+
+    let first_page = market_list_seller_listings(seller_a.to_text(), None, 1)
+        .expect("first seller page should load");
+    assert_eq!(first_page.listings.len(), 1);
+    assert_eq!(first_page.listings[0].seller_principal, seller_a.to_text());
+    assert!(first_page.next_cursor.is_some());
+
+    let second_page = market_list_seller_listings(seller_a.to_text(), first_page.next_cursor, 10)
+        .expect("second seller page should load");
+    assert_eq!(second_page.listings.len(), 1);
+    assert_eq!(second_page.listings[0].seller_principal, seller_a.to_text());
+    assert!(second_page.next_cursor.is_none());
 }
 
 #[test]
@@ -1369,6 +1638,282 @@ fn canister_list_databases_hides_deleted_databases() {
     let summaries = list_databases().expect("database summaries should load");
 
     assert!(summaries.is_empty());
+}
+
+#[test]
+fn market_listing_description_allows_newlines() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Multiline market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(220));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        let mut create = market_listing_request(&database_id, 500);
+        create.description = "Line one\nLine two\r\n\tIndented".to_string();
+        create.llm_summary = Some("Summary one\nSummary two".to_string());
+        let listing = market_create_listing(create).expect("multiline description should create");
+        assert_eq!(listing.description, "Line one\nLine two\r\n\tIndented");
+        assert_eq!(
+            listing.llm_summary,
+            Some("Summary one\nSummary two".to_string())
+        );
+
+        let updated = market_update_listing(MarketUpdateListingRequest {
+            listing_id: listing.listing_id,
+            expected_revision: listing.revision,
+            payout_principal: Principal::management_canister().to_text(),
+            title: "Updated market DB".to_string(),
+            description: "Updated one\nUpdated two".to_string(),
+            llm_summary: Some("Updated summary\nSecond line".to_string()),
+            tags_json: "[]".to_string(),
+            price_e8s: 600,
+        })
+        .expect("multiline description should update");
+        assert_eq!(updated.description, "Updated one\nUpdated two");
+        assert_eq!(
+            updated.llm_summary,
+            Some("Updated summary\nSecond line".to_string())
+        );
+    }
+}
+
+#[test]
+fn market_listing_description_rejects_non_whitespace_control_characters() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Control market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(221));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+
+        let mut bad_description = market_listing_request(&database_id, 500);
+        bad_description.description = "bad\0description".to_string();
+        let description_error = market_create_listing(bad_description)
+            .expect_err("NUL in description should be rejected");
+        assert!(
+            description_error
+                .contains("market listing description may not contain control characters")
+        );
+
+        let mut bad_title = market_listing_request(&database_id, 500);
+        bad_title.title = "bad\ntitle".to_string();
+        let title_error =
+            market_create_listing(bad_title).expect_err("title newline should be rejected");
+        assert!(title_error.contains("market listing title may not contain control characters"));
+
+        let mut bad_tags = market_listing_request(&database_id, 500);
+        bad_tags.tags_json = "[\"bad\ntag\"]".to_string();
+        let tags_error =
+            market_create_listing(bad_tags).expect_err("tags newline should be rejected");
+        assert!(tags_error.contains("market listing tags may not contain control characters"));
+    }
+}
+
+#[test]
+fn canister_list_databases_includes_market_entitlements_as_reader_access() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let buyer = Principal::self_authenticating(b"market buyer");
+    let wallet = Principal::self_authenticating(b"market wallet payer");
+    let payout = Principal::self_authenticating(b"market seller payout");
+    let database_id;
+    let listing_id;
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Private market".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(201));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Wiki/paid.md".to_string(),
+            kind: NodeKind::File,
+            content: "# Paid\n\nPrivate body".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("market database content should write");
+        let mut request = market_listing_request(&database_id, 500);
+        request.payout_principal = payout.to_text();
+        let listing = market_create_listing(request).expect("listing should create");
+        assert!(!listing.listing_id.starts_with("listing_"));
+        assert_eq!(listing.status, MarketListingStatus::Active);
+        listing_id = listing.listing_id;
+    }
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(wallet);
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(202));
+        let order = block_on_ready(market_purchase_access(market_purchase_request(
+            &listing_id,
+            500,
+            buyer,
+        )))
+        .expect("wallet should pay for buyer access");
+        assert_eq!(order.buyer_principal, buyer.to_text());
+        assert_eq!(order.payout_principal, payout.to_text());
+        assert_eq!(order.ledger_block_index, 202);
+        assert_eq!(
+            last_ledger_from_for_test()
+                .expect("market payer should record")
+                .owner,
+            wallet
+        );
+        assert_eq!(
+            last_ledger_to_for_test()
+                .expect("market recipient should record")
+                .owner,
+            payout
+        );
+    }
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(buyer);
+        let summaries = list_databases().expect("buyer database summaries should load");
+        let summary = summaries
+            .iter()
+            .find(|summary| summary.database_id == database_id)
+            .expect("entitled database should appear in authenticated list");
+        assert_eq!(summary.role, DatabaseRole::Reader);
+
+        let node = read_node(database_id.clone(), "/Wiki/paid.md".to_string())
+            .expect("entitled buyer read should succeed")
+            .expect("paid node should exist");
+        assert_eq!(node.content, "# Paid\n\nPrivate body");
+        let children = list_children(ListChildrenRequest {
+            database_id: database_id.clone(),
+            path: "/Wiki".to_string(),
+        })
+        .expect("entitled buyer should list children");
+        assert!(children.iter().any(|child| child.path == "/Wiki/paid.md"));
+    }
+
+    let anonymous_summaries = list_databases().expect("anonymous summaries should load");
+    assert!(
+        anonymous_summaries
+            .iter()
+            .all(|summary| summary.database_id != database_id)
+    );
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        grant_database_access(database_id.clone(), buyer.to_text(), DatabaseRole::Writer)
+            .expect("owner should grant writer access");
+    }
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(buyer);
+        let summaries = list_databases().expect("buyer database summaries should load");
+        let matching = summaries
+            .iter()
+            .filter(|summary| summary.database_id == database_id)
+            .collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].role, DatabaseRole::Writer);
+    }
+}
+
+#[test]
+fn marketplace_listing_detail_includes_wiki_node_character_counts() {
+    install_empty_test_service();
+    let owner = Principal::management_canister();
+    let database_id;
+    let listing_id;
+    let japanese_content = "# 日本語\n\nabc";
+
+    {
+        let _caller = AuthenticatedCallerGuard::install_principal(owner);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market character counts".to_string(),
+        })
+        .expect("market database should create");
+        database_id = database.database_id;
+        set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(211));
+        block_on_ready(purchase_database_cycles(cycles_purchase_request(
+            &database_id,
+            1_000_000,
+        )))
+        .expect("market database should activate");
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Wiki/japanese.md".to_string(),
+            kind: NodeKind::File,
+            content: japanese_content.to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("wiki node should write");
+        for path in ["/Sources", "/Sources/raw", "/Sources/raw/test"] {
+            mkdir_node(MkdirNodeRequest {
+                database_id: database_id.clone(),
+                path: path.to_string(),
+            })
+            .expect("source parent folder should create");
+        }
+        write_node(WriteNodeRequest {
+            database_id: database_id.clone(),
+            path: "/Sources/raw/test/source.md".to_string(),
+            kind: NodeKind::Source,
+            content: "source text should not appear in marketplace node sizes".to_string(),
+            metadata_json: "{}".to_string(),
+            expected_etag: None,
+        })
+        .expect("source node should write");
+        let listing = market_create_listing(market_listing_request(&database_id, 500))
+            .expect("listing should create");
+        assert_eq!(listing.status, MarketListingStatus::Active);
+        listing_id = listing.listing_id;
+    }
+
+    let detail = market_get_listing(listing_id).expect("listing detail should load");
+    let excerpt = detail
+        .preview
+        .excerpts
+        .iter()
+        .find(|excerpt| excerpt.path == "/Wiki/japanese.md")
+        .expect("wiki file should appear in marketplace node size details");
+    assert_eq!(
+        excerpt.content_chars,
+        japanese_content.chars().count() as u64
+    );
+    assert_eq!(excerpt.excerpt, japanese_content);
+    assert!(
+        detail
+            .preview
+            .excerpts
+            .iter()
+            .all(|excerpt| !excerpt.path.starts_with("/Sources/"))
+    );
 }
 
 #[test]

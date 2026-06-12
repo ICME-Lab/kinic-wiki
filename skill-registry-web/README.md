@@ -26,7 +26,6 @@ Required public environment:
 
 ```bash
 NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io
-NEXT_PUBLIC_II_PROVIDER_URL=https://id.ai
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai
 ```
 

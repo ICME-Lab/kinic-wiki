@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 candid = "0.10.26"
+serde_json = "1.0.145"
 sha2 = "0.10.9"
 vfs_types = { package = "kinic-vfs-types", version = "0.1.0", path = "../vfs_types" }
 vfs-store = { path = "../vfs_store" }

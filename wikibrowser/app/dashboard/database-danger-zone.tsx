@@ -9,6 +9,7 @@ import type { BusyAction } from "./access-control";
 import { ActionButton } from "./action-button";
 
 export function DatabaseDangerZone(props: {
+  activeEntitlementCount: string | null;
   cyclesBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
@@ -34,26 +35,28 @@ export function DatabaseDangerZone(props: {
   }
   return (
     <>
-      <div className="grid gap-3 border-t border-red-200 bg-red-50/60 p-4">
-        <div>
-          <h3 className="text-sm font-semibold text-red-950">Delete database</h3>
-          <p className="mt-1 text-sm leading-6 text-red-900">
-            This action is irreversible. Archive first if recovery is required.
-          </p>
-          <p className="mt-2 break-all font-mono text-xs text-red-900">
-            {props.databaseName} / {props.databaseId}
-          </p>
-          <DeleteCyclesNotice />
-        </div>
-        <div>
+      <section className="rounded-lg border border-red-200 bg-red-50/60 shadow-sm">
+        <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-red-950">Delete database</h3>
+            <p className="mt-1 text-sm leading-6 text-red-900">
+              This action is irreversible. Archive first if recovery is required.
+            </p>
+            <p className="mt-2 break-all font-mono text-xs text-red-900">
+              {props.databaseName} / {props.databaseId}
+            </p>
+            <DeleteEntitlementNotice count={props.activeEntitlementCount} />
+            <DeleteCyclesNotice />
+          </div>
           <ActionButton disabled={deleteDisabled} onClick={openDeleteDialog} variant="danger">
             Delete database
           </ActionButton>
         </div>
-      </div>
+      </section>
       {deleteDialogOpen ? (
         <ConfirmDeleteDatabaseDialog
           busy={props.busy}
+          activeEntitlementCount={props.activeEntitlementCount}
           databaseId={props.databaseId}
           databaseName={props.databaseName}
           deleting={props.busyAction?.kind === "delete"}
@@ -67,6 +70,7 @@ export function DatabaseDangerZone(props: {
 }
 
 function ConfirmDeleteDatabaseDialog(props: {
+  activeEntitlementCount: string | null;
   busy: boolean;
   databaseId: string;
   databaseName: string;
@@ -78,12 +82,18 @@ function ConfirmDeleteDatabaseDialog(props: {
   const [typedDatabaseId, setTypedDatabaseId] = useState("");
   const deleteConfirmed = typedDatabaseId === props.databaseId;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
+      onMouseDown={(event) => {
+        if (!props.deleting && event.target === event.currentTarget) props.onCancel();
+      }}
+    >
       <div className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
         <h3 className="text-lg font-semibold text-ink">Delete database</h3>
         <p className="mt-3 text-sm leading-6 text-muted">
           Delete {props.databaseName}. This action is irreversible. Archive first if recovery is required.
         </p>
+        <DeleteEntitlementNotice count={props.activeEntitlementCount} />
         <p className="mt-3 break-all rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs text-ink">{props.databaseId}</p>
         {props.deleteError ? (
           <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-900" role="alert">
@@ -113,4 +123,9 @@ function ConfirmDeleteDatabaseDialog(props: {
 
 function DeleteCyclesNotice() {
   return <p className="mt-3 text-sm leading-6 text-red-900">Remaining cycles will be discarded.</p>;
+}
+
+function DeleteEntitlementNotice({ count }: { count: string | null }) {
+  if (!count || count === "0") return null;
+  return <p className="mt-3 text-sm leading-6 text-red-900">{count} active paid readers will lose marketplace access after deletion.</p>;
 }

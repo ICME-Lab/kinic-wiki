@@ -49,4 +49,5 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 cd "${REPO_ROOT}"
+unset KINIC_VFS_LOCAL_II_ORIGINS
 icp deploy wiki -e ic --args-file "${ARGS_FILE}" "$@"

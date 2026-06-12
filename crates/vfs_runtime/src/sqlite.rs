@@ -223,6 +223,16 @@ pub(crate) fn text_value(value: impl Into<String>) -> types::Value {
 }
 
 #[cfg(target_arch = "wasm32")]
+pub(crate) fn nullable_text_value(value: Option<String>) -> types::Value {
+    value.map(types::Value::Text).unwrap_or(types::Value::Null)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn nullable_text_value(value: Option<String>) -> types::Value {
+    value.map(types::Value::Text).unwrap_or(types::Value::Null)
+}
+
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn integer_value(value: i64) -> types::Value {
     types::Value::Integer(value)
 }

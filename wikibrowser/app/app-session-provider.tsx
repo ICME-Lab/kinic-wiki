@@ -6,7 +6,7 @@
 import { AuthClient } from "@icp-sdk/auth/client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
-import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/cycles-wallet";
+import { connectOisyWallet, connectPlugWallet, getConnectedWalletKinicBalance, type ConnectedKinicWallet } from "@/lib/kinic-wallet";
 import type { HeaderWalletProvider } from "./home-ui";
 
 type AppSessionContext = {
@@ -40,7 +40,7 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [authReady, setAuthReady] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
-  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(() => readStoredWallet());
+  const [wallet, setWallet] = useState<ConnectedKinicWallet | null>(null);
   const [walletBalance, setWalletBalance] = useState<string | null>(null);
   const [walletBalanceError, setWalletBalanceError] = useState<string | null>(null);
   const [walletBalanceLoading, setWalletBalanceLoading] = useState(false);
@@ -128,10 +128,14 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
     [clearWallet, wallet, walletBusyProvider, walletControlsLocked]
   );
 
-  const syncAuth = useCallback(async (client: AuthClient) => {
-    const authenticated = await client.isAuthenticated();
-    setPrincipal(authenticated ? client.getIdentity().getPrincipal().toText() : null);
-  }, []);
+  const syncAuth = useCallback(
+    async (client: AuthClient) => {
+      const authenticated = await client.isAuthenticated();
+      const nextPrincipal = authenticated ? client.getIdentity().getPrincipal().toText() : null;
+      setPrincipal(nextPrincipal);
+    },
+    []
+  );
 
   const login = useCallback(async () => {
     if (!authClient) return;
@@ -166,6 +170,12 @@ export function AppSessionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const storedWallet = readStoredWallet();
+      if (storedWallet) setWallet(storedWallet);
+    });
 
     AuthClient.create(AUTH_CLIENT_CREATE_OPTIONS)
       .then(async (client) => {

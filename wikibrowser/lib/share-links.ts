@@ -1,22 +1,23 @@
 // Where: shared browser link helpers.
 // What: Build public database URLs and X share intents.
-// Why: Keep share links encoded consistently and avoid static route collisions.
+// Why: Keep database ids under /db so app routes never compete with database slugs.
 
 const X_TWEET_INTENT_URL = "https://twitter.com/intent/tweet";
 const PUBLIC_WIKI_ORIGIN = "https://wiki.kinic.xyz";
-const RESERVED_DATABASE_ROUTE_SLUGS = new Set(["_next", "api", "cli", "dashboard", "skills"]);
-
-export function isReservedDatabaseRouteSlug(databaseId: string): boolean {
-  return RESERVED_DATABASE_ROUTE_SLUGS.has(databaseId.trim().toLowerCase());
-}
+const PUBLIC_DATABASE_ROUTE_PREFIX = "/db";
 
 export function isRoutableDatabaseId(databaseId: string): boolean {
-  return databaseId.trim().length > 0 && !isReservedDatabaseRouteSlug(databaseId);
+  return databaseId.trim().length > 0;
 }
 
 export function publicDatabasePath(databaseId: string): string {
   assertPublicDatabaseId(databaseId);
-  return `/${encodeURIComponent(databaseId)}/Wiki`;
+  return `${databaseRouteBase(databaseId)}/Wiki`;
+}
+
+export function databaseRouteBase(databaseId: string): string {
+  assertPublicDatabaseId(databaseId);
+  return `${PUBLIC_DATABASE_ROUTE_PREFIX}/${encodeURIComponent(databaseId)}`;
 }
 
 export function publicDatabaseUrl(databaseId: string, origin = PUBLIC_WIKI_ORIGIN): string {
@@ -40,6 +41,6 @@ export function xShareDatabaseHref({
 
 function assertPublicDatabaseId(databaseId: string): void {
   if (!isRoutableDatabaseId(databaseId)) {
-    throw new Error(`reserved database route slug: ${databaseId}`);
+    throw new Error(`invalid database id: ${databaseId}`);
   }
 }

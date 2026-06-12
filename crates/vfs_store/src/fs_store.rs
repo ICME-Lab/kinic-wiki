@@ -19,12 +19,14 @@ use vfs_types::{
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
-    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
-    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge, MarketCategoryGraphNode,
+    MarketListingPreview, MarketListingVerifiedStats, MarketPreviewExcerpt, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
+    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidence, SourceEvidenceRef,
+    SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 use crate::{
@@ -53,6 +55,7 @@ const WIKI_ROOT_PATH: &str = "/Wiki";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
+const MARKETPLACE_PREVIEW_NODE_LIMIT: i64 = 12;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
@@ -165,6 +168,23 @@ impl FsStore {
                 file_count: count_nodes(conn, "file")?,
                 source_count: count_nodes(conn, "source")?,
             })
+        })
+    }
+
+    pub fn marketplace_preview(
+        &self,
+    ) -> Result<(MarketListingVerifiedStats, MarketListingPreview), String> {
+        self.read_conn(|conn| {
+            let mut stats = load_marketplace_verified_stats(conn)?;
+            stats.logical_size_bytes = logical_size_bytes_for_conn(conn)?;
+            let preview = MarketListingPreview {
+                top_level_paths: load_marketplace_top_level_paths(conn)?,
+                excerpts: load_marketplace_preview_excerpts(conn)?,
+                category_graph: load_marketplace_category_graph(conn)?,
+                graph_links: load_graph_links(conn, "/Wiki", 100)?,
+                preview_stale: false,
+            };
+            Ok((stats, preview))
         })
     }
 
@@ -1435,6 +1455,209 @@ fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
         )
         .map_err(|error| error.to_string())?;
     u64::try_from(count).map_err(|error| error.to_string())
+}
+
+fn load_marketplace_verified_stats(
+    conn: &Connection,
+) -> Result<MarketListingVerifiedStats, String> {
+    let (
+        total_nodes,
+        wiki_nodes,
+        source_nodes,
+        folder_nodes,
+        markdown_chars,
+        source_chars,
+        last_content_updated_at_ms,
+    ) = conn
+        .query_row(
+            "SELECT COUNT(*),
+                    SUM(CASE WHEN path = '/Wiki' OR path LIKE '/Wiki/%' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN kind = 'source' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN kind = 'folder' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN kind = 'file' THEN length(content) ELSE 0 END),
+                    SUM(CASE WHEN kind = 'source' THEN length(content) ELSE 0 END),
+                    MAX(CASE WHEN kind IN ('file', 'source') THEN updated_at ELSE NULL END)
+             FROM fs_nodes",
+            params![],
+            |row| {
+                Ok((
+                    crate::sqlite::row_get::<i64>(row, 0)?,
+                    crate::sqlite::row_get::<Option<i64>>(row, 1)?,
+                    crate::sqlite::row_get::<Option<i64>>(row, 2)?,
+                    crate::sqlite::row_get::<Option<i64>>(row, 3)?,
+                    crate::sqlite::row_get::<Option<i64>>(row, 4)?,
+                    crate::sqlite::row_get::<Option<i64>>(row, 5)?,
+                    crate::sqlite::row_get::<Option<i64>>(row, 6)?,
+                ))
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let link_edges = conn
+        .query_row("SELECT COUNT(*) FROM fs_links", params![], |row| {
+            crate::sqlite::row_get::<i64>(row, 0)
+        })
+        .map_err(|error| error.to_string())?;
+    Ok(MarketListingVerifiedStats {
+        total_nodes: nonnegative_i64_to_u64(total_nodes)?,
+        wiki_nodes: nonnegative_i64_to_u64(wiki_nodes.unwrap_or(0))?,
+        source_nodes: nonnegative_i64_to_u64(source_nodes.unwrap_or(0))?,
+        folder_nodes: nonnegative_i64_to_u64(folder_nodes.unwrap_or(0))?,
+        markdown_chars: nonnegative_i64_to_u64(markdown_chars.unwrap_or(0))?,
+        source_chars: nonnegative_i64_to_u64(source_chars.unwrap_or(0))?,
+        link_edges: nonnegative_i64_to_u64(link_edges)?,
+        logical_size_bytes: 0,
+        last_content_updated_at_ms,
+    })
+}
+
+fn load_marketplace_top_level_paths(conn: &Connection) -> Result<Vec<String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT child.path
+             FROM fs_nodes child
+             JOIN fs_nodes parent ON parent.id = child.parent_id
+             WHERE parent.path = '/Wiki'
+             ORDER BY CASE child.kind WHEN 'folder' THEN 0 WHEN 'file' THEN 1 ELSE 2 END,
+                      child.path ASC
+             LIMIT 12",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![], |row| crate::sqlite::row_get(row, 0))
+        .map_err(|error| error.to_string())
+}
+
+fn load_marketplace_preview_excerpts(
+    conn: &Connection,
+) -> Result<Vec<MarketPreviewExcerpt>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT path,
+                    etag,
+                    substr(content, 1, 240),
+                    length(content)
+             FROM fs_nodes
+             WHERE kind = 'file'
+               AND (path = '/Wiki' OR path LIKE '/Wiki/%')
+             ORDER BY path ASC
+             LIMIT ?1",
+        )
+        .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![MARKETPLACE_PREVIEW_NODE_LIMIT], |row| {
+        let content_chars = crate::sqlite::row_get::<i64>(row, 3)?;
+        Ok(MarketPreviewExcerpt {
+            path: crate::sqlite::row_get(row, 0)?,
+            etag: crate::sqlite::row_get(row, 1)?,
+            excerpt: crate::sqlite::row_get(row, 2)?,
+            content_chars: content_chars.max(0) as u64,
+        })
+    })
+    .map_err(|error| error.to_string())
+}
+
+fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGraph, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT path
+             FROM fs_nodes
+             WHERE path = '/Wiki' OR path LIKE '/Wiki/%'
+             ORDER BY path ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let paths = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        crate::sqlite::row_get::<String>(row, 0)
+    })
+    .map_err(|error| error.to_string())?;
+    let mut counts = BTreeMap::<String, u64>::new();
+    for path in paths {
+        if let Some(category) = marketplace_top_category(&path) {
+            *counts.entry(category).or_insert(0) += 1;
+        }
+    }
+    let mut nodes = counts
+        .into_iter()
+        .map(|(category, node_count)| MarketCategoryGraphNode {
+            category,
+            node_count,
+        })
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| {
+        right
+            .node_count
+            .cmp(&left.node_count)
+            .then_with(|| left.category.cmp(&right.category))
+    });
+    nodes.truncate(12);
+    let selected = nodes
+        .iter()
+        .map(|node| node.category.clone())
+        .collect::<BTreeSet<_>>();
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT source_path, target_path
+             FROM fs_links
+             WHERE (source_path = '/Wiki' OR source_path LIKE '/Wiki/%')
+               AND (target_path = '/Wiki' OR target_path LIKE '/Wiki/%')",
+        )
+        .map_err(|error| error.to_string())?;
+    let edges = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get::<String>(row, 0)?,
+            crate::sqlite::row_get::<String>(row, 1)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    let mut edge_counts = BTreeMap::<(String, String), u64>::new();
+    for (source_path, target_path) in edges {
+        let Some(source_category) = marketplace_top_category(&source_path) else {
+            continue;
+        };
+        let Some(target_category) = marketplace_top_category(&target_path) else {
+            continue;
+        };
+        if source_category == target_category
+            || !selected.contains(&source_category)
+            || !selected.contains(&target_category)
+        {
+            continue;
+        }
+        *edge_counts
+            .entry((source_category, target_category))
+            .or_insert(0) += 1;
+    }
+    let mut edges = edge_counts
+        .into_iter()
+        .map(
+            |((source_category, target_category), link_count)| MarketCategoryGraphEdge {
+                source_category,
+                target_category,
+                link_count,
+            },
+        )
+        .collect::<Vec<_>>();
+    edges.sort_by(|left, right| {
+        right
+            .link_count
+            .cmp(&left.link_count)
+            .then_with(|| left.source_category.cmp(&right.source_category))
+            .then_with(|| left.target_category.cmp(&right.target_category))
+    });
+    edges.truncate(30);
+    Ok(MarketCategoryGraph { nodes, edges })
+}
+
+fn marketplace_top_category(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/Wiki/")?;
+    let segment = rest.split('/').next()?.trim();
+    if segment.is_empty() {
+        None
+    } else {
+        Some(format!("/Wiki/{segment}"))
+    }
+}
+
+fn nonnegative_i64_to_u64(value: i64) -> Result<u64, String> {
+    u64::try_from(value.max(0)).map_err(|error| error.to_string())
 }
 
 fn logical_size_bytes_for_conn(conn: &Connection) -> Result<u64, String> {

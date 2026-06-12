@@ -8,10 +8,11 @@ import { ANONYMOUS_PRINCIPAL, LLM_WRITER_LABEL, LLM_WRITER_PRINCIPAL, databaseRo
 import { ActionButton } from "./action-button";
 import { DatabaseDangerZone } from "./database-danger-zone";
 import { MemberTable } from "./member-table";
+import { AdminNotice } from "@/components/admin-ui";
 import { formatRawCycles } from "@/lib/cycles";
 import { databaseCyclesView, databaseCyclesHref } from "@/lib/cycles-state";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseCycleEntry, DatabaseCyclesPendingPurchase, DatabaseMember, DatabaseRole, DatabaseSummary, MarketCreateListingRequest, MarketEntitlement, MarketListing, MarketUpdateListingRequest } from "@/lib/types";
 import { isRoutableDatabaseId, publicDatabasePath, xShareDatabaseHref } from "@/lib/share-links";
 
 type PendingAclAction = {
@@ -23,7 +24,7 @@ type PendingAclAction = {
   kind: "grant" | "revoke";
 };
 
-export type DashboardTab = "access" | "cycles-history";
+export type DashboardTab = "access" | "list" | "buyers" | "cycles-history" | "settings";
 
 export function AuthControls(props: { authReady: boolean; loading: boolean; principal: string | null; onLogin: () => void; onLogout: () => void }) {
   if (!props.principal) {
@@ -44,23 +45,20 @@ export function SummaryPanel({
   cyclesConfig,
   database,
   databaseId,
-  principal,
   publicReadable
 }: {
   cyclesConfig: CyclesBillingConfig | null;
   database: DatabaseSummary | null;
   databaseId: string;
-  principal: string;
   publicReadable: boolean;
 }) {
   const routable = isRoutableDatabaseId(databaseId);
   const active = database?.status === "active";
-  const openHref = active && routable ? (publicReadable ? publicDatabasePath(databaseId) : `/${encodeURIComponent(databaseId)}/Wiki`) : null;
+  const openHref = active && routable ? publicDatabasePath(databaseId) : null;
   const cycles = databaseCyclesView(database, cyclesConfig);
   const purchaseHref = database ? databaseCyclesHref(database) : null;
   return (
     <section className="grid gap-3 rounded-lg border border-line bg-paper p-4 text-sm shadow-sm sm:grid-cols-2 lg:grid-cols-5">
-      <Field label="Principal" value={principal} />
       <Field label="Database" value={database?.name ?? databaseId} />
       <Field label="Database ID" value={databaseId} />
       <Field label="Your Role" value={database?.role ?? "-"} />
@@ -84,33 +82,22 @@ export function SummaryPanel({
   );
 }
 
-export function PendingDatabasePanel(props: {
-  busy: boolean;
-  busyAction: BusyAction | null;
-  databaseId: string;
-  databaseName: string;
-  onDelete: () => Promise<string | null>;
-}) {
+export function PendingDatabasePanel() {
   return (
     <section className="rounded-lg border border-line bg-paper shadow-sm">
       <div className="grid gap-2 border-b border-line px-4 py-4">
         <h2 className="text-lg font-semibold text-ink">Reserved database</h2>
         <p className="text-sm leading-6 text-muted">This database is reserved until the first cycle purchase completes. VFS, skills, and member management are available after activation.</p>
       </div>
-      <DatabaseDangerZone cyclesBalance="0" busy={props.busy} busyAction={props.busyAction} databaseId={props.databaseId} databaseName={props.databaseName} onDelete={props.onDelete} />
     </section>
   );
 }
 
 export function OwnerPanel(props: {
-  cyclesBalance: string;
   busy: boolean;
   busyAction: BusyAction | null;
-  databaseId: string;
-  databaseName: string;
   members: DatabaseMember[];
   principal: string;
-  onDelete: () => Promise<string | null>;
   onGrant: (principalText: string, role: DatabaseRole) => void;
   onRevoke: (principalText: string) => void;
 }) {
@@ -242,7 +229,40 @@ export function OwnerPanel(props: {
       <GrantForm busy={props.busy} busyAction={props.busyAction} onGrant={requestGrant} />
       <MemberTable busy={props.busy} busyAction={props.busyAction} members={props.members} principal={props.principal} onRevoke={requestRevoke} onRoleChange={requestRoleChange} />
       {pendingAction ? <ConfirmAclDialog action={pendingAction} busy={props.busy} busyAction={props.busyAction} onCancel={() => setPendingAction(null)} onConfirm={confirmPendingAction} /> : null}
+    </section>
+  );
+}
+
+export function DashboardSettingsPanel(props: {
+  activeEntitlementCount: string | null;
+  busy: boolean;
+  busyAction: BusyAction | null;
+  canRename: boolean;
+  cyclesBalance: string;
+  databaseId: string;
+  databaseName: string;
+  onDelete: () => Promise<string | null>;
+  onRename: () => void;
+}) {
+  return (
+    <div className="grid gap-4">
+      {props.canRename ? (
+        <section className="rounded-lg border border-line bg-paper shadow-sm">
+          <div className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-ink">Rename database</h2>
+              <p className="mt-2 break-all font-mono text-xs text-muted">
+                {props.databaseName} / {props.databaseId}
+              </p>
+            </div>
+            <ActionButton disabled={props.busy} loading={props.busyAction?.kind === "rename"} loadingLabel="Saving..." onClick={props.onRename} size="compact" variant="secondary">
+              Rename
+            </ActionButton>
+          </div>
+        </section>
+      ) : null}
       <DatabaseDangerZone
+        activeEntitlementCount={props.activeEntitlementCount}
         cyclesBalance={props.cyclesBalance}
         busy={props.busy}
         busyAction={props.busyAction}
@@ -250,6 +270,248 @@ export function OwnerPanel(props: {
         databaseName={props.databaseName}
         onDelete={props.onDelete}
       />
+    </div>
+  );
+}
+
+export function MarketListingsPanel(props: {
+  busy: boolean;
+  databaseId: string;
+  databaseName: string;
+  error: string | null;
+  listings: MarketListing[];
+  principal: string | null;
+  onCreate: (request: MarketCreateListingRequest) => void;
+  onPause: (listingId: string) => void;
+  onPublish: (listingId: string) => void;
+  onUpdate: (request: MarketUpdateListingRequest) => void;
+}) {
+  const [selectedListingId, setSelectedListingId] = useState("");
+  const [title, setTitle] = useState(props.databaseName);
+  const [description, setDescription] = useState("");
+  const [payoutPrincipal, setPayoutPrincipal] = useState(props.principal ?? "");
+  const [payoutPrincipalEdited, setPayoutPrincipalEdited] = useState(false);
+  const [price, setPrice] = useState("1");
+  const [tags, setTags] = useState<string[]>([]);
+  const selected = props.listings.find((listing) => listing.listingId === selectedListingId) ?? null;
+  const priceE8s = parseKinicInput(price);
+  const payoutPrincipalInput = selected || payoutPrincipalEdited ? payoutPrincipal : props.principal ?? "";
+  const submitDisabled = props.busy || !title.trim() || !description.trim() || !payoutPrincipalInput.trim() || !priceE8s;
+
+  function selectListing(listing: MarketListing) {
+    setSelectedListingId(listing.listingId);
+    setTitle(listing.title);
+    setDescription(listing.description);
+    setPayoutPrincipal(listing.payoutPrincipal);
+    setPayoutPrincipalEdited(false);
+    setPrice(decimalFromE8s(listing.priceE8s));
+    setTags(tagsFromJson(listing.tagsJson));
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitDisabled || !priceE8s) return;
+    const base = {
+      title: title.trim(),
+      description: description.trim(),
+      payoutPrincipal: payoutPrincipalInput.trim(),
+      llmSummary: null,
+      tagsJson: tagsJsonFromTags(tags),
+      priceE8s
+    };
+    if (selected) {
+        props.onUpdate({
+          ...base,
+          listingId: selected.listingId,
+          expectedRevision: selected.revision
+        });
+    } else {
+      props.onCreate({
+        ...base,
+        databaseId: props.databaseId
+      });
+    }
+  }
+
+  function updateTag(index: number, value: string) {
+    setTags((current) => current.map((tag, tagIndex) => (tagIndex === index ? value : tag)));
+  }
+
+  function addTag() {
+    setTags((current) => [...current, ""]);
+  }
+
+  function removeTag(index: number) {
+    setTags((current) => current.filter((_, tagIndex) => tagIndex !== index));
+  }
+
+  return (
+    <section className="rounded-lg border border-line bg-paper shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-4">
+        <div>
+          <h3 className="text-lg font-semibold text-ink">Marketplace</h3>
+          <p className="mt-1 text-sm leading-6 text-muted">DB owner can sell paid reader access.</p>
+        </div>
+        <Link className="rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent" href="/marketplace">
+          Marketplace
+        </Link>
+      </div>
+      {props.error ? (
+        <div className="px-4 pt-4">
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">{props.error}</p>
+        </div>
+      ) : null}
+      {props.listings.length ? (
+        <div className="grid gap-2 px-4 py-4">
+          {props.listings.map((listing) => (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm" key={listing.listingId}>
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-ink">{listing.title}</p>
+                <p className="font-mono text-xs text-muted">
+                  {listing.status} / {formatTokenAmountFromE8s(listing.priceE8s)} / {listing.purchaseCount} purchases
+                </p>
+                <p className="break-all font-mono text-xs text-muted">Payout {listing.payoutPrincipal}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <ActionButton disabled={props.busy} onClick={() => selectListing(listing)} variant="secondary">
+                  Edit
+                </ActionButton>
+                {listing.status === "Active" ? (
+                  <ActionButton disabled={props.busy} onClick={() => props.onPause(listing.listingId)} variant="secondary">
+                    Pause
+                  </ActionButton>
+                ) : (
+                  <ActionButton disabled={props.busy} onClick={() => props.onPublish(listing.listingId)} variant="primary">
+                    Publish
+                  </ActionButton>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <form className={`${props.listings.length ? "border-t border-line" : ""} grid gap-3 px-4 py-4`} onSubmit={submit}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="grid gap-1 text-sm">
+            <span className="text-xs uppercase text-muted">Title</span>
+            <input className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={title} onChange={(event) => setTitle(event.target.value)} />
+          </label>
+          <label className="grid gap-1 text-sm">
+            <span className="text-xs uppercase text-muted">Price KINIC</span>
+            <input className="rounded-lg border border-line bg-white px-3 py-2 font-mono outline-none focus:border-accent" inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} />
+          </label>
+        </div>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xs uppercase text-muted">Description</span>
+          <textarea className="min-h-24 rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={description} onChange={(event) => setDescription(event.target.value)} />
+        </label>
+        <label className="grid gap-1 text-sm">
+          <span className="text-xs uppercase text-muted">Payout principal</span>
+          <input
+            className="rounded-lg border border-line bg-white px-3 py-2 font-mono text-xs outline-none focus:border-accent"
+            value={payoutPrincipalInput}
+            onChange={(event) => {
+              setPayoutPrincipalEdited(true);
+              setPayoutPrincipal(event.target.value);
+            }}
+          />
+        </label>
+        <div className="grid gap-2 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs uppercase text-muted">Tags</span>
+            <ActionButton disabled={props.busy} onClick={addTag} size="compact" variant="secondary">
+              Add tag
+            </ActionButton>
+          </div>
+          {tags.length ? (
+            <div className="grid gap-2">
+              {tags.map((tag, index) => (
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" key={index}>
+                  <input aria-label={`Tag ${index + 1}`} className="rounded-lg border border-line bg-white px-3 py-2 outline-none focus:border-accent" value={tag} onChange={(event) => updateTag(index, event.target.value)} />
+                  <ActionButton disabled={props.busy} onClick={() => removeTag(index)} size="compact" variant="secondary">
+                    Remove
+                  </ActionButton>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <ActionButton disabled={submitDisabled} loading={props.busy} loadingLabel="Saving..." type="submit" variant="primary">
+            {selected ? "Edit listing" : "Sell"}
+          </ActionButton>
+          {selected ? (
+            <ActionButton
+              disabled={props.busy}
+              onClick={() => {
+                setSelectedListingId("");
+                setTitle(props.databaseName);
+                setDescription("");
+                setPayoutPrincipal(props.principal ?? "");
+                setPayoutPrincipalEdited(false);
+                setPrice("1");
+                setTags([]);
+              }}
+              variant="secondary"
+            >
+              New listing
+            </ActionButton>
+          ) : null}
+        </div>
+      </form>
+    </section>
+  );
+}
+
+export function BuyersPanel(props: {
+  entitlements: MarketEntitlement[];
+  error: string | null;
+  loading: boolean;
+  nextCursor: string | null;
+  onLoadMore: () => void;
+}) {
+  return (
+    <section className="rounded-lg border border-line bg-paper shadow-sm">
+      <div className="grid gap-2 border-b border-line px-4 py-4">
+        <h2 className="text-lg font-semibold text-ink">Buyers</h2>
+        <p className="text-sm leading-6 text-muted">Readonly list of marketplace reader access purchased for this database.</p>
+      </div>
+      {props.error ? <div className="border-b border-line px-4 py-3 text-sm text-red-900">{props.error}</div> : null}
+      {props.entitlements.length ? (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left text-sm">
+            <thead className="bg-white/70 text-xs uppercase tracking-[0.12em] text-muted">
+              <tr>
+                <th className="px-4 py-3 font-medium">Buyer</th>
+                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium">Listing</th>
+                <th className="px-4 py-3 font-medium">Order</th>
+                <th className="px-4 py-3 font-medium">Purchased</th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.entitlements.map((entitlement) => (
+                <tr className="border-t border-line" key={`${entitlement.databaseId}:${entitlement.buyerPrincipal}:${entitlement.orderId}`}>
+                  <td className="px-4 py-3 font-mono text-xs text-ink">{entitlement.buyerPrincipal}</td>
+                  <td className="px-4 py-3 text-ink">{entitlement.status}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{entitlement.listingId}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted">{entitlement.orderId}</td>
+                  <td className="px-4 py-3 text-muted">{formatTimestamp(entitlement.purchasedAtMs)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="px-4 py-6 text-sm text-muted">No marketplace buyers.</div>
+      )}
+      {props.nextCursor ? (
+        <div className="border-t border-line px-4 py-3">
+          <ActionButton disabled={props.loading} loading={props.loading} loadingLabel="Loading..." onClick={props.onLoadMore} variant="secondary">
+            Load more
+          </ActionButton>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -272,7 +534,12 @@ export function RenameDatabaseDialog(props: {
     props.onSubmit(trimmed);
   }
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
+      onMouseDown={(event) => {
+        if (!props.busy && event.target === event.currentTarget) props.onCancel();
+      }}
+    >
       <form className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg" onSubmit={submit}>
         <h3 className="text-lg font-semibold text-ink">Rename database</h3>
         <label className="mt-4 grid gap-1 text-sm">
@@ -320,15 +587,29 @@ export function ReadonlyMembersPanel(props: { memberError: string | null; member
 }
 
 export function StatusPanel({ tone, message }: { tone: "error" | "info"; message: string }) {
-  const toneClass = tone === "error" ? "border-red-200 bg-red-50 text-red-900" : "border-line bg-paper text-ink";
-  return <div className={`rounded-lg border px-4 py-3 text-sm ${toneClass}`}>{message}</div>;
+  return <AdminNotice tone={tone} message={message} />;
 }
 
-export function DashboardTabs({ activeTab, onChange }: { activeTab: DashboardTab; onChange: (tab: DashboardTab) => void }) {
+export function DashboardTabs({
+  activeTab,
+  canManageListings,
+  canManageSettings,
+  canViewCyclesHistory,
+  onChange
+}: {
+  activeTab: DashboardTab;
+  canManageListings: boolean;
+  canManageSettings: boolean;
+  canViewCyclesHistory: boolean;
+  onChange: (tab: DashboardTab) => void;
+}) {
   return (
     <nav aria-label="Database dashboard sections" className="flex flex-wrap gap-2 border-b border-line">
       <DashboardTabButton active={activeTab === "access"} label="Access" onClick={() => onChange("access")} />
-      <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} />
+      {canManageListings ? <DashboardTabButton active={activeTab === "list"} label="List" onClick={() => onChange("list")} /> : null}
+      {canManageListings ? <DashboardTabButton active={activeTab === "buyers"} label="Buyers" onClick={() => onChange("buyers")} /> : null}
+      {canViewCyclesHistory ? <DashboardTabButton active={activeTab === "cycles-history"} label="Cycles History" onClick={() => onChange("cycles-history")} /> : null}
+      {canManageSettings ? <DashboardTabButton active={activeTab === "settings"} label="Settings" onClick={() => onChange("settings")} /> : null}
     </nav>
   );
 }
@@ -511,7 +792,12 @@ function ConfirmAclDialog(props: { action: PendingAclAction; busy: boolean; busy
       ? isBusyGrant(props.busyAction, props.action.principalText, props.action.role)
       : isBusyRevoke(props.busyAction, props.action.principalText);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/30 px-4"
+      onMouseDown={(event) => {
+        if (!props.busy && event.target === event.currentTarget) props.onCancel();
+      }}
+    >
       <div className="w-full max-w-md rounded-lg border border-line bg-paper p-5 shadow-lg">
         <h3 className="text-lg font-semibold text-ink">{props.action.title}</h3>
         <p className="mt-3 text-sm leading-6 text-muted">{props.action.message}</p>
@@ -578,6 +864,36 @@ function databaseStatusLabel(status: DatabaseSummary["status"] | undefined): str
     deleted: "Deleted"
   };
   return labels[status];
+}
+
+function parseKinicInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d{0,8})?$/.test(trimmed)) return null;
+  const [whole, fraction = ""] = trimmed.split(".");
+  const e8s = `${whole}${fraction.padEnd(8, "0")}`.replace(/^0+(?=\d)/, "");
+  return BigInt(e8s) > 0n ? e8s : null;
+}
+
+function decimalFromE8s(value: string): string {
+  if (!/^\d+$/.test(value)) return "1";
+  const padded = value.padStart(9, "0");
+  const whole = padded.slice(0, -8).replace(/^0+(?=\d)/, "");
+  const fraction = padded.slice(-8).replace(/0+$/, "");
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+function tagsJsonFromTags(value: string[]): string {
+  return JSON.stringify(value.map((tag) => tag.trim()).filter((tag) => tag.length > 0));
+}
+
+function tagsFromJson(value: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string");
+  } catch {
+    return [];
+  }
 }
 
 function formatBytes(value: string): string {

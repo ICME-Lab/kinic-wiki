@@ -14,7 +14,7 @@ pnpm dev
 Open a database with:
 
 ```text
-http://localhost:3000/<database-id>/Wiki
+http://localhost:3010/<database-id>/Wiki
 ```
 
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
@@ -24,17 +24,15 @@ DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canist
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success. `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. `NEXT_PUBLIC_II_PROVIDER_URL` overrides the Internet Identity frontend URL for local II. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
+`database create <database-name>` creates a generated database ID and prints it on success. `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash
 # local icp network
 NEXT_PUBLIC_WIKI_IC_HOST=http://127.0.0.1:8011
-NEXT_PUBLIC_II_PROVIDER_URL=http://id.ai.localhost:8011
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=<local-wiki-canister-id>
 
 # mainnet / Cloudflare Workers
 NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io
-NEXT_PUBLIC_II_PROVIDER_URL=https://id.ai
 NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai
 ```
 
@@ -100,14 +98,24 @@ pnpm typecheck
 pnpm build
 ```
 
-Internet Identity E2E requires a local wiki canister and the E2E setup script. The script deploys the pinned Internet Identity backend/frontend dev canisters with dummy auth and writes `.env.e2e.local`. Override `II_RELEASE` only when intentionally updating the tested Internet Identity release.
+Internet Identity for `localhost` uses the local II canisters prepared by the E2E setup script. The script deploys the local wiki, KINIC ledger, and pinned Internet Identity backend/frontend dev canisters with dummy auth, then writes `.env.e2e.local` with `NEXT_PUBLIC_ENABLE_LOCAL_II_E2E=1`. Copy that file to `.env.local` for manual browser testing on `localhost`; restart the dev server after copying so Next picks up the new public env values. Mainnet II (`https://id.ai`) is reserved for production or preview origins, not `localhost`. Override `II_RELEASE` only when intentionally updating the tested Internet Identity release.
 
 ```bash
+cd ..
 icp network start -d -e local-wiki
-KINIC_LEDGER_CANISTER_ID=<local-ledger-or-test-principal> scripts/local/deploy_wiki.sh
+cd wikibrowser
 pnpm e2e:ii:setup
+cp .env.e2e.local .env.local
+pnpm dev
+```
+
+Run E2E in another terminal from `wikibrowser/` while the dev server is running:
+
+```bash
 pnpm e2e:ii
 ```
+
+For production and preview deployments, leave `NEXT_PUBLIC_ENABLE_LOCAL_II_E2E` unset so auth uses `https://id.ai` with the production derivation origin. Do not add `localhost` or `127.0.0.1` to the production `ii-alternative-origins`; Internet Identity also rejects alternative-origin lists with more than 10 entries.
 
 The wiki canister constructor requires cycles billing config; use the deploy wrapper instead of no-arg `icp deploy`.
 
@@ -124,7 +132,7 @@ pnpm dev
 Run the browser smoke against an existing file node:
 
 ```bash
-pnpm smoke -- --url http://127.0.0.1:3000/<database-id>/Wiki/<existing-file>.md
+pnpm smoke -- --url http://127.0.0.1:3010/<database-id>/Wiki/<existing-file>.md
 ```
 
 The URL must point to a readable file node. Directory paths and missing files intentionally fail.
@@ -138,7 +146,7 @@ pnpm smoke:errors -- --database-id <database-id>
 Optional base URL:
 
 ```bash
-pnpm smoke:errors -- --base-url http://127.0.0.1:3000 --database-id <database-id>
+pnpm smoke:errors -- --base-url http://127.0.0.1:3010 --database-id <database-id>
 ```
 
 ## Candid Surface
@@ -185,7 +193,7 @@ Cloudflare settings:
 - Framework Preset: Next.js
 - Root Directory: `wikibrowser`
 - Install Command: `pnpm install --frozen-lockfile`
-- Build Command: `pnpm deploy`
+- Build Command: `pnpm deploy:production`
 - Build Variables: `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai` for Preview and Production
 - Runtime: Cloudflare Workers via `@opennextjs/cloudflare`
 
@@ -195,7 +203,7 @@ CLI deploy from this directory:
 
 ```bash
 pnpm wrangler whoami
-pnpm deploy
+pnpm deploy:production
 ```
 
 Pre-deploy checklist:

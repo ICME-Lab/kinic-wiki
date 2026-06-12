@@ -1,25 +1,19 @@
 "use client";
 
 // Where: root wikibrowser layout.
-// What: renders the shared dashboard/cycles header with wallet and II controls.
-// Why: funding pages should keep the same wallet session and management shell.
+// What: renders the shared dashboard/cycles header with external wallet controls.
+// Why: external wallet funding stays separate from the sidebar App account controls.
 import { usePathname } from "next/navigation";
 import { AdminHeader } from "@/components/admin-header";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import { AuthControls, WalletControls } from "./home-ui";
+import { WalletControls } from "./home-ui";
 import { connectedWalletPrincipal, useAppSession } from "./app-session-provider";
 
 export function AppHeader() {
   const pathname = usePathname();
   const {
-    authClient,
-    authLoading,
-    authReady,
     connectWallet,
     disconnectWallet,
-    login,
-    logout,
-    principal,
     wallet,
     walletBalance,
     walletBalanceLoading,
@@ -27,43 +21,34 @@ export function AppHeader() {
     walletControlsLocked
   } = useAppSession();
 
-  if (pathname !== "/dashboard" && pathname !== "/cycles") return null;
+  const isDashboard = pathname === "/dashboard" || pathname.startsWith("/dashboard/");
+  const isMarketplace = pathname === "/marketplace" || pathname.startsWith("/marketplace/");
+  const isCycles = pathname === "/cycles";
+  const isProfile = pathname === "/profile";
+  const isCli = pathname === "/cli";
+  if (!isDashboard && !isCycles && !isMarketplace && !isProfile && !isCli) return null;
 
-  const title = pathname === "/cycles" ? "Database cycles purchase" : "Database dashboard";
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
-
   return (
-    <div className="px-6 pt-8">
-      <section className="mx-auto max-w-6xl">
+    <div className="px-6 pt-4">
+      <section className="max-w-none">
         <AdminHeader
-          title={title}
+          title="Console"
+          nav={null}
           actions={
-            <>
-              <WalletControls
-                busyProvider={walletBusyProvider}
-                connectedBalanceLabel={connectedWalletBalanceLabel}
-                connectedLabel={connectedWalletLabel}
-                connectedProvider={wallet?.provider ?? null}
-                balanceLoading={walletBalanceLoading}
-                disabled={walletControlsLocked}
-                onConnect={(provider) => {
-                  void connectWallet(provider);
-                }}
-                onDisconnect={disconnectWallet}
-              />
-              <AuthControls
-                authReady={authReady && Boolean(authClient)}
-                principal={principal}
-                loading={authLoading}
-                onLogin={() => {
-                  void login();
-                }}
-                onLogout={() => {
-                  void logout();
-                }}
-              />
-            </>
+            <WalletControls
+              busyProvider={walletBusyProvider}
+              connectedBalanceLabel={connectedWalletBalanceLabel}
+              connectedLabel={connectedWalletLabel}
+              connectedProvider={wallet?.provider ?? null}
+              balanceLoading={walletBalanceLoading}
+              disabled={walletControlsLocked}
+              onConnect={(provider) => {
+                void connectWallet(provider);
+              }}
+              onDisconnect={disconnectWallet}
+            />
           }
         />
       </section>

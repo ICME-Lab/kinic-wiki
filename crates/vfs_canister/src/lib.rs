@@ -48,13 +48,15 @@ use vfs_types::{
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MemoryCapability, MemoryManifest, MemoryRoot, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
-    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
+    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
     WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -65,12 +67,15 @@ const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
 #[cfg(not(target_arch = "wasm32"))]
 const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
-const II_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
+const II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi"]}"#;
+const II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY: &str = r#"{"alternativeOrigins":["https://wiki.kinic.xyz","https://kinic.xyz","chrome-extension://jcfniiflikojmbfnaoamlbbddlikchaj","chrome-extension://hbnicbmdodpmihmcnfgejcdgbfmemoci","chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi","http://localhost:3000","http://127.0.0.1:3010","http://localhost:3010","http://127.0.0.1:3100","http://localhost:3100"]}"#;
 const ICP_CLI_LOGIN_DISCOVERY_PATH: &str = "/.well-known/ic-cli-login";
 const ICP_CLI_LOGIN_PATH: &str = "/login";
 const ICP_CLI_LOGIN_HTML: &str = include_str!("icp_cli_login.html");
 const UPDATE_EXECUTION_BASE_CYCLES: u128 = 5_000_000;
 const UPDATE_ACCOUNTING_OVERHEAD_CYCLES: u128 = 15_000_000;
+const DB_PAYMENT_RECIPIENT_PRINCIPAL: &str =
+    "isz6c-6c4pl-oba7w-ikjex-472yu-rf3fe-valdh-lfazm-5f3ep-v474i-qae";
 #[cfg(target_arch = "wasm32")]
 const STORAGE_BILLING_TIMER_BATCHES_PER_MESSAGE: u32 = 6;
 #[cfg(target_arch = "wasm32")]
@@ -117,17 +122,6 @@ enum LedgerTransferFromOutcome {
 struct IcrcAccount {
     owner: Principal,
     subaccount: Option<Vec<u8>>,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType)]
-struct TransferArg {
-    from_subaccount: Option<Vec<u8>>,
-    to: IcrcAccount,
-    amount: Nat,
-    fee: Option<Nat>,
-    memo: Option<Vec<u8>>,
-    created_at_time: Option<u64>,
 }
 
 #[allow(dead_code)]
@@ -218,19 +212,6 @@ enum Icrc21ConsentMessageResponse {
 struct Icrc10SupportedStandard {
     name: String,
     url: String,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Debug, CandidType, Deserialize)]
-enum TransferError {
-    BadFee { expected_fee: Nat },
-    BadBurn { min_burn_amount: Nat },
-    InsufficientFunds { balance: Nat },
-    TooOld,
-    CreatedInFuture { ledger_time: u64 },
-    Duplicate { duplicate_of: Nat },
-    TemporarilyUnavailable,
-    GenericError { error_code: Nat, message: String },
 }
 
 #[allow(dead_code)]
@@ -434,49 +415,85 @@ fn icrc10_supported_standards() -> Vec<Icrc10SupportedStandard> {
 fn icrc21_canister_call_consent_message(
     request: Icrc21ConsentMessageRequest,
 ) -> Icrc21ConsentMessageResponse {
-    if request.method != "purchase_database_cycles" {
-        return icrc21_unsupported(format!("unsupported canister call: {}", request.method));
-    }
-    let purchase = match Decode!(&request.arg, DatabaseCyclesPurchaseRequest) {
-        Ok(decoded) => decoded,
-        Err(error) => {
-            return icrc21_unavailable(format!(
-                "purchase_database_cycles argument decode failed: {error}"
-            ));
-        }
-    };
-    let cycles = match with_service(|service| {
-        let config = service.cycles_billing_config()?;
-        let cycles = cycles_for_payment_amount_e8s(purchase.payment_amount_e8s, &config)?;
-        service.validate_database_cycles_purchase_with_minimum(
-            &purchase.database_id,
-            purchase.payment_amount_e8s,
-            purchase.min_expected_cycles,
-        )?;
-        Ok(cycles)
-    }) {
-        Ok(cycles) => cycles,
-        Err(error) => return icrc21_unsupported(error),
-    };
     let language = if request.user_preferences.metadata.language.trim().is_empty() {
         "en".to_string()
     } else {
         request.user_preferences.metadata.language
     };
-    Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
-        metadata: Icrc21ConsentMessageMetadata {
-            language,
-            utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
-        },
-        consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
-            "# Purchase Kinic database cycles\n\nDatabase: `{database_id}`\n\nCycles: `{cycles}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
-            database_id = purchase.database_id,
-            cycles = format_cycles(cycles),
-            payment = format_e8s(purchase.payment_amount_e8s),
-            fee = format_e8s(KINIC_LEDGER_FEE_E8S),
-            spender = canister_principal().to_text()
-        )),
-    })
+    let metadata = Icrc21ConsentMessageMetadata {
+        language,
+        utc_offset_minutes: request.user_preferences.metadata.utc_offset_minutes,
+    };
+    match request.method.as_str() {
+        "purchase_database_cycles" => {
+            let purchase = match Decode!(&request.arg, DatabaseCyclesPurchaseRequest) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    return icrc21_unavailable(format!(
+                        "purchase_database_cycles argument decode failed: {error}"
+                    ));
+                }
+            };
+            let cycles = match with_service(|service| {
+                let config = service.cycles_billing_config()?;
+                let cycles = cycles_for_payment_amount_e8s(purchase.payment_amount_e8s, &config)?;
+                service.validate_database_cycles_purchase_with_minimum(
+                    &purchase.database_id,
+                    purchase.payment_amount_e8s,
+                    purchase.min_expected_cycles,
+                )?;
+                Ok(cycles)
+            }) {
+                Ok(cycles) => cycles,
+                Err(error) => return icrc21_unsupported(error),
+            };
+            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+                metadata,
+                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+                    "# Purchase Kinic database cycles\n\nDatabase: `{database_id}`\n\nCycles: `{cycles}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSpender canister: `{spender}`",
+                    database_id = purchase.database_id,
+                    cycles = format_cycles(cycles),
+                    payment = format_e8s(purchase.payment_amount_e8s),
+                    fee = format_e8s(KINIC_LEDGER_FEE_E8S),
+                    spender = canister_principal().to_text()
+                )),
+            })
+        }
+        "market_purchase_access" => {
+            let purchase = match Decode!(&request.arg, MarketPurchaseRequest) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    return icrc21_unavailable(format!(
+                        "market_purchase_access argument decode failed: {error}"
+                    ));
+                }
+            };
+            let payer = caller_text();
+            let validation = match with_service(|service| {
+                service.validate_market_purchase_for_consent(&payer, &purchase)
+            }) {
+                Ok(validation) => validation,
+                Err(error) => return icrc21_unsupported(error),
+            };
+            let listing = validation.listing;
+            let access_principal = validation.request.access_principal;
+            Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
+                metadata,
+                consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
+                    "# Purchase marketplace database access\n\nListing: `{listing_title}`\n\nDatabase: `{database_id}`\n\nPayment: `{payment}` KINIC\n\nLedger transfer fee in allowance: `{fee}` KINIC\n\nSeller principal: `{seller}`\n\nSeller payout principal: `{payout}`\n\nPayer wallet principal: `{payer}`\n\nAccess principal: `{access}`\n\nGranted access: read-only marketplace entitlement",
+                    listing_title = listing.title,
+                    database_id = listing.database_id,
+                    payment = format_e8s(purchase.price_e8s),
+                    fee = format_e8s(KINIC_LEDGER_FEE_E8S),
+                    seller = listing.seller_principal,
+                    payout = listing.payout_principal,
+                    payer = payer,
+                    access = access_principal,
+                )),
+            })
+        }
+        method => icrc21_unsupported(format!("unsupported canister call: {method}")),
+    }
 }
 
 #[update]
@@ -492,7 +509,9 @@ async fn purchase_database_cycles(
     let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
     let payment_amount_e8s = request.payment_amount_e8s;
     let ledger_created_at_time_ns = now_nanos();
-    let canister_owner = canister_principal().to_text();
+    let payment_recipient = Principal::from_text(DB_PAYMENT_RECIPIENT_PRINCIPAL)
+        .map_err(|error| format!("invalid database payment recipient principal: {error}"))?;
+    let payment_recipient_text = payment_recipient.to_text();
     let purchase_start = match with_service(|service| {
         service.begin_database_cycles_purchase_with_ledger_details(
             DatabaseCyclesPurchaseWithLedgerDetails {
@@ -503,7 +522,7 @@ async fn purchase_database_cycles(
                 ledger: CyclesPendingLedgerDetailsInput {
                     from_owner: &caller,
                     from_subaccount: None,
-                    to_owner: &canister_owner,
+                    to_owner: &payment_recipient_text,
                     to_subaccount: None,
                     ledger_fee_e8s,
                     ledger_created_at_time_ns,
@@ -517,25 +536,26 @@ async fn purchase_database_cycles(
     };
     let operation_id = purchase_start.operation_id;
     let amount_cycles = purchase_start.amount_cycles;
-    match ledger_transfer_from(
-        ledger,
-        IcrcAccount {
-            owner: caller_principal(),
-            subaccount: None,
+    run_transfer_from_saga(
+        TransferFromSaga {
+            operation_id,
+            ledger,
+            from: IcrcAccount {
+                owner: caller_principal(),
+                subaccount: None,
+            },
+            to: IcrcAccount {
+                owner: payment_recipient,
+                subaccount: None,
+            },
+            amount_e8s: payment_amount_e8s,
+            ledger_fee_e8s,
+            memo: cycles_purchase_memo(operation_id),
+            created_at_time_ns: ledger_created_at_time_ns,
+            ambiguous_review_label: "billing authority review required",
         },
-        IcrcAccount {
-            owner: canister_principal(),
-            subaccount: None,
-        },
-        payment_amount_e8s,
-        ledger_fee_e8s,
-        operation_id,
-        ledger_created_at_time_ns,
-    )
-    .await
-    {
-        LedgerTransferFromOutcome::Completed(block_index) => {
-            if let Err(error) = with_service(|service| {
+        |block_index| {
+            with_service(|service| {
                 service.complete_database_cycles_purchase_ledger_transfer(
                     operation_id,
                     &request.database_id,
@@ -543,32 +563,16 @@ async fn purchase_database_cycles(
                     amount_cycles,
                     block_index,
                 )
-            }) {
-                return Err(cycles_purchase_local_apply_error(
-                    operation_id,
-                    block_index,
-                    error,
-                ));
-            }
-            if let Err(error) = activate_pending_database_after_cycles_purchase_ledger_success(
+            })?;
+            activate_pending_database_after_cycles_purchase_ledger_success(
                 &request.database_id,
                 now,
-            ) {
-                return Err(cycles_purchase_local_apply_error(
-                    operation_id,
-                    block_index,
-                    error,
-                ));
-            }
+            )?;
             #[cfg(test)]
             if TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(false)) {
-                return Err(cycles_purchase_local_apply_error(
-                    operation_id,
-                    block_index,
-                    "test cycle purchase apply failure".to_string(),
-                ));
+                return Err("test cycle purchase apply failure".to_string());
             }
-            let balance = match with_service(|service| {
+            let balance = with_service(|service| {
                 service.apply_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
@@ -577,64 +581,36 @@ async fn purchase_database_cycles(
                     block_index,
                     now,
                 )
-            }) {
-                Ok(balance) => balance,
-                Err(error) => {
-                    return Err(cycles_purchase_local_apply_error(
-                        operation_id,
-                        block_index,
-                        error,
-                    ));
-                }
-            };
+            })?;
             Ok(CyclesPurchaseResult {
                 block_index,
                 amount_cycles,
                 balance_cycles: balance,
             })
-        }
-        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
-            let _ = with_service(|service| {
+        },
+        || {
+            with_service(|service| {
                 service.cancel_database_cycles_purchase(
                     operation_id,
                     &request.database_id,
                     &caller,
                     amount_cycles,
                 )
-            });
-            Err(format!(
-                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
-            ))
-        }
-        LedgerTransferFromOutcome::LedgerErr(error) => {
-            let _ = with_service(|service| {
-                service.cancel_database_cycles_purchase(
-                    operation_id,
-                    &request.database_id,
-                    &caller,
-                    amount_cycles,
-                )
-            });
-            Err(error)
-        }
-        LedgerTransferFromOutcome::Ambiguous(error) => {
-            if let Err(mark_error) = with_service(|service| {
+            })
+        },
+        || {
+            with_service(|service| {
                 service.mark_database_cycles_purchase_ambiguous(
                     operation_id,
                     &request.database_id,
                     &caller,
                     amount_cycles,
                 )
-            }) {
-                return Err(format!(
-                    "icrc2_transfer_from result ambiguous for operation_id {operation_id}; failed to mark operation ambiguous; billing authority review required: {mark_error}; original ledger ambiguity: {error}"
-                ));
-            }
-            Err(format!(
-                "icrc2_transfer_from result ambiguous for operation_id {operation_id}; billing authority review required: {error}"
-            ))
-        }
-    }
+            })
+        },
+        cycles_purchase_local_apply_error,
+    )
+    .await
 }
 
 #[query]
@@ -672,21 +648,81 @@ fn activate_pending_database_after_cycles_purchase_ledger_success(
     database_id: &str,
     now: i64,
 ) -> Result<(), String> {
-    let activation = with_service(|service| {
-        service.activate_pending_database_for_cycles_purchase(database_id, now)
-    })?;
-    if let Some(meta) = &activation {
-        if let Err(error) = mount_database_file(meta) {
-            return Err(database_create_error(error, None));
-        }
-        if let Err(error) =
-            with_service(|service| service.run_pending_database_migrations(database_id))
-        {
-            unmount_database_file(&meta.db_file_name);
-            return Err(database_create_error(error, None));
-        }
+    let activation =
+        with_service(|service| service.prepare_pending_database_activation(database_id, now))?;
+    if let Some(meta) = &activation
+        && let Err(error) = mount_database_file(meta)
+    {
+        return Err(database_create_error(error, None));
     }
     Ok(())
+}
+
+struct TransferFromSaga {
+    operation_id: u64,
+    ledger: Principal,
+    from: IcrcAccount,
+    to: IcrcAccount,
+    amount_e8s: u64,
+    ledger_fee_e8s: u64,
+    memo: Vec<u8>,
+    created_at_time_ns: u64,
+    ambiguous_review_label: &'static str,
+}
+
+async fn run_transfer_from_saga<T, Apply, Cancel, Ambiguous, LocalApplyError>(
+    saga: TransferFromSaga,
+    apply_after_completed_transfer: Apply,
+    cancel_after_no_credit: Cancel,
+    mark_ambiguous: Ambiguous,
+    local_apply_error: LocalApplyError,
+) -> Result<T, String>
+where
+    Apply: FnOnce(u64) -> Result<T, String>,
+    Cancel: FnOnce() -> Result<(), String>,
+    Ambiguous: FnOnce() -> Result<(), String>,
+    LocalApplyError: Fn(u64, u64, String) -> String,
+{
+    match ledger_transfer_from_with_memo(
+        saga.ledger,
+        saga.from,
+        saga.to,
+        saga.amount_e8s,
+        saga.ledger_fee_e8s,
+        saga.memo,
+        saga.created_at_time_ns,
+    )
+    .await
+    {
+        LedgerTransferFromOutcome::Completed(block_index) => {
+            apply_after_completed_transfer(block_index)
+                .map_err(|error| local_apply_error(saga.operation_id, block_index, error))
+        }
+        LedgerTransferFromOutcome::BadFee { expected_fee_e8s } => {
+            let _ = cancel_after_no_credit();
+            Err(format!(
+                "icrc2_transfer_from failed: BadFee expected fee {expected_fee_e8s}; re-approve with the current ledger fee and retry"
+            ))
+        }
+        LedgerTransferFromOutcome::LedgerErr(error) => {
+            let _ = cancel_after_no_credit();
+            Err(error)
+        }
+        LedgerTransferFromOutcome::Ambiguous(error) => {
+            if let Err(mark_error) = mark_ambiguous() {
+                return Err(format!(
+                    "icrc2_transfer_from result ambiguous for operation_id {operation_id}; failed to mark operation ambiguous; {review_label}: {mark_error}; original ledger ambiguity: {error}",
+                    operation_id = saga.operation_id,
+                    review_label = saga.ambiguous_review_label
+                ));
+            }
+            Err(format!(
+                "icrc2_transfer_from result ambiguous for operation_id {operation_id}; {review_label}: {error}",
+                operation_id = saga.operation_id,
+                review_label = saga.ambiguous_review_label
+            ))
+        }
+    }
 }
 
 fn cycles_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
@@ -707,6 +743,201 @@ fn list_database_cycles_pending_purchases(
     with_service(|service| {
         service.list_database_cycles_pending_purchases(&database_id, &caller_text())
     })
+}
+
+#[update]
+fn market_create_listing(request: MarketCreateListingRequest) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "market_create_listing",
+        Some(request.database_id.clone()),
+        |service, caller, now| service.market_create_listing(caller, request, now),
+    )
+}
+
+#[update]
+fn market_update_listing(request: MarketUpdateListingRequest) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_update_listing", None, |service, caller, now| {
+        service.market_update_listing(caller, request, now)
+    })
+}
+
+#[update]
+fn market_publish_listing(listing_id: String) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_publish_listing", None, |service, caller, now| {
+        service.market_publish_listing(caller, &listing_id, now)
+    })
+}
+
+#[update]
+fn market_pause_listing(listing_id: String) -> Result<MarketListing, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("market_pause_listing", None, |service, caller, now| {
+        service.market_pause_listing(caller, &listing_id, now)
+    })
+}
+
+#[query]
+fn market_list_listings(cursor: Option<String>, limit: u32) -> Result<MarketListingPage, String> {
+    with_service(|service| service.market_list_listings(cursor, limit))
+}
+
+#[query]
+fn market_list_seller_listings(
+    seller_principal: String,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<MarketListingPage, String> {
+    with_service(|service| service.market_list_seller_listings(&seller_principal, cursor, limit))
+}
+
+#[query]
+fn market_list_database_listings(database_id: String) -> Result<Vec<MarketListing>, String> {
+    with_service(|service| service.market_list_database_listings(&caller_text(), &database_id))
+}
+
+#[query]
+fn market_list_database_entitlements(
+    database_id: String,
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<MarketEntitlementPage, String> {
+    with_service(|service| {
+        service.market_list_database_entitlements(&caller_text(), &database_id, cursor, limit)
+    })
+}
+
+#[query]
+fn market_get_listing(listing_id: String) -> Result<MarketListingDetail, String> {
+    with_service(|service| service.market_get_listing(&caller_text(), &listing_id))
+}
+
+#[query]
+fn market_preview_purchase(listing_id: String) -> Result<MarketPurchasePreview, String> {
+    with_service(|service| service.market_preview_purchase(&caller_text(), &listing_id))
+}
+
+#[update]
+async fn market_purchase_access(request: MarketPurchaseRequest) -> Result<MarketOrder, String> {
+    require_authenticated_caller()?;
+    let caller = caller_text();
+    let now = now_millis();
+    let config = with_service(|service| service.cycles_billing_config())?;
+    let ledger = Principal::from_text(&config.kinic_ledger_canister_id)
+        .map_err(|error| format!("invalid KINIC ledger canister id: {error}"))?;
+    let ledger_fee_e8s = KINIC_LEDGER_FEE_E8S;
+    let ledger_created_at_time_ns = now_nanos();
+    let purchase_start = with_service(|service| {
+        service.begin_market_purchase_with_ledger_details(
+            &caller,
+            request,
+            CyclesPendingLedgerDetailsInput {
+                from_owner: &caller,
+                from_subaccount: None,
+                to_owner: "",
+                to_subaccount: None,
+                ledger_fee_e8s,
+                ledger_created_at_time_ns,
+            },
+            now,
+        )
+    })?;
+    let payout = Principal::from_text(&purchase_start.payout_principal)
+        .map_err(|error| format!("invalid market payout principal: {error}"))?;
+    let operation_id = purchase_start.operation_id;
+    run_transfer_from_saga(
+        TransferFromSaga {
+            operation_id,
+            ledger,
+            from: IcrcAccount {
+                owner: caller_principal(),
+                subaccount: None,
+            },
+            to: IcrcAccount {
+                owner: payout,
+                subaccount: None,
+            },
+            amount_e8s: purchase_start.price_e8s,
+            ledger_fee_e8s,
+            memo: market_purchase_memo(operation_id),
+            created_at_time_ns: ledger_created_at_time_ns,
+            ambiguous_review_label: "review required",
+        },
+        |block_index| {
+            with_service(|service| {
+                service.complete_market_purchase_ledger_transfer(
+                    operation_id,
+                    &purchase_start.access_principal,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                    block_index,
+                )
+            })?;
+            with_service(|service| {
+                service.apply_market_purchase(
+                    operation_id,
+                    &purchase_start.access_principal,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                    now,
+                )
+            })
+        },
+        || {
+            with_service(|service| {
+                service.cancel_market_purchase(
+                    operation_id,
+                    &purchase_start.access_principal,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                )
+            })
+        },
+        || {
+            with_service(|service| {
+                service.mark_market_purchase_ambiguous(
+                    operation_id,
+                    &purchase_start.access_principal,
+                    &purchase_start.listing_id,
+                    purchase_start.price_e8s,
+                )
+            })
+        },
+        market_purchase_local_apply_error,
+    )
+    .await
+}
+
+fn market_purchase_local_apply_error(operation_id: u64, block_index: u64, cause: String) -> String {
+    format!(
+        "market purchase payment completed at ledger block {block_index} but local entitlement application failed; pending operation {operation_id} remains completed for review: {cause}"
+    )
+}
+
+fn market_purchase_memo(operation_id: u64) -> Vec<u8> {
+    let mut memo = b"kinic:market:".to_vec();
+    memo.extend_from_slice(operation_id.to_string().as_bytes());
+    memo
+}
+
+#[query]
+fn market_list_entitlements(
+    cursor: Option<String>,
+    limit: u32,
+) -> Result<MarketEntitlementPage, String> {
+    with_service(|service| service.market_list_entitlements(&caller_text(), cursor, limit))
+}
+
+#[query]
+fn market_list_orders(cursor: Option<String>, limit: u32) -> Result<MarketOrderPage, String> {
+    with_service(|service| service.market_list_orders(&caller_text(), cursor, limit))
+}
+
+#[query]
+fn market_count_active_entitlements(database_id: String) -> Result<u64, String> {
+    with_service(|service| service.market_count_active_entitlements(&caller_text(), &database_id))
 }
 
 #[update]
@@ -1244,6 +1475,7 @@ thread_local! {
     static TEST_LEDGER_TRANSFER_FEES: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     static TEST_LAST_LEDGER_MEMO: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
     static TEST_LAST_LEDGER_FROM: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
+    static TEST_LAST_LEDGER_TO: RefCell<Option<IcrcAccount>> = const { RefCell::new(None) };
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
@@ -1308,6 +1540,13 @@ fn record_test_ledger_from(from: &IcrcAccount) {
 }
 
 #[cfg(test)]
+fn record_test_ledger_to(to: &IcrcAccount) {
+    TEST_LAST_LEDGER_TO.with(|slot| {
+        slot.replace(Some(to.clone()));
+    });
+}
+
+#[cfg(test)]
 fn last_ledger_memo_for_test() -> Option<Vec<u8>> {
     TEST_LAST_LEDGER_MEMO.with(|slot| slot.borrow().clone())
 }
@@ -1315,6 +1554,11 @@ fn last_ledger_memo_for_test() -> Option<Vec<u8>> {
 #[cfg(test)]
 fn last_ledger_from_for_test() -> Option<IcrcAccount> {
     TEST_LAST_LEDGER_FROM.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+fn last_ledger_to_for_test() -> Option<IcrcAccount> {
+    TEST_LAST_LEDGER_TO.with(|slot| slot.borrow().clone())
 }
 
 #[cfg(test)]
@@ -1328,6 +1572,9 @@ fn clear_last_ledger_memo_for_test() {
         slot.replace(None);
     });
     TEST_LAST_LEDGER_FROM.with(|slot| {
+        slot.replace(None);
+    });
+    TEST_LAST_LEDGER_TO.with(|slot| {
         slot.replace(None);
     });
 }
@@ -1485,19 +1732,19 @@ fn now_nanos() -> u64 {
     }
 }
 
-async fn ledger_transfer_from(
+async fn ledger_transfer_from_with_memo(
     ledger: Principal,
     from: IcrcAccount,
     to: IcrcAccount,
     amount_e8s: u64,
     ledger_fee_e8s: u64,
-    operation_id: u64,
+    memo: Vec<u8>,
     created_at_time_ns: u64,
 ) -> LedgerTransferFromOutcome {
-    let memo = cycles_purchase_memo(operation_id);
     #[cfg(test)]
     {
         record_test_ledger_from(&from);
+        record_test_ledger_to(&to);
         let _ = (ledger, to, amount_e8s, created_at_time_ns);
         record_test_ledger_memo(&memo);
         TEST_LEDGER_TRANSFER_FEES.with(|fees| {
@@ -1811,7 +2058,7 @@ fn certified_static_responses() -> Vec<(
     vec![
         certified_static_response_entry(
             II_ALTERNATIVE_ORIGINS_PATH,
-            II_ALTERNATIVE_ORIGINS_BODY.as_bytes().to_vec(),
+            ii_alternative_origins_body().as_bytes().to_vec(),
             "application/json; charset=utf-8",
             true,
         ),
@@ -1828,6 +2075,13 @@ fn certified_static_responses() -> Vec<(
             false,
         ),
     ]
+}
+
+fn ii_alternative_origins_body() -> &'static str {
+    match option_env!("KINIC_VFS_LOCAL_II_ORIGINS") {
+        Some("1") => II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY,
+        _ => II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY,
+    }
 }
 
 fn certified_static_response_entry(

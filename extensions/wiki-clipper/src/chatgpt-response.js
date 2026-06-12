@@ -1,6 +1,7 @@
 // Where: extensions/wiki-clipper/src/chatgpt-response.js
 // What: Convert ChatGPT conversation API responses into raw-source captures.
 // Why: Direct API export needs stable mapping/current_node conversion.
+import { appendLimitedMessage } from "./conversation-limits.js";
 
 export function conversationIdFromUrl(value) {
   try {
@@ -25,7 +26,9 @@ export function captureFromChatGptResponse(payload, url, capturedAt = new Date()
 export function messagesFromMapping(mapping, currentNode) {
   const orderedIds = pathToCurrentNode(mapping, currentNode);
   const messages = [];
+  const state = { chars: 0, done: false };
   for (const id of orderedIds) {
+    if (state.done) break;
     const node = mapping[id];
     const message = node?.message;
     if (!message) continue;
@@ -33,7 +36,7 @@ export function messagesFromMapping(mapping, currentNode) {
     const content = contentFromMessage(message);
     if (!content || (role !== "user" && content.length === 0)) continue;
     if ((role === "assistant" || role === "system") && content.length === 0) continue;
-    messages.push({ role, content });
+    appendLimitedMessage(messages, state, role, content);
   }
   return messages;
 }

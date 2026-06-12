@@ -154,8 +154,8 @@ function TreeNode({
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm ${
-          selected ? "bg-accentSoft text-accentText" : "text-ink hover:bg-white"
+        className={`flex items-center gap-1 rounded-xl px-2 py-1.5 text-sm ${
+          selected ? "bg-accentSoft font-semibold text-accentText" : "text-ink hover:bg-paper hover:text-accentText"
         }`}
         style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
@@ -189,7 +189,7 @@ function TreeNode({
 function Toggle({ expanded, setExpanded }: { expanded: boolean; setExpanded: (value: boolean) => void }) {
   return (
     <button
-      className="rounded p-0.5 text-muted hover:bg-canvas"
+      className="rounded-lg p-0.5 text-muted hover:bg-accentSoft hover:text-accentText"
       type="button"
       onClick={() => setExpanded(!expanded)}
       aria-label={expanded ? "Collapse directory" : "Expand directory"}

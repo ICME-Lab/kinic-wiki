@@ -1,3 +1,5 @@
+import { databaseRouteBase } from "./share-links";
+
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
     return "/Wiki";
@@ -35,7 +37,7 @@ export function hrefForPath(
     params.set("kind", searchKind);
   }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
-  return `/${encodeURIComponent(databaseId)}/${suffix}${queryString}`;
+  return `${databaseRouteBase(databaseId)}/${suffix}${queryString}`;
 }
 
 export function hrefForSearch(canisterId: string, databaseId: string, searchQuery: string, searchKind: string): string {
@@ -48,7 +50,7 @@ export function hrefForSearch(canisterId: string, databaseId: string, searchQuer
     params.set("kind", searchKind);
   }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
-  return `/${encodeURIComponent(databaseId)}/search${queryString}`;
+  return `${databaseRouteBase(databaseId)}/search${queryString}`;
 }
 
 export function hrefForGraph(canisterId: string, databaseId: string, centerPath?: string | null, depth?: number): string {
@@ -61,14 +63,14 @@ export function hrefForGraph(canisterId: string, databaseId: string, centerPath?
     params.set("depth", String(depth));
   }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
-  return `/${encodeURIComponent(databaseId)}/graph${queryString}`;
+  return `${databaseRouteBase(databaseId)}/graph${queryString}`;
 }
 
 export function hrefForHelp(canisterId: string, databaseId: string): string {
   void canisterId;
   const params = new URLSearchParams();
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
-  return `/${encodeURIComponent(databaseId)}/help${queryString}`;
+  return `${databaseRouteBase(databaseId)}/help${queryString}`;
 }
 
 export function hrefForDatabaseSwitch(

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AppHeader } from "./app-header";
 import { AppSessionProvider } from "./app-session-provider";
+import { AdminShell } from "@/components/admin-shell";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://wiki.kinic.xyz"),
@@ -25,8 +27,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <AppSessionProvider>
-          <AppHeader />
-          {children}
+          <TooltipProvider delayDuration={120}>
+            <div className="flex min-h-screen flex-col">
+              <AppHeader />
+              <AdminShell>{children}</AdminShell>
+            </div>
+          </TooltipProvider>
         </AppSessionProvider>
       </body>
     </html>

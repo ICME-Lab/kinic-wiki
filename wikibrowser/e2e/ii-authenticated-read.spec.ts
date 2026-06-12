@@ -27,7 +27,7 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
 
   const principal = extractPrincipal(await page.locator("body").innerText());
   const databaseId = await seedPrivateDatabase(principal);
-  const privateHref = `/${encodeURIComponent(databaseId)}${E2E_PATH}`;
+  const privateHref = `/db/${encodeURIComponent(databaseId)}${E2E_PATH}`;
 
   const anonymousContext = await browser.newContext();
   const anonymousPage = await anonymousContext.newPage();
@@ -40,11 +40,11 @@ testWithII("reads a private database after Internet Identity login", async ({ pa
   await expect(page.getByRole("heading", { name: E2E_TITLE })).toBeVisible();
   await expect(page.getByText(E2E_TOKEN)).toBeVisible();
 
-  await page.goto(`/${encodeURIComponent(databaseId)}/search?q=${encodeURIComponent(E2E_TOKEN)}&kind=full`);
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/search?q=${encodeURIComponent(E2E_TOKEN)}&kind=full`);
   await expect(page.getByText("principal has no access")).toHaveCount(0);
   await expect(page.getByText(E2E_TOKEN)).toBeVisible();
 
-  await page.goto(`/${encodeURIComponent(databaseId)}/graph?center=${encodeURIComponent(E2E_PATH)}&depth=1`);
+  await page.goto(`/db/${encodeURIComponent(databaseId)}/graph?center=${encodeURIComponent(E2E_PATH)}&depth=1`);
   await expect(page.getByText("principal has no access")).toHaveCount(0);
   await expect(page.getByText("Local link graph")).toBeVisible();
 });

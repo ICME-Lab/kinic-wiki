@@ -90,6 +90,8 @@ ledger 転送は KINIC ledger の `icrc2_transfer_from` を使う。
 - to: canister principal
 - amount: request の `payment_amount_e8s`
 - fee: 固定 `ledger_fee_e8s`
+
+App KINIC の withdraw は `kinic_withdraw_balance` で行う。recipient には任意 principal と任意 32-byte subaccount を指定できる。canister は内部 App balance から `amount_e8s + expected_fee_e8s` を先に差し引き、KINIC ledger の `icrc1_transfer` で recipient に `amount_e8s` を送る。ledger が明確に失敗した場合は debit を返金する。call/decode 失敗など結果不明の場合は pending withdraw を残し、debit は返金しない。直接 ledger transfer は App balance に反映されない。
 - memo: `kvfs:cp:{operation_id}`
 - created_at_time: purchase 開始時刻
 - spender: canister principal

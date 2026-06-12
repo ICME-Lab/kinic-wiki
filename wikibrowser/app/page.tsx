@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { BookOpen, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
+import { publicDatabasePath } from "@/lib/share-links";
 import heroImage from "./home-hero.png";
 
 export const metadata: Metadata = {
@@ -41,7 +42,7 @@ const companionSurfaces = [
   {
     title: "Official wiki",
     body: "Open the public Kinic Wiki example in the wiki browser to inspect how /Wiki and /Sources are organized.",
-    href: "/db_kva4v2twg6jv/Wiki",
+    href: publicDatabasePath("db_kva4v2twg6jv"),
     label: "Open Official Wiki",
     icon: BookOpen
   },
@@ -72,7 +73,7 @@ export default function HomePage() {
         <div className="mx-auto flex min-h-[calc(100svh-56px)] max-w-[1155px] flex-col gap-12 sm:gap-16">
           <nav className="flex flex-wrap items-center justify-between gap-3">
             <Link className="inline-flex items-center gap-3 rounded-2xl no-underline transition-transform hover:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" href="/" aria-label="Kinic Wiki home">
-              <Image className="h-12 w-12 rounded-2xl shadow-sm" src="/icon.png" alt="" width={48} height={48} unoptimized />
+              <Image className="h-12 w-12 rounded-2xl shadow-sm" src="/kinic-mark.png" alt="" width={48} height={48} unoptimized />
               <span className="text-sm font-semibold text-ink">Kinic Wiki</span>
             </Link>
             <Link className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-line bg-white px-4 py-2 text-sm font-bold text-ink no-underline shadow-[0_4px_10px_#14142b0a] transition-[transform,background-color,border-color,color,box-shadow] hover:-translate-y-[3px] hover:border-accent hover:bg-accent hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent motion-reduce:transition-none motion-reduce:hover:translate-y-0" href="/dashboard">

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { checkCandidSubset } from "../../scripts/candid-subset-check.mjs";
+import { didTypeAliases, expectedMethods, expectedTypes } from "../../wikibrowser/scripts/candid-shapes.mjs";
 
 const route = readFileSync(new URL("../app/skills/[databaseId]/page.tsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../app/skills/skill-registry-client.tsx", import.meta.url), "utf8");
@@ -15,6 +17,7 @@ const types = readFileSync(new URL("../lib/types.ts", import.meta.url), "utf8");
 const vfsClient = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
 const vfsIdl = readFileSync(new URL("../lib/vfs-idl.ts", import.meta.url), "utf8");
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const did = readFileSync(new URL("../../crates/vfs_canister/vfs.did", import.meta.url), "utf8");
 
 assert.equal(packageJson.name, "kinic-skill-registry-web");
 assert.match(route, /<SkillRegistryClient databaseId=\{databaseId\} \/>/);
@@ -68,6 +71,16 @@ assert.match(vfsIdl, /Active: idl\.Null/);
 assert.match(vfsIdl, /status: DatabaseStatus/);
 assert.match(vfsIdl, /Deleted: idl\.Null/);
 assert.match(vfsIdl, /deleted_at_ms: idl\.Opt\(idl\.Int64\)/);
+assert.deepEqual(
+  checkCandidSubset({
+    didSource: did,
+    idlSource: vfsIdl,
+    expectedTypes: pickUsedExpectedTypes(vfsIdl),
+    expectedMethods: pickUsedExpectedMethods(vfsIdl),
+    didTypeAliases
+  }),
+  []
+);
 assert.match(vfsClient, /function normalizeDatabaseStatus/);
 assert.match(vfsClient, /"Active" in status/);
 assert.match(vfsClient, /"Pending" in status/);
@@ -128,6 +141,18 @@ assert.equal(
 );
 
 console.log("Skill Registry web checks OK");
+
+function pickUsedExpectedTypes(source) {
+  return Object.fromEntries(
+    Object.entries(expectedTypes).filter(([name]) => new RegExp(`const\\s+${name}\\s*=`).test(source))
+  );
+}
+
+function pickUsedExpectedMethods(source) {
+  return Object.fromEntries(
+    Object.entries(expectedMethods).filter(([name]) => new RegExp(`${name}:\\s*idl\\.Func`).test(source))
+  );
+}
 
 async function importSkillRegistryPackageForTest(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);

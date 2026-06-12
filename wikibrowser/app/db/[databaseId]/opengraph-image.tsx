@@ -2,10 +2,8 @@ import {
   LINK_PREVIEW_CONTENT_TYPE,
   LINK_PREVIEW_SIZE,
   renderLinkPreviewImage
-} from "../link-preview-image";
-import { notFound } from "next/navigation";
+} from "@/app/link-preview-image";
 import { databasePreviewDescription, loadDatabasePreview } from "@/lib/database-preview";
-import { isReservedDatabaseRouteSlug } from "@/lib/share-links";
 
 export const alt = "Kinic Wiki database link preview";
 export const size = LINK_PREVIEW_SIZE;
@@ -13,9 +11,6 @@ export const contentType = LINK_PREVIEW_CONTENT_TYPE;
 
 export default async function Image({ params }: { params: Promise<{ databaseId: string }> }) {
   const { databaseId } = await params;
-  if (isReservedDatabaseRouteSlug(databaseId)) {
-    notFound();
-  }
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const preview = await loadDatabasePreview(canisterId, databaseId);
   return renderLinkPreviewImage({

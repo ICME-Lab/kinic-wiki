@@ -18,12 +18,15 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MemoryManifest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest,
-    QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest,
 };
 
 #[async_trait]
@@ -74,6 +77,97 @@ pub trait VfsApi: Sync {
     ) -> Result<Vec<DatabaseCyclesPendingPurchase>> {
         Err(anyhow!(
             "list_database_cycles_pending_purchases is not implemented by this client"
+        ))
+    }
+    async fn market_create_listing(
+        &self,
+        _request: MarketCreateListingRequest,
+    ) -> Result<MarketListing> {
+        Err(anyhow!(
+            "market_create_listing is not implemented by this client"
+        ))
+    }
+    async fn market_update_listing(
+        &self,
+        _request: MarketUpdateListingRequest,
+    ) -> Result<MarketListing> {
+        Err(anyhow!(
+            "market_update_listing is not implemented by this client"
+        ))
+    }
+    async fn market_publish_listing(&self, _listing_id: &str) -> Result<MarketListing> {
+        Err(anyhow!(
+            "market_publish_listing is not implemented by this client"
+        ))
+    }
+    async fn market_pause_listing(&self, _listing_id: &str) -> Result<MarketListing> {
+        Err(anyhow!(
+            "market_pause_listing is not implemented by this client"
+        ))
+    }
+    async fn market_list_listings(
+        &self,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<MarketListingPage> {
+        Err(anyhow!(
+            "market_list_listings is not implemented by this client"
+        ))
+    }
+    async fn market_list_seller_listings(
+        &self,
+        _seller_principal: &str,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<MarketListingPage> {
+        Err(anyhow!(
+            "market_list_seller_listings is not implemented by this client"
+        ))
+    }
+    async fn market_list_database_listings(
+        &self,
+        _database_id: &str,
+    ) -> Result<Vec<MarketListing>> {
+        Err(anyhow!(
+            "market_list_database_listings is not implemented by this client"
+        ))
+    }
+    async fn market_get_listing(&self, _listing_id: &str) -> Result<MarketListing> {
+        Err(anyhow!(
+            "market_get_listing is not implemented by this client"
+        ))
+    }
+    async fn market_preview_purchase(&self, _listing_id: &str) -> Result<MarketPurchasePreview> {
+        Err(anyhow!(
+            "market_preview_purchase is not implemented by this client"
+        ))
+    }
+    async fn market_purchase_access(&self, _request: MarketPurchaseRequest) -> Result<MarketOrder> {
+        Err(anyhow!(
+            "market_purchase_access is not implemented by this client"
+        ))
+    }
+    async fn market_list_entitlements(
+        &self,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<MarketEntitlementPage> {
+        Err(anyhow!(
+            "market_list_entitlements is not implemented by this client"
+        ))
+    }
+    async fn market_list_orders(
+        &self,
+        _cursor: Option<String>,
+        _limit: u32,
+    ) -> Result<MarketOrderPage> {
+        Err(anyhow!(
+            "market_list_orders is not implemented by this client"
+        ))
+    }
+    async fn market_count_active_entitlements(&self, _database_id: &str) -> Result<u64> {
+        Err(anyhow!(
+            "market_count_active_entitlements is not implemented by this client"
         ))
     }
     async fn get_cycles_billing_config(&self) -> Result<CyclesBillingConfig> {
@@ -489,6 +583,120 @@ impl VfsApi for CanisterVfsClient {
                 "list_database_cycles_pending_purchases",
                 &database_id.to_string(),
             )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_create_listing(
+        &self,
+        request: MarketCreateListingRequest,
+    ) -> Result<MarketListing> {
+        let result: Result<MarketListing, String> =
+            self.update("market_create_listing", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_update_listing(
+        &self,
+        request: MarketUpdateListingRequest,
+    ) -> Result<MarketListing> {
+        let result: Result<MarketListing, String> =
+            self.update("market_update_listing", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_publish_listing(&self, listing_id: &str) -> Result<MarketListing> {
+        let result: Result<MarketListing, String> = self
+            .update("market_publish_listing", &listing_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_pause_listing(&self, listing_id: &str) -> Result<MarketListing> {
+        let result: Result<MarketListing, String> = self
+            .update("market_pause_listing", &listing_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_listings(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketListingPage> {
+        let result: Result<MarketListingPage, String> =
+            self.query2("market_list_listings", &cursor, &limit).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_seller_listings(
+        &self,
+        seller_principal: &str,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketListingPage> {
+        let result: Result<MarketListingPage, String> = self
+            .query3(
+                "market_list_seller_listings",
+                &seller_principal.to_string(),
+                &cursor,
+                &limit,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_database_listings(&self, database_id: &str) -> Result<Vec<MarketListing>> {
+        let result: Result<Vec<MarketListing>, String> = self
+            .query("market_list_database_listings", &database_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_get_listing(&self, listing_id: &str) -> Result<MarketListing> {
+        let result: Result<MarketListing, String> = self
+            .query("market_get_listing", &listing_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_preview_purchase(&self, listing_id: &str) -> Result<MarketPurchasePreview> {
+        let result: Result<MarketPurchasePreview, String> = self
+            .query("market_preview_purchase", &listing_id.to_string())
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_purchase_access(&self, request: MarketPurchaseRequest) -> Result<MarketOrder> {
+        let result: Result<MarketOrder, String> =
+            self.update("market_purchase_access", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_entitlements(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketEntitlementPage> {
+        let result: Result<MarketEntitlementPage, String> = self
+            .query2("market_list_entitlements", &cursor, &limit)
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_list_orders(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<MarketOrderPage> {
+        let result: Result<MarketOrderPage, String> =
+            self.query2("market_list_orders", &cursor, &limit).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn market_count_active_entitlements(&self, database_id: &str) -> Result<u64> {
+        let result: Result<u64, String> = self
+            .query("market_count_active_entitlements", &database_id.to_string())
             .await?;
         result.map_err(|error| anyhow!(error))
     }

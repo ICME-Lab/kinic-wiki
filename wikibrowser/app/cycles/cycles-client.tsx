@@ -4,16 +4,23 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CircleAlert, Info, PlugZap, Wallet } from "lucide-react";
-import { useMemo, useState } from "react";
+import { PlugZap, Wallet } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAppSession } from "@/app/app-session-provider";
+import { AdminContent } from "@/components/admin-shell";
+import { AdminField, AdminNotice, AdminPanel } from "@/components/admin-ui";
 import { parseKinicAmountE8sInput, parseCyclesTarget } from "@/lib/cycles-url";
-import { purchaseCyclesWithOisy, purchaseCyclesWithPlug } from "@/lib/cycles-wallet";
+import { databaseCyclesHref, databaseCyclesView } from "@/lib/cycles-state";
+import { purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import type { DatabaseStatus } from "@/lib/types";
+import { getCyclesBillingConfig, listDatabasesAuthenticated } from "@/lib/vfs-client";
+import { errorMessage } from "@/lib/wiki-helpers";
+import type { CyclesBillingConfig, DatabaseStatus, DatabaseSummary } from "@/lib/types";
 
-type CyclesStatus = "idle" | "running" | "success" | "error";
+type CyclesStatus = "idle" | "running" | "success" | "notice" | "error";
 type CyclesProvider = "oisy" | "plug";
+type FundingProvider = CyclesProvider;
+type DatabaseLoadState = "idle" | "loading" | "ready" | "error";
 
 type CyclesClientProps = {
   canisterId: string;
@@ -23,39 +30,94 @@ type CyclesClientProps = {
 
 export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesClientProps) {
   const router = useRouter();
-  const { refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
+  const { authClient, principal, refreshWalletBalance, wallet, walletBalanceError, walletBusyProvider } = useAppSession();
   const [status, setStatus] = useState<CyclesStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [amount, setAmount] = useState("1");
+  const [databaseLoadState, setDatabaseLoadState] = useState<DatabaseLoadState>("idle");
+  const [databaseLoadError, setDatabaseLoadError] = useState<string | null>(null);
+  const [databases, setDatabases] = useState<DatabaseSummary[]>([]);
+  const [cyclesConfig, setCyclesConfig] = useState<CyclesBillingConfig | null>(null);
   const configuredCanisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
   const parsedTarget = useMemo(() => {
     const params = new URLSearchParams();
     params.set("database_id", databaseId);
     return parseCyclesTarget(params);
   }, [databaseId]);
+  const selectedDatabase = useMemo(() => databases.find((database) => database.databaseId === databaseId) ?? null, [databaseId, databases]);
+  const fundableDatabases = useMemo(() => databases.filter((database) => databaseCyclesView(database, cyclesConfig).purchaseAvailable), [cyclesConfig, databases]);
+  const resolvedDatabaseStatus = selectedDatabase?.status ?? databaseStatus;
   const parsedAmount = useMemo(() => parseKinicAmountE8sInput(amount), [amount]);
+  const hasNoFundableDatabases = principal !== null && databaseLoadState === "ready" && fundableDatabases.length === 0;
+  const targetError = typeof parsedTarget === "string" && !hasNoFundableDatabases ? parsedTarget : null;
   const error =
-    typeof parsedTarget === "string"
-      ? parsedTarget
-      : !configuredCanisterId
+    targetError ??
+    (!configuredCanisterId
         ? "NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID is not configured"
-        : null;
+        : null);
   const amountError = typeof parsedAmount === "string" ? parsedAmount : null;
   const busy = status === "running" || walletBusyProvider !== null;
   const selectedProvider = wallet?.provider ?? null;
-  const purchaseDisabled = !selectedProvider || Boolean(error) || Boolean(amountError) || busy;
+  const purchaseDisabled =
+    parsedTarget === null ||
+    typeof parsedTarget === "string" ||
+    Boolean(error) ||
+    Boolean(amountError) ||
+    busy ||
+    !selectedProvider;
+
+  const loadDatabases = useCallback(async () => {
+    if (!authClient || !principal || !canisterId) {
+      setDatabases([]);
+      setCyclesConfig(null);
+      setDatabaseLoadState("idle");
+      setDatabaseLoadError(null);
+      return;
+    }
+    setDatabaseLoadState("loading");
+    setDatabaseLoadError(null);
+    try {
+      const identity = authClient.getIdentity();
+      const [nextDatabases, nextCyclesConfig] = await Promise.all([
+        listDatabasesAuthenticated(canisterId, identity),
+        getCyclesBillingConfig(canisterId)
+      ]);
+      setDatabases(nextDatabases);
+      setCyclesConfig(nextCyclesConfig);
+      setDatabaseLoadState("ready");
+    } catch (cause) {
+      setDatabases([]);
+      setCyclesConfig(null);
+      setDatabaseLoadError(errorMessage(cause));
+      setDatabaseLoadState("error");
+    }
+  }, [authClient, canisterId, principal]);
+
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      void loadDatabases();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDatabases]);
+
+  function selectDatabase(nextDatabaseId: string) {
+    const nextDatabase = fundableDatabases.find((database) => database.databaseId === nextDatabaseId);
+    if (!nextDatabase) return;
+    router.replace(databaseCyclesHref(nextDatabase));
+  }
 
   async function purchase() {
-    if (!wallet || !selectedProvider) return;
-    if (typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
+    if (parsedTarget === null || typeof parsedTarget === "string" || typeof parsedAmount !== "bigint" || error) return;
     setStatus("running");
     setMessage(null);
     try {
       const request = { canisterId, databaseId: parsedTarget.databaseId, paymentAmountE8s: parsedAmount };
-      const result =
-        wallet.provider === "oisy"
-          ? await purchaseCyclesWithOisy(request, wallet.connection)
-          : await purchaseCyclesWithPlug(request, wallet.connection);
+      if (!wallet || !selectedProvider) return;
+        const result = await purchaseCyclesWithWallet(request, wallet);
       const balance = result.balanceCycles ? `cycles balance ${result.balanceCycles}` : "cycles purchase accepted";
       setMessage(
         `${result.provider} purchased cycles ${result.purchasedCycles}; paid ${formatTokenAmountFromE8s(result.paymentAmountE8s)}; approved allowance ${formatTokenAmountFromE8s(result.approvedAllowanceE8s)}; ledger transfer fee in allowance ${formatTokenAmountFromE8s(result.transferFeeE8s)}; ${balance}`
@@ -69,15 +131,32 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
         provider: result.provider
       }));
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : String(cause));
-      setStatus("error");
+      void cause;
+      setMessage("Cycles purchase did not complete. Review the wallet prompt or try again from Cycles.");
+      setStatus("notice");
     }
   }
 
   return (
-    <main className="min-h-screen bg-white px-6 pb-8 pt-6 text-ink">
-      <section className="mx-auto flex max-w-3xl flex-col gap-6">
-        <section className="grid gap-3 rounded-lg border border-line bg-white p-4 shadow-[0_8px_28px_#14142b0d]">
+    <AdminContent>
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 text-ink">
+        <AdminPanel className="grid gap-3 bg-white" padding="md">
+          <label className="grid gap-2">
+            <span className="text-xs font-semibold uppercase text-muted">Database</span>
+            <select
+              className="min-h-12 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+              disabled={!principal || databaseLoadState === "loading" || fundableDatabases.length === 0}
+              value={fundableDatabases.some((database) => database.databaseId === databaseId) ? databaseId : ""}
+              onChange={(event) => selectDatabase(event.target.value)}
+            >
+              <option value="">Select a database</option>
+              {fundableDatabases.map((database) => (
+                <option key={database.databaseId} value={database.databaseId}>
+                  {database.name} · {database.status} · {databaseCyclesView(database, cyclesConfig).summary}
+                </option>
+              ))}
+            </select>
+          </label>
           <Field label="Database" value={databaseId || "-"} />
           <Field label="Canister" value={canisterId || "-"} />
           <label className="grid gap-2">
@@ -91,10 +170,14 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
             />
             {amountError ? <span className="text-xs text-red-700">{amountError}</span> : null}
           </label>
-        </section>
+        </AdminPanel>
 
-        {databaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
-        <Notice tone="warning" text="Any authenticated wallet can purchase non-refundable cycles for this database." />
+        {!principal ? <Notice tone="info" text="Login with Internet Identity to select a database." /> : null}
+        {principal && databaseLoadState === "loading" ? <Notice tone="info" text="Loading linked databases." /> : null}
+        {databaseLoadError ? <Notice tone="error" text={databaseLoadError} /> : null}
+        {hasNoFundableDatabases ? <Notice tone="info" text="No fundable databases linked to this principal." /> : null}
+        {databaseId && principal && databaseLoadState === "ready" && !selectedDatabase ? <Notice tone="info" text="The selected database is not linked to this principal. The URL target is still shown below." /> : null}
+        {resolvedDatabaseStatus === "pending" ? <Notice tone="info" text="A newly created database is pending, not active, until this first cycles purchase completes." /> : null}
 
         <div className="grid gap-3">
           <button
@@ -111,9 +194,10 @@ export function CyclesClient({ canisterId, databaseId, databaseStatus }: CyclesC
         {error ? <Notice tone="error" text={error} /> : null}
         {walletBalanceError ? <Notice tone="error" text={walletBalanceError} /> : null}
         {status === "success" && message ? <Notice tone="success" text={message} /> : null}
+        {status === "notice" && message ? <Notice tone="info" text={message} /> : null}
         {status === "error" && message ? <Notice tone="error" text={message} /> : null}
-      </section>
-    </main>
+      </div>
+    </AdminContent>
   );
 }
 
@@ -136,7 +220,7 @@ function cyclesPurchaseSuccessHref({
   cycles: string;
   databaseId: string;
   kinic: string;
-  provider: CyclesProvider;
+  provider: FundingProvider;
 }): string {
   const params = new URLSearchParams();
   params.set("funding", "success");
@@ -148,28 +232,9 @@ function cyclesPurchaseSuccessHref({
 }
 
 function Field({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1">
-      <span className="text-xs font-semibold uppercase text-muted">{label}</span>
-      <span className="break-all font-mono text-sm">{value}</span>
-    </div>
-  );
+  return <AdminField breakAll mono label={label} value={value} />;
 }
 
 function Notice({ tone, text }: { tone: "success" | "error" | "info" | "warning"; text: string }) {
-  const Icon = tone === "success" ? CheckCircle2 : tone === "info" ? Info : CircleAlert;
-  const classes =
-    tone === "success"
-      ? "border-green-200 bg-green-50 text-green-900"
-      : tone === "error"
-        ? "border-red-200 bg-red-50 text-red-900"
-        : tone === "warning"
-          ? "border-amber-200 bg-amber-50 text-amber-950"
-        : "border-infoLine bg-infoSoft text-ink";
-  return (
-    <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${classes}`}>
-      <Icon aria-hidden className="mt-0.5 shrink-0" size={16} />
-      <span className="break-words">{text}</span>
-    </div>
-  );
+  return <AdminNotice tone={tone} message={text} />;
 }

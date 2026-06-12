@@ -173,6 +173,133 @@ export type DatabaseCyclesPendingPurchase = {
   requiredAction: string;
 };
 
+export type MarketListingStatus = "Active" | "Paused";
+
+export type MarketListing = {
+  listingId: string;
+  sellerPrincipal: string;
+  payoutPrincipal: string;
+  databaseId: string;
+  title: string;
+  description: string;
+  llmSummary: string | null;
+  tagsJson: string;
+  priceE8s: string;
+  status: MarketListingStatus;
+  revision: string;
+  purchaseCount: string;
+  reportCount: string;
+  createdAtMs: string;
+  updatedAtMs: string;
+};
+
+export type MarketListingVerifiedStats = {
+  totalNodes: string;
+  wikiNodes: string;
+  sourceNodes: string;
+  folderNodes: string;
+  markdownChars: string;
+  sourceChars: string;
+  linkEdges: string;
+  logicalSizeBytes: string;
+  lastContentUpdatedAtMs: string | null;
+};
+
+export type MarketPreviewExcerpt = {
+  path: string;
+  etag: string;
+  excerpt: string;
+  contentChars: string;
+};
+
+export type MarketCategoryGraphNode = {
+  category: string;
+  nodeCount: string;
+};
+
+export type MarketCategoryGraphEdge = {
+  sourceCategory: string;
+  targetCategory: string;
+  linkCount: string;
+};
+
+export type MarketCategoryGraph = {
+  nodes: MarketCategoryGraphNode[];
+  edges: MarketCategoryGraphEdge[];
+};
+
+export type MarketListingPreview = {
+  topLevelPaths: string[];
+  excerpts: MarketPreviewExcerpt[];
+  categoryGraph: MarketCategoryGraph;
+  graphLinks: LinkEdge[];
+  previewStale: boolean;
+};
+
+export type MarketListingDetail = {
+  listing: MarketListing;
+  verifiedStats: MarketListingVerifiedStats;
+  preview: MarketListingPreview;
+};
+
+export type MarketListingPage = {
+  listings: MarketListing[];
+  nextCursor: string | null;
+};
+
+export type MarketCreateListingRequest = {
+  databaseId: string;
+  payoutPrincipal: string;
+  title: string;
+  description: string;
+  llmSummary: string | null;
+  tagsJson: string;
+  priceE8s: string;
+};
+
+export type MarketUpdateListingRequest = Omit<MarketCreateListingRequest, "databaseId"> & {
+  listingId: string;
+  expectedRevision: string;
+};
+
+export type MarketPurchasePreview = {
+  listingId: string;
+  databaseId: string;
+  priceE8s: string;
+  alreadyEntitled: boolean;
+};
+
+export type MarketOrder = {
+  orderId: string;
+  listingId: string;
+  databaseId: string;
+  buyerPrincipal: string;
+  sellerPrincipal: string;
+  payoutPrincipal: string;
+  priceE8s: string;
+  ledgerBlockIndex: string;
+  createdAtMs: string;
+};
+
+export type MarketOrderPage = {
+  orders: MarketOrder[];
+  nextCursor: string | null;
+};
+
+export type MarketEntitlement = {
+  databaseId: string;
+  buyerPrincipal: string;
+  listingId: string;
+  orderId: string;
+  purchasedAtMs: string;
+  status: string;
+};
+
+export type MarketEntitlementPage = {
+  entitlements: MarketEntitlement[];
+  nextCursor: string | null;
+};
+
 export type DatabaseMember = {
   databaseId: string;
   principal: string;

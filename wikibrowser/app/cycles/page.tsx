@@ -29,7 +29,7 @@ function first(value: string | string[] | undefined): string {
 }
 
 function parseDatabaseStatus(value: string): DatabaseStatus | null {
-  if (value === "pending" || value === "active" || value === "restoring" || value === "archiving" || value === "archived" || value === "deleted") {
+  if (value === "pending" || value === "active" || value === "restoring" || value === "archiving" || value === "archived") {
     return value;
   }
   return null;

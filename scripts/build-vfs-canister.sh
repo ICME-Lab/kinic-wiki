@@ -16,6 +16,27 @@ OUTPUT_WASM="${INPUT_WASM}"
 # `icp deploy` sets this; standalone runs default to the repo artifact path.
 ICP_WASM_OUTPUT_PATH="${ICP_WASM_OUTPUT_PATH:-${OUTPUT_WASM}}"
 
+guard_local_ii_origins() {
+  if [[ "${KINIC_VFS_LOCAL_II_ORIGINS:-}" != "1" ]]; then
+    return
+  fi
+  case "${ICP_ENVIRONMENT:-}" in
+    local | local-wiki)
+      return
+      ;;
+    *)
+      echo "KINIC_VFS_LOCAL_II_ORIGINS=1 is only allowed for ICP_ENVIRONMENT=local or local-wiki" >&2
+      exit 1
+      ;;
+  esac
+}
+
+guard_local_ii_origins
+
+if [[ "${1:-}" == "--check-env-only" ]]; then
+  exit 0
+fi
+
 EXTRA_FEATURES=""
 case "${VFS_CANISTER_DIAGNOSTIC_PROFILE:-baseline}" in
   baseline)

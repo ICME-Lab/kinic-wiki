@@ -10,8 +10,9 @@ use vfs_types::{
 
 use super::{
     HttpRequest, ICP_CLI_LOGIN_DISCOVERY_PATH, ICP_CLI_LOGIN_PATH, II_ALTERNATIVE_ORIGINS_PATH,
-    SERVICE, delete_node, export_snapshot, fetch_updates, http_request, mkdir_node,
-    search_node_paths, search_nodes, write_node,
+    II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY, II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY, SERVICE,
+    delete_node, export_snapshot, fetch_updates, http_request, mkdir_node, search_node_paths,
+    search_nodes, write_node,
 };
 use ic_http_certification::CERTIFICATE_EXPRESSION_HEADER_NAME;
 
@@ -98,6 +99,31 @@ fn http_request_serves_certified_ii_alternative_origins() {
 }
 
 #[test]
+fn production_ii_alternative_origins_do_not_include_localhost() {
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3000"));
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3000"));
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3010"));
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3010"));
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3100"));
+    assert!(!II_PRODUCTION_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
+}
+
+#[test]
+fn local_dev_ii_alternative_origins_include_fixed_dev_server_origins() {
+    assert!(!II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3000"));
+    assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3000"));
+    assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3010"));
+    assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3010"));
+    assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://127.0.0.1:3100"));
+    assert!(II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.contains("http://localhost:3100"));
+    assert_eq!(
+        II_LOCAL_DEV_ALTERNATIVE_ORIGINS_BODY.matches("://").count(),
+        10,
+        "Internet Identity rejects ii-alternative-origins with more than 10 entries"
+    );
+}
+
+#[test]
 fn http_request_serves_icp_cli_login_discovery() {
     let response = http_request(test_http_get(ICP_CLI_LOGIN_DISCOVERY_PATH));
 
@@ -133,9 +159,10 @@ fn http_request_serves_icp_cli_login_page() {
     assert!(body.contains("Callback host/port"));
     assert!(body.contains("Derivation origin"));
     assert!(body.contains("Delegation TTL"));
-    assert!(body.contains("http://id.ai.localhost:"));
+    assert!(body.contains("https://id.ai"));
+    assert!(!body.contains("http://id.ai.localhost:"));
     assert!(body.contains("https://xis3j-paaaa-aaaai-axumq-cai.icp0.io"));
-    assert!(compact_body.contains("endsWith(\".localhost\")?"));
+    assert!(compact_body.contains("endsWith(\".localhost\")"));
     assert!(compact_body.contains("derivationOrigin:"));
     assert!(compact_body.contains(r#"method:"POST""#));
     assert!(compact_body.contains(r#""content-type":"application/json""#));

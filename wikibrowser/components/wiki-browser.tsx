@@ -2,7 +2,7 @@
 
 import { AuthClient } from "@icp-sdk/auth/client";
 import type { Identity } from "@icp-sdk/core/agent";
-import type { ChangeEvent, FormEvent } from "react";
+import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
@@ -16,12 +16,14 @@ import { Inspector } from "@/components/inspector";
 import { IngestPanel } from "@/components/ingest-panel";
 import { QueryPanel } from "@/components/query-panel";
 import { PanelHeader } from "@/components/panel";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AUTH_CLIENT_CREATE_OPTIONS, authLoginOptions } from "@/lib/auth";
 import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, formatCycles } from "@/lib/cycles-state";
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
-import { xShareDatabaseHref } from "@/lib/share-links";
+import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
 import { folderIndexPath, isReservedFolderIndexName, visibleChildren } from "@/lib/folder-index";
@@ -905,57 +907,87 @@ function ExplorerHeaderActions({
 }) {
   return (
     <div className="flex items-center gap-1">
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      <ExplorerActionButton
         onClick={onNewFile}
         disabled={fileDisabled}
         title={fileTitle}
         aria-label="New Markdown file"
       >
         <FilePlus size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onNewFolder}
         disabled={folderDisabled}
         title={folderTitle}
         aria-label="New folder"
       >
         <FolderPlus size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onRename}
         disabled={renameDisabled}
         title={renameTitle}
         aria-label="Rename selected node"
       >
         <Pencil size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-accentSoft hover:text-accentText disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onMove}
         disabled={moveDisabled}
         title={moveTitle}
         aria-label="Move selected node"
       >
         <MoveRight size={15} />
-      </button>
-      <button
-        type="button"
-        className="rounded-md p-1 text-muted hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+      </ExplorerActionButton>
+      <ExplorerActionButton
         onClick={onDelete}
         disabled={deleteDisabled}
         title={deleteTitle}
         aria-label="Delete selected Markdown file"
+        danger
       >
         <Trash2 size={15} />
-      </button>
+      </ExplorerActionButton>
     </div>
+  );
+}
+
+function ExplorerActionButton({
+  children,
+  danger = false,
+  disabled,
+  title,
+  onClick,
+  "aria-label": ariaLabel
+}: {
+  children: ReactNode;
+  danger?: boolean;
+  disabled: boolean;
+  title: string;
+  onClick: () => void;
+  "aria-label": string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={`h-8 w-8 rounded-xl text-muted disabled:cursor-not-allowed disabled:opacity-40 ${danger ? "hover:bg-red-50 hover:text-red-700" : "hover:bg-accentSoft hover:text-accentText"}`}
+            onClick={onClick}
+            disabled={disabled}
+            aria-label={ariaLabel}
+          >
+            {children}
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        <p>{title}</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -1299,25 +1331,24 @@ function TopBar({
   }
 
   return (
-    <header className="grid min-h-[52px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-paper/80 px-3 py-2 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-4">
+    <header className="grid min-h-[64px] grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-line bg-white/90 px-3 py-3 backdrop-blur lg:grid-cols-[auto_minmax(280px,720px)_auto] lg:items-center lg:gap-3">
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <button
-          type="button"
           className={`inline-flex items-center justify-center rounded-lg border p-2 lg:hidden ${mobileSidebarOpen ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
-          aria-controls="wiki-mobile-sidebar"
+          type="button"
           aria-expanded={mobileSidebarOpen}
-          aria-label="Toggle Explorer tabs"
-          data-tid="mobile-sidebar-toggle"
+          aria-controls="wiki-mobile-sidebar"
+          aria-label="Toggle workspace panel"
           onClick={onMobileSidebarToggle}
         >
           <Menu size={18} aria-hidden />
         </button>
         <Link
-          className="inline-flex items-center gap-2 rounded-lg border border-line bg-white px-2.5 py-1.5 text-sm font-semibold leading-tight text-ink no-underline hover:border-accent"
+          className="inline-flex items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2 text-sm font-semibold leading-tight text-ink no-underline shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
           href="/dashboard"
           aria-label="Back to database dashboard"
         >
-          <Image className="h-5 w-5 rounded-md" src="/icon.png" alt="" width={20} height={20} unoptimized />
+          <Image className="h-6 w-6 rounded-md" src="/kinic-mark.png" alt="" width={24} height={24} unoptimized />
           Kinic Wiki
         </Link>
         <div className="flex min-w-0 shrink-0 items-center gap-1 text-xs text-muted">
@@ -1326,7 +1357,7 @@ function TopBar({
           </label>
           <select
             id="database-switcher"
-            className="w-[132px] rounded-lg border border-line bg-white px-2 py-1.5 font-mono text-xs text-ink outline-none sm:w-[180px]"
+            className="h-10 w-[132px] rounded-2xl border border-line bg-white px-3 py-2 font-mono text-xs text-ink shadow-[0_4px_10px_#14142b0a] outline-none focus:border-accent sm:w-[180px]"
             value={databaseId}
             onChange={switchDatabase}
             aria-label="Switch database"
@@ -1347,7 +1378,7 @@ function TopBar({
         {publicReadable ? (
           <a
             aria-label={`Share ${currentDatabaseName} on X`}
-            className={`${HEADER_ICON_LINK_CLASS} border-line bg-white text-ink hover:border-accent hover:bg-accentSoft`}
+            className={`${HEADER_ICON_LINK_CLASS} rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white`}
             href={xShareDatabaseHref({ databaseId, databaseName: currentDatabaseName })}
             rel="noreferrer"
             target="_blank"
@@ -1358,7 +1389,7 @@ function TopBar({
           </a>
         ) : null}
         <Link
-          className={`${HEADER_ICON_LINK_CLASS} ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           href={isHelpPage ? hrefForPath(canisterId, databaseId, "/Wiki") : hrefForHelp(canisterId, databaseId)}
           aria-label="Help"
           title={isHelpPage ? "Close help" : "Help"}
@@ -1367,7 +1398,7 @@ function TopBar({
           <span className="sr-only sm:not-sr-only">Help</span>
         </Link>
         <Link
-          className={`${HEADER_ICON_LINK_CLASS} ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink hover:border-accent hover:bg-accentSoft"}`}
+          className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isGraphPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
           href={graphHref}
           aria-label="Graph"
           title={isGraphPage ? "Close graph" : "Graph"}
@@ -1377,11 +1408,11 @@ function TopBar({
         </Link>
         <DatabaseCyclesBadge cycles={cycles} database={currentDatabase} />
         {principal ? (
-          <button className="ml-auto rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink lg:ml-0" type="button" onClick={onLogout}>
+          <Button className="ml-auto rounded-2xl border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white lg:ml-0" variant="outline" type="button" onClick={onLogout}>
             Logout
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             className="ml-auto rounded-2xl border border-action bg-action px-3 py-2 text-sm font-bold text-white hover:-translate-y-[3px] hover:border-accent hover:bg-accent disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60 lg:ml-0"
             data-tid="header-login-button"
             disabled={!authReady}
@@ -1389,7 +1420,7 @@ function TopBar({
             onClick={onLogin}
           >
             Login
-          </button>
+          </Button>
         )}
       </div>
     </header>
@@ -1510,8 +1541,8 @@ function HeaderSearch({
   }
 
   return (
-    <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-xl border border-line bg-white px-2 py-1.5 text-sm sm:basis-[360px] sm:gap-2 lg:max-w-[720px]" onSubmit={submitSearch}>
-      <div className="flex shrink-0 rounded-lg border border-line bg-paper p-1 text-xs">
+    <form className="flex min-w-0 flex-1 basis-full items-center gap-1.5 rounded-[20px] border border-line bg-white px-2 py-1.5 text-sm shadow-[0_4px_10px_#14142b0a] sm:basis-[360px] sm:gap-2 lg:max-w-[560px]" onSubmit={submitSearch}>
+      <div className="flex shrink-0 rounded-2xl border border-line bg-paper p-1 text-xs">
         <SearchKindButton active={kind === "path"} label="Path" onClick={() => setDraft({ key: draftKey, text, kind: "path" })} />
         <SearchKindButton active={kind === "full"} label="Full text" onClick={() => setDraft({ key: draftKey, text, kind: "full" })} />
       </div>
@@ -1523,10 +1554,10 @@ function HeaderSearch({
         placeholder="Search wiki"
         aria-label="Search wiki"
       />
-      <button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
+      <Button className="inline-flex shrink-0 items-center justify-center gap-1 rounded-2xl bg-action px-2.5 py-1.5 font-bold text-white hover:-translate-y-[3px] hover:bg-accent sm:px-3" type="submit">
         <Search size={15} aria-hidden />
         <span className="sr-only sm:not-sr-only">Search</span>
-      </button>
+      </Button>
     </form>
   );
 }
@@ -1535,7 +1566,7 @@ function SearchKindButton({ active, label, onClick }: { active: boolean; label: 
   return (
     <button
       type="button"
-      className={`rounded-md px-2 py-1 ${active ? "bg-white text-accentText shadow-sm" : "text-muted hover:text-accentText"}`}
+      className={`rounded-xl px-2 py-1 ${active ? "bg-white text-accentText shadow-sm" : "text-muted hover:text-accentText"}`}
       onClick={onClick}
     >
       {label}
@@ -1555,13 +1586,13 @@ function ModeTabs({
   tab: ModeTab;
 }) {
   return (
-    <nav className="border-b border-line px-3 py-2" aria-label="Left sidebar mode">
-      <div className="grid grid-cols-3 gap-1 rounded-xl border border-line bg-white p-1 text-center text-xs">
+    <nav className="border-b border-line bg-white px-3 py-2" aria-label="Left sidebar mode">
+      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-xs">
         {SIDEBAR_TABS.map((value) => (
           <Link
             key={value}
             href={hrefForPath(canisterId, databaseId, selectedPath, undefined, value)}
-            className={`rounded-lg px-1.5 py-1.5 no-underline ${tab === value ? "bg-accent text-white" : "text-muted hover:bg-accentSoft hover:text-accentText"}`}
+            className={`rounded-xl px-1.5 py-1.5 no-underline ${tab === value ? "bg-accent text-white" : "text-muted hover:bg-white hover:text-accentText"}`}
           >
             {tabLabel(value)}
           </Link>
@@ -1667,33 +1698,36 @@ function validateCanisterText(canisterId: string): string | null {
 
 function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath: string } {
   const segments = pathname.split("/").filter(Boolean);
-  if (!segments[0]) {
+  if (segments[0] !== "db" || !segments[1]) {
     return { databaseId: null, nodePath: "/Wiki" };
   }
   const path = segments
-    .slice(1)
+    .slice(2)
     .filter(Boolean)
     .map(decodePathSegment)
     .join("/");
   return {
-    databaseId: decodePathSegment(segments[0]),
+    databaseId: decodePathSegment(segments[1]),
     nodePath: path ? `/${path}` : "/Wiki",
   };
 }
 
 function isBrowserSearchPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
-  return pathname === `/${encodeURIComponent(databaseId)}/search`;
+  if (!databaseId) return false;
+  return pathname === `${databaseRouteBase(databaseId)}/search`;
 }
 
 function isBrowserGraphPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
-  return pathname === `/${encodeURIComponent(databaseId)}/graph`;
+  if (!databaseId) return false;
+  return pathname === `${databaseRouteBase(databaseId)}/graph`;
 }
 
 function isBrowserHelpPathname(canisterId: string, databaseId: string, pathname: string): boolean {
   void canisterId;
-  return pathname === `/${encodeURIComponent(databaseId)}/help`;
+  if (!databaseId) return false;
+  return pathname === `${databaseRouteBase(databaseId)}/help`;
 }
 
 function decodePathSegment(segment: string): string {

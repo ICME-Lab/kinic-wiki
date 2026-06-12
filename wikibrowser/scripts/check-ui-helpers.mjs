@@ -12,19 +12,19 @@ const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-section
 const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
 const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
-const { isReservedDatabaseRouteSlug, isRoutableDatabaseId, publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
+const { isRoutableDatabaseId, publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, inferNoteRole, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
 const explorerTreeSource = readFileSync(new URL("../components/explorer-tree.tsx", import.meta.url), "utf8");
 const documentPaneSource = readFileSync(new URL("../components/document-pane.tsx", import.meta.url), "utf8");
 const inspectorSource = readFileSync(new URL("../components/inspector.tsx", import.meta.url), "utf8");
 const layoutSource = readFileSync(new URL("../app/layout.tsx", import.meta.url), "utf8");
-const databaseLayoutSource = readFileSync(new URL("../app/[databaseId]/layout.tsx", import.meta.url), "utf8");
+const databaseLayoutSource = readFileSync(new URL("../app/db/[databaseId]/layout.tsx", import.meta.url), "utf8");
 const linkPreviewImageSource = readFileSync(new URL("../app/link-preview-image.tsx", import.meta.url), "utf8");
 const openGraphImageSource = readFileSync(new URL("../app/opengraph-image.tsx", import.meta.url), "utf8");
 const twitterImageSource = readFileSync(new URL("../app/twitter-image.tsx", import.meta.url), "utf8");
-const databaseOpenGraphImageSource = readFileSync(new URL("../app/[databaseId]/opengraph-image.tsx", import.meta.url), "utf8");
-const databaseTwitterImageSource = readFileSync(new URL("../app/[databaseId]/twitter-image.tsx", import.meta.url), "utf8");
+const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId]/opengraph-image.tsx", import.meta.url), "utf8");
+const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image.tsx", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
 const markdownEditorSource = readFileSync(new URL("../components/markdown-editor.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
@@ -50,7 +50,8 @@ assert.match(panelSource, /actions\?: ReactNode/);
 assert.match(panelSource, /\{actions \? <div className="shrink-0">\{actions\}<\/div> : null\}/);
 assert.match(wikiBrowserSource, /data-tid="header-login-button"/);
 assert.match(wikiBrowserSource, /onClick=\{onLogin\}/);
-assert.match(wikiBrowserSource, /src="\/icon\.png"/);
+assert.match(wikiBrowserSource, /src="\/kinic-mark\.png"/);
+assert.doesNotMatch(wikiBrowserSource, /src="\/icon\.png"/);
 assert.doesNotMatch(wikiBrowserSource, /LayoutDashboard/);
 assert.match(wikiBrowserSource, /aria-label="Back to database dashboard"/);
 assert.match(wikiBrowserSource, /lg:grid-cols-\[auto_minmax\(280px,720px\)_auto\]/);
@@ -113,12 +114,10 @@ assert.match(databaseLayoutSource, /databasePreviewTitle/);
 assert.match(databaseLayoutSource, /opengraph-image/);
 assert.match(databaseLayoutSource, /twitter-image/);
 assert.match(databaseOpenGraphImageSource, /Kinic Wiki database/);
-assert.match(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug/);
-assert.match(databaseOpenGraphImageSource, /notFound\(\)/);
+assert.doesNotMatch(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.match(databaseOpenGraphImageSource, /preview\.databaseName/);
 assert.match(databaseTwitterImageSource, /Kinic Wiki database/);
-assert.match(databaseTwitterImageSource, /isReservedDatabaseRouteSlug/);
-assert.match(databaseTwitterImageSource, /notFound\(\)/);
+assert.doesNotMatch(databaseTwitterImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
 assert.match(databaseTwitterImageSource, /preview\.databaseName/);
 assert.match(databasePreviewSource, /databasePreviewTitle/);
 assert.match(databasePreviewSource, /databasePreviewDescription/);
@@ -258,6 +257,7 @@ assert.deepEqual(queryAnswerSearchTerms("vetkeyについて教えて"), ["vetkey
 assert.deepEqual(queryAnswerSearchTerms("What does the wiki say about vetKey?"), ["vetKey"]);
 assert.equal(parseModeTab("legacy"), "explorer");
 assert.equal(readIdentityMode(true, true, true, true), "user");
+assert.equal(readIdentityMode(true, true, true, false), "user");
 assert.equal(readIdentityMode(true, false, true, true), "anonymous");
 assert.equal(readIdentityMode(true, false, false, true), "anonymous");
 assert.equal(readIdentityMode(true, false, false, false), "user");
@@ -362,19 +362,17 @@ assert.notEqual(
   graphRequestKey("aaaaa-aa", "alpha", "/Wiki/index.md", 1, "aaaaa-aa")
 );
 assert.notEqual(searchRequestKey("aaaaa-aa", "alpha", "path", "budget"), searchRequestKey("aaaaa-aa", "alpha", "path", "budget", "aaaaa-aa"));
-assert.equal(publicDatabasePath("alpha/db"), "/alpha%2Fdb/Wiki");
-assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db_kva4v2twg6jv/Wiki");
-assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/alpha%20db/Wiki");
-assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/alpha%20db/Wiki");
-assert.equal(isReservedDatabaseRouteSlug("cli"), true);
-assert.equal(isReservedDatabaseRouteSlug("CLI"), true);
-assert.equal(isReservedDatabaseRouteSlug("db_cli"), false);
+assert.equal(publicDatabasePath("alpha/db"), "/db/alpha%2Fdb/Wiki");
+assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db/db_kva4v2twg6jv/Wiki");
+assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/db/alpha%20db/Wiki");
+assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/db/alpha%20db/Wiki");
 assert.equal(isRoutableDatabaseId("db_xuwmtks27uik"), true);
-assert.equal(isRoutableDatabaseId("dashboard"), false);
-assert.throws(() => publicDatabasePath("cli"), /reserved database route slug: cli/);
+assert.equal(isRoutableDatabaseId("dashboard"), true);
+assert.equal(isRoutableDatabaseId(""), false);
+assert.throws(() => publicDatabasePath(""), /invalid database id/);
 assert.equal(
   xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
-  "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Falpha%2520db%2FWiki"
+  "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Fdb%2Falpha%2520db%2FWiki"
 );
 assert.equal(
   renderWikilinksAsMarkdown("[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]"),
@@ -419,8 +417,8 @@ assert.equal(
 );
 assert.equal(renderWikilinksAsMarkdown("![[notes/alpha.md|Alpha]]"), "![[notes/alpha.md|Alpha]]");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|Alpha]]"), "[Alpha](<notes/alpha.md>)");
-assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/foo.md"), "/db-1/Wiki/foo.md");
-assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db-1/Sources/foo.md#top");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/foo.md"), "/db/db-1/Wiki/foo.md");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wikipedia/foo.md"), null);
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/SourcesBackup/foo.md"), null);
 assert.equal(inferNoteRole("/Sources/raw/web/abc.md"), "raw_source");
@@ -479,7 +477,10 @@ function child(path, name, kind, hasChildren = kind === "directory") {
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
-  const source = readFileSync(sourcePath, "utf8");
+  const rawSource = readFileSync(sourcePath, "utf8");
+  const source = relativePath === "../lib/paths.ts"
+    ? `${readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8")}\n${rawSource.replace('import { databaseRouteBase } from "./share-links";', "")}`
+    : rawSource;
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,

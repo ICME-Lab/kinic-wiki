@@ -85,6 +85,22 @@ test("messagesFromClaudePayload maps text, content arrays, and attachments", () 
   ]);
 });
 
+test("messagesFromClaudePayload caps captured attachment content before later messages", () => {
+  const messages = messagesFromClaudePayload({
+    chat: {
+      chat_messages: [
+        { uuid: "u1", sender: "human", attachments: [{ extracted_content: "a".repeat(400_000) }] },
+        { uuid: "a1", sender: "assistant", text: "SHOULD_NOT_BE_CAPTURED" }
+      ]
+    }
+  });
+
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].role, "user");
+  assert.equal(messages[0].content.length, 320_000);
+  assert.doesNotMatch(messages.map((entry) => entry.content).join("\n"), /SHOULD_NOT_BE_CAPTURED/);
+});
+
 test("captureFromClaudeResponse emits Claude capture", () => {
   const capture = captureFromClaudeResponse(
     {

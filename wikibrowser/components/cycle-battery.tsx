@@ -1,47 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { cycleTone, formatCycles, formatRawCycles, type CycleTone } from "@/lib/cycles";
-import type { CanisterHealth } from "@/lib/types";
 
-type HealthState = {
-  canisterId: string;
-  data: CanisterHealth | null;
-  error: boolean;
-  loading: boolean;
-};
-
-export function CycleBattery({ canisterId }: { canisterId: string }) {
-  const [health, setHealth] = useState<HealthState>({
-    canisterId,
-    data: null,
-    error: false,
-    loading: true
-  });
-  useEffect(() => {
-    let cancelled = false;
-    import("@/lib/vfs-client")
-      .then(({ canisterHealth }) => canisterHealth(canisterId))
-      .then((data) => {
-        if (!cancelled) {
-          setHealth({ canisterId, data, error: false, loading: false });
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setHealth({ canisterId, data: null, error: true, loading: false });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [canisterId]);
-
-  const current = health.canisterId === canisterId ? health : { canisterId, data: null, error: false, loading: true };
-  const cycles = current.data?.cyclesBalance ?? null;
+export function CycleBattery({ cyclesBalance }: { cyclesBalance: string | null }) {
+  const cycles = parseCyclesBalance(cyclesBalance);
   const tone = cycleTone(cycles);
   const label = cycles === null ? "--" : formatCycles(cycles);
-  const title = titleForState(current, cycles);
+  const title = titleForCycles(cycles);
   return (
     <div
       className={`hidden h-[38px] shrink-0 items-center gap-2 rounded-lg border px-3 text-sm md:flex ${toneClass(tone)}`}
@@ -57,14 +22,20 @@ export function CycleBattery({ canisterId }: { canisterId: string }) {
   );
 }
 
-function titleForState(state: HealthState, cycles: bigint | null): string {
+function parseCyclesBalance(value: string | null): bigint | null {
+  if (value === null) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+function titleForCycles(cycles: bigint | null): string {
   if (cycles !== null) {
-    return `${formatRawCycles(cycles)} cycles available`;
+    return `${formatRawCycles(cycles)} database cycles available`;
   }
-  if (state.loading) {
-    return "Loading cycle balance";
-  }
-  return "Cycle balance unavailable";
+  return "Database cycle balance unavailable";
 }
 
 function toneClass(tone: CycleTone): string {

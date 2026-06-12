@@ -129,3 +129,67 @@ code {
 .cm-scroller {
   line-height: 1.6;
 }
+
+
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 97.3%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 1 1% 38.4%;
+    --muted-foreground: 1 1% 38.4%;
+    --accent: 331 100% 57.5%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 90.2%;
+    --input: 0 0% 90.2%;
+    --ring: 331 100% 57.5%;
+    --radius: 1rem;
+    --sidebar-background: 0 0% 97.3%;
+    --sidebar-foreground: 0 0% 0%;
+    --sidebar-primary: 0 0% 0%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 331 100% 57.5%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 90.2%;
+    --sidebar-ring: 331 100% 57.5%;
+  }
+  .dark {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 0 0% 0%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 97.3%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 1 1% 38.4%;
+    --muted-foreground: 1 1% 38.4%;
+    --accent: 331 100% 57.5%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 90.2%;
+    --input: 0 0% 90.2%;
+    --ring: 331 100% 57.5%;
+    --sidebar-background: 0 0% 97.3%;
+    --sidebar-foreground: 0 0% 0%;
+    --sidebar-primary: 0 0% 0%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 331 100% 57.5%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 90.2%;
+    --sidebar-ring: 331 100% 57.5%;
+  }
+}

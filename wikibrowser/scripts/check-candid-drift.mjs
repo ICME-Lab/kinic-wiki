@@ -204,28 +204,8 @@ function normalizeBlobAlias(value) {
 
 function normalizeResultAlias(value) {
   const normalized = normalizeShape(value).replace(/,$/, "").trim();
-  if (normalized === "Result_10") return "ResultLinks";
-  if (normalized === "Result_11") return "ResultLinks";
-  if (normalized === "Result_12") return "ResultChildren";
-  if (normalized === "Result_13") return "ResultCyclesEntries";
-  if (normalized === "Result_14") return "ResultCyclesPendingPurchases";
-  if (normalized === "Result_15") return "ResultMembers";
-  if (normalized === "Result_16") return "ResultDatabases";
-  if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_4") return "ResultCreateDatabase";
-  if (normalized === "Result_5") return "ResultDeleteNode";
-  if (normalized === "Result_18") return "ResultMkdirNode";
-  if (normalized === "Result_19") return "ResultMoveNode";
-  if (normalized === "Result_20") return "ResultCyclesPurchase";
-  if (normalized === "Result_21") return "ResultQueryContext";
-  if (normalized === "Result_24") return "ResultNode";
-  if (normalized === "Result_25") return "ResultNodeContext";
-  if (normalized === "Result_26") return "ResultSearch";
-  if (normalized === "Result_27") return "ResultStorageBillingBatch";
-  if (normalized === "Result_28") return "ResultSourceEvidence";
-  if (normalized === "Result_3") return "ResultOpsAnswerSessionCheck";
-  if (normalized === "Result_30") return "ResultWriteSourceForGeneration";
-  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
+  const alias = Object.entries(didTypeAliases).find(([, didName]) => didName === normalized)?.[0];
+  if (alias) return alias;
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

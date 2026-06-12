@@ -21,7 +21,7 @@ export function invalidCanisterIdError(reason: string): PublicApiError {
 }
 
 export function classifyApiError(error: unknown, host: string): PublicApiError {
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = errorMessage(error);
   const local = isLocalHost(host);
   if (/Canister\s+[\w-]+\s+not found/i.test(raw) || /IC0301/i.test(raw)) {
     return {
@@ -66,4 +66,8 @@ export function classifyApiError(error: unknown, host: string): PublicApiError {
 
 function isLocalHost(host: string): boolean {
   return /^(https?:\/\/)?(127\.0\.0\.1|localhost|\[::1\]|0\.0\.0\.0)(:\d+)?/i.test(host);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unexpected error";
 }

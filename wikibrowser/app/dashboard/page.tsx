@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { DashboardHomeClient } from "./dashboard-home-client";
+import { AdminContent } from "@/components/admin-shell";
 
 export const metadata: Metadata = {
   title: "Kinic Wiki Database Dashboard",
@@ -25,10 +26,8 @@ export default function DashboardPage() {
 
 function DashboardHomeFallback() {
   return (
-    <main className="min-h-screen px-6 pb-8 pt-6">
-      <section className="mx-auto flex max-w-6xl flex-col gap-6">
-        <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-muted">Loading databases...</div>
-      </section>
-    </main>
+    <AdminContent>
+      <div className="rounded-lg border border-line bg-paper px-4 py-3 text-sm text-muted">Loading databases...</div>
+    </AdminContent>
   );
 }
