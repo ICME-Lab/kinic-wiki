@@ -2016,7 +2016,7 @@ impl VfsService {
         }
         let result = self.database_store(meta)?.run_fs_migrations();
         if result.is_ok() {
-            let _ = self.refresh_logical_size(database_id);
+            let _ = self.refresh_logical_size_for_meta(database_id, meta);
         }
         result
     }
@@ -3241,6 +3241,14 @@ impl VfsService {
 
     fn refresh_logical_size(&self, database_id: &str) -> Result<(), String> {
         let meta = self.database_meta_allowing_restoring(database_id)?;
+        self.refresh_logical_size_for_meta(database_id, &meta)
+    }
+
+    fn refresh_logical_size_for_meta(
+        &self,
+        database_id: &str,
+        meta: &DatabaseMeta,
+    ) -> Result<(), String> {
         let size = self.database_size(&meta)?;
         self.write_index(|conn| {
             conn.execute(

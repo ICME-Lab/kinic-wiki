@@ -1802,6 +1802,7 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
     let row = database_index_row(&root, &pending.database_id);
     assert_eq!(row.0, "active");
     assert_eq!(row.1, Some(11));
+    assert!(row.2 > 0);
     assert_eq!(
         database_cycles_balance(&root, &pending.database_id),
         purchased_cycles as i64
