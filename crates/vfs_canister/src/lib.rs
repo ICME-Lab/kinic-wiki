@@ -523,12 +523,14 @@ fn icrc21_canister_call_consent_message(
                 }
             };
             let payer = caller_text();
-            let listing = match with_service(|service| {
+            let validation = match with_service(|service| {
                 service.validate_market_purchase_for_consent(&payer, &purchase)
             }) {
-                Ok(listing) => listing,
+                Ok(validation) => validation,
                 Err(error) => return icrc21_unsupported(error),
             };
+            let listing = validation.listing;
+            let access_principal = validation.request.access_principal;
             Icrc21ConsentMessageResponse::Ok(Icrc21ConsentInfo {
                 metadata,
                 consent_message: Icrc21ConsentMessage::GenericDisplayMessage(format!(
@@ -540,7 +542,7 @@ fn icrc21_canister_call_consent_message(
                     seller = listing.seller_principal,
                     payout = listing.payout_principal,
                     payer = payer,
-                    access = purchase.access_principal,
+                    access = access_principal,
                 )),
             })
         }

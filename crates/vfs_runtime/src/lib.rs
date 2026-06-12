@@ -691,8 +691,8 @@ impl VfsService {
     ) -> Result<Option<DatabaseMeta>, String> {
         let activation = self
             .write_index(|tx| self.activate_pending_database_mount_for_tx(tx, database_id, now))?;
-        if activation.is_some() {
-            self.run_pending_database_migrations(database_id)?;
+        if let Some(meta) = &activation {
+            self.run_database_migrations_for_meta(database_id, meta)?;
         }
         Ok(activation)
     }
@@ -707,15 +707,31 @@ impl VfsService {
         if status != DatabaseStatus::Pending {
             return Ok(None);
         }
-        let active_mount_id: Option<i64> = tx
+        let (db_file_name, mount_id, active_mount_id): (String, i64, Option<i64>) = tx
             .query_row(
-                "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+                "SELECT db_file_name, mount_id, active_mount_id
+                 FROM databases
+                 WHERE database_id = ?1",
                 params![database_id],
-                |row| crate::sqlite::row_get(row, 0),
+                |row| {
+                    Ok((
+                        crate::sqlite::row_get(row, 0)?,
+                        crate::sqlite::row_get(row, 1)?,
+                        crate::sqlite::row_get(row, 2)?,
+                    ))
+                },
             )
             .map_err(|error| error.to_string())?;
         if active_mount_id.is_some() {
             return load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending]);
+        }
+        if mount_id != i64::from(PENDING_DATABASE_MOUNT_ID) {
+            if db_file_name.is_empty() {
+                return Err(format!(
+                    "pending database activation is staged without a db file name: {database_id}"
+                ));
+            }
+            return load_pending_database_activation_meta(tx, database_id);
         }
         let mount_id = allocate_mount_id(tx)?;
         let db_file_name = self.database_file_name(database_id, mount_id)?;
@@ -724,13 +740,12 @@ impl VfsService {
             "UPDATE databases
              SET db_file_name = ?2,
                  mount_id = ?3,
-                 active_mount_id = ?3,
                  updated_at_ms = ?4
              WHERE database_id = ?1 AND status = 'pending'",
             params![database_id, db_file_name, i64::from(mount_id), now],
         )
         .map_err(|error| error.to_string())?;
-        load_database_with_statuses(tx, database_id, &[DatabaseStatus::Pending])
+        load_pending_database_activation_meta(tx, database_id)
     }
 
     pub fn validate_database_cycles_purchase(
@@ -1457,15 +1472,16 @@ impl VfsService {
         now: i64,
     ) -> Result<MarketPurchaseStart, String> {
         require_authenticated_principal(caller)?;
-        require_authenticated_principal(&request.access_principal)?;
-        if request.listing_id.trim().is_empty() {
-            return Err("market listing id is required".to_string());
-        }
-        if request.price_e8s == 0 {
-            return Err("market listing price must be positive".to_string());
-        }
         self.write_index(|tx| {
-            let listing = validate_market_purchase_request(tx, &request)?;
+            let validation = validate_market_purchase_input(tx, request)?;
+            let request = validation.request;
+            let listing = validation.listing;
+            if !ledger.to_owner.is_empty() && ledger.to_owner != listing.payout_principal {
+                return Err(
+                    "market purchase ledger recipient must match listing payout principal"
+                        .to_string(),
+                );
+            }
             let price_e8s = amount_to_i64(request.price_e8s)?;
             let ledger_fee_e8s = amount_to_i64(ledger.ledger_fee_e8s)?;
             let ledger_created_at_time_ns = i64::try_from(ledger.ledger_created_at_time_ns)
@@ -1506,16 +1522,9 @@ impl VfsService {
         &self,
         payer: &str,
         request: &MarketPurchaseRequest,
-    ) -> Result<MarketListing, String> {
+    ) -> Result<MarketPurchaseValidation, String> {
         require_authenticated_principal(payer)?;
-        require_authenticated_principal(&request.access_principal)?;
-        if request.listing_id.trim().is_empty() {
-            return Err("market listing id is required".to_string());
-        }
-        if request.price_e8s == 0 {
-            return Err("market listing price must be positive".to_string());
-        }
-        self.read_index(|conn| validate_market_purchase_request(conn, request))
+        self.read_index(|conn| validate_market_purchase_input(conn, request.clone()))
     }
 
     pub fn market_purchase_access(
@@ -1526,7 +1535,6 @@ impl VfsService {
     ) -> Result<MarketOrder, String> {
         let price_e8s = request.price_e8s;
         let listing_id = request.listing_id.clone();
-        let access_principal = request.access_principal.clone();
         let start = self.begin_market_purchase_with_ledger_details(
             caller,
             request,
@@ -1542,14 +1550,14 @@ impl VfsService {
         )?;
         self.complete_market_purchase_ledger_transfer(
             start.operation_id,
-            &access_principal,
+            &start.access_principal,
             &listing_id,
             price_e8s,
             0,
         )?;
         self.apply_market_purchase(
             start.operation_id,
-            &access_principal,
+            &start.access_principal,
             &listing_id,
             price_e8s,
             now,
@@ -2014,7 +2022,7 @@ impl VfsService {
         }
         let result = self.database_store(meta)?.run_fs_migrations();
         if result.is_ok() {
-            let _ = self.refresh_logical_size(database_id);
+            let _ = self.refresh_logical_size_for_meta(database_id, meta);
         }
         result
     }
@@ -2075,7 +2083,7 @@ impl VfsService {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         self.require_no_pending_cycles_operations(database_id)?;
         let meta = self.database_meta(database_id)?;
-        let size_bytes = self.database_size(meta)?;
+        let size_bytes = self.database_size(&meta)?;
         self.write_index(|conn| {
             conn.execute(
                 "UPDATE databases
@@ -3239,6 +3247,14 @@ impl VfsService {
 
     fn refresh_logical_size(&self, database_id: &str) -> Result<(), String> {
         let meta = self.database_meta_allowing_restoring(database_id)?;
+        self.refresh_logical_size_for_meta(database_id, &meta)
+    }
+
+    fn refresh_logical_size_for_meta(
+        &self,
+        database_id: &str,
+        meta: &DatabaseMeta,
+    ) -> Result<(), String> {
         let size = self.database_size(meta)?;
         self.write_index(|conn| {
             conn.execute(
@@ -3274,8 +3290,8 @@ impl VfsService {
         }
     }
 
-    fn database_size(&self, meta: DatabaseMeta) -> Result<u64, String> {
-        self.database_store(&meta)?.logical_size_bytes()
+    fn database_size(&self, meta: &DatabaseMeta) -> Result<u64, String> {
+        self.database_store(meta)?.logical_size_bytes()
     }
 
     fn database_export_chunk(
@@ -4602,6 +4618,7 @@ fn purge_expired_unstarted_pending_databases(
                  JOIN database_members m ON m.database_id = d.database_id
                  WHERE d.status = 'pending'
                    AND d.active_mount_id IS NULL
+                   AND d.mount_id = ?3
                    AND d.created_at_ms <= ?2
                    AND m.principal = ?1
                    AND m.role = 'owner'
@@ -4613,9 +4630,11 @@ fn purge_expired_unstarted_pending_databases(
                  ORDER BY d.created_at_ms ASC",
             )
             .map_err(|error| error.to_string())?;
-        crate::sqlite::query_map(&mut stmt, params![caller, expires_before], |row| {
-            crate::sqlite::row_get::<String>(row, 0)
-        })
+        crate::sqlite::query_map(
+            &mut stmt,
+            params![caller, expires_before, i64::from(PENDING_DATABASE_MOUNT_ID)],
+            |row| crate::sqlite::row_get::<String>(row, 0),
+        )
         .map_err(|error| error.to_string())?
     };
     for database_id in expired_database_ids {
@@ -4631,9 +4650,10 @@ fn pending_database_count_for_caller(conn: &Connection, caller: &str) -> Result<
          JOIN database_members m ON m.database_id = d.database_id
          WHERE d.status = 'pending'
            AND d.active_mount_id IS NULL
+           AND d.mount_id = ?2
            AND m.principal = ?1
            AND m.role = 'owner'",
-        params![caller],
+        params![caller, i64::from(PENDING_DATABASE_MOUNT_ID)],
         |row| crate::sqlite::row_get(row, 0),
     )
     .map_err(|error| error.to_string())
@@ -4648,24 +4668,34 @@ fn complete_pending_database_activation(
     if status != DatabaseStatus::Pending {
         return Ok(());
     }
-    let active_mount_id: Option<i64> = conn
+    let (db_file_name, mount_id, active_mount_id): (String, i64, Option<i64>) = conn
         .query_row(
-            "SELECT active_mount_id FROM databases WHERE database_id = ?1",
+            "SELECT db_file_name, mount_id, active_mount_id
+             FROM databases
+             WHERE database_id = ?1",
             params![database_id],
-            |row| crate::sqlite::row_get(row, 0),
+            |row| {
+                Ok((
+                    crate::sqlite::row_get(row, 0)?,
+                    crate::sqlite::row_get(row, 1)?,
+                    crate::sqlite::row_get(row, 2)?,
+                ))
+            },
         )
         .map_err(|error| error.to_string())?;
-    if active_mount_id.is_none() {
+    if mount_id == i64::from(PENDING_DATABASE_MOUNT_ID) || db_file_name.is_empty() {
         return Err(format!(
             "pending database has no activation mount: {database_id}"
         ));
     }
+    let active_mount_id = active_mount_id.unwrap_or(mount_id);
     conn.execute(
         "UPDATE databases
          SET status = 'active',
-             updated_at_ms = ?2
+             active_mount_id = ?2,
+             updated_at_ms = ?3
          WHERE database_id = ?1 AND status = 'pending'",
-        params![database_id, now],
+        params![database_id, active_mount_id, now],
     )
     .map_err(|error| error.to_string())?;
     conn.execute(
@@ -5049,6 +5079,11 @@ pub struct MarketPurchaseStart {
     pub access_principal: String,
 }
 
+pub struct MarketPurchaseValidation {
+    pub request: MarketPurchaseRequest,
+    pub listing: MarketListing,
+}
+
 struct PendingMarketPurchase {
     listing_id: String,
     database_id: String,
@@ -5209,6 +5244,28 @@ fn require_authenticated_principal(caller: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn normalize_authenticated_principal_text(value: &str) -> Result<String, String> {
+    let principal = Principal::from_text(value)
+        .map_err(|error| format!("principal text is invalid: {error}"))?;
+    if principal == Principal::anonymous() {
+        return Err("principal must not be anonymous".to_string());
+    }
+    Ok(principal.to_text())
+}
+
+fn normalize_market_purchase_request(
+    mut request: MarketPurchaseRequest,
+) -> Result<MarketPurchaseRequest, String> {
+    request.access_principal = normalize_authenticated_principal_text(&request.access_principal)?;
+    if request.listing_id.trim().is_empty() {
+        return Err("market listing id is required".to_string());
+    }
+    if request.price_e8s == 0 {
+        return Err("market listing price must be positive".to_string());
+    }
+    Ok(request)
+}
+
 fn update_pending_operation_completed(
     conn: &Transaction<'_>,
     table: &str,
@@ -5347,6 +5404,15 @@ fn validate_market_purchase_request(
         &request.access_principal,
     )?;
     Ok(listing)
+}
+
+fn validate_market_purchase_input(
+    conn: &Connection,
+    request: MarketPurchaseRequest,
+) -> Result<MarketPurchaseValidation, String> {
+    let request = normalize_market_purchase_request(request)?;
+    let listing = validate_market_purchase_request(conn, &request)?;
+    Ok(MarketPurchaseValidation { request, listing })
 }
 
 fn has_active_market_entitlement(
@@ -7016,6 +7082,21 @@ fn load_database_with_statuses(
          WHERE database_id = ?1",
         params![database_id],
         |row| map_database_meta_with_statuses(row, statuses),
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn load_pending_database_activation_meta(
+    conn: &Connection,
+    database_id: &str,
+) -> Result<Option<DatabaseMeta>, String> {
+    conn.query_row(
+        "SELECT database_id, name, db_file_name, mount_id, schema_version, logical_size_bytes, status
+         FROM databases
+         WHERE database_id = ?1",
+        params![database_id],
+        |row| map_database_meta_with_statuses(row, &[DatabaseStatus::Pending]),
     )
     .optional()
     .map_err(|error| error.to_string())

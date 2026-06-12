@@ -15,8 +15,6 @@ import type { LinkEdge, MarketListing, MarketListingDetail, MarketListingVerifie
 import { errorMessage } from "@/lib/wiki-helpers";
 
 const GRAPH_LIMIT = 100;
-const PURCHASED_MARKET_LISTING_KEY_PREFIX = "kinic-wiki.market-purchase";
-
 type ListingDetailClientProps = {
   canisterId: string;
   listingId: string;
@@ -55,17 +53,13 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
   }, [canisterId, listingId]);
 
   const loadPurchasePreview = useCallback(async () => {
-    if (principal && readStoredMarketPurchase(canisterId, listingId, principal)) {
-      setPurchaseState("success");
-      return;
-    }
     if (!authClient || !principal) {
-      setPurchaseState((current) => (current === "success" ? "success" : "idle"));
+      setPurchaseState("idle");
       return;
     }
     try {
       const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listingId);
-      setPurchaseState((current) => (preview.alreadyEntitled || current === "success" ? "success" : "idle"));
+      setPurchaseState(preview.alreadyEntitled ? "success" : "idle");
     } catch {
       setPurchaseState((current) => (current === "success" ? "success" : "idle"));
     }
@@ -88,7 +82,6 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       const preview = await marketPreviewPurchase(canisterId, authClient.getIdentity(), listing.listingId);
       if (preview.alreadyEntitled) {
         setMessage("Access is already active.");
-        storeMarketPurchase(canisterId, listing.listingId, principal);
         setPurchaseState("success");
         return;
       }
@@ -100,14 +93,12 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
       }
       const order = await purchaseMarketAccessWithWallet({ canisterId, listingId: listing.listingId, priceE8s: BigInt(listing.priceE8s), accessPrincipal: principal }, wallet);
       setMessage(`Purchase complete. Ledger block ${order.ledgerBlockIndex}.`);
-      storeMarketPurchase(canisterId, order.listingId, principal);
       await refreshWalletBalance(wallet);
       setPurchaseState("success");
     } catch (cause) {
       const message = errorMessage(cause);
       if (message.includes("active entitlement already exists")) {
         setMessage("Access is already active.");
-        storeMarketPurchase(canisterId, listing.listingId, principal);
         setPurchaseState("success");
         return;
       }
@@ -441,26 +432,6 @@ function formatDate(value: string | null): string {
   if (!value) return "-";
   const date = new Date(Number(value));
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString();
-}
-
-function marketPurchaseStorageKey(canisterId: string, listingId: string, buyerPrincipal: string): string {
-  return `${PURCHASED_MARKET_LISTING_KEY_PREFIX}:${canisterId}:${listingId}:${buyerPrincipal}`;
-}
-
-function readStoredMarketPurchase(canisterId: string, listingId: string, buyerPrincipal: string): boolean {
-  try {
-    return localStorage.getItem(marketPurchaseStorageKey(canisterId, listingId, buyerPrincipal)) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function storeMarketPurchase(canisterId: string, listingId: string, buyerPrincipal: string): void {
-  try {
-    localStorage.setItem(marketPurchaseStorageKey(canisterId, listingId, buyerPrincipal), "1");
-  } catch {
-    // The canister order is authoritative; local storage only keeps the button state across reloads.
-  }
 }
 
 function formatInteger(value: string): string {

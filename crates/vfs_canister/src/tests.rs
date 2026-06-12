@@ -141,6 +141,26 @@ fn pending_cycle_purchase_state(database_id: &str) -> String {
     })
 }
 
+fn pending_database_activation_state(database_id: &str) -> String {
+    SERVICE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .expect("service should be installed")
+            .query_index_sql_json(
+                &format!(
+                    "SELECT json_object('status', status, 'mount_id', mount_id, 'active_mount_id', active_mount_id, 'has_db_file_name', db_file_name <> '') FROM databases WHERE database_id = '{}' LIMIT 1",
+                    database_id
+                ),
+                1,
+            )
+            .expect("database activation state should query")
+            .rows
+            .into_iter()
+            .next()
+            .expect("database row should exist")
+    })
+}
+
 fn cycles_for_test_payment(service: &VfsService, payment_amount_e8s: u64) -> u64 {
     super::cycles_for_payment_amount_e8s(
         payment_amount_e8s,
@@ -1147,8 +1167,12 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1189,8 +1213,12 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     );
     assert!(database_exists(&database.database_id));
     assert_eq!(
-        database_status_and_mount(&database.database_id).0,
-        DatabaseStatus::Pending
+        database_status_and_mount(&database.database_id),
+        (DatabaseStatus::Pending, None)
+    );
+    assert_eq!(
+        pending_database_activation_state(&database.database_id),
+        r#"{"status":"pending","mount_id":11,"active_mount_id":null,"has_db_file_name":1}"#
     );
     assert!(
         list_database_cycle_entries(database.database_id.clone(), None, 10)
@@ -1368,6 +1396,49 @@ fn icrc21_market_purchase_access_returns_consent_message() {
     assert!(message.contains(&format!("Payer wallet principal: `{}`", payer.to_text())));
     assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
     assert!(message.contains("read-only marketplace entitlement"));
+}
+
+#[test]
+fn icrc21_market_purchase_access_canonicalizes_access_principal() {
+    install_empty_test_service();
+    let seller = test_billing_authority_principal();
+    let payer = Principal::management_canister();
+    let access =
+        Principal::from_text("r7inp-6aaaa-aaaaa-aaabq-cai").expect("access principal should parse");
+    let listing = {
+        let _seller = AuthenticatedCallerGuard::install_principal(seller);
+        let database = create_database(CreateDatabaseRequest {
+            name: "Market canonical consent".to_string(),
+        })
+        .expect("database should create");
+        fund_database(&database.database_id, 1_000_000, 301);
+        market_create_listing(market_listing_request(&database.database_id, 250_000_000))
+            .expect("listing should create")
+    };
+    let _payer = AuthenticatedCallerGuard::install_principal(payer);
+    let arg = Encode!(&MarketPurchaseRequest {
+        listing_id: listing.listing_id.clone(),
+        price_e8s: listing.price_e8s,
+        access_principal: access.to_text().to_ascii_uppercase(),
+    })
+    .expect("arg should encode");
+
+    let response =
+        icrc21_canister_call_consent_message(consent_request("market_purchase_access", arg));
+
+    let message = match response {
+        Icrc21ConsentMessageResponse::Ok(info) => match info.consent_message {
+            Icrc21ConsentMessage::GenericDisplayMessage(message) => message,
+        },
+        Icrc21ConsentMessageResponse::Err(error) => {
+            panic!("market purchase consent should succeed: {error:?}");
+        }
+    };
+    assert!(message.contains(&format!("Access principal: `{}`", access.to_text())));
+    assert!(!message.contains(&format!(
+        "Access principal: `{}`",
+        access.to_text().to_ascii_uppercase()
+    )));
 }
 
 #[test]
