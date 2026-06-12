@@ -2075,7 +2075,7 @@ impl VfsService {
         self.require_role(database_id, caller, RequiredRole::Owner)?;
         self.require_no_pending_cycles_operations(database_id)?;
         let meta = self.database_meta(database_id)?;
-        let size_bytes = self.database_size(&meta)?;
+        let size_bytes = self.database_size(meta)?;
         self.write_index(|conn| {
             conn.execute(
                 "UPDATE databases
@@ -3239,7 +3239,7 @@ impl VfsService {
 
     fn refresh_logical_size(&self, database_id: &str) -> Result<(), String> {
         let meta = self.database_meta_allowing_restoring(database_id)?;
-        let size = self.database_size(&meta)?;
+        let size = self.database_size(meta)?;
         self.write_index(|conn| {
             conn.execute(
                 "UPDATE databases
@@ -3274,8 +3274,8 @@ impl VfsService {
         }
     }
 
-    fn database_size(&self, meta: &DatabaseMeta) -> Result<u64, String> {
-        self.database_store(meta)?.logical_size_bytes()
+    fn database_size(&self, meta: DatabaseMeta) -> Result<u64, String> {
+        self.database_store(&meta)?.logical_size_bytes()
     }
 
     fn database_export_chunk(
