@@ -46,6 +46,7 @@ type CyclesTopUpCheckResult = record {
   status : CyclesTopUpCheckStatus;
   called_launcher : bool;
   balance_cycles_before : nat;
+  balance_cycles_after : opt nat;
   threshold_cycles : nat;
   launcher_result : opt CyclesTopUpLauncherResult;
 };

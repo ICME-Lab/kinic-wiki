@@ -62,6 +62,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const CyclesTopUpCheckResult = idl.Record({
     balance_cycles_before: idl.Nat,
+    balance_cycles_after: idl.Opt(idl.Nat),
     threshold_cycles: idl.Nat,
     called_launcher: idl.Bool,
     status: CyclesTopUpCheckStatus,

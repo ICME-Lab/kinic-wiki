@@ -54,6 +54,7 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       balance_cycles_before: "nat",
+      balance_cycles_after: "opt nat",
       threshold_cycles: "nat",
       called_launcher: "bool",
       status: "CyclesTopUpCheckStatus",

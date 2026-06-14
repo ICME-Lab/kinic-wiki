@@ -165,6 +165,7 @@ enum CyclesTopUpCheckStatus {
 #[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
 struct CyclesTopUpCheckResult {
     balance_cycles_before: Nat,
+    balance_cycles_after: Option<Nat>,
     threshold_cycles: Nat,
     called_launcher: bool,
     status: CyclesTopUpCheckStatus,
@@ -1814,6 +1815,7 @@ async fn run_cycles_top_up_check() -> Result<CyclesTopUpCheckResult, String> {
     if !config.enabled {
         return Ok(CyclesTopUpCheckResult {
             balance_cycles_before: Nat::from(balance),
+            balance_cycles_after: None,
             threshold_cycles: Nat::from(config.threshold_cycles),
             called_launcher: false,
             status: CyclesTopUpCheckStatus::SkippedDisabled,
@@ -1823,6 +1825,7 @@ async fn run_cycles_top_up_check() -> Result<CyclesTopUpCheckResult, String> {
     if balance > config.threshold_cycles {
         return Ok(CyclesTopUpCheckResult {
             balance_cycles_before: Nat::from(balance),
+            balance_cycles_after: None,
             threshold_cycles: Nat::from(config.threshold_cycles),
             called_launcher: false,
             status: CyclesTopUpCheckStatus::SkippedAboveThreshold,
@@ -1832,6 +1835,7 @@ async fn run_cycles_top_up_check() -> Result<CyclesTopUpCheckResult, String> {
     if !try_begin_cycles_top_up_request() {
         return Ok(CyclesTopUpCheckResult {
             balance_cycles_before: Nat::from(balance),
+            balance_cycles_after: None,
             threshold_cycles: Nat::from(config.threshold_cycles),
             called_launcher: false,
             status: CyclesTopUpCheckStatus::SkippedInProgress,
@@ -1841,12 +1845,14 @@ async fn run_cycles_top_up_check() -> Result<CyclesTopUpCheckResult, String> {
     let launcher_result = request_cycles_from_launcher(&config.launcher_principal).await;
     finish_cycles_top_up_request(matches!(launcher_result, Ok(CyclesTopUpLauncherResult::Ok)));
     let launcher_result = launcher_result?;
+    let balance_after = canister_balance_cycles();
     let status = match launcher_result {
         CyclesTopUpLauncherResult::Ok => CyclesTopUpCheckStatus::LauncherOk,
         CyclesTopUpLauncherResult::Err(_) => CyclesTopUpCheckStatus::LauncherErr,
     };
     Ok(CyclesTopUpCheckResult {
         balance_cycles_before: Nat::from(balance),
+        balance_cycles_after: Some(Nat::from(balance_after)),
         threshold_cycles: Nat::from(config.threshold_cycles),
         called_launcher: true,
         status,
