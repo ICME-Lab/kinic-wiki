@@ -27,17 +27,46 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64)
   });
+  const CyclesTopUpConfig = idl.Record({ enabled: idl.Bool, threshold_cycles: idl.Nat, launcher_principal: idl.Text });
   const CyclesBillingConfig = idl.Record({
     cycles_per_kinic: idl.Nat64,
     min_update_cycles: idl.Nat64,
+    top_up: CyclesTopUpConfig,
     kinic_ledger_canister_id: idl.Text,
     billing_authority_id: idl.Text
   });
-  const CyclesBillingConfigUpdate = idl.Record({ cycles_per_kinic: idl.Nat64, min_update_cycles: idl.Nat64 });
+  const CyclesBillingConfigUpdate = idl.Record({
+    cycles_per_kinic: idl.Nat64,
+    min_update_cycles: idl.Nat64,
+    top_up: CyclesTopUpConfig
+  });
   const CyclesPurchaseResult = idl.Record({
     block_index: idl.Nat64,
     amount_cycles: idl.Nat64,
     balance_cycles: idl.Nat64
+  });
+  const CyclesTopUpLauncherError = idl.Variant({
+    Unauthorized: idl.Null,
+    TooSoon: idl.Null,
+    LauncherBalanceTooLow: idl.Null,
+    TopUpFailed: idl.Text
+  });
+  const CyclesTopUpLauncherResult = idl.Variant({ Ok: idl.Null, Err: CyclesTopUpLauncherError });
+  const CyclesTopUpCheckStatus = idl.Variant({
+    SkippedDisabled: idl.Null,
+    CallErr: idl.Null,
+    LauncherErr: idl.Null,
+    SkippedInProgress: idl.Null,
+    LauncherOk: idl.Null,
+    SkippedAboveThreshold: idl.Null
+  });
+  const CyclesTopUpCheckResult = idl.Record({
+    balance_cycles_before: idl.Nat,
+    balance_cycles_after: idl.Opt(idl.Nat),
+    threshold_cycles: idl.Nat,
+    called_launcher: idl.Bool,
+    status: CyclesTopUpCheckStatus,
+    launcher_result: idl.Opt(CyclesTopUpLauncherResult)
   });
   const DatabaseCyclesPendingPurchase = idl.Record({
     operation_id: idl.Nat64,
@@ -387,6 +416,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultStorageBillingBatch = idl.Variant({ Ok: StorageBillingBatchResult, Err: idl.Text });
+  const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
@@ -422,6 +452,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [ResultUnit], []),
     canister_health: idl.Func([], [CanisterHealth], ["query"]),
     check_database_write_cycles: idl.Func([idl.Text], [ResultUnit], ["query"]),
+    check_cycles_top_up: idl.Func([], [ResultCyclesTopUpCheck], []),
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),

@@ -74,6 +74,11 @@ type RawCyclesBillingConfig = {
   billing_authority_id: string;
   cycles_per_kinic: bigint;
   min_update_cycles: bigint;
+  top_up: {
+    enabled: boolean;
+    launcher_principal: string;
+    threshold_cycles: bigint;
+  };
 };
 
 export type DatabaseCyclesPurchaseRequest = {
@@ -1226,7 +1231,12 @@ function normalizeCyclesBillingConfig(raw: RawCyclesBillingConfig): CyclesBillin
     kinicLedgerCanisterId: raw.kinic_ledger_canister_id,
     billingAuthorityId: raw.billing_authority_id,
     cyclesPerKinic: raw.cycles_per_kinic.toString(),
-    minUpdateCycles: raw.min_update_cycles.toString()
+    minUpdateCycles: raw.min_update_cycles.toString(),
+    topUp: {
+      enabled: raw.top_up.enabled,
+      launcherPrincipal: raw.top_up.launcher_principal,
+      thresholdCycles: raw.top_up.threshold_cycles.toString()
+    }
   };
 }
 

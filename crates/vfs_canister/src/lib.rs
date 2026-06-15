@@ -1,6 +1,8 @@
 // Where: crates/vfs_canister/src/lib.rs
 // What: ICP canister entrypoints backed by VfsService with an FS-first public API.
 // Why: The canister now exposes node-oriented operations directly and keeps the runtime boundary thin.
+#[cfg(test)]
+use std::cell::Cell;
 use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 use std::collections::BTreeMap;
@@ -105,8 +107,27 @@ thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
         RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
     static SERVICE: RefCell<Option<VfsService>> = const { RefCell::new(None) };
+    static CYCLES_TOP_UP_RUNTIME_STATE: RefCell<CyclesTopUpRuntimeState> =
+        const { RefCell::new(CyclesTopUpRuntimeState::new()) };
     #[cfg(target_arch = "wasm32")]
     static DATABASE_HANDLES: RefCell<BTreeMap<u16, DbHandle>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CyclesTopUpRuntimeState {
+    in_progress: bool,
+    last_attempt_ns: Option<u64>,
+    last_success_ns: Option<u64>,
+}
+
+impl CyclesTopUpRuntimeState {
+    const fn new() -> Self {
+        Self {
+            in_progress: false,
+            last_attempt_ns: None,
+            last_success_ns: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -115,6 +136,40 @@ enum LedgerTransferFromOutcome {
     BadFee { expected_fee_e8s: u64 },
     LedgerErr(String),
     Ambiguous(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum CyclesTopUpLauncherError {
+    Unauthorized,
+    TooSoon,
+    LauncherBalanceTooLow,
+    TopUpFailed(String),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum CyclesTopUpLauncherResult {
+    Ok,
+    Err(CyclesTopUpLauncherError),
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+enum CyclesTopUpCheckStatus {
+    SkippedDisabled,
+    SkippedAboveThreshold,
+    SkippedInProgress,
+    LauncherOk,
+    LauncherErr,
+    CallErr,
+}
+
+#[derive(Clone, Debug, CandidType, Deserialize, PartialEq, Eq)]
+struct CyclesTopUpCheckResult {
+    balance_cycles_before: Nat,
+    balance_cycles_after: Option<Nat>,
+    threshold_cycles: Nat,
+    called_launcher: bool,
+    status: CyclesTopUpCheckStatus,
+    launcher_result: Option<CyclesTopUpLauncherResult>,
 }
 
 #[allow(dead_code)]
@@ -642,6 +697,12 @@ fn settle_database_storage_charges_batch(
             now_millis(),
         )
     })
+}
+
+#[update]
+async fn check_cycles_top_up() -> Result<CyclesTopUpCheckResult, String> {
+    require_controller_caller()?;
+    run_cycles_top_up_check().await
 }
 
 fn activate_pending_database_after_cycles_purchase_ledger_success(
@@ -1323,9 +1384,38 @@ fn schedule_storage_billing_timer() {
     #[cfg(target_arch = "wasm32")]
     {
         let interval_ms = u64::try_from(STORAGE_BILLING_INTERVAL_MS).unwrap_or(24 * 60 * 60 * 1000);
+        set_timer(Duration::ZERO, async {
+            run_cycles_top_up_check_from_timer().await;
+        });
         set_timer_interval(Duration::from_millis(interval_ms), || async {
+            run_cycles_top_up_check_from_timer().await;
             run_storage_billing_timer_batches();
         });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn run_cycles_top_up_check_from_timer() {
+    match run_cycles_top_up_check().await {
+        Ok(result) => {
+            if result.called_launcher
+                || matches!(
+                    result.status,
+                    CyclesTopUpCheckStatus::LauncherErr | CyclesTopUpCheckStatus::SkippedInProgress
+                )
+            {
+                ic_cdk::println!(
+                    "cycles top-up check status {:?}, balance before {:?}, threshold {:?}, launcher {:?}",
+                    result.status,
+                    result.balance_cycles_before,
+                    result.threshold_cycles,
+                    result.launcher_result
+                );
+            }
+        }
+        Err(error) => {
+            ic_cdk::println!("cycles top-up check failed with status CallErr: {error}");
+        }
     }
 }
 
@@ -1479,6 +1569,9 @@ thread_local! {
     static TEST_CALLER_PRINCIPAL: RefCell<Option<Principal>> = const { RefCell::new(None) };
     static TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE: RefCell<bool> = const { RefCell::new(false) };
     static TEST_UPDATE_CHARGE_UNITS: RefCell<Vec<u128>> = const { RefCell::new(Vec::new()) };
+    static TEST_CYCLES_BALANCE: Cell<Option<u128>> = const { Cell::new(None) };
+    static TEST_CYCLES_TOP_UP_LAUNCHER_RESULTS: RefCell<Vec<Result<CyclesTopUpLauncherResult, String>>> = const { RefCell::new(Vec::new()) };
+    static TEST_CYCLES_TOP_UP_LAUNCHER_CALL_COUNT: Cell<u64> = const { Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -1516,6 +1609,50 @@ fn clear_ledger_transactions_for_test() {
     TEST_UPDATE_CHARGE_UNITS.with(|slot| {
         slot.borrow_mut().clear();
     });
+}
+
+#[cfg(test)]
+fn set_cycles_balance_for_test(balance: u128) {
+    TEST_CYCLES_BALANCE.with(|slot| {
+        slot.set(Some(balance));
+    });
+}
+
+#[cfg(test)]
+fn clear_cycles_top_up_state_for_test() {
+    TEST_CYCLES_BALANCE.with(|slot| {
+        slot.set(None);
+    });
+    TEST_CYCLES_TOP_UP_LAUNCHER_RESULTS.with(|slot| {
+        slot.borrow_mut().clear();
+    });
+    TEST_CYCLES_TOP_UP_LAUNCHER_CALL_COUNT.with(|slot| {
+        slot.set(0);
+    });
+    CYCLES_TOP_UP_RUNTIME_STATE.with(|slot| {
+        *slot.borrow_mut() = CyclesTopUpRuntimeState::new();
+    });
+}
+
+#[cfg(test)]
+fn set_cycles_top_up_in_progress_for_test() {
+    CYCLES_TOP_UP_RUNTIME_STATE.with(|slot| {
+        slot.borrow_mut().in_progress = true;
+    });
+}
+
+#[cfg(test)]
+fn set_next_cycles_top_up_launcher_result_for_test(
+    result: Result<CyclesTopUpLauncherResult, String>,
+) {
+    TEST_CYCLES_TOP_UP_LAUNCHER_RESULTS.with(|slot| {
+        slot.borrow_mut().push(result);
+    });
+}
+
+#[cfg(test)]
+fn cycles_top_up_launcher_call_count_for_test() -> u64 {
+    TEST_CYCLES_TOP_UP_LAUNCHER_CALL_COUNT.with(Cell::get)
 }
 
 #[cfg(test)]
@@ -1670,6 +1807,132 @@ fn require_controller_caller() -> Result<(), String> {
         }
     }
     Err("caller is not a canister controller".to_string())
+}
+
+async fn run_cycles_top_up_check() -> Result<CyclesTopUpCheckResult, String> {
+    let config = with_service(|service| service.cycles_billing_config())?.top_up;
+    let balance = canister_balance_cycles();
+    if !config.enabled {
+        return Ok(CyclesTopUpCheckResult {
+            balance_cycles_before: Nat::from(balance),
+            balance_cycles_after: None,
+            threshold_cycles: Nat::from(config.threshold_cycles),
+            called_launcher: false,
+            status: CyclesTopUpCheckStatus::SkippedDisabled,
+            launcher_result: None,
+        });
+    }
+    if balance > config.threshold_cycles {
+        return Ok(CyclesTopUpCheckResult {
+            balance_cycles_before: Nat::from(balance),
+            balance_cycles_after: None,
+            threshold_cycles: Nat::from(config.threshold_cycles),
+            called_launcher: false,
+            status: CyclesTopUpCheckStatus::SkippedAboveThreshold,
+            launcher_result: None,
+        });
+    }
+    if !try_begin_cycles_top_up_request() {
+        return Ok(CyclesTopUpCheckResult {
+            balance_cycles_before: Nat::from(balance),
+            balance_cycles_after: None,
+            threshold_cycles: Nat::from(config.threshold_cycles),
+            called_launcher: false,
+            status: CyclesTopUpCheckStatus::SkippedInProgress,
+            launcher_result: None,
+        });
+    }
+    let launcher_result = request_cycles_from_launcher(&config.launcher_principal).await;
+    finish_cycles_top_up_request(matches!(launcher_result, Ok(CyclesTopUpLauncherResult::Ok)));
+    let launcher_result = launcher_result?;
+    let balance_after = canister_balance_cycles();
+    let status = match launcher_result {
+        CyclesTopUpLauncherResult::Ok => CyclesTopUpCheckStatus::LauncherOk,
+        CyclesTopUpLauncherResult::Err(_) => CyclesTopUpCheckStatus::LauncherErr,
+    };
+    Ok(CyclesTopUpCheckResult {
+        balance_cycles_before: Nat::from(balance),
+        balance_cycles_after: Some(Nat::from(balance_after)),
+        threshold_cycles: Nat::from(config.threshold_cycles),
+        called_launcher: true,
+        status,
+        launcher_result: Some(launcher_result),
+    })
+}
+
+fn try_begin_cycles_top_up_request() -> bool {
+    CYCLES_TOP_UP_RUNTIME_STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        if state.in_progress {
+            return false;
+        }
+        state.in_progress = true;
+        state.last_attempt_ns = Some(now_nanos());
+        true
+    })
+}
+
+fn finish_cycles_top_up_request(succeeded: bool) {
+    CYCLES_TOP_UP_RUNTIME_STATE.with(|slot| {
+        let mut state = slot.borrow_mut();
+        state.in_progress = false;
+        if succeeded {
+            state.last_success_ns = Some(now_nanos());
+        }
+    });
+}
+
+fn canister_balance_cycles() -> u128 {
+    #[cfg(test)]
+    if let Some(balance) = TEST_CYCLES_BALANCE.with(Cell::get) {
+        return balance;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        ic_cdk::api::canister_cycle_balance()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        u128::MAX
+    }
+}
+
+#[cfg(test)]
+fn request_cycles_from_launcher_for_test() -> Result<CyclesTopUpLauncherResult, String> {
+    TEST_CYCLES_TOP_UP_LAUNCHER_CALL_COUNT.with(|slot| {
+        slot.set(slot.get() + 1);
+    });
+    TEST_CYCLES_TOP_UP_LAUNCHER_RESULTS.with(|slot| {
+        slot.borrow_mut()
+            .pop()
+            .unwrap_or(Ok(CyclesTopUpLauncherResult::Ok))
+    })
+}
+
+async fn request_cycles_from_launcher(
+    launcher_principal: &str,
+) -> Result<CyclesTopUpLauncherResult, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let launcher = Principal::from_text(launcher_principal)
+            .map_err(|error| format!("invalid cycles launcher principal: {error}"))?;
+        let response = Call::bounded_wait(launcher, "request_cycles")
+            .await
+            .map_err(|error| format!("request_cycles call failed: {error:?}"))?;
+        response
+            .candid()
+            .map_err(|error| format!("request_cycles decode failed: {error}"))
+    }
+    #[cfg(all(not(target_arch = "wasm32"), test))]
+    {
+        let _ = launcher_principal;
+        request_cycles_from_launcher_for_test()
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(test)))]
+    {
+        let _ = launcher_principal;
+        Ok(CyclesTopUpLauncherResult::Ok)
+    }
 }
 
 #[allow(dead_code)]

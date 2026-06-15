@@ -7,12 +7,12 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfig, DatabaseRole, DatabaseStatus, DatabaseSummary,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
-    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
-    GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry, NodeKind,
-    NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
+    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
+    NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
     WriteNodeRequest, WriteNodeResult,
 };
 
@@ -49,6 +49,14 @@ fn test_connection() -> ResolvedConnection {
 
 const SNAPSHOT_REVISION_1: &str = "v5:1:2f57696b69";
 
+fn test_cycles_top_up_config() -> CyclesTopUpConfig {
+    CyclesTopUpConfig {
+        enabled: true,
+        launcher_principal: "xfug4-5qaaa-aaaak-afowa-cai".to_string(),
+        threshold_cycles: 2_000_000_000_000,
+    }
+}
+
 #[async_trait]
 impl VfsApi for MockClient {
     async fn status(&self, _database_id: &str) -> Result<Status> {
@@ -64,6 +72,7 @@ impl VfsApi for MockClient {
             billing_authority_id: "aaaaa-aa".to_string(),
             cycles_per_kinic: 1_000,
             min_update_cycles: 1,
+            top_up: test_cycles_top_up_config(),
         })
     }
 

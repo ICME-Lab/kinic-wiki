@@ -7,12 +7,13 @@ use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use vfs_runtime::{
-    CyclesPendingLedgerDetailsInput, DEFAULT_LLM_WRITER_PRINCIPAL,
+    CyclesPendingLedgerDetailsInput, DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL,
+    DEFAULT_CYCLES_TOP_UP_THRESHOLD, DEFAULT_LLM_WRITER_PRINCIPAL,
     DatabaseCyclesPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
     MAX_RESTORE_CHUNK_BYTES, VfsService, cycles_for_payment_amount_e8s,
 };
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfigUpdate, DatabaseRole, DatabaseStatus,
+    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
     MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
     MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
@@ -36,6 +37,14 @@ fn service_with_root() -> (VfsService, PathBuf) {
         .run_index_migrations()
         .expect("index migrations should run");
     (service, root)
+}
+
+fn test_cycles_top_up_config() -> CyclesTopUpConfig {
+    CyclesTopUpConfig {
+        enabled: true,
+        launcher_principal: DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL.to_string(),
+        threshold_cycles: DEFAULT_CYCLES_TOP_UP_THRESHOLD,
+    }
 }
 
 fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
@@ -2121,6 +2130,7 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
             CyclesBillingConfigUpdate {
                 cycles_per_kinic: 234_500_000_000,
                 min_update_cycles: 1_000_000,
+                top_up: test_cycles_top_up_config(),
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )
@@ -2132,6 +2142,7 @@ fn cycles_billing_config_update_changes_only_mutable_values() {
             CyclesBillingConfigUpdate {
                 cycles_per_kinic: 469_000_000_000,
                 min_update_cycles: 1_000_000,
+                top_up: test_cycles_top_up_config(),
             },
             "rrkah-fqaaa-aaaaa-aaaaq-cai",
         )

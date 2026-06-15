@@ -21,23 +21,24 @@ use sha2::{Digest, Sha256};
 use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase,
-    DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary,
-    DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
-    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-    GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCategoryGraph, MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage,
-    MarketListing, MarketListingDetail, MarketListingPage, MarketListingPreview,
-    MarketListingStatus, MarketListingVerifiedStats, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
-    SourceEvidenceRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
-    StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    CyclesTopUpConfig, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
+    DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
+    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
@@ -83,6 +84,7 @@ const INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW: &str = "database_index:029_marke
 const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
     "database_index:030_direct_market_purchase";
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
+const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -104,6 +106,8 @@ const INDEX_011_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/011_t
 const INDEX_026_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/026_to_latest.sql");
 pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
+pub const DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL: &str = "xfug4-5qaaa-aaaak-afowa-cai";
+pub const DEFAULT_CYCLES_TOP_UP_THRESHOLD: u128 = 2_000_000_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
 const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
@@ -393,11 +397,13 @@ impl VfsService {
             billing_authority_id: current.billing_authority_id,
             cycles_per_kinic: update.cycles_per_kinic,
             min_update_cycles: update.min_update_cycles,
+            top_up: update.top_up,
         };
         validate_cycles_billing_config(&next)?;
         self.write_index(|tx| {
             set_cycles_billing_config_value(tx, "cycles_per_kinic", next.cycles_per_kinic)?;
             set_cycles_billing_config_value(tx, "min_update_cycles", next.min_update_cycles)?;
+            set_cycles_top_up_config(tx, &next.top_up)?;
             Ok(())
         })?;
         Ok(next)
@@ -3544,6 +3550,7 @@ enum IndexSchemaState {
     Latest,
     Mainnet011,
     Mainnet026,
+    Mainnet031,
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -3562,6 +3569,10 @@ fn ensure_existing_index_schema_is_latest(
         }
         IndexSchemaState::Mainnet026 => {
             apply_mainnet_026_to_latest_index_migration(conn)?;
+            validate_index_schema(conn)
+        }
+        IndexSchemaState::Mainnet031 => {
+            apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
             validate_index_schema(conn)
         }
     }
@@ -3592,8 +3603,11 @@ fn classify_existing_index_schema_state(
             "unsupported partial index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
+        return Ok(IndexSchemaState::Mainnet031);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORAGE_BILLING_BATCH)? {
         for &version in POST_026_INDEX_SCHEMA_VERSIONS {
@@ -3651,8 +3665,24 @@ fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result
     conn.execute_batch(INDEX_026_TO_LATEST_SQL)
         .map_err(|error| error.to_string())?;
     for &version in POST_026_INDEX_SCHEMA_VERSIONS {
+        if version == INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG {
+            continue;
+        }
         insert_schema_migration_now(conn, version)?;
     }
+    apply_cycles_top_up_config_migration(conn, None)?;
+    Ok(())
+}
+
+fn apply_cycles_top_up_config_migration(
+    conn: &Transaction<'_>,
+    top_up: Option<&CyclesTopUpConfig>,
+) -> Result<(), String> {
+    match top_up {
+        Some(config) => set_cycles_top_up_config(conn, config)?,
+        None => insert_default_cycles_top_up_config(conn)?,
+    }
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)?;
     Ok(())
 }
 
@@ -3695,12 +3725,14 @@ fn default_cycles_billing_config() -> CyclesBillingConfig {
         billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
         cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
         min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
+        top_up: default_cycles_top_up_config(),
     }
 }
 
 fn validate_cycles_billing_config(config: &CyclesBillingConfig) -> Result<(), String> {
     validate_principal_text(&config.kinic_ledger_canister_id)?;
     validate_principal_text(&config.billing_authority_id)?;
+    validate_cycles_top_up_config(&config.top_up)?;
     if config.cycles_per_kinic == 0 {
         return Err("cycles_per_kinic must be positive".to_string());
     }
@@ -3709,6 +3741,22 @@ fn validate_cycles_billing_config(config: &CyclesBillingConfig) -> Result<(), St
     }
     amount_to_i64(config.cycles_per_kinic)?;
     amount_to_i64(config.min_update_cycles)?;
+    Ok(())
+}
+
+fn default_cycles_top_up_config() -> CyclesTopUpConfig {
+    CyclesTopUpConfig {
+        enabled: true,
+        launcher_principal: DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL.to_string(),
+        threshold_cycles: DEFAULT_CYCLES_TOP_UP_THRESHOLD,
+    }
+}
+
+fn validate_cycles_top_up_config(config: &CyclesTopUpConfig) -> Result<(), String> {
+    validate_principal_text(&config.launcher_principal)?;
+    if config.threshold_cycles == 0 {
+        return Err("top_up.threshold_cycles must be positive".to_string());
+    }
     Ok(())
 }
 
@@ -3737,7 +3785,56 @@ fn insert_cycles_billing_config(
     .map_err(|error| error.to_string())?;
     set_cycles_billing_config_value(conn, "cycles_per_kinic", config.cycles_per_kinic)?;
     set_cycles_billing_config_value(conn, "min_update_cycles", config.min_update_cycles)?;
+    set_cycles_top_up_config(conn, &config.top_up)?;
     Ok(())
+}
+
+fn insert_default_cycles_top_up_config(conn: &Transaction<'_>) -> Result<(), String> {
+    set_cycles_top_up_config(conn, &default_cycles_top_up_config())
+}
+
+fn set_cycles_top_up_config(
+    conn: &Transaction<'_>,
+    config: &CyclesTopUpConfig,
+) -> Result<(), String> {
+    set_cycles_billing_config_bool(conn, "top_up_enabled", config.enabled)?;
+    set_cycles_billing_config_text(
+        conn,
+        "top_up_launcher_principal",
+        &config.launcher_principal,
+    )?;
+    set_cycles_billing_config_u128(conn, "top_up_threshold_cycles", config.threshold_cycles)
+}
+
+fn set_cycles_billing_config_text(
+    conn: &Transaction<'_>,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO cycles_billing_config (key, value)
+         VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn set_cycles_billing_config_bool(
+    conn: &Transaction<'_>,
+    key: &str,
+    value: bool,
+) -> Result<(), String> {
+    set_cycles_billing_config_text(conn, key, if value { "true" } else { "false" })
+}
+
+fn set_cycles_billing_config_u128(
+    conn: &Transaction<'_>,
+    key: &str,
+    value: u128,
+) -> Result<(), String> {
+    set_cycles_billing_config_text(conn, key, &value.to_string())
 }
 
 fn set_cycles_billing_config_value(
@@ -3745,14 +3842,7 @@ fn set_cycles_billing_config_value(
     key: &str,
     value: u64,
 ) -> Result<(), String> {
-    conn.execute(
-        "INSERT INTO cycles_billing_config (key, value)
-         VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        params![key, value.to_string()],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
+    set_cycles_billing_config_text(conn, key, &value.to_string())
 }
 
 const INDEX_SCHEMA_VERSIONS: &[&str] = &[
@@ -3787,6 +3877,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
+    INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -3830,6 +3921,7 @@ const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
+    INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
 ];
 
 const POST_011_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -3850,6 +3942,7 @@ const POST_026_INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_MARKETPLACE_PREVIEW,
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
+    INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
 ];
 
 const POST_026_INDEX_SCHEMA_TABLES: &[&str] = &[
@@ -4280,6 +4373,11 @@ fn load_cycles_billing_config(conn: &Connection) -> Result<CyclesBillingConfig, 
         billing_authority_id: load_cycles_billing_config_text(conn, "billing_authority_id")?,
         cycles_per_kinic: load_cycles_billing_config_u64(conn, "cycles_per_kinic")?,
         min_update_cycles: load_cycles_billing_config_u64(conn, "min_update_cycles")?,
+        top_up: CyclesTopUpConfig {
+            enabled: load_cycles_billing_config_bool(conn, "top_up_enabled")?,
+            launcher_principal: load_cycles_billing_config_text(conn, "top_up_launcher_principal")?,
+            threshold_cycles: load_cycles_billing_config_u128(conn, "top_up_threshold_cycles")?,
+        },
     })
 }
 
@@ -4295,6 +4393,20 @@ fn load_cycles_billing_config_text(conn: &Connection, key: &str) -> Result<Strin
 fn load_cycles_billing_config_u64(conn: &Connection, key: &str) -> Result<u64, String> {
     let value = load_cycles_billing_config_text(conn, key)?;
     value.parse::<u64>().map_err(|error| error.to_string())
+}
+
+fn load_cycles_billing_config_u128(conn: &Connection, key: &str) -> Result<u128, String> {
+    let value = load_cycles_billing_config_text(conn, key)?;
+    value.parse::<u128>().map_err(|error| error.to_string())
+}
+
+fn load_cycles_billing_config_bool(conn: &Connection, key: &str) -> Result<bool, String> {
+    let value = load_cycles_billing_config_text(conn, key)?;
+    match value.as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("{key} must be true or false")),
+    }
 }
 
 fn validate_index_select_sql(sql: &str) -> Result<(), String> {
@@ -7395,6 +7507,7 @@ mod tests {
             billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai".to_string(),
             cycles_per_kinic: DEFAULT_CYCLES_PER_KINIC,
             min_update_cycles: DEFAULT_MIN_UPDATE_CYCLES,
+            top_up: default_cycles_top_up_config(),
         }
     }
 
@@ -7600,6 +7713,27 @@ mod tests {
         tx.commit().expect("mainnet 026 schema should commit");
     }
 
+    fn write_mainnet_031_schema(index_path: &Path, config: &CyclesBillingConfig) {
+        write_mainnet_026_schema(index_path, config);
+        let mut conn = Connection::open(index_path).expect("index DB should reopen");
+        let tx = conn.transaction().expect("transaction should start");
+        tx.execute_batch(INDEX_026_TO_LATEST_SQL)
+            .expect("mainnet 031 schema should write");
+        for &version in POST_026_INDEX_SCHEMA_VERSIONS {
+            if version == INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG {
+                continue;
+            }
+            insert_schema_migration_now(&tx, version).expect("031 marker should insert");
+        }
+        tx.execute(
+            "DELETE FROM cycles_billing_config
+             WHERE key IN ('top_up_enabled', 'top_up_launcher_principal', 'top_up_threshold_cycles')",
+            params![],
+        )
+        .expect("031 config should not contain top-up rows");
+        tx.commit().expect("mainnet 031 schema should commit");
+    }
+
     #[test]
     fn old_upgrade_migrations_require_config() {
         let dir = tempdir().expect("tempdir should create");
@@ -7709,6 +7843,43 @@ mod tests {
             .expect("market table count should load");
         assert_eq!(marker, "database_index:031_drop_app_balance");
         assert_eq!(market_tables, 4);
+    }
+
+    #[test]
+    fn upgrade_migrations_apply_mainnet_031_top_up_config_from_arg() {
+        let dir = tempdir().expect("tempdir should create");
+        let index_path = dir.path().join("index.sqlite3");
+        let old_config = test_cycles_billing_config();
+        write_mainnet_031_schema(&index_path, &old_config);
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
+        let mut next_config = old_config.clone();
+        next_config.top_up = CyclesTopUpConfig {
+            enabled: false,
+            launcher_principal: "ryjl3-tyaaa-aaaaa-aaaba-cai".to_string(),
+            threshold_cycles: 123_456_789,
+        };
+
+        service
+            .run_index_migrations_for_upgrade(Some(next_config.clone()))
+            .expect("mainnet 031 index should use top-up config arg");
+
+        assert_eq!(
+            service
+                .cycles_billing_config()
+                .expect("config should load")
+                .top_up,
+            next_config.top_up
+        );
+        let conn = Connection::open(&index_path).expect("index DB should reopen");
+        let marker: String = conn
+            .query_row(
+                "SELECT version FROM schema_migrations
+                 WHERE version = 'database_index:032_cycles_top_up_config'",
+                params![],
+                |row| row.get(0),
+            )
+            .expect("top-up marker should exist");
+        assert_eq!(marker, "database_index:032_cycles_top_up_config");
     }
 
     #[test]

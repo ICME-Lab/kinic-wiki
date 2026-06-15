@@ -21,6 +21,7 @@ export const expectedTypes = {
     fields: {
       cycles_per_kinic: "nat64",
       min_update_cycles: "nat64",
+      top_up: "CyclesTopUpConfig",
       kinic_ledger_canister_id: "text",
       billing_authority_id: "text"
     }
@@ -29,12 +30,47 @@ export const expectedTypes = {
     kind: "record",
     fields: {
       cycles_per_kinic: "nat64",
-      min_update_cycles: "nat64"
+      min_update_cycles: "nat64",
+      top_up: "CyclesTopUpConfig"
     }
+  },
+  CyclesTopUpConfig: {
+    kind: "record",
+    fields: { enabled: "bool", threshold_cycles: "nat", launcher_principal: "text" }
   },
   CyclesPurchaseResult: {
     kind: "record",
     fields: { block_index: "nat64", amount_cycles: "nat64", balance_cycles: "nat64" }
+  },
+  CyclesTopUpLauncherError: {
+    kind: "variant",
+    cases: { Unauthorized: "null", TooSoon: "null", LauncherBalanceTooLow: "null", TopUpFailed: "text" }
+  },
+  CyclesTopUpLauncherResult: {
+    kind: "variant",
+    cases: { Ok: "null", Err: "CyclesTopUpLauncherError" }
+  },
+  CyclesTopUpCheckResult: {
+    kind: "record",
+    fields: {
+      balance_cycles_before: "nat",
+      balance_cycles_after: "opt nat",
+      threshold_cycles: "nat",
+      called_launcher: "bool",
+      status: "CyclesTopUpCheckStatus",
+      launcher_result: "opt CyclesTopUpLauncherResult"
+    }
+  },
+  CyclesTopUpCheckStatus: {
+    kind: "variant",
+    cases: {
+      SkippedDisabled: "null",
+      CallErr: "null",
+      LauncherErr: "null",
+      SkippedInProgress: "null",
+      LauncherOk: "null",
+      SkippedAboveThreshold: "null"
+    }
   },
   DatabaseCyclesPendingPurchase: {
     kind: "record",
@@ -474,6 +510,7 @@ export const expectedTypes = {
     fields: { incoming_links: "vec LinkEdge", node: "Node", outgoing_links: "vec LinkEdge" }
   },
   ResultChildren: { kind: "variant", cases: { Ok: "vec ChildNode", Err: "text" } },
+  ResultCyclesTopUpCheck: { kind: "variant", cases: { Ok: "CyclesTopUpCheckResult", Err: "text" } },
   ResultCyclesBillingConfig: { kind: "variant", cases: { Ok: "CyclesBillingConfig", Err: "text" } },
   ResultCyclesPurchase: { kind: "variant", cases: { Ok: "CyclesPurchaseResult", Err: "text" } },
   ResultCyclesEntries: { kind: "variant", cases: { Ok: "DatabaseCycleEntryPage", Err: "text" } },
@@ -589,43 +626,45 @@ export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
   RenameDatabaseRequest: "CreateDatabaseResult",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
-  ResultChildren: "Result_12",
-  ResultCyclesBillingConfig: "Result_9",
-  ResultCyclesPurchase: "Result_29",
-  ResultCyclesEntries: "Result_13",
-  ResultCyclesPendingPurchases: "Result_14",
-  ResultMarketEntitlementPage: "Result_21",
-  ResultMarketListing: "Result_19",
-  ResultMarketListingDetail: "Result_20",
-  ResultMarketListings: "Result_22",
-  ResultMarketListingPage: "Result_23",
-  ResultMarketOrder: "Result_26",
-  ResultMarketOrderPage: "Result_24",
-  ResultMarketPurchasePreview: "Result_25",
-  ResultCreateDatabase: "Result_4",
-  ResultDatabases: "Result_16",
-  ResultDeleteNode: "Result_5",
-  ResultMkdirNode: "Result_27",
-  ResultMoveNode: "Result_28",
-  ResultMembers: "Result_15",
-  ResultNat64: "Result_18",
+  ResultCyclesTopUpCheck: "Result_3",
+  ResultOpsAnswerSessionCheck: "Result_4",
+  ResultCreateDatabase: "Result_5",
+  ResultDeleteNode: "Result_6",
+  ResultCyclesBillingConfig: "Result_10",
+  ResultLinks: "Result_12",
+  ResultChildren: "Result_13",
+  ResultCyclesEntries: "Result_14",
+  ResultCyclesPendingPurchases: "Result_15",
+  ResultMembers: "Result_16",
+  ResultDatabases: "Result_17",
+  ResultNat64: "Result_19",
+  ResultMarketListing: "Result_20",
+  ResultMarketListingDetail: "Result_21",
+  ResultMarketEntitlementPage: "Result_22",
+  ResultMarketListings: "Result_23",
+  ResultMarketListingPage: "Result_24",
+  ResultMarketOrderPage: "Result_25",
+  ResultMarketPurchasePreview: "Result_26",
+  ResultMarketOrder: "Result_27",
+  ResultMkdirNode: "Result_28",
+  ResultMoveNode: "Result_29",
+  ResultCyclesPurchase: "Result_30",
+  ResultQueryContext: "Result_31",
+  ResultNode: "Result_34",
+  ResultNodeContext: "Result_35",
+  ResultSearch: "Result_36",
+  ResultStorageBillingBatch: "Result_37",
+  ResultSourceEvidence: "Result_38",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultLinks: "Result_11",
-  ResultNode: "Result_33",
-  ResultNodeContext: "Result_34",
-  ResultQueryContext: "Result_30",
-  ResultSearch: "Result_35",
-  ResultStorageBillingBatch: "Result_36",
-  ResultSourceEvidence: "Result_37",
-  ResultOpsAnswerSessionCheck: "Result_3",
-  ResultWriteSourceForGeneration: "Result_39"
+  ResultWriteSourceForGeneration: "Result_40"
 };
 
 export const expectedMethods = {
   authorize_ops_answer_session: { input: ["OpsAnswerSessionRequest"], output: "ResultUnit", mode: "update" },
   authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   canister_health: { input: [], output: "CanisterHealth", mode: "query" },
+  check_cycles_top_up: { input: [], output: "ResultCyclesTopUpCheck", mode: "update" },
   check_database_write_cycles: { input: ["text"], output: "ResultUnit", mode: "query" },
   check_ops_answer_session: { input: ["OpsAnswerSessionCheckRequest"], output: "ResultOpsAnswerSessionCheck", mode: "query" },
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },

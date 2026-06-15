@@ -30,8 +30,13 @@ const expectedTypes = {
       kinic_ledger_canister_id: "text",
       billing_authority_id: "text",
       cycles_per_kinic: "nat64",
-      min_update_cycles: "nat64"
+      min_update_cycles: "nat64",
+      top_up: "CyclesTopUpConfig"
     }
+  },
+  CyclesTopUpConfig: {
+    kind: "record",
+    fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
@@ -188,12 +193,12 @@ function normalizeDidShape(value) {
 function normalizeDidResult(value) {
   const normalized = normalizeDidShape(value).replace(/,$/, "");
   if (normalized === "Result_1") return "ResultUnit";
-  if (normalized === "Result_9") return "ResultCyclesBillingConfig";
-  if (normalized === "Result_4") return "ResultCreateDatabase";
-  if (normalized === "Result_16") return "ResultDatabases";
-  if (normalized === "Result_27") return "ResultMkdirNode";
-  if (normalized === "Result_33") return "ResultNode";
-  if (normalized === "Result_39") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_10") return "ResultCyclesBillingConfig";
+  if (normalized === "Result_5") return "ResultCreateDatabase";
+  if (normalized === "Result_17") return "ResultDatabases";
+  if (normalized === "Result_28") return "ResultMkdirNode";
+  if (normalized === "Result_34") return "ResultNode";
+  if (normalized === "Result_40") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }
@@ -204,6 +209,7 @@ function normalizeActorShape(value) {
     .replace(/^idl\./, "")
     .replace(/^Text$/, "text")
     .replace(/^Int64$/, "int64")
+    .replace(/^Nat$/, "nat")
     .replace(/^Nat64$/, "nat64")
     .replace(/^Bool$/, "bool")
     .replace(/^Null$/, "null")
