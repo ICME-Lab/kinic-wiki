@@ -1,7 +1,11 @@
 allowBuilds:
   esbuild: true
   esbuild@0.27.3: true
+  esbuild@0.28.1: true
   sharp: true
   sharp@0.34.5: true
   workerd: true
   workerd@1.20260507.1: true
+overrides:
+  esbuild: 0.28.1
+  ws: 8.20.1
