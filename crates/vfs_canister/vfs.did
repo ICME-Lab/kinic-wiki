@@ -521,9 +521,10 @@ type Result_35 = variant { Ok : opt NodeContext; Err : text };
 type Result_36 = variant { Ok : vec SearchNodeHit; Err : text };
 type Result_37 = variant { Ok : StorageBillingBatchResult; Err : text };
 type Result_38 = variant { Ok : SourceEvidence; Err : text };
-type Result_39 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_39 = variant { Ok : WikiMetrics; Err : text };
 type Result_4 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
-type Result_40 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_40 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_41 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_5 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_6 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_7 = variant { Ok : EditNodeResult; Err : text };
@@ -589,6 +590,18 @@ type UrlIngestTriggerSessionCheckRequest = record {
   request_path : text;
   session_nonce : text;
   database_id : text;
+};
+type WikiMetrics = record {
+  charged_kinic_30d_e8s : nat64;
+  users_active_30d : nat64;
+  databases_new_30d : nat64;
+  users_total : nat64;
+  last_activity_at_ms : opt int64;
+  databases_total : nat64;
+  charged_kinic_total_e8s : nat64;
+  paid_users_total : nat64;
+  databases_active_30d : nat64;
+  users_new_30d : nat64;
 };
 type UrlIngestTriggerSessionRequest = record {
   session_nonce : text;
@@ -692,6 +705,7 @@ service : (CyclesBillingConfig) -> {
   outgoing_links : (OutgoingLinksRequest) -> (Result_12) query;
   purchase_database_cycles : (DatabaseCyclesPurchaseRequest) -> (Result_30);
   query_context : (QueryContextRequest) -> (Result_31) query;
+  query_database_sql_json : (text, text, nat32) -> (Result_32) query;
   query_index_sql_json : (text, nat32) -> (Result_32) query;
   read_database_archive_chunk : (text, nat64, nat32) -> (Result_33) query;
   read_node : (text, text) -> (Result_34) query;
@@ -706,10 +720,11 @@ service : (CyclesBillingConfig) -> {
   source_evidence : (SourceEvidenceRequest) -> (Result_38) query;
   status : (text) -> (Status) query;
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
+  wiki_metrics : () -> (Result_39) query;
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_39);
+  write_nodes : (WriteNodesRequest) -> (Result_40);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_40,
+      Result_41,
     );
 }

@@ -18,15 +18,15 @@ use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge, MarketCategoryGraphNode,
-    MarketListingPreview, MarketListingVerifiedStats, MarketPreviewExcerpt, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceEvidence, SourceEvidenceRef,
-    SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest, WriteNodeResult,
-    WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
+    MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
+    MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
+    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
+    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 use crate::{
@@ -236,6 +236,28 @@ impl FsStore {
                 return Err(format!("path not found: {path}"));
             }
             build_child_nodes(&path, rows)
+        })
+    }
+
+    pub fn query_sql_json(&self, sql: &str, limit: u32) -> Result<IndexSqlJsonQueryResult, String> {
+        validate_sql_json_select(sql, "database SQL")?;
+        let limit = sql_json_page_limit(limit);
+        self.read_conn(|conn| {
+            let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
+            let rows = crate::sqlite::query_map_limit(&mut stmt, params![], limit as usize, |row| {
+                let value: Option<String> = crate::sqlite::row_get(row, 0)?;
+                value.ok_or_else(crate::sqlite::invalid_query)
+            })
+            .map_err(|error| {
+                format!(
+                    "database SQL must return one non-null TEXT JSON column as the first column: {error}"
+                )
+            })?;
+            Ok(IndexSqlJsonQueryResult {
+                row_count: rows.len() as u32,
+                rows,
+                limit,
+            })
         })
     }
 
@@ -2394,4 +2416,47 @@ fn glob_type_matches(node_type: &GlobNodeType, entry_kind: &NodeEntryKind) -> bo
             matches!(entry_kind, NodeEntryKind::Directory | NodeEntryKind::Folder)
         }
     }
+}
+
+pub fn validate_sql_json_select(sql: &str, label: &str) -> Result<(), String> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{label} must not be empty"));
+    }
+    if trimmed.contains(';') {
+        return Err(format!("{label} must be a single SELECT statement"));
+    }
+    let first = trimmed
+        .split(|character: char| !is_sql_identifier_character(character))
+        .find(|token| !token.is_empty())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if first != "select" {
+        return Err(format!("{label} must start with SELECT"));
+    }
+    let blocked = [
+        "pragma", "attach", "detach", "insert", "update", "delete", "create", "drop", "alter",
+        "replace", "vacuum", "reindex", "analyze",
+    ];
+    for token in sql_identifier_tokens(trimmed) {
+        if blocked.contains(&token.as_str()) {
+            return Err(format!("{label} token is not allowed: {token}"));
+        }
+    }
+    Ok(())
+}
+
+fn sql_json_page_limit(limit: u32) -> u32 {
+    limit.clamp(1, QUERY_RESULT_LIMIT_MAX)
+}
+
+fn sql_identifier_tokens(sql: &str) -> Vec<String> {
+    sql.split(|character: char| !is_sql_identifier_character(character))
+        .filter(|token| !token.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn is_sql_identifier_character(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric()
 }

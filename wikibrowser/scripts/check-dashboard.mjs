@@ -8,6 +8,7 @@ const createDialog = readProjectFile("../app/create-database-dialog.tsx");
 const appSession = readProjectFile("../app/app-session-provider.tsx");
 const adminShell = readProjectFile("../components/admin-shell.tsx");
 const profile = readProjectFile("../app/profile/profile-client.tsx");
+const metrics = readProjectFile("../app/metrics/metrics-client.tsx");
 
 assert.match(dashboardClient, /const canViewCyclesHistory = \(database\?\.role === "writer" \|\| database\?\.role === "owner"\) && isActiveDatabase/);
 assert.match(dashboardUi, /canViewCyclesHistory/);
@@ -29,10 +30,17 @@ assert.match(appSession, /getConnectedWalletKinicBalance/);
 assertNoAppBalanceSurface(appSession);
 assert.doesNotMatch(appSession, /kinicBalance|refreshKinicBalance/);
 assertNoAppBalanceSurface(adminShell);
+assert.match(adminShell, /href: "\/metrics", label: "Metrics"/);
+assert.match(adminShell, /pathname === "\/metrics"/);
 assert.match(profile, /Marketplace access/);
 assert.match(profile, /Purchased databases/);
 assert.match(profile, /Ledger KINIC balance/);
 assertNoAppBalanceSurface(profile);
 assert.doesNotMatch(profile, /Deposit|Withdraw/);
+
+assert.match(metrics, /wikiMetrics/);
+assert.match(metrics, /Public usage and KINIC charge totals/);
+assert.doesNotMatch(metrics, /<input|<textarea|contentEditable/);
+assert.doesNotMatch(metrics, /queryIndexSqlJson|buildWikiMetricsSql|useAppSession/);
 
 console.log("Dashboard direct funding checks passed");

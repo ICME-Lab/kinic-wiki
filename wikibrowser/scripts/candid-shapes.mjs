@@ -492,6 +492,25 @@ export const expectedTypes = {
   GraphLinksRequest: { kind: "record", fields: { limit: "nat32", database_id: "text", prefix: "text" } },
   GraphNeighborhoodRequest: { kind: "record", fields: { center_path: "text", limit: "nat32", database_id: "text", depth: "nat32" } },
   IncomingLinksRequest: { kind: "record", fields: { path: "text", limit: "nat32", database_id: "text" } },
+  IndexSqlJsonQueryResult: {
+    kind: "record",
+    fields: { rows: "vec text", row_count: "nat32", limit: "nat32" }
+  },
+  WikiMetrics: {
+    kind: "record",
+    fields: {
+      users_total: "nat64",
+      users_active_30d: "nat64",
+      users_new_30d: "nat64",
+      databases_total: "nat64",
+      databases_active_30d: "nat64",
+      databases_new_30d: "nat64",
+      paid_users_total: "nat64",
+      charged_kinic_total_e8s: "nat64",
+      charged_kinic_30d_e8s: "nat64",
+      last_activity_at_ms: "opt int64"
+    }
+  },
   NodeContextRequest: { kind: "record", fields: { link_limit: "nat32", path: "text", database_id: "text" } },
   OutgoingLinksRequest: { kind: "record", fields: { path: "text", limit: "nat32", database_id: "text" } },
   LinkEdge: {
@@ -536,6 +555,8 @@ export const expectedTypes = {
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
+  ResultIndexSqlJsonQuery: { kind: "variant", cases: { Ok: "IndexSqlJsonQueryResult", Err: "text" } },
+  ResultWikiMetrics: { kind: "variant", cases: { Ok: "WikiMetrics", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultStorageBillingBatch: {
     kind: "variant",
@@ -650,6 +671,7 @@ export const didTypeAliases = {
   ResultMoveNode: "Result_29",
   ResultCyclesPurchase: "Result_30",
   ResultQueryContext: "Result_31",
+  ResultIndexSqlJsonQuery: "Result_32",
   ResultNode: "Result_34",
   ResultNodeContext: "Result_35",
   ResultSearch: "Result_36",
@@ -657,7 +679,8 @@ export const didTypeAliases = {
   ResultSourceEvidence: "Result_38",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteSourceForGeneration: "Result_40"
+  ResultWriteSourceForGeneration: "Result_41",
+  ResultWikiMetrics: "Result_39"
 };
 
 export const expectedMethods = {
@@ -704,6 +727,9 @@ export const expectedMethods = {
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
   query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
+  query_database_sql_json: { input: ["text", "text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
+  query_index_sql_json: { input: ["text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
+  wiki_metrics: { input: [], output: "ResultWikiMetrics", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },

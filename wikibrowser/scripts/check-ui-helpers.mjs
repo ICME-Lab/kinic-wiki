@@ -263,6 +263,13 @@ assert.equal(readIdentityMode(true, false, false, true), "anonymous");
 assert.equal(readIdentityMode(true, false, false, false), "user");
 assert.equal(readIdentityMode(false, false, false, true), "anonymous");
 assert.equal(classifyQueryInput("https://example.com/a", "/Wiki", "user").kind, "queue_url");
+assert.deepEqual(classifyQueryInput("sql: SELECT json_object('url', 'https://example.com/a')", "/Wiki", "anonymous"), {
+  kind: "sql",
+  targetPath: "current database",
+  sideEffect: "none",
+  identityMode: "anonymous",
+  sql: "SELECT json_object('url', 'https://example.com/a')"
+});
 assert.deepEqual(classifyQueryInput("topic", "/Wiki", "user"), {
   kind: "search",
   targetPath: "/Wiki",

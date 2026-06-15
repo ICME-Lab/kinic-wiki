@@ -44,14 +44,14 @@ use super::{
     market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
     market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
     multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
-    purchase_database_cycles, query_context, query_index_sql_json, read_database_archive_chunk,
-    read_node, read_node_context, rename_database, revoke_database_access, search_node_paths,
-    search_nodes, set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
-    set_next_cycles_top_up_launcher_result_for_test,
+    purchase_database_cycles, query_context, query_database_sql_json, query_index_sql_json,
+    read_database_archive_chunk, read_node, read_node_context, rename_database,
+    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
+    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
     set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
     status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    write_database_restore_chunk, write_node, write_nodes,
+    wiki_metrics, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -291,6 +291,84 @@ fn controller_can_query_index_sql_json() {
         result.rows,
         vec![r#"{"cycles_purchase_cycles":2345000000}"#.to_string()]
     );
+}
+
+#[test]
+fn non_controller_can_query_public_wiki_metrics() {
+    install_empty_test_service();
+    let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
+        .expect("valid non-controller principal");
+    set_test_caller_principal_for_test(non_controller);
+
+    let metrics = wiki_metrics().expect("public metrics should not require controller");
+
+    assert_eq!(metrics.users_total, 0);
+    assert_eq!(metrics.databases_total, 0);
+}
+
+#[test]
+fn reader_can_query_database_sql_json_without_controller_role() {
+    install_test_service();
+    let reader =
+        Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("valid reader principal");
+    SERVICE.with(|slot| {
+        let service = slot.borrow();
+        let service = service.as_ref().expect("service should be installed");
+        service
+            .write_node(
+                "2vxsx-fae",
+                WriteNodeRequest {
+                    database_id: "default".to_string(),
+                    path: "/Wiki/sql.md".to_string(),
+                    kind: NodeKind::File,
+                    content: "database sql".to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                1_700_000_000_002,
+            )
+            .expect("node should write");
+        service
+            .grant_database_access(
+                "default",
+                "2vxsx-fae",
+                &reader.to_text(),
+                DatabaseRole::Reader,
+                1_700_000_000_003,
+            )
+            .expect("reader grant should succeed");
+    });
+    set_test_caller_principal_for_test(reader);
+
+    let result = query_database_sql_json(
+        "default".to_string(),
+        "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/sql.md' LIMIT 1".to_string(),
+        10,
+    )
+    .expect("reader should query database SQL");
+
+    assert_eq!(result.row_count, 1);
+    assert_eq!(
+        result.rows,
+        vec![r#"{"path":"/Wiki/sql.md","content":"database sql"}"#]
+    );
+}
+
+#[test]
+fn database_sql_json_rejects_non_readers_at_entrypoint() {
+    install_test_service();
+    let non_reader =
+        Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai").expect("valid non-reader principal");
+    set_test_caller_principal_for_test(non_reader);
+
+    let error = query_database_sql_json(
+        "default".to_string(),
+        "SELECT json_object('ok', 1) LIMIT 1".to_string(),
+        10,
+    )
+    .expect_err("non-reader should reject");
+
+    assert!(error.contains("principal has no access"));
 }
 
 #[test]

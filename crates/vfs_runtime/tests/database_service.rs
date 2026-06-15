@@ -4577,6 +4577,243 @@ fn market_purchase_begin_records_listing_payout_for_empty_ledger_recipient() {
 }
 
 #[test]
+fn database_sql_json_returns_rows_for_readers_and_public_readers() {
+    let service = service();
+    service
+        .create_database("sql-db", "owner", 1)
+        .expect("database should create");
+    cycle_database(&service, "sql-db", "owner", 1_000_000, 1, 2);
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "sql-db".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("node should write");
+    service
+        .grant_database_access("sql-db", "owner", "reader", DatabaseRole::Reader, 4)
+        .expect("reader grant should succeed");
+    service
+        .grant_database_access("sql-db", "owner", "2vxsx-fae", DatabaseRole::Reader, 5)
+        .expect("public reader grant should succeed");
+
+    let reader_result = service
+        .query_database_sql_json(
+            "sql-db",
+            "reader",
+            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            10,
+        )
+        .expect("reader should query database SQL");
+    let public_result = service
+        .query_database_sql_json(
+            "sql-db",
+            "2vxsx-fae",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            10,
+        )
+        .expect("public reader should query database SQL");
+
+    assert_eq!(reader_result.row_count, 1);
+    assert_eq!(
+        reader_result.rows,
+        vec![r#"{"path":"/Wiki/a.md","content":"alpha"}"#]
+    );
+    assert_eq!(public_result.rows, vec![r#"{"path":"/Wiki/a.md"}"#]);
+}
+
+#[test]
+fn database_sql_json_rejects_non_readers() {
+    let service = service();
+    service
+        .create_database("private-sql-db", "owner", 1)
+        .expect("database should create");
+
+    let error = service
+        .query_database_sql_json(
+            "private-sql-db",
+            "missing",
+            "SELECT json_object('ok', 1) LIMIT 1",
+            10,
+        )
+        .expect_err("non-reader should reject");
+
+    assert!(error.contains("principal has no access"));
+}
+
+#[test]
+fn database_sql_json_rejects_mutating_and_multi_statement_sql() {
+    let service = service();
+    service
+        .create_database("guarded-sql-db", "owner", 1)
+        .expect("database should create");
+
+    for sql in [
+        "UPDATE fs_nodes SET content = ''",
+        "DELETE FROM fs_nodes",
+        "INSERT INTO fs_nodes (path) VALUES ('/Wiki/x.md')",
+        "CREATE TABLE x (id INTEGER)",
+        "DROP TABLE fs_nodes",
+        "PRAGMA table_info(fs_nodes)",
+        "ATTACH DATABASE 'x' AS x",
+        "SELECT json_object('ok', 1); SELECT json_object('ok', 2)",
+    ] {
+        let error = service
+            .query_database_sql_json("guarded-sql-db", "owner", sql, 10)
+            .expect_err("SQL should reject");
+        assert!(
+            error.contains("database SQL must")
+                || error.contains("database SQL token is not allowed"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_sql_json_clamps_limit_and_stops_reading_at_limit() {
+    let service = service();
+    service
+        .create_database("limited-sql-db", "owner", 1)
+        .expect("database should create");
+
+    let result = service
+        .query_database_sql_json(
+            "limited-sql-db",
+            "owner",
+            "SELECT json_object('n', 1) UNION ALL SELECT 2",
+            0,
+        )
+        .expect("second non-text row should not be read");
+
+    assert_eq!(result.limit, 1);
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows, vec![r#"{"n":1}"#.to_string()]);
+}
+
+#[test]
+fn database_sql_json_requires_text_json_first_column() {
+    let service = service();
+    service
+        .create_database("typed-sql-db", "owner", 1)
+        .expect("database should create");
+
+    let error = service
+        .query_database_sql_json("typed-sql-db", "owner", "SELECT 1 LIMIT 1", 10)
+        .expect_err("non-text first column should reject");
+
+    assert!(error.contains("one non-null TEXT JSON column"));
+}
+
+#[test]
+fn wiki_metrics_returns_public_aggregate_counts() {
+    const THIRTY_DAYS_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+    const NOW: i64 = 1_800_000_000_000;
+    let old = NOW - THIRTY_DAYS_MS - 1_000;
+    let recent = NOW - 1_000;
+    let (service, root) = service_with_root();
+    service
+        .create_database("old-db", "old-owner", old)
+        .expect("old database should create");
+    cycle_database(&service, "old-db", "old-owner", 1_000_000, 1, old + 1);
+    service
+        .create_database("fresh-db", "fresh-owner", recent)
+        .expect("fresh database should create");
+    cycle_database(&service, "fresh-db", "payer", 2_000_000, 2, recent + 1);
+    service
+        .create_database("anonymous-db", "2vxsx-fae", recent + 10)
+        .expect("anonymous database should create");
+    cycle_database(
+        &service,
+        "anonymous-db",
+        "2vxsx-fae",
+        3_000_000,
+        3,
+        recent + 11,
+    );
+    let listing = service
+        .market_create_listing(
+            "fresh-owner",
+            market_listing_request("fresh-db", 250),
+            recent + 20,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "aaaaa-aa", 100_000, recent + 21),
+            recent + 21,
+        )
+        .expect("market purchase should begin");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            4,
+        )
+        .expect("market purchase ledger transfer should complete");
+    service
+        .apply_market_purchase(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            recent + 30,
+        )
+        .expect("market purchase should apply");
+    Connection::open(root.join("index.sqlite3"))
+        .expect("index should open")
+        .execute(
+            "INSERT INTO database_members (database_id, principal, role, created_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params!["fresh-db", "", "reader", recent + 40],
+        )
+        .expect("empty principal fixture should insert");
+
+    let metrics = service.wiki_metrics(NOW).expect("wiki metrics should load");
+
+    assert_eq!(metrics.users_total, 6);
+    assert_eq!(metrics.users_active_30d, 5);
+    assert_eq!(metrics.users_new_30d, 4);
+    assert_eq!(metrics.databases_total, 3);
+    assert_eq!(metrics.databases_active_30d, 2);
+    assert_eq!(metrics.databases_new_30d, 2);
+    assert_eq!(metrics.paid_users_total, 3);
+    assert_eq!(metrics.charged_kinic_total_e8s, 6_000_250);
+    assert_eq!(metrics.charged_kinic_30d_e8s, 5_000_250);
+    assert_eq!(metrics.last_activity_at_ms, Some(recent + 40));
+}
+
+#[test]
+fn wiki_metrics_returns_zero_counts_without_activity() {
+    let service = service();
+
+    let metrics = service
+        .wiki_metrics(1_800_000_000_000)
+        .expect("wiki metrics should load");
+
+    assert_eq!(metrics.users_total, 0);
+    assert_eq!(metrics.users_active_30d, 0);
+    assert_eq!(metrics.users_new_30d, 0);
+    assert_eq!(metrics.databases_total, 0);
+    assert_eq!(metrics.databases_active_30d, 0);
+    assert_eq!(metrics.databases_new_30d, 0);
+    assert_eq!(metrics.paid_users_total, 0);
+    assert_eq!(metrics.charged_kinic_total_e8s, 0);
+    assert_eq!(metrics.charged_kinic_30d_e8s, 0);
+    assert_eq!(metrics.last_activity_at_ms, None);
+}
+
+#[test]
 fn market_purchase_rejects_ledger_recipient_mismatch() {
     let service = service();
     service

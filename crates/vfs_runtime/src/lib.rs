@@ -13,12 +13,12 @@ use std::path::{Path, PathBuf};
 #[cfg(any(test, debug_assertions))]
 use std::sync::{LazyLock, Mutex};
 
-use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
+use crate::sqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use candid::Principal;
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{Db, DbError, DbHandle};
 use sha2::{Digest, Sha256};
-use vfs_store::FsStore;
+use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
     CyclesTopUpConfig, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
@@ -37,8 +37,8 @@ use vfs_types::{
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
     Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
+    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
     WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
@@ -85,6 +85,7 @@ const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
     "database_index:030_direct_market_purchase";
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
+const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -298,6 +299,23 @@ impl VfsService {
                 limit,
             })
         })
+    }
+
+    pub fn query_database_sql_json(
+        &self,
+        database_id: &str,
+        caller: &str,
+        sql: &str,
+        limit: u32,
+    ) -> Result<IndexSqlJsonQueryResult, String> {
+        self.with_market_read_database_store(database_id, caller, |store| {
+            store.query_sql_json(sql, limit)
+        })
+    }
+
+    pub fn wiki_metrics(&self, now_ms: i64) -> Result<WikiMetrics, String> {
+        let cutoff_30d_ms = now_ms.saturating_sub(WIKI_METRICS_WINDOW_MS).max(0);
+        self.read_index(|conn| load_wiki_metrics(conn, cutoff_30d_ms))
     }
 
     pub fn settle_database_storage_charges_batch(
@@ -4410,42 +4428,104 @@ fn load_cycles_billing_config_bool(conn: &Connection, key: &str) -> Result<bool,
 }
 
 fn validate_index_select_sql(sql: &str) -> Result<(), String> {
-    let trimmed = sql.trim();
-    if trimmed.is_empty() {
-        return Err("index SQL must not be empty".to_string());
-    }
-    if trimmed.contains(';') {
-        return Err("index SQL must be a single SELECT statement".to_string());
-    }
-    let first = trimmed
-        .split(|character: char| !is_sql_identifier_character(character))
-        .find(|token| !token.is_empty())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if first != "select" {
-        return Err("index SQL must start with SELECT".to_string());
-    }
-    let blocked = [
-        "pragma", "attach", "detach", "insert", "update", "delete", "create", "drop", "alter",
-        "replace", "vacuum", "reindex", "analyze",
-    ];
-    for token in sql_identifier_tokens(trimmed) {
-        if blocked.contains(&token.as_str()) {
-            return Err(format!("index SQL token is not allowed: {token}"));
-        }
-    }
-    Ok(())
+    validate_sql_json_select(sql, "index SQL")
 }
 
-fn sql_identifier_tokens(sql: &str) -> Vec<String> {
-    sql.split(|character: char| !is_sql_identifier_character(character))
-        .filter(|token| !token.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect()
+fn load_wiki_metrics(conn: &Connection, cutoff_30d_ms: i64) -> Result<WikiMetrics, String> {
+    let metrics = conn
+        .query_row(
+            "
+            WITH
+            principal_events AS (
+              SELECT principal, created_at_ms AS first_at, created_at_ms AS active_at FROM database_members
+              UNION ALL SELECT caller AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM database_cycle_ledger
+              UNION ALL SELECT buyer_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders
+              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders
+              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders
+              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, updated_at_ms AS active_at FROM market_listings
+              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, updated_at_ms AS active_at FROM market_listings
+              UNION ALL SELECT buyer_principal AS principal, purchased_at_ms AS first_at, purchased_at_ms AS active_at FROM market_entitlements
+              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM url_ingest_trigger_sessions
+              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM ops_answer_sessions
+              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM source_run_sessions
+            ),
+            known_principals AS (
+              SELECT principal, MIN(first_at) AS first_at, MAX(active_at) AS active_at
+              FROM principal_events
+              WHERE principal <> ?2 AND principal <> ''
+              GROUP BY principal
+            ),
+            database_events AS (
+              SELECT database_id, created_at_ms AS active_at FROM databases WHERE status <> 'deleted'
+              UNION ALL SELECT database_id, updated_at_ms AS active_at FROM databases WHERE status <> 'deleted'
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM database_cycle_ledger
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM market_orders
+              UNION ALL SELECT database_id, purchased_at_ms AS active_at FROM market_entitlements
+              UNION ALL SELECT database_id, updated_at_ms AS active_at FROM market_listings
+              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM url_ingest_trigger_sessions
+              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM ops_answer_sessions
+              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM source_run_sessions
+            ),
+            paid_principals AS (
+              SELECT caller AS principal FROM database_cycle_ledger
+              WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL
+              UNION ALL SELECT buyer_principal AS principal FROM market_orders
+            ),
+            all_activity AS (
+              SELECT first_at AS active_at FROM principal_events
+              UNION ALL SELECT active_at FROM principal_events
+              UNION ALL SELECT active_at FROM database_events
+            )
+            SELECT
+              (SELECT COUNT(*) FROM known_principals),
+              (SELECT COUNT(*) FROM known_principals WHERE active_at >= ?1),
+              (SELECT COUNT(*) FROM known_principals WHERE first_at >= ?1),
+              (SELECT COUNT(*) FROM databases WHERE status <> 'deleted'),
+              (
+                SELECT COUNT(DISTINCT database_id)
+                FROM database_events
+                WHERE active_at >= ?1
+                  AND database_id IN (SELECT database_id FROM databases WHERE status <> 'deleted')
+              ),
+              (SELECT COUNT(*) FROM databases WHERE status <> 'deleted' AND created_at_ms >= ?1),
+              (
+                SELECT COUNT(DISTINCT principal)
+                FROM paid_principals
+                WHERE principal <> ?2 AND principal <> ''
+              ),
+              (
+                (SELECT COALESCE(SUM(payment_amount_e8s), 0) FROM database_cycle_ledger WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL) +
+                (SELECT COALESCE(SUM(price_e8s), 0) FROM market_orders)
+              ),
+              (
+                (SELECT COALESCE(SUM(payment_amount_e8s), 0) FROM database_cycle_ledger WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL AND created_at_ms >= ?1) +
+                (SELECT COALESCE(SUM(price_e8s), 0) FROM market_orders WHERE created_at_ms >= ?1)
+              ),
+              (SELECT MAX(active_at) FROM all_activity)
+            ",
+            params![cutoff_30d_ms, ANONYMOUS_PRINCIPAL],
+            |row| {
+                Ok(WikiMetrics {
+                    users_total: metric_u64(row, 0)?,
+                    users_active_30d: metric_u64(row, 1)?,
+                    users_new_30d: metric_u64(row, 2)?,
+                    databases_total: metric_u64(row, 3)?,
+                    databases_active_30d: metric_u64(row, 4)?,
+                    databases_new_30d: metric_u64(row, 5)?,
+                    paid_users_total: metric_u64(row, 6)?,
+                    charged_kinic_total_e8s: metric_u64(row, 7)?,
+                    charged_kinic_30d_e8s: metric_u64(row, 8)?,
+                    last_activity_at_ms: crate::sqlite::row_get(row, 9)?,
+                })
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(metrics)
 }
 
-fn is_sql_identifier_character(character: char) -> bool {
-    character.is_ascii_alphanumeric() || character == '_'
+fn metric_u64(row: &Row<'_>, index: usize) -> crate::sqlite::Result<u64> {
+    let value: i64 = crate::sqlite::row_get(row, index)?;
+    u64::try_from(value).map_err(|_| crate::sqlite::integral_value_out_of_range(index, value))
 }
 
 fn amount_to_i64(amount: u64) -> Result<i64, String> {

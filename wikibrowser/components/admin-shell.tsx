@@ -7,12 +7,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
-import { BookOpen, LayoutDashboard, PanelLeft, PowerOff, Store, UserRound, Wallet } from "lucide-react";
+import { BarChart3, BookOpen, LayoutDashboard, PanelLeft, PowerOff, Store, UserRound, Wallet } from "lucide-react";
 import { useAppSession } from "@/app/app-session-provider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 const ADMIN_NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/metrics", label: "Metrics", icon: BarChart3 },
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/cycles", label: "Cycles", icon: Wallet },
   { href: "/profile", label: "My Profile", icon: UserRound },
@@ -121,11 +122,12 @@ function AdminAccountControls() {
 }
 
 function isAdminShellPath(pathname: string): boolean {
-  return pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/marketplace" || pathname.startsWith("/marketplace/") || pathname === "/cycles" || pathname === "/profile" || pathname === "/cli";
+  return pathname === "/dashboard" || pathname.startsWith("/dashboard/") || pathname === "/metrics" || pathname === "/marketplace" || pathname.startsWith("/marketplace/") || pathname === "/cycles" || pathname === "/profile" || pathname === "/cli";
 }
 
 function isActiveAdminPath(pathname: string, href: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard" || pathname.startsWith("/dashboard/");
+  if (href === "/metrics") return pathname === "/metrics";
   if (href === "/marketplace") return pathname === "/marketplace" || pathname.startsWith("/marketplace/");
   return pathname === href;
 }

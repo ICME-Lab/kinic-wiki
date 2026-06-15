@@ -323,6 +323,19 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ListChildrenRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
   const IncomingLinksRequest = idl.Record({ path: idl.Text, limit: idl.Nat32, database_id: idl.Text });
   const OutgoingLinksRequest = idl.Record({ path: idl.Text, limit: idl.Nat32, database_id: idl.Text });
+  const IndexSqlJsonQueryResult = idl.Record({ rows: idl.Vec(idl.Text), row_count: idl.Nat32, limit: idl.Nat32 });
+  const WikiMetrics = idl.Record({
+    users_total: idl.Nat64,
+    users_active_30d: idl.Nat64,
+    users_new_30d: idl.Nat64,
+    databases_total: idl.Nat64,
+    databases_active_30d: idl.Nat64,
+    databases_new_30d: idl.Nat64,
+    paid_users_total: idl.Nat64,
+    charged_kinic_total_e8s: idl.Nat64,
+    charged_kinic_30d_e8s: idl.Nat64,
+    last_activity_at_ms: idl.Opt(idl.Int64)
+  });
   const GraphLinksRequest = idl.Record({ limit: idl.Nat32, database_id: idl.Text, prefix: idl.Text });
   const GraphNeighborhoodRequest = idl.Record({
     center_path: idl.Text,
@@ -414,6 +427,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
+  const ResultIndexSqlJsonQuery = idl.Variant({ Ok: IndexSqlJsonQueryResult, Err: idl.Text });
+  const ResultWikiMetrics = idl.Variant({ Ok: WikiMetrics, Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultStorageBillingBatch = idl.Variant({ Ok: StorageBillingBatchResult, Err: idl.Text });
   const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
@@ -488,6 +503,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     move_node: idl.Func([MoveNodeRequest], [ResultMoveNode], []),
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
+    query_database_sql_json: idl.Func([idl.Text, idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
+    query_index_sql_json: idl.Func([idl.Text, idl.Nat32], [ResultIndexSqlJsonQuery], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
@@ -499,6 +516,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     settle_database_storage_charges_batch: idl.Func([StorageBillingBatchRequest], [ResultStorageBillingBatch], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     update_cycles_billing_config: idl.Func([CyclesBillingConfigUpdate], [ResultUnit], []),
+    wiki_metrics: idl.Func([], [ResultWikiMetrics], ["query"]),
     purchase_database_cycles: idl.Func([DatabaseCyclesPurchaseRequest], [ResultCyclesPurchase], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [ResultWriteSourceForGeneration], [])

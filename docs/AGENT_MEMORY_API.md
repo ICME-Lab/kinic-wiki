@@ -17,6 +17,7 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 
 - `memory_manifest()`: discover the API version, roots, capability summary, canonical roles, limits, and recommended entrypoint.
 - `query_context(QueryContextRequest)`: read task-scoped wiki context. This is the primary entrypoint for normal agent questions.
+- `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON text rows.
 - `source_evidence(SourceEvidenceRequest)`: read `/Sources` references for one known wiki node path.
 
 These methods are canister query methods. They do not mutate wiki content.
@@ -80,6 +81,39 @@ The request takes `database_id` and `node_path`.
 The response returns the wiki `node_path` and refs with source path, linking path, raw href, and link text.
 
 `source_evidence` returns an error when the wiki node does not exist.
+
+## Database SQL JSON Query
+
+Use `query_database_sql_json` when a caller needs direct structured inspection of the target wiki DB.
+The method uses the same read access as `read_node`: database members, marketplace-entitled readers, and anonymous callers for public-readable DBs can query the DB they can already read.
+
+The method only runs against the specified wiki DB. It cannot read the canister index DB, controller metrics tables, session tables, marketplace orders, or billing tables.
+
+SQL constraints:
+
+- The SQL must be one `SELECT` statement.
+- `;` and mutating/admin tokens such as `PRAGMA`, `ATTACH`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, and `DROP` are rejected.
+- The first selected column must be non-null TEXT JSON.
+- `limit` is clamped to the canister query limit.
+
+Example:
+
+```sql
+SELECT json_object('path', path, 'updated_at', updated_at)
+FROM fs_nodes
+ORDER BY updated_at DESC
+LIMIT 20
+```
+
+The response shape is:
+
+```json
+{
+  "rows": ["{\"path\":\"/Wiki/example.md\",\"updated_at\":1700000000000}"],
+  "row_count": 1,
+  "limit": 20
+}
+```
 
 ## v1 Limits
 
