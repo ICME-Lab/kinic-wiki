@@ -25,8 +25,9 @@ export function AppHeader() {
   const isMarketplace = pathname === "/marketplace" || pathname.startsWith("/marketplace/");
   const isCycles = pathname === "/cycles";
   const isProfile = pathname === "/profile";
+  const isCanisterApi = pathname === "/canister-api";
   const isCli = pathname === "/cli";
-  if (!isDashboard && !isCycles && !isMarketplace && !isProfile && !isCli) return null;
+  if (!isDashboard && !isCycles && !isMarketplace && !isProfile && !isCanisterApi && !isCli) return null;
 
   const connectedWalletLabel = wallet ? `${walletLabel(wallet.provider)} ${shortPrincipal(connectedWalletPrincipal(wallet))}` : null;
   const connectedWalletBalanceLabel = walletBalance ? formatTokenAmountFromE8s(walletBalance) : null;
@@ -62,5 +63,5 @@ function walletLabel(provider: "oisy" | "plug"): string {
 
 function shortPrincipal(value: string): string {
   if (value.length <= 16) return value;
-  return `${value.slice(0, 8)}...${value.slice(-5)}`;
+  return `${value.slice(0, 8)}…${value.slice(-5)}`;
 }
