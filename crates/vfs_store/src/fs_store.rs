@@ -58,6 +58,9 @@ const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
 const MARKETPLACE_PREVIEW_NODE_LIMIT: i64 = 12;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
+const SQL_JSON_SQL_BYTES_MAX: usize = 4_096;
+const SQL_JSON_ROW_BYTES_MAX: usize = 64 * 1024;
+const SQL_JSON_RESPONSE_BYTES_MAX: usize = 256 * 1024;
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
 const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
 const SNAPSHOT_REVISION_CURSOR_REQUIRED: &str = "snapshot_revision is required when cursor is set";
@@ -240,19 +243,36 @@ impl FsStore {
     }
 
     pub fn query_sql_json(&self, sql: &str, limit: u32) -> Result<IndexSqlJsonQueryResult, String> {
-        validate_sql_json_select(sql, "database SQL")?;
+        validate_database_sql_json_select(sql, "database SQL")?;
         let limit = sql_json_page_limit(limit);
         self.read_conn(|conn| {
+            let mut json_valid_stmt = conn
+                .prepare("SELECT json_valid(?1)")
+                .map_err(|error| error.to_string())?;
             let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
-            let rows = crate::sqlite::query_map_limit(&mut stmt, params![], limit as usize, |row| {
-                let value: Option<String> = crate::sqlite::row_get(row, 0)?;
-                value.ok_or_else(crate::sqlite::invalid_query)
-            })
+            let rows = crate::sqlite::query_map_limit(
+                &mut stmt,
+                params![],
+                limit as usize,
+                |row| {
+                    let value: Option<String> = crate::sqlite::row_get(row, 0)?;
+                    let value = value.ok_or_else(crate::sqlite::invalid_query)?;
+                    let valid: i64 = json_valid_stmt.query_row(params![value.as_str()], |row| {
+                        crate::sqlite::row_get(row, 0)
+                    })?;
+                    if valid == 1 {
+                        Ok(value)
+                    } else {
+                        Err(crate::sqlite::invalid_query())
+                    }
+                },
+            )
             .map_err(|error| {
                 format!(
-                    "database SQL must return one non-null TEXT JSON column as the first column: {error}"
+                    "database SQL must return one non-null valid JSON TEXT column as the first column: {error}"
                 )
             })?;
+            validate_sql_json_response_bytes("database SQL", &rows)?;
             Ok(IndexSqlJsonQueryResult {
                 row_count: rows.len() as u32,
                 rows,
@@ -2441,6 +2461,185 @@ pub fn validate_sql_json_select(sql: &str, label: &str) -> Result<(), String> {
     for token in sql_identifier_tokens(trimmed) {
         if blocked.contains(&token.as_str()) {
             return Err(format!("{label} token is not allowed: {token}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_database_sql_json_select(sql: &str, label: &str) -> Result<(), String> {
+    validate_sql_json_select(sql, label)?;
+    let trimmed = sql.trim();
+    if trimmed.len() > SQL_JSON_SQL_BYTES_MAX {
+        return Err(format!(
+            "{label} must be at most {SQL_JSON_SQL_BYTES_MAX} bytes"
+        ));
+    }
+    if trimmed.contains("--") || trimmed.contains("/*") || trimmed.contains("*/") {
+        return Err(format!("{label} comments are not allowed"));
+    }
+    let tokens = sql_identifier_tokens(trimmed);
+    validate_database_sql_tokens(label, &tokens)
+}
+
+fn validate_database_sql_tokens(label: &str, tokens: &[String]) -> Result<(), String> {
+    if tokens
+        .iter()
+        .filter(|token| token.as_str() == "select")
+        .count()
+        != 1
+    {
+        return Err(format!("{label} must contain exactly one SELECT"));
+    }
+    let blocked = [
+        "with",
+        "recursive",
+        "join",
+        "union",
+        "intersect",
+        "except",
+        "group",
+        "having",
+        "over",
+        "offset",
+        "random",
+        "randomblob",
+        "zeroblob",
+        "load_extension",
+        "hex",
+        "group_concat",
+        "json_group_array",
+        "json_group_object",
+        "count",
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "total",
+    ];
+    for token in tokens {
+        if blocked.contains(&token.as_str()) {
+            return Err(format!("{label} token is not allowed: {token}"));
+        }
+    }
+    let table = validate_database_sql_from_clause(label, tokens)?;
+    validate_database_sql_order_by(label, table, tokens)?;
+    validate_database_sql_limit(label, tokens)
+}
+
+fn validate_database_sql_from_clause<'a>(
+    label: &str,
+    tokens: &'a [String],
+) -> Result<&'a str, String> {
+    let Some(from_index) = tokens.iter().position(|token| token == "from") else {
+        return Err(format!("{label} must read from fs_nodes or fs_links"));
+    };
+    let Some(table) = tokens.get(from_index + 1) else {
+        return Err(format!("{label} must name a table after FROM"));
+    };
+    if !matches!(table.as_str(), "fs_nodes" | "fs_links") {
+        return Err(format!("{label} table is not allowed: {table}"));
+    }
+    if let Some(extra) = tokens.get(from_index + 2)
+        && !matches!(extra.as_str(), "where" | "order" | "limit")
+    {
+        return Err(format!("{label} must read from exactly one allowed table"));
+    }
+    Ok(table)
+}
+
+fn validate_database_sql_order_by(
+    label: &str,
+    table: &str,
+    tokens: &[String],
+) -> Result<(), String> {
+    let order_indexes = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| (token == "order").then_some(index))
+        .collect::<Vec<_>>();
+    if order_indexes.is_empty() {
+        return Ok(());
+    }
+    if order_indexes.len() != 1 {
+        return Err(format!("{label} must contain at most one ORDER BY"));
+    }
+    let order_index = order_indexes[0];
+    if tokens.get(order_index + 1).map(String::as_str) != Some("by") {
+        return Err(format!("{label} ORDER must be followed by BY"));
+    }
+    let Some(column) = tokens.get(order_index + 2).map(String::as_str) else {
+        return Err(format!("{label} ORDER BY must name one allowed column"));
+    };
+    if !database_sql_order_column_allowed(table, column) {
+        return Err(format!("{label} ORDER BY column is not allowed: {column}"));
+    }
+    let next_index = match tokens.get(order_index + 3).map(String::as_str) {
+        Some("asc" | "desc") => order_index + 4,
+        _ => order_index + 3,
+    };
+    if tokens.get(next_index).map(String::as_str) != Some("limit") {
+        return Err(format!(
+            "{label} ORDER BY must be one allowed column followed by LIMIT"
+        ));
+    }
+    Ok(())
+}
+
+fn database_sql_order_column_allowed(table: &str, column: &str) -> bool {
+    match table {
+        "fs_nodes" => matches!(
+            column,
+            "id" | "path" | "kind" | "created_at" | "updated_at" | "etag" | "name" | "parent_id"
+        ),
+        "fs_links" => matches!(
+            column,
+            "source_path" | "target_path" | "updated_at" | "link_kind"
+        ),
+        _ => false,
+    }
+}
+
+fn validate_database_sql_limit(label: &str, tokens: &[String]) -> Result<(), String> {
+    let limit_indexes = tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| (token == "limit").then_some(index))
+        .collect::<Vec<_>>();
+    if limit_indexes.len() != 1 {
+        return Err(format!("{label} must contain exactly one LIMIT"));
+    }
+    let value = tokens.get(limit_indexes[0] + 1).ok_or_else(|| {
+        format!("{label} LIMIT must be an integer between 1 and {QUERY_RESULT_LIMIT_MAX}")
+    })?;
+    let limit = value.parse::<u32>().map_err(|_| {
+        format!("{label} LIMIT must be an integer between 1 and {QUERY_RESULT_LIMIT_MAX}")
+    })?;
+    if !(1..=QUERY_RESULT_LIMIT_MAX).contains(&limit) {
+        return Err(format!(
+            "{label} LIMIT must be between 1 and {QUERY_RESULT_LIMIT_MAX}"
+        ));
+    }
+    if tokens.get(limit_indexes[0] + 2).is_some() {
+        return Err(format!(
+            "{label} LIMIT must be an integer between 1 and {QUERY_RESULT_LIMIT_MAX}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sql_json_response_bytes(label: &str, rows: &[String]) -> Result<(), String> {
+    let mut total = 0_usize;
+    for row in rows {
+        if row.len() > SQL_JSON_ROW_BYTES_MAX {
+            return Err(format!(
+                "{label} row JSON exceeds {SQL_JSON_ROW_BYTES_MAX} bytes"
+            ));
+        }
+        total = total.saturating_add(row.len());
+        if total > SQL_JSON_RESPONSE_BYTES_MAX {
+            return Err(format!(
+                "{label} response JSON exceeds {SQL_JSON_RESPONSE_BYTES_MAX} bytes"
+            ));
         }
     }
     Ok(())

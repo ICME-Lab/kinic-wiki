@@ -86,15 +86,21 @@ The response returns the wiki `node_path` and refs with source path, linking pat
 
 Use `query_database_sql_json` when a caller needs direct structured inspection of the target wiki DB.
 The method uses the same read access as `read_node`: database members, marketplace-entitled readers, and anonymous callers for public-readable DBs can query the DB they can already read.
+The browser Query panel `sql:` action and CLI `query-sql` command both call this same database-scoped API.
 
 The method only runs against the specified wiki DB. It cannot read the canister index DB, controller metrics tables, session tables, marketplace orders, or billing tables.
 
 SQL constraints:
 
-- The SQL must be one `SELECT` statement.
-- `;` and mutating/admin tokens such as `PRAGMA`, `ATTACH`, `INSERT`, `UPDATE`, `DELETE`, `CREATE`, and `DROP` are rejected.
-- The first selected column must be non-null TEXT JSON.
-- `limit` is clamped to the canister query limit.
+- The SQL must be one restricted `SELECT` statement, at most 4096 bytes.
+- The query must read from exactly one allowed table: `fs_nodes` or `fs_links`.
+- `LIMIT` is required in the SQL and must be between 1 and 100.
+- Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`.
+- `OFFSET` is rejected.
+- `;`, comments, joins, compound selects, subqueries, grouping/window clauses, mutating/admin tokens, and large generated/aggregate values are rejected.
+- The first selected column must be non-null valid JSON TEXT.
+- The request `limit` is also clamped to the canister query limit.
+- Each JSON row is capped at 64 KiB, and the total JSON rows response is capped at 256 KiB.
 
 Example:
 

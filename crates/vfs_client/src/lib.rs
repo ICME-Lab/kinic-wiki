@@ -25,8 +25,8 @@ use vfs_types::{
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WriteNodeRequest, WriteNodeResult,
-    WriteNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -310,6 +310,11 @@ pub trait VfsApi: Sync {
     }
     async fn wiki_metrics(&self) -> Result<WikiMetrics> {
         Err(anyhow!("wiki_metrics is not implemented by this client"))
+    }
+    async fn wiki_metrics_series(&self, _days: u32) -> Result<Vec<WikiMetricsPoint>> {
+        Err(anyhow!(
+            "wiki_metrics_series is not implemented by this client"
+        ))
     }
     async fn source_evidence(&self, _request: SourceEvidenceRequest) -> Result<SourceEvidence> {
         Err(anyhow!("source_evidence is not implemented by this client"))
@@ -968,6 +973,12 @@ impl VfsApi for CanisterVfsClient {
 
     async fn wiki_metrics(&self) -> Result<WikiMetrics> {
         let result: Result<WikiMetrics, String> = self.query("wiki_metrics", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn wiki_metrics_series(&self, days: u32) -> Result<Vec<WikiMetricsPoint>> {
+        let result: Result<Vec<WikiMetricsPoint>, String> =
+            self.query("wiki_metrics_series", &days).await?;
         result.map_err(|error| anyhow!(error))
     }
 

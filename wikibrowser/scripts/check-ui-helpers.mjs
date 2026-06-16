@@ -182,6 +182,9 @@ assert.match(markdownEditorSource, /saveState === "dirty" \|\| saveState === "er
 assert.match(markdownEditorSource, /warning: string \| null/);
 assert.match(vfsClientSource, /deleteNodeAuthenticated/);
 assert.match(vfsClientSource, /delete_node/);
+assert.match(vfsClientSource, /wikiMetricsSeries/);
+assert.match(vfsClientSource, /wiki_metrics_series/);
+assert.match(vfsClientSource, /normalizeWikiMetricsPoint/);
 assert.match(markdownEditorSource, /@uiw\/react-codemirror/);
 assert.match(markdownEditorSource, /Cmd\/Ctrl\+S|Save/);
 assert.match(globalsCss, /button:not\(:disabled\):active/);

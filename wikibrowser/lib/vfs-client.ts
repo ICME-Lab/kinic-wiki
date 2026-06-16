@@ -47,6 +47,7 @@ import type {
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
   WikiMetrics,
+  WikiMetricsPoint,
   WikiNode,
   WriteNodeRequest,
   WriteNodeResult,
@@ -138,6 +139,11 @@ type RawWikiMetrics = {
   charged_kinic_total_e8s: bigint;
   charged_kinic_30d_e8s: bigint;
   last_activity_at_ms: [] | [bigint];
+};
+
+type RawWikiMetricsPoint = {
+  bucket_start_ms: bigint;
+  metrics: RawWikiMetrics;
 };
 
 type RawDatabaseCyclesPendingPurchase = {
@@ -492,6 +498,7 @@ type VfsActor = {
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   query_index_sql_json: (sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   wiki_metrics: () => Promise<{ Ok: RawWikiMetrics } | { Err: string }>;
+  wiki_metrics_series: (days: number) => Promise<{ Ok: RawWikiMetricsPoint[] } | { Err: string }>;
   search_node_paths: (request: {
     database_id: string;
     query_text: string;
@@ -695,6 +702,17 @@ export async function wikiMetrics(canisterId: string): Promise<WikiMetrics> {
       throwCanisterError(result.Err);
     }
     return normalizeWikiMetrics(result.Ok);
+  });
+}
+
+export async function wikiMetricsSeries(canisterId: string, days: number): Promise<WikiMetricsPoint[]> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.wiki_metrics_series(days);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok.map(normalizeWikiMetricsPoint);
   });
 }
 
@@ -1344,6 +1362,13 @@ function normalizeWikiMetrics(raw: RawWikiMetrics): WikiMetrics {
     chargedKinicTotalE8s: raw.charged_kinic_total_e8s.toString(),
     chargedKinic30dE8s: raw.charged_kinic_30d_e8s.toString(),
     lastActivityAtMs: raw.last_activity_at_ms[0]?.toString() ?? null
+  };
+}
+
+function normalizeWikiMetricsPoint(raw: RawWikiMetricsPoint): WikiMetricsPoint {
+  return {
+    bucketStartMs: raw.bucket_start_ms.toString(),
+    metrics: normalizeWikiMetrics(raw.metrics)
   };
 }
 

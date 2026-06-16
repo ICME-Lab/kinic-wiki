@@ -60,8 +60,8 @@ use vfs_types::{
     SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult, kinic_base_units_per_token,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -699,6 +699,11 @@ fn query_database_sql_json(
 #[query]
 fn wiki_metrics() -> Result<WikiMetrics, String> {
     with_service(|service| service.wiki_metrics(now_millis()))
+}
+
+#[query]
+fn wiki_metrics_series(days: u32) -> Result<Vec<WikiMetricsPoint>, String> {
+    with_service(|service| service.wiki_metrics_series(now_millis(), days))
 }
 
 #[update]

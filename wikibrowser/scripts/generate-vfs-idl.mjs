@@ -82,6 +82,7 @@ const typeOrder = [
   "OutgoingLinksRequest",
   "IndexSqlJsonQueryResult",
   "WikiMetrics",
+  "WikiMetricsPoint",
   "GraphLinksRequest",
   "GraphNeighborhoodRequest",
   "NodeContextRequest",
@@ -110,6 +111,7 @@ const typeOrder = [
   "ResultQueryContext",
   "ResultIndexSqlJsonQuery",
   "ResultWikiMetrics",
+  "ResultWikiMetricsSeries",
   "ResultSourceEvidence",
   "ResultStorageBillingBatch",
   "ResultCyclesTopUpCheck",
@@ -198,6 +200,7 @@ const methodOrder = [
   "source_evidence",
   "update_cycles_billing_config",
   "wiki_metrics",
+  "wiki_metrics_series",
   "purchase_database_cycles",
   "write_node",
   "write_source_for_generation"

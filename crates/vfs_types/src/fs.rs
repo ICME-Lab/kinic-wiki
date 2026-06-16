@@ -336,6 +336,12 @@ pub struct WikiMetrics {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WikiMetricsPoint {
+    pub bucket_start_ms: i64,
+    pub metrics: WikiMetrics,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
 }

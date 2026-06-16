@@ -186,6 +186,11 @@ export type WikiMetrics = {
   lastActivityAtMs: string | null;
 };
 
+export type WikiMetricsPoint = {
+  bucketStartMs: string;
+  metrics: WikiMetrics;
+};
+
 export type DatabaseCyclesPendingPurchase = {
   operationId: string;
   databaseId: string;

@@ -51,7 +51,7 @@ use super::{
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
     set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
     status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    wiki_metrics, write_database_restore_chunk, write_node, write_nodes,
+    wiki_metrics, wiki_metrics_series, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -307,6 +307,21 @@ fn non_controller_can_query_public_wiki_metrics() {
 }
 
 #[test]
+fn non_controller_can_query_public_wiki_metrics_series() {
+    install_empty_test_service();
+    let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
+        .expect("valid non-controller principal");
+    set_test_caller_principal_for_test(non_controller);
+
+    let series =
+        wiki_metrics_series(30).expect("public metrics series should not require controller");
+
+    assert_eq!(series.len(), 7);
+    assert_eq!(series[0].metrics.users_total, 0);
+    assert_eq!(series[0].metrics.databases_total, 0);
+}
+
+#[test]
 fn reader_can_query_database_sql_json_without_controller_role() {
     install_test_service();
     let reader =
@@ -369,6 +384,21 @@ fn database_sql_json_rejects_non_readers_at_entrypoint() {
     .expect_err("non-reader should reject");
 
     assert!(error.contains("principal has no access"));
+}
+
+#[test]
+fn database_sql_json_rejects_invalid_json_at_entrypoint() {
+    install_test_service();
+    set_test_caller_principal_for_test(Principal::anonymous());
+
+    let error = query_database_sql_json(
+        "default".to_string(),
+        "SELECT 'not-json' FROM fs_nodes LIMIT 1".to_string(),
+        10,
+    )
+    .expect_err("invalid JSON should reject");
+
+    assert!(error.contains("one non-null valid JSON TEXT column"));
 }
 
 #[test]

@@ -523,8 +523,9 @@ type Result_37 = variant { Ok : StorageBillingBatchResult; Err : text };
 type Result_38 = variant { Ok : SourceEvidence; Err : text };
 type Result_39 = variant { Ok : WikiMetrics; Err : text };
 type Result_4 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
-type Result_40 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_41 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_40 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_41 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_42 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_5 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_6 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_7 = variant { Ok : EditNodeResult; Err : text };
@@ -602,6 +603,10 @@ type WikiMetrics = record {
   paid_users_total : nat64;
   databases_active_30d : nat64;
   users_new_30d : nat64;
+};
+type WikiMetricsPoint = record {
+  metrics : WikiMetrics;
+  bucket_start_ms : int64;
 };
 type UrlIngestTriggerSessionRequest = record {
   session_nonce : text;
@@ -721,10 +726,11 @@ service : (CyclesBillingConfig) -> {
   status : (text) -> (Status) query;
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
   wiki_metrics : () -> (Result_39) query;
+  wiki_metrics_series : (nat32) -> (Result_40) query;
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_40);
+  write_nodes : (WriteNodesRequest) -> (Result_41);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_41,
+      Result_42,
     );
 }

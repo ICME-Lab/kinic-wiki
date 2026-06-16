@@ -7,13 +7,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode } from "react";
-import { BarChart3, BookOpen, LayoutDashboard, PanelLeft, PowerOff, Store, UserRound, Wallet } from "lucide-react";
+import { BookOpen, LayoutDashboard, PanelLeft, PowerOff, Store, UserRound, Wallet } from "lucide-react";
 import { useAppSession } from "@/app/app-session-provider";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 const ADMIN_NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/metrics", label: "Metrics", icon: BarChart3 },
   { href: "/marketplace", label: "Marketplace", icon: Store },
   { href: "/cycles", label: "Cycles", icon: Wallet },
   { href: "/profile", label: "My Profile", icon: UserRound },

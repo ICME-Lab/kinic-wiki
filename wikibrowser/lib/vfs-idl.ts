@@ -336,6 +336,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     charged_kinic_30d_e8s: idl.Nat64,
     last_activity_at_ms: idl.Opt(idl.Int64)
   });
+  const WikiMetricsPoint = idl.Record({ bucket_start_ms: idl.Int64, metrics: WikiMetrics });
   const GraphLinksRequest = idl.Record({ limit: idl.Nat32, database_id: idl.Text, prefix: idl.Text });
   const GraphNeighborhoodRequest = idl.Record({
     center_path: idl.Text,
@@ -429,6 +430,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultIndexSqlJsonQuery = idl.Variant({ Ok: IndexSqlJsonQueryResult, Err: idl.Text });
   const ResultWikiMetrics = idl.Variant({ Ok: WikiMetrics, Err: idl.Text });
+  const ResultWikiMetricsSeries = idl.Variant({ Ok: idl.Vec(WikiMetricsPoint), Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultStorageBillingBatch = idl.Variant({ Ok: StorageBillingBatchResult, Err: idl.Text });
   const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
@@ -517,6 +519,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     update_cycles_billing_config: idl.Func([CyclesBillingConfigUpdate], [ResultUnit], []),
     wiki_metrics: idl.Func([], [ResultWikiMetrics], ["query"]),
+    wiki_metrics_series: idl.Func([idl.Nat32], [ResultWikiMetricsSeries], ["query"]),
     purchase_database_cycles: idl.Func([DatabaseCyclesPurchaseRequest], [ResultCyclesPurchase], []),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [ResultWriteSourceForGeneration], [])

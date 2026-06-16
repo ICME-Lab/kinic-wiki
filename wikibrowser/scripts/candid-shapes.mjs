@@ -511,6 +511,13 @@ export const expectedTypes = {
       last_activity_at_ms: "opt int64"
     }
   },
+  WikiMetricsPoint: {
+    kind: "record",
+    fields: {
+      bucket_start_ms: "int64",
+      metrics: "WikiMetrics"
+    }
+  },
   NodeContextRequest: { kind: "record", fields: { link_limit: "nat32", path: "text", database_id: "text" } },
   OutgoingLinksRequest: { kind: "record", fields: { path: "text", limit: "nat32", database_id: "text" } },
   LinkEdge: {
@@ -557,6 +564,7 @@ export const expectedTypes = {
   ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
   ResultIndexSqlJsonQuery: { kind: "variant", cases: { Ok: "IndexSqlJsonQueryResult", Err: "text" } },
   ResultWikiMetrics: { kind: "variant", cases: { Ok: "WikiMetrics", Err: "text" } },
+  ResultWikiMetricsSeries: { kind: "variant", cases: { Ok: "vec WikiMetricsPoint", Err: "text" } },
   ResultSearch: { kind: "variant", cases: { Ok: "vec SearchNodeHit", Err: "text" } },
   ResultStorageBillingBatch: {
     kind: "variant",
@@ -679,8 +687,9 @@ export const didTypeAliases = {
   ResultSourceEvidence: "Result_38",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteSourceForGeneration: "Result_41",
-  ResultWikiMetrics: "Result_39"
+  ResultWriteSourceForGeneration: "Result_42",
+  ResultWikiMetrics: "Result_39",
+  ResultWikiMetricsSeries: "Result_40"
 };
 
 export const expectedMethods = {
@@ -730,6 +739,7 @@ export const expectedMethods = {
   query_database_sql_json: { input: ["text", "text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
   query_index_sql_json: { input: ["text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
   wiki_metrics: { input: [], output: "ResultWikiMetrics", mode: "query" },
+  wiki_metrics_series: { input: ["nat32"], output: "ResultWikiMetricsSeries", mode: "query" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
   read_node_context: { input: ["NodeContextRequest"], output: "ResultNodeContext", mode: "query" },
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },

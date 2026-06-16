@@ -38,8 +38,8 @@ use vfs_types::{
     SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
     Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult, kinic_base_units_per_token,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
 
@@ -85,7 +85,9 @@ const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
     "database_index:030_direct_market_purchase";
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
+const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
@@ -315,7 +317,32 @@ impl VfsService {
 
     pub fn wiki_metrics(&self, now_ms: i64) -> Result<WikiMetrics, String> {
         let cutoff_30d_ms = now_ms.saturating_sub(WIKI_METRICS_WINDOW_MS).max(0);
-        self.read_index(|conn| load_wiki_metrics(conn, cutoff_30d_ms))
+        self.read_index(|conn| load_wiki_metrics(conn, cutoff_30d_ms, now_ms))
+    }
+
+    pub fn wiki_metrics_series(
+        &self,
+        now_ms: i64,
+        days: u32,
+    ) -> Result<Vec<WikiMetricsPoint>, String> {
+        let limit = wiki_metrics_series_limit(days);
+        let today_start_ms = day_start_ms(now_ms);
+        let first_bucket_start_ms =
+            today_start_ms.saturating_sub(i64::from(limit.saturating_sub(1)) * DAY_MS);
+        self.read_index(|conn| {
+            (0..limit)
+                .map(|index| {
+                    let bucket_start_ms =
+                        first_bucket_start_ms.saturating_add(i64::from(index) * DAY_MS);
+                    let bucket_end_ms = bucket_start_ms.saturating_add(DAY_MS - 1).min(now_ms);
+                    let cutoff_30d_ms = bucket_end_ms.saturating_sub(WIKI_METRICS_WINDOW_MS).max(0);
+                    Ok(WikiMetricsPoint {
+                        bucket_start_ms,
+                        metrics: load_wiki_metrics(conn, cutoff_30d_ms, bucket_end_ms)?,
+                    })
+                })
+                .collect()
+        })
     }
 
     pub fn settle_database_storage_charges_batch(
@@ -4431,23 +4458,32 @@ fn validate_index_select_sql(sql: &str) -> Result<(), String> {
     validate_sql_json_select(sql, "index SQL")
 }
 
-fn load_wiki_metrics(conn: &Connection, cutoff_30d_ms: i64) -> Result<WikiMetrics, String> {
+fn load_wiki_metrics(
+    conn: &Connection,
+    cutoff_30d_ms: i64,
+    as_of_ms: i64,
+) -> Result<WikiMetrics, String> {
     let metrics = conn
         .query_row(
             "
             WITH
             principal_events AS (
-              SELECT principal, created_at_ms AS first_at, created_at_ms AS active_at FROM database_members
-              UNION ALL SELECT caller AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM database_cycle_ledger
-              UNION ALL SELECT buyer_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders
-              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders
-              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders
-              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, updated_at_ms AS active_at FROM market_listings
-              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, updated_at_ms AS active_at FROM market_listings
-              UNION ALL SELECT buyer_principal AS principal, purchased_at_ms AS first_at, purchased_at_ms AS active_at FROM market_entitlements
-              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM url_ingest_trigger_sessions
-              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM ops_answer_sessions
-              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM source_run_sessions
+              SELECT principal, created_at_ms AS first_at, created_at_ms AS active_at FROM database_members WHERE created_at_ms <= ?3
+              UNION ALL SELECT caller AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM database_cycle_ledger WHERE created_at_ms <= ?3
+              UNION ALL SELECT buyer_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders WHERE created_at_ms <= ?3
+              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders WHERE created_at_ms <= ?3
+              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_orders WHERE created_at_ms <= ?3
+              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_listings WHERE created_at_ms <= ?3
+              UNION ALL SELECT seller_principal AS principal, created_at_ms AS first_at, updated_at_ms AS active_at FROM market_listings WHERE updated_at_ms <= ?3
+              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, created_at_ms AS active_at FROM market_listings WHERE created_at_ms <= ?3
+              UNION ALL SELECT payout_principal AS principal, created_at_ms AS first_at, updated_at_ms AS active_at FROM market_listings WHERE updated_at_ms <= ?3
+              UNION ALL SELECT buyer_principal AS principal, purchased_at_ms AS first_at, purchased_at_ms AS active_at FROM market_entitlements WHERE purchased_at_ms <= ?3
+              UNION ALL SELECT principal, created_at_ms AS first_at, created_at_ms AS active_at FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?3
+              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?3
+              UNION ALL SELECT principal, created_at_ms AS first_at, created_at_ms AS active_at FROM ops_answer_sessions WHERE created_at_ms <= ?3
+              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM ops_answer_sessions WHERE refreshed_at_ms <= ?3
+              UNION ALL SELECT principal, created_at_ms AS first_at, created_at_ms AS active_at FROM source_run_sessions WHERE created_at_ms <= ?3
+              UNION ALL SELECT principal, created_at_ms AS first_at, refreshed_at_ms AS active_at FROM source_run_sessions WHERE refreshed_at_ms <= ?3
             ),
             known_principals AS (
               SELECT principal, MIN(first_at) AS first_at, MAX(active_at) AS active_at
@@ -4456,20 +4492,24 @@ fn load_wiki_metrics(conn: &Connection, cutoff_30d_ms: i64) -> Result<WikiMetric
               GROUP BY principal
             ),
             database_events AS (
-              SELECT database_id, created_at_ms AS active_at FROM databases WHERE status <> 'deleted'
-              UNION ALL SELECT database_id, updated_at_ms AS active_at FROM databases WHERE status <> 'deleted'
-              UNION ALL SELECT database_id, created_at_ms AS active_at FROM database_cycle_ledger
-              UNION ALL SELECT database_id, created_at_ms AS active_at FROM market_orders
-              UNION ALL SELECT database_id, purchased_at_ms AS active_at FROM market_entitlements
-              UNION ALL SELECT database_id, updated_at_ms AS active_at FROM market_listings
-              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM url_ingest_trigger_sessions
-              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM ops_answer_sessions
-              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM source_run_sessions
+              SELECT database_id, created_at_ms AS active_at FROM databases WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, updated_at_ms AS active_at FROM databases WHERE updated_at_ms <= ?3
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM database_cycle_ledger WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM market_orders WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, purchased_at_ms AS active_at FROM market_entitlements WHERE purchased_at_ms <= ?3
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM market_listings WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, updated_at_ms AS active_at FROM market_listings WHERE updated_at_ms <= ?3
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?3
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM ops_answer_sessions WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM ops_answer_sessions WHERE refreshed_at_ms <= ?3
+              UNION ALL SELECT database_id, created_at_ms AS active_at FROM source_run_sessions WHERE created_at_ms <= ?3
+              UNION ALL SELECT database_id, refreshed_at_ms AS active_at FROM source_run_sessions WHERE refreshed_at_ms <= ?3
             ),
             paid_principals AS (
               SELECT caller AS principal FROM database_cycle_ledger
-              WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL
-              UNION ALL SELECT buyer_principal AS principal FROM market_orders
+              WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL AND created_at_ms <= ?3
+              UNION ALL SELECT buyer_principal AS principal FROM market_orders WHERE created_at_ms <= ?3
             ),
             all_activity AS (
               SELECT first_at AS active_at FROM principal_events
@@ -4480,30 +4520,33 @@ fn load_wiki_metrics(conn: &Connection, cutoff_30d_ms: i64) -> Result<WikiMetric
               (SELECT COUNT(*) FROM known_principals),
               (SELECT COUNT(*) FROM known_principals WHERE active_at >= ?1),
               (SELECT COUNT(*) FROM known_principals WHERE first_at >= ?1),
-              (SELECT COUNT(*) FROM databases WHERE status <> 'deleted'),
+              (SELECT COUNT(*) FROM databases WHERE created_at_ms <= ?3 AND (status <> 'deleted' OR deleted_at_ms IS NULL OR deleted_at_ms > ?3)),
               (
                 SELECT COUNT(DISTINCT database_id)
                 FROM database_events
                 WHERE active_at >= ?1
-                  AND database_id IN (SELECT database_id FROM databases WHERE status <> 'deleted')
+                  AND database_id IN (
+                    SELECT database_id FROM databases
+                    WHERE created_at_ms <= ?3 AND (status <> 'deleted' OR deleted_at_ms IS NULL OR deleted_at_ms > ?3)
+                  )
               ),
-              (SELECT COUNT(*) FROM databases WHERE status <> 'deleted' AND created_at_ms >= ?1),
+              (SELECT COUNT(*) FROM databases WHERE created_at_ms BETWEEN ?1 AND ?3 AND (status <> 'deleted' OR deleted_at_ms IS NULL OR deleted_at_ms > ?3)),
               (
                 SELECT COUNT(DISTINCT principal)
                 FROM paid_principals
                 WHERE principal <> ?2 AND principal <> ''
               ),
               (
-                (SELECT COALESCE(SUM(payment_amount_e8s), 0) FROM database_cycle_ledger WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL) +
-                (SELECT COALESCE(SUM(price_e8s), 0) FROM market_orders)
+                (SELECT COALESCE(SUM(payment_amount_e8s), 0) FROM database_cycle_ledger WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL AND created_at_ms <= ?3) +
+                (SELECT COALESCE(SUM(price_e8s), 0) FROM market_orders WHERE created_at_ms <= ?3)
               ),
               (
-                (SELECT COALESCE(SUM(payment_amount_e8s), 0) FROM database_cycle_ledger WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL AND created_at_ms >= ?1) +
-                (SELECT COALESCE(SUM(price_e8s), 0) FROM market_orders WHERE created_at_ms >= ?1)
+                (SELECT COALESCE(SUM(payment_amount_e8s), 0) FROM database_cycle_ledger WHERE kind = 'cycles_purchase' AND payment_amount_e8s IS NOT NULL AND created_at_ms BETWEEN ?1 AND ?3) +
+                (SELECT COALESCE(SUM(price_e8s), 0) FROM market_orders WHERE created_at_ms BETWEEN ?1 AND ?3)
               ),
               (SELECT MAX(active_at) FROM all_activity)
             ",
-            params![cutoff_30d_ms, ANONYMOUS_PRINCIPAL],
+            params![cutoff_30d_ms, ANONYMOUS_PRINCIPAL, as_of_ms],
             |row| {
                 Ok(WikiMetrics {
                     users_total: metric_u64(row, 0)?,
@@ -4526,6 +4569,14 @@ fn load_wiki_metrics(conn: &Connection, cutoff_30d_ms: i64) -> Result<WikiMetric
 fn metric_u64(row: &Row<'_>, index: usize) -> crate::sqlite::Result<u64> {
     let value: i64 = crate::sqlite::row_get(row, index)?;
     u64::try_from(value).map_err(|_| crate::sqlite::integral_value_out_of_range(index, value))
+}
+
+fn wiki_metrics_series_limit(days: u32) -> u32 {
+    days.clamp(1, WIKI_METRICS_SERIES_LIMIT_MAX)
+}
+
+fn day_start_ms(value: i64) -> i64 {
+    value.div_euclid(DAY_MS) * DAY_MS
 }
 
 fn amount_to_i64(amount: u64) -> Result<i64, String> {

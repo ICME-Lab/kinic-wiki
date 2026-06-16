@@ -175,8 +175,9 @@ Covered methods:
 ## Public MVP
 
 Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`.
-The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility and database-scoped `sql:` queries.
-`sql:` in the Query panel calls `query_database_sql_json` against the current DB only. It accepts one read-only `SELECT` statement and expects the first result column to be TEXT JSON.
+The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility and restricted database-scoped `sql:` queries.
+`sql:` in the Query panel calls `query_database_sql_json` against the current DB only. It accepts a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, requires SQL `LIMIT 1..100`, allows only one-column `ORDER BY` followed by `LIMIT`, rejects `OFFSET`, and expects the first result column to be valid JSON TEXT.
+The CLI exposes the same database-scoped API as `query-sql`; both surfaces can query only DBs the caller can already read, including owned/member DBs, marketplace-entitled DBs, and public-readable DBs.
 Controller metrics use `query_index_sql_json`; that method stays controller-only and is not exposed as user input.
 Canister unreachable / API failures are shown as browser errors and are not treated as not-found states.
 The `/<database-id>/...` and `/dashboard/<database-id>` URLs are App Router dynamic routes. Read and authenticated calls go directly from the browser to the configured IC gateway.

@@ -260,6 +260,14 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Run one restricted JSON SELECT query against the selected database")]
+    QuerySql {
+        sql: String,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
