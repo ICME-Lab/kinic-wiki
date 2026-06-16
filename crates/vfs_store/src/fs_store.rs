@@ -257,9 +257,13 @@ impl FsStore {
                 |row| {
                     let value: Option<String> = crate::sqlite::row_get(row, 0)?;
                     let value = value.ok_or_else(crate::sqlite::invalid_query)?;
-                    let valid: i64 = json_valid_stmt.query_row(params![value.as_str()], |row| {
+                    let valid: i64 = crate::sqlite::query_one(
+                        &mut json_valid_stmt,
+                        params![value.as_str()],
+                        |row| {
                         crate::sqlite::row_get(row, 0)
-                    })?;
+                        },
+                    )?;
                     if valid == 1 {
                         Ok(value)
                     } else {

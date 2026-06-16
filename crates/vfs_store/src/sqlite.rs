@@ -63,6 +63,15 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
+where
+    P: Params,
+    F: FnOnce(&Row<'_>) -> Result<T>,
+{
+    statement.query_row(params, f)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn last_insert_rowid(conn: &Connection) -> Result<i64> {
     Ok(conn.last_insert_rowid())
 }
@@ -308,6 +317,15 @@ where
         output.push(f(&row)?);
     }
     Ok(output)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
+where
+    P: Params,
+    F: FnOnce(&Row<'_>) -> Result<T>,
+{
+    statement.query_one(params.as_params(), f)
 }
 
 #[cfg(target_arch = "wasm32")]
