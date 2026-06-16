@@ -50,6 +50,24 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_fold<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    mut state: T,
+    mut f: F,
+) -> Result<T>
+where
+    P: Params,
+    F: FnMut(&mut T, &Row<'_>) -> Result<()>,
+{
+    let mut rows = statement.query(params)?;
+    while let Some(row) = rows.next()? {
+        f(&mut state, row)?;
+    }
+    Ok(state)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn query_map_limit<T, P, F>(
     statement: &mut Statement<'_>,
     params: P,
@@ -314,6 +332,24 @@ where
     F: FnMut(&Row<'_>) -> Result<T>,
 {
     statement.query_all(params.as_params(), f)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn query_fold<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    mut state: T,
+    mut f: F,
+) -> Result<T>
+where
+    P: Params,
+    F: FnMut(&mut T, &Row<'_>) -> Result<()>,
+{
+    let mut rows = statement.query(params.as_params())?;
+    while let Some(row) = rows.next_row()? {
+        f(&mut state, &row)?;
+    }
+    Ok(state)
 }
 
 #[cfg(target_arch = "wasm32")]
