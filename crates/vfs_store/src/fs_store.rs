@@ -61,6 +61,9 @@ const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
 const SQL_JSON_SQL_BYTES_MAX: usize = 4_096;
 const SQL_JSON_ROW_BYTES_MAX: usize = 64 * 1024;
 const SQL_JSON_RESPONSE_BYTES_MAX: usize = 256 * 1024;
+const SQL_JSON_PROGRESS_OP_INTERVAL: i32 = 1_000;
+const SQL_JSON_PROGRESS_CALLBACK_BUDGET: u32 = 200;
+const SQL_JSON_EXECUTION_BUDGET_EXCEEDED: &str = "database SQL execution budget exceeded";
 const SNAPSHOT_REVISION_NO_LONGER_CURRENT: &str = "snapshot_revision is no longer current";
 const SNAPSHOT_SESSION_INVALID: &str = "snapshot_session_id is invalid";
 const SNAPSHOT_REVISION_CURSOR_REQUIRED: &str = "snapshot_revision is required when cursor is set";
@@ -246,12 +249,17 @@ impl FsStore {
         validate_database_sql_json_select(sql, "database SQL")?;
         let limit = sql_json_page_limit(limit);
         self.read_conn(|conn| {
+            let _progress_handler = crate::sqlite::install_progress_handler(
+                conn,
+                SQL_JSON_PROGRESS_OP_INTERVAL,
+                SQL_JSON_PROGRESS_CALLBACK_BUDGET,
+            );
             let mut json_object_stmt = conn
                 .prepare(
                     "SELECT CASE WHEN json_valid(?1) THEN json_type(?1) = 'object' ELSE 0 END",
                 )
-                .map_err(|error| error.to_string())?;
-            let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
+                .map_err(map_sql_json_execution_error)?;
+            let mut stmt = conn.prepare(sql).map_err(map_sql_json_execution_error)?;
             let rows = crate::sqlite::query_map_limit(
                 &mut stmt,
                 params![],
@@ -275,6 +283,9 @@ impl FsStore {
                 },
             )
             .map_err(|error| {
+                if crate::sqlite::is_interrupted(&error) {
+                    return SQL_JSON_EXECUTION_BUDGET_EXCEEDED.to_string();
+                }
                 format!(
                     "database SQL must return exactly one non-null valid JSON object TEXT column: {error}"
                 )
@@ -2654,6 +2665,14 @@ fn validate_sql_json_response_bytes(label: &str, rows: &[String]) -> Result<(), 
 
 fn sql_json_page_limit(limit: u32) -> u32 {
     limit.clamp(1, QUERY_RESULT_LIMIT_MAX)
+}
+
+fn map_sql_json_execution_error(error: crate::sqlite::Error) -> String {
+    if crate::sqlite::is_interrupted(&error) {
+        SQL_JSON_EXECUTION_BUDGET_EXCEEDED.to_string()
+    } else {
+        error.to_string()
+    }
 }
 
 fn sql_identifier_tokens(sql: &str) -> Vec<String> {

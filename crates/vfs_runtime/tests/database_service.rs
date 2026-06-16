@@ -1,7 +1,7 @@
 // Where: crates/vfs_runtime/tests/database_service.rs
 // What: Multi-database service tests over local SQLite files.
 // Why: The canister mount layer depends on runtime index and role semantics being deterministic.
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
@@ -37,6 +37,40 @@ fn service_with_root() -> (VfsService, PathBuf) {
         .run_index_migrations()
         .expect("index migrations should run");
     (service, root)
+}
+
+fn seed_sql_budget_rows(database_path: &Path, count: i64) {
+    let mut conn = Connection::open(database_path).expect("db should open");
+    let tx = conn.transaction().expect("seed transaction should start");
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO fs_nodes
+                 (path, kind, content, created_at, updated_at, etag, metadata_json, name)
+                 VALUES (?1, 'file', ?2, ?3, ?3, ?4, '{}', ?5)",
+            )
+            .expect("seed insert should prepare");
+        for index in 0_i64..count {
+            let name = format!("node-{index:05}.md");
+            insert
+                .execute(params![
+                    format!("/Wiki/budget/{name}"),
+                    format!("budget content row {index}"),
+                    index,
+                    format!("etag-{index}"),
+                    name,
+                ])
+                .expect("seed row should insert");
+        }
+    }
+    tx.commit().expect("seed transaction should commit");
+}
+
+fn heavy_missing_sql() -> String {
+    let predicates = vec!["length(content) >= 0"; 50].join(" AND ");
+    format!(
+        "SELECT json_object('path', path) FROM fs_nodes WHERE {predicates} AND content LIKE '%missing-budget-token%' LIMIT 1"
+    )
 }
 
 fn test_cycles_top_up_config() -> CyclesTopUpConfig {
@@ -4627,6 +4661,39 @@ fn database_sql_json_returns_rows_for_readers_and_public_readers() {
         vec![r#"{"path":"/Wiki/a.md","content":"alpha"}"#]
     );
     assert_eq!(public_result.rows, vec![r#"{"path":"/Wiki/a.md"}"#]);
+}
+
+#[test]
+fn database_sql_json_budget_applies_to_reader_and_public_reader() {
+    let (service, root) = service_with_root();
+    service
+        .create_database("sql-budget-db", "owner", 1)
+        .expect("database should create");
+    cycle_database(&service, "sql-budget-db", "owner", 1_000_000, 1, 2);
+    service
+        .grant_database_access("sql-budget-db", "owner", "reader", DatabaseRole::Reader, 3)
+        .expect("reader grant should succeed");
+    service
+        .grant_database_access(
+            "sql-budget-db",
+            "owner",
+            "2vxsx-fae",
+            DatabaseRole::Reader,
+            4,
+        )
+        .expect("public reader grant should succeed");
+    seed_sql_budget_rows(&root.join("databases/sql-budget-db.sqlite3"), 10_000);
+
+    for caller in ["reader", "2vxsx-fae"] {
+        let error = service
+            .query_database_sql_json("sql-budget-db", caller, &heavy_missing_sql(), 1)
+            .expect_err("heavy database SQL should exceed budget");
+
+        assert!(
+            error.contains("database SQL execution budget exceeded"),
+            "unexpected error for {caller}: {error}"
+        );
+    }
 }
 
 #[test]
