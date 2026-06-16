@@ -94,7 +94,7 @@ const sqlRules = [
   "SQL must be one restricted SELECT, <=4096 bytes, from exactly fs_nodes or fs_links.",
   "LIMIT 1..100 is required.",
   "Joins, subqueries, grouping/window/aggregate functions, comments, semicolons, OFFSET, and mutating/admin tokens are rejected.",
-  "The first selected column must be non-null JSON object text, usually json_object(...). Each row is capped at 64 KiB and the total response at 256 KiB.",
+  "The query must return exactly one non-null JSON object text column, usually json_object(...). Each row is capped at 64 KiB and the total response at 256 KiB.",
   "Index DB tables, metrics tables, sessions, marketplace orders, and billing tables are not available.",
   "Granting reader to 2vxsx-fae makes wiki content, read-only member metadata, and restricted database-scoped SQL readable by anonymous callers.",
   "For guaranteed anonymous public reads, pass --identity anonymous or use Browser, kinic-vfs-cli --identity-mode anonymous, or an anonymous agent."

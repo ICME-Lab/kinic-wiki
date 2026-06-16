@@ -4899,10 +4899,43 @@ fn database_sql_json_requires_json_object_text_first_column() {
             .expect_err("non-object JSON text first column should reject");
 
         assert!(
-            error.contains("one non-null valid JSON object TEXT column"),
+            error.contains("exactly one non-null valid JSON object TEXT column"),
             "unexpected error for {sql}: {error}"
         );
     }
+}
+
+#[test]
+fn database_sql_json_rejects_extra_result_columns() {
+    let service = service();
+    service
+        .create_database("typed-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "typed-sql-db".to_string(),
+                path: "/Wiki/sql.md".to_string(),
+                kind: NodeKind::File,
+                content: "database sql".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("node should write");
+
+    let error = service
+        .query_database_sql_json(
+            "typed-sql-db",
+            "owner",
+            "SELECT json_object('path', path), kind FROM fs_nodes LIMIT 1",
+            10,
+        )
+        .expect_err("extra result columns should reject");
+
+    assert!(error.contains("exactly one non-null valid JSON object TEXT column"));
 }
 
 #[test]

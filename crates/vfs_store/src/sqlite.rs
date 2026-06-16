@@ -32,6 +32,11 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn row_has_column(row: &Row<'_>, index: usize) -> Result<bool> {
+    Ok(index < row.as_ref().column_count())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn query_map<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<Vec<T>>
 where
     P: Params,
@@ -286,6 +291,16 @@ where
     T: FromColumn,
 {
     row.get(index)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn row_has_column(row: &Row<'_>, index: usize) -> Result<bool> {
+    match row_get::<Option<String>>(row, index) {
+        Ok(_) => Ok(true),
+        Err(Error::ColumnOutOfRange { .. }) => Ok(false),
+        Err(Error::TypeMismatch { .. }) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -98,7 +98,7 @@ SQL constraints:
 - Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`.
 - `OFFSET` is rejected.
 - `;`, comments, joins, compound selects, subqueries, grouping/window clauses, mutating/admin tokens, and large generated/aggregate values are rejected.
-- The first selected column must be non-null valid JSON object TEXT.
+- The query must return exactly one selected column, and each value must be non-null valid JSON object TEXT.
 - The request `limit` is also clamped to the canister query limit.
 - Each JSON row is capped at 64 KiB, and the total JSON rows response is capped at 256 KiB.
 

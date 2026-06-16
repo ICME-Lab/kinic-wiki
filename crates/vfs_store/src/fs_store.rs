@@ -257,6 +257,9 @@ impl FsStore {
                 params![],
                 limit as usize,
                 |row| {
+                    if crate::sqlite::row_has_column(row, 1)? {
+                        return Err(crate::sqlite::invalid_query());
+                    }
                     let value: Option<String> = crate::sqlite::row_get(row, 0)?;
                     let value = value.ok_or_else(crate::sqlite::invalid_query)?;
                     let is_object: i64 = crate::sqlite::query_one(
@@ -273,7 +276,7 @@ impl FsStore {
             )
             .map_err(|error| {
                 format!(
-                    "database SQL must return one non-null valid JSON object TEXT column as the first column: {error}"
+                    "database SQL must return exactly one non-null valid JSON object TEXT column: {error}"
                 )
             })?;
             validate_sql_json_response_bytes("database SQL", &rows)?;

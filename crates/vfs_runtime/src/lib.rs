@@ -286,15 +286,17 @@ impl VfsService {
         let limit = page_limit(limit);
         self.read_index(|conn| {
             let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
-            let rows = crate::sqlite::query_map_limit(&mut stmt, params![], limit as usize, |row| {
-                let value: Option<String> = crate::sqlite::row_get(row, 0)?;
-                value.ok_or_else(crate::sqlite::invalid_query)
-            })
-            .map_err(|error| {
-                format!(
-                    "index SQL must return one non-null TEXT JSON column as the first column: {error}"
-                )
-            })?;
+            let rows =
+                crate::sqlite::query_map_limit(&mut stmt, params![], limit as usize, |row| {
+                    if crate::sqlite::row_has_column(row, 1)? {
+                        return Err(crate::sqlite::invalid_query());
+                    }
+                    let value: Option<String> = crate::sqlite::row_get(row, 0)?;
+                    value.ok_or_else(crate::sqlite::invalid_query)
+                })
+                .map_err(|error| {
+                    format!("index SQL must return exactly one non-null TEXT JSON column: {error}")
+                })?;
             Ok(IndexSqlJsonQueryResult {
                 row_count: rows.len() as u32,
                 rows,
@@ -8247,7 +8249,7 @@ mod tests {
             .query_index_sql_json("SELECT 1 LIMIT 1", 10)
             .expect_err("non-text first column should reject");
 
-        assert!(error.contains("one non-null TEXT JSON column"));
+        assert!(error.contains("exactly one non-null TEXT JSON column"));
     }
 
     #[test]

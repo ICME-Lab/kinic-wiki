@@ -331,7 +331,9 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Run one restricted JSON SELECT query against the selected database")]
+    #[command(
+        about = "Run one restricted JSON SELECT against the selected database; auto identity uses anonymous for public DBs unless the selected identity is a member"
+    )]
     QuerySql {
         sql: String,
         #[arg(long, default_value_t = 100)]
