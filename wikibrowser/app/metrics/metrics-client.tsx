@@ -17,7 +17,7 @@ type LoadState = "idle" | "loading" | "ready" | "error";
 type ChartSeries = {
   label: string;
   color: string;
-  values: number[];
+  values: (number | null)[];
 };
 
 export function MetricsClient({ canisterId }: { canisterId: string }) {
@@ -143,17 +143,17 @@ function activityChartSeries(points: WikiMetricsPoint[]): ChartSeries[] {
     {
       label: "Users active 30d",
       color: "#1d4ed8",
-      values: points.map((point) => numberFromDecimal(point.metrics.usersActive30d))
+      values: points.map((point) => chartNumberFromDecimal(point.metrics.usersActive30d))
     },
     {
       label: "Users new 30d",
       color: "#059669",
-      values: points.map((point) => numberFromDecimal(point.metrics.usersNew30d))
+      values: points.map((point) => chartNumberFromDecimal(point.metrics.usersNew30d))
     },
     {
       label: "DBs active 30d",
       color: "#e11d48",
-      values: points.map((point) => numberFromDecimal(point.metrics.databasesActive30d))
+      values: points.map((point) => chartNumberFromDecimal(point.metrics.databasesActive30d))
     }
   ];
 }
@@ -163,13 +163,13 @@ function chargeChartSeries(points: WikiMetricsPoint[]): ChartSeries[] {
     {
       label: "Charged KINIC 30d",
       color: "#ca8a04",
-      values: points.map((point) => numberFromDecimal(point.metrics.chargedKinic30dE8s) / 100_000_000)
+      values: points.map((point) => chartNumberFromDecimal(point.metrics.chargedKinic30dE8s, 100_000_000n))
     }
   ];
 }
 
 function MetricChart({ title, points, series }: { title: string; points: WikiMetricsPoint[]; series: ChartSeries[] }) {
-  const values = series.flatMap((line) => line.values);
+  const values = series.flatMap((line) => line.values).filter(isChartNumber);
   const maxValue = Math.max(0, ...values);
   const firstDate = points[0]?.bucketStartMs ?? null;
   const lastDate = points[points.length - 1]?.bucketStartMs ?? null;
@@ -188,7 +188,7 @@ function MetricChart({ title, points, series }: { title: string; points: WikiMet
             <span key={line.label} className="grid grid-cols-[auto_1fr_auto] items-center gap-2">
               <span className="h-2 w-4 rounded-full" style={{ backgroundColor: line.color }} />
               <span className="truncate">{line.label}</span>
-              <span className="font-mono font-semibold tabular-nums text-ink">{formatChartValue(line.values[line.values.length - 1] ?? 0)}</span>
+              <span className="font-mono font-semibold tabular-nums text-ink">{formatNullableChartValue(line.values[line.values.length - 1] ?? null)}</span>
             </span>
           ))}
         </div>
@@ -215,17 +215,13 @@ function MetricChart({ title, points, series }: { title: string; points: WikiMet
             <line x1={0} x2={0} y1={0} y2={100} stroke="#d8dee8" strokeWidth={0.7} vectorEffect="non-scaling-stroke" />
             {hasPositiveData
               ? series.map((line) => {
-                  const linePoints = line.values.map((value, index) => {
-                    const x = pointRatio(index, line.values.length) * 100;
-                    const y = valueRatio(value, yAxisMax) * 100;
-                    return { x, y };
-                  });
-                  const pathPoints = linePoints.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
-                  const latestPoint = linePoints[linePoints.length - 1] ?? null;
+                  const segments = chartLineSegments(line.values, yAxisMax);
                   return (
                     <g key={line.label}>
-                      <polyline points={pathPoints} fill="none" stroke={line.color} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
-                      {latestPoint ? <circle cx={latestPoint.x} cy={latestPoint.y} r={1.1} fill={line.color} stroke="#ffffff" strokeWidth={0.65} vectorEffect="non-scaling-stroke" /> : null}
+                      {segments.map((linePoints, segmentIndex) => {
+                        const pathPoints = linePoints.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+                        return <polyline key={segmentIndex} points={pathPoints} fill="none" stroke={line.color} strokeWidth={3} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />;
+                      })}
                     </g>
                   );
                 })
@@ -252,11 +248,36 @@ function valueRatio(value: number, maxValue: number): number {
   return 1 - value / maxValue;
 }
 
-function numberFromDecimal(value: string): number {
-  if (!/^[0-9]+$/.test(value)) return 0;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return parsed;
+function isChartNumber(value: number | null): value is number {
+  return value !== null && Number.isFinite(value);
+}
+
+function chartLineSegments(values: (number | null)[], maxValue: number): { x: number; y: number }[][] {
+  const segments: { x: number; y: number }[][] = [];
+  let current: { x: number; y: number }[] = [];
+  values.forEach((value, index) => {
+    if (value === null) {
+      if (current.length > 0) segments.push(current);
+      current = [];
+      return;
+    }
+    current.push({
+      x: pointRatio(index, values.length) * 100,
+      y: valueRatio(value, maxValue) * 100
+    });
+  });
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+function chartNumberFromDecimal(value: string, divisor = 1n): number | null {
+  if (divisor <= 0n || !/^[0-9]+$/.test(value)) return null;
+  const raw = BigInt(value);
+  const integer = raw / divisor;
+  const fraction = raw % divisor;
+  const maxSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+  if (integer > maxSafeInteger || (integer === maxSafeInteger && fraction > 0n)) return null;
+  return Number(integer) + Number(fraction) / Number(divisor);
 }
 
 function formatChartValue(value: number): string {
@@ -265,6 +286,11 @@ function formatChartValue(value: number): string {
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
   if (value % 1 === 0) return value.toString();
   return value.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function formatNullableChartValue(value: number | null): string {
+  if (value === null) return "-";
+  return formatChartValue(value);
 }
 
 function formatShortDate(value: string | null): string {

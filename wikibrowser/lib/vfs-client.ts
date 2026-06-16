@@ -705,6 +705,7 @@ export async function wikiMetrics(canisterId: string): Promise<WikiMetrics> {
   });
 }
 
+// Public aggregate telemetry. The canister clamps days to 1..7.
 export async function wikiMetricsSeries(canisterId: string, days: number): Promise<WikiMetricsPoint[]> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);

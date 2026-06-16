@@ -4699,6 +4699,7 @@ fn database_sql_json_rejects_mutating_multi_statement_and_expensive_sql() {
         "DROP TABLE fs_nodes",
         "PRAGMA table_info(fs_nodes)",
         "ATTACH DATABASE 'x' AS x",
+        "DETACH DATABASE x",
         "SELECT json_object('ok', 1); SELECT json_object('ok', 2)",
         "SELECT json_object('ok', 1) FROM fs_nodes -- comment LIMIT 1",
         "SELECT json_object('ok', 1) FROM fs_nodes /* comment */ LIMIT 1",
@@ -4818,6 +4819,8 @@ fn database_sql_json_rejects_internal_tables() {
         .expect("database should create");
 
     for sql in [
+        "SELECT json_object('name', name) FROM sqlite_master LIMIT 1",
+        "SELECT json_object('name', name) FROM sqlite_schema LIMIT 1",
         "SELECT json_object('version', version) FROM schema_migrations LIMIT 1",
         "SELECT json_object('path', path) FROM fs_change_log LIMIT 1",
         "SELECT json_object('path', path) FROM fs_path_state LIMIT 1",
@@ -4833,7 +4836,7 @@ fn database_sql_json_rejects_internal_tables() {
 }
 
 #[test]
-fn database_sql_json_requires_text_json_first_column() {
+fn database_sql_json_requires_json_object_text_first_column() {
     let service = service();
     service
         .create_database("typed-sql-db", "owner", 1)
@@ -4857,20 +4860,24 @@ fn database_sql_json_requires_text_json_first_column() {
         "SELECT 1 FROM fs_nodes LIMIT 1",
         "SELECT NULL FROM fs_nodes LIMIT 1",
         "SELECT 'not-json' FROM fs_nodes LIMIT 1",
+        "SELECT json_array(1, 2) FROM fs_nodes LIMIT 1",
+        "SELECT json_quote('value') FROM fs_nodes LIMIT 1",
+        "SELECT json(1) FROM fs_nodes LIMIT 1",
+        "SELECT json('null') FROM fs_nodes LIMIT 1",
     ] {
         let error = service
             .query_database_sql_json("typed-sql-db", "owner", sql, 10)
-            .expect_err("invalid JSON text first column should reject");
+            .expect_err("non-object JSON text first column should reject");
 
         assert!(
-            error.contains("one non-null valid JSON TEXT column"),
+            error.contains("one non-null valid JSON object TEXT column"),
             "unexpected error for {sql}: {error}"
         );
     }
 }
 
 #[test]
-fn database_sql_json_accepts_valid_json_values() {
+fn database_sql_json_accepts_valid_json_object_values() {
     let service = service();
     service
         .create_database("json-sql-db", "owner", 1)
@@ -4894,12 +4901,12 @@ fn database_sql_json_accepts_valid_json_values() {
         .query_database_sql_json(
             "json-sql-db",
             "owner",
-            "SELECT json_array(1, 2) FROM fs_nodes LIMIT 1",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
             10,
         )
-        .expect("JSON array should be accepted");
+        .expect("JSON object should be accepted");
 
-    assert_eq!(result.rows, vec!["[1,2]".to_string()]);
+    assert_eq!(result.rows, vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]);
 }
 
 #[test]
@@ -5076,7 +5083,7 @@ fn wiki_metrics_returns_zero_counts_without_activity() {
 }
 
 #[test]
-fn wiki_metrics_series_clamps_days_and_excludes_future_events() {
+fn wiki_metrics_series_clamps_days_to_one_through_seven_and_excludes_future_events() {
     const DAY_MS: i64 = 24 * 60 * 60 * 1000;
     const NOW: i64 = 1_800_000_000_000;
     let today_start = (NOW / DAY_MS) * DAY_MS;
@@ -5096,12 +5103,24 @@ fn wiki_metrics_series_clamps_days_and_excludes_future_events() {
     let zero_day = service
         .wiki_metrics_series(NOW, 0)
         .expect("zero day should clamp to one point");
-    let capped_days = service
-        .wiki_metrics_series(NOW, 100)
-        .expect("large day count should clamp to seven points");
+    let one_day = service
+        .wiki_metrics_series(NOW, 1)
+        .expect("one day should return one point");
+    let seven_days = service
+        .wiki_metrics_series(NOW, 7)
+        .expect("seven days should return seven points");
+    let eight_days = service
+        .wiki_metrics_series(NOW, 8)
+        .expect("eight days should clamp to seven points");
+    let thirty_days = service
+        .wiki_metrics_series(NOW, 30)
+        .expect("thirty days should clamp to seven points");
 
     assert_eq!(zero_day.len(), 1);
-    assert_eq!(capped_days.len(), 7);
+    assert_eq!(one_day.len(), 1);
+    assert_eq!(seven_days.len(), 7);
+    assert_eq!(eight_days.len(), 7);
+    assert_eq!(thirty_days.len(), 7);
     assert_eq!(series.len(), 3);
     assert_eq!(series[0].bucket_start_ms, first_start);
     assert_eq!(series[1].bucket_start_ms, previous_start);

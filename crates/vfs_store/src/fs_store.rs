@@ -246,8 +246,10 @@ impl FsStore {
         validate_database_sql_json_select(sql, "database SQL")?;
         let limit = sql_json_page_limit(limit);
         self.read_conn(|conn| {
-            let mut json_valid_stmt = conn
-                .prepare("SELECT json_valid(?1)")
+            let mut json_object_stmt = conn
+                .prepare(
+                    "SELECT CASE WHEN json_valid(?1) THEN json_type(?1) = 'object' ELSE 0 END",
+                )
                 .map_err(|error| error.to_string())?;
             let mut stmt = conn.prepare(sql).map_err(|error| error.to_string())?;
             let rows = crate::sqlite::query_map_limit(
@@ -257,14 +259,12 @@ impl FsStore {
                 |row| {
                     let value: Option<String> = crate::sqlite::row_get(row, 0)?;
                     let value = value.ok_or_else(crate::sqlite::invalid_query)?;
-                    let valid: i64 = crate::sqlite::query_one(
-                        &mut json_valid_stmt,
+                    let is_object: i64 = crate::sqlite::query_one(
+                        &mut json_object_stmt,
                         params![value.as_str()],
-                        |row| {
-                        crate::sqlite::row_get(row, 0)
-                        },
+                        |row| crate::sqlite::row_get(row, 0),
                     )?;
-                    if valid == 1 {
+                    if is_object == 1 {
                         Ok(value)
                     } else {
                         Err(crate::sqlite::invalid_query())
@@ -273,7 +273,7 @@ impl FsStore {
             )
             .map_err(|error| {
                 format!(
-                    "database SQL must return one non-null valid JSON TEXT column as the first column: {error}"
+                    "database SQL must return one non-null valid JSON object TEXT column as the first column: {error}"
                 )
             })?;
             validate_sql_json_response_bytes("database SQL", &rows)?;

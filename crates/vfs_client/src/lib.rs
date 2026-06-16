@@ -311,6 +311,7 @@ pub trait VfsApi: Sync {
     async fn wiki_metrics(&self) -> Result<WikiMetrics> {
         Err(anyhow!("wiki_metrics is not implemented by this client"))
     }
+    /// Return public aggregate telemetry buckets. The service clamps days to 1..=7.
     async fn wiki_metrics_series(&self, _days: u32) -> Result<Vec<WikiMetricsPoint>> {
         Err(anyhow!(
             "wiki_metrics_series is not implemented by this client"

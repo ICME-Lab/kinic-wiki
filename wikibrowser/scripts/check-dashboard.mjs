@@ -47,6 +47,13 @@ assert.match(metrics, /No activity in this period/);
 assert.match(metrics, /Activity/);
 assert.match(metrics, /KINIC charge rolling 30d/);
 assert.match(metrics, /Public usage and KINIC charge totals/);
+assert.match(metrics, /chartNumberFromDecimal\(value: string, divisor = 1n\): number \| null/);
+assert.match(metrics, /BigInt\(value\)/);
+assert.match(metrics, /Number\.MAX_SAFE_INTEGER/);
+assert.match(metrics, /chargedKinic30dE8s, 100_000_000n/);
+assert.match(metrics, /formatNullableChartValue/);
+assert.doesNotMatch(metrics, /chargedKinic30dE8s\) \/ 100_000_000/);
+assert.doesNotMatch(metrics, /\bnumberFromDecimal\(/);
 assert.doesNotMatch(metrics, /<input|<textarea|contentEditable/);
 assert.doesNotMatch(metrics, /queryIndexSqlJson|buildWikiMetricsSql|useAppSession/);
 

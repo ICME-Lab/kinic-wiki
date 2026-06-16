@@ -307,14 +307,14 @@ fn non_controller_can_query_public_wiki_metrics() {
 }
 
 #[test]
-fn non_controller_can_query_public_wiki_metrics_series() {
+fn non_controller_can_query_public_wiki_metrics_series_clamped_to_seven_days() {
     install_empty_test_service();
     let non_controller = Principal::from_text("rrkah-fqaaa-aaaaa-aaaaq-cai")
         .expect("valid non-controller principal");
     set_test_caller_principal_for_test(non_controller);
 
-    let series =
-        wiki_metrics_series(30).expect("public metrics series should not require controller");
+    let series = wiki_metrics_series(30)
+        .expect("public metrics series should not require controller and should clamp to max 7");
 
     assert_eq!(series.len(), 7);
     assert_eq!(series[0].metrics.users_total, 0);
@@ -398,7 +398,7 @@ fn database_sql_json_rejects_invalid_json_at_entrypoint() {
     )
     .expect_err("invalid JSON should reject");
 
-    assert!(error.contains("one non-null valid JSON TEXT column"));
+    assert!(error.contains("one non-null valid JSON object TEXT column"));
 }
 
 #[test]

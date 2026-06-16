@@ -17,7 +17,7 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 
 - `memory_manifest()`: discover the API version, roots, capability summary, canonical roles, limits, and recommended entrypoint.
 - `query_context(QueryContextRequest)`: read task-scoped wiki context. This is the primary entrypoint for normal agent questions.
-- `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON text rows.
+- `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON object text rows.
 - `source_evidence(SourceEvidenceRequest)`: read `/Sources` references for one known wiki node path.
 
 These methods are canister query methods. They do not mutate wiki content.
@@ -98,7 +98,7 @@ SQL constraints:
 - Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`.
 - `OFFSET` is rejected.
 - `;`, comments, joins, compound selects, subqueries, grouping/window clauses, mutating/admin tokens, and large generated/aggregate values are rejected.
-- The first selected column must be non-null valid JSON TEXT.
+- The first selected column must be non-null valid JSON object TEXT.
 - The request `limit` is also clamped to the canister query limit.
 - Each JSON row is capped at 64 KiB, and the total JSON rows response is capped at 256 KiB.
 
@@ -120,6 +120,13 @@ The response shape is:
   "limit": 20
 }
 ```
+
+## Public Wiki Metrics
+
+`wiki_metrics` and `wiki_metrics_series(days)` are unauthenticated public aggregate telemetry APIs.
+They expose user and database counts, paid user totals, charged KINIC totals in e8s, and `last_activity_at_ms`.
+`wiki_metrics_series(days)` clamps `days` to `1..7`; `0` returns one point and values above `7` return seven points.
+Controller-only operational SQL remains separate in `query_index_sql_json`.
 
 ## v1 Limits
 
