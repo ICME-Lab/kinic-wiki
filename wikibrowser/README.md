@@ -73,6 +73,12 @@ Open a database route and select the `ingest` left-pane tab:
 /<database-id>/Wiki?tab=ingest
 ```
 
+Select the `clipper` left-pane tab to check the current database, writer readiness, Chrome extension setup steps, and Clipper storage paths without leaving WikiBrowser:
+
+```text
+/<database-id>/Wiki?tab=clipper
+```
+
 Submitting a URL writes one request node to the same database:
 
 ```text

@@ -9,6 +9,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
+import { ClipperPanel } from "@/components/clipper-panel";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -41,7 +42,7 @@ import {
   type ViewMode
 } from "@/lib/wiki-helpers";
 
-const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest"];
+const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest", "clipper"];
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
@@ -731,6 +732,7 @@ export function WikiBrowser() {
             currentNode={currentNode.data}
             readIdentityMode={currentReadIdentityMode}
             databaseCyclesError={currentDatabaseCycleReason}
+            currentDatabaseRole={currentDatabaseRole}
             explorerRevision={explorerRevision}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
@@ -817,6 +819,7 @@ function LeftPane({
   currentNode,
   readIdentityMode,
   databaseCyclesError,
+  currentDatabaseRole,
   explorerRevision,
   onSelectedExplorerNode
 }: {
@@ -831,6 +834,7 @@ function LeftPane({
   currentNode: WikiNode | null;
   readIdentityMode: "anonymous" | "user";
   databaseCyclesError: string | null;
+  currentDatabaseRole: DatabaseRole | null;
   explorerRevision: number;
   onSelectedExplorerNode: (node: ChildNode) => void;
 }) {
@@ -854,6 +858,17 @@ function LeftPane({
         canisterId={canisterId}
         databaseId={databaseId}
         readIdentity={readIdentity}
+        databaseCyclesError={databaseCyclesError}
+      />
+    );
+  }
+  if (tab === "clipper") {
+    return (
+      <ClipperPanel
+        databaseId={databaseId}
+        ingestHref={hrefForPath(canisterId, databaseId, selectedPath, undefined, "ingest")}
+        readIdentity={readIdentity}
+        currentDatabaseRole={currentDatabaseRole}
         databaseCyclesError={databaseCyclesError}
       />
     );
@@ -1587,7 +1602,7 @@ function ModeTabs({
 }) {
   return (
     <nav className="border-b border-line bg-white px-3 py-2" aria-label="Left sidebar mode">
-      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-xs">
+      <div className="grid grid-cols-4 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-[11px]">
         {SIDEBAR_TABS.map((value) => (
           <Link
             key={value}
@@ -1605,6 +1620,7 @@ function ModeTabs({
 function tabTitle(tab: ModeTab): string {
   if (tab === "query") return "Query";
   if (tab === "ingest") return "Ingest";
+  if (tab === "clipper") return "Clipper";
   return "Explorer";
 }
 

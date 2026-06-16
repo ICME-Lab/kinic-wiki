@@ -2472,12 +2472,12 @@ pub fn validate_sql_json_select(sql: &str, label: &str) -> Result<(), String> {
 
 fn validate_database_sql_json_select(sql: &str, label: &str) -> Result<(), String> {
     validate_sql_json_select(sql, label)?;
-    let trimmed = sql.trim();
-    if trimmed.len() > SQL_JSON_SQL_BYTES_MAX {
+    if sql.len() > SQL_JSON_SQL_BYTES_MAX {
         return Err(format!(
             "{label} must be at most {SQL_JSON_SQL_BYTES_MAX} bytes"
         ));
     }
+    let trimmed = sql.trim();
     if trimmed.contains("--") || trimmed.contains("/*") || trimmed.contains("*/") {
         return Err(format!("{label} comments are not allowed"));
     }

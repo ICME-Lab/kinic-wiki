@@ -4738,6 +4738,23 @@ fn database_sql_json_rejects_mutating_multi_statement_and_expensive_sql() {
 }
 
 #[test]
+fn database_sql_json_rejects_raw_sql_over_byte_limit_before_trimming() {
+    let service = service();
+    service
+        .create_database("raw-size-guard-sql-db", "owner", 1)
+        .expect("database should create");
+    let sql_body = "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1";
+    let padding_len = 4_097_usize.saturating_sub(sql_body.len());
+    let sql = format!("{}{}", " ".repeat(padding_len), sql_body);
+
+    let error = service
+        .query_database_sql_json("raw-size-guard-sql-db", "owner", &sql, 10)
+        .expect_err("raw SQL over byte limit should reject");
+
+    assert!(error.contains("must be at most 4096 bytes"));
+}
+
+#[test]
 fn database_sql_json_api_limit_stops_reading_before_sql_limit() {
     let service = service();
     service
