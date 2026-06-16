@@ -48,20 +48,33 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn query_map_limit<T, P, F>(
+pub(crate) enum QueryTryMapError<E> {
+    Sqlite(Error),
+    Validation(E),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<E> From<Error> for QueryTryMapError<E> {
+    fn from(error: Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_try_map_limit<T, P, F, E>(
     statement: &mut Statement<'_>,
     params: P,
     limit: usize,
     mut f: F,
-) -> Result<Vec<T>>
+) -> std::result::Result<Vec<T>, QueryTryMapError<E>>
 where
     P: Params,
-    F: FnMut(&Row<'_>) -> Result<T>,
+    F: FnMut(&Row<'_>) -> std::result::Result<T, QueryTryMapError<E>>,
 {
-    let mut rows = statement.query(params)?;
+    let mut rows = statement.query(params).map_err(QueryTryMapError::Sqlite)?;
     let mut output = Vec::new();
     while output.len() < limit {
-        let Some(row) = rows.next()? else {
+        let Some(row) = rows.next().map_err(QueryTryMapError::Sqlite)? else {
             break;
         };
         output.push(f(row)?);
@@ -187,6 +200,19 @@ use std::ffi::{c_int, c_void};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) enum QueryTryMapError<E> {
+    Sqlite(Error),
+    Validation(E),
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<E> From<Error> for QueryTryMapError<E> {
+    fn from(error: Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait OptionalExtension<T> {
@@ -368,20 +394,22 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn query_map_limit<T, P, F>(
+pub(crate) fn query_try_map_limit<T, P, F, E>(
     statement: &mut Statement<'_>,
     params: P,
     limit: usize,
     mut f: F,
-) -> Result<Vec<T>>
+) -> std::result::Result<Vec<T>, QueryTryMapError<E>>
 where
     P: Params,
-    F: FnMut(&Row<'_>) -> Result<T>,
+    F: FnMut(&Row<'_>) -> std::result::Result<T, QueryTryMapError<E>>,
 {
-    let mut rows = statement.query(params.as_params())?;
+    let mut rows = statement
+        .query(params.as_params())
+        .map_err(QueryTryMapError::Sqlite)?;
     let mut output = Vec::new();
     while output.len() < limit {
-        let Some(row) = rows.next_row()? else {
+        let Some(row) = rows.next_row().map_err(QueryTryMapError::Sqlite)? else {
             break;
         };
         output.push(f(&row)?);

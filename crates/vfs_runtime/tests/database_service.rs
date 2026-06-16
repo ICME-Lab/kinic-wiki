@@ -4611,6 +4611,71 @@ fn market_purchase_begin_records_listing_payout_for_empty_ledger_recipient() {
 }
 
 #[test]
+fn index_sql_json_requires_valid_json_object_values() {
+    let service = service();
+
+    for sql in [
+        "SELECT 1 LIMIT 1",
+        "SELECT NULL LIMIT 1",
+        "SELECT 'not-json' LIMIT 1",
+        "SELECT json_array(1, 2) LIMIT 1",
+        "SELECT json_quote('value') LIMIT 1",
+        "SELECT json('null') LIMIT 1",
+        "SELECT json_object('ok', 1), 1 LIMIT 1",
+    ] {
+        let error = service
+            .query_index_sql_json(sql, 10)
+            .expect_err("invalid index SQL JSON should reject");
+        assert!(
+            error.contains("exactly one non-null valid JSON object TEXT column"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn index_sql_json_rejects_oversized_row_and_response() {
+    let service = service();
+
+    let row_error = service
+        .query_index_sql_json(
+            "SELECT json_object('content', printf('%70000s', 'x')) LIMIT 1",
+            1,
+        )
+        .expect_err("oversized index SQL row should reject");
+    assert!(row_error.contains("row JSON exceeds"));
+
+    let response_error = service
+        .query_index_sql_json(
+            "SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) UNION ALL SELECT json_object('content', printf('%60000s', 'x')) LIMIT 5",
+            5,
+        )
+        .expect_err("oversized index SQL response should reject");
+    assert!(response_error.contains("response JSON exceeds"));
+}
+
+#[test]
+fn index_sql_json_interrupts_heavy_query_and_clears_progress_handler() {
+    let service = service();
+
+    let error = service
+        .query_index_sql_json(
+            "SELECT json_object('i', (WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000000) SELECT max(i) FROM n)) LIMIT 1",
+            1,
+        )
+        .expect_err("heavy index SQL should exceed budget");
+    assert!(
+        error.contains("index SQL execution budget exceeded"),
+        "unexpected error: {error}"
+    );
+
+    let result = service
+        .query_index_sql_json("SELECT json_object('ok', 1) LIMIT 1", 1)
+        .expect("progress handler should be cleared after interrupt");
+    assert_eq!(result.rows, vec![r#"{"ok":1}"#.to_string()]);
+}
+
+#[test]
 fn database_sql_json_returns_rows_for_readers_and_public_readers() {
     let service = service();
     service
@@ -4661,6 +4726,37 @@ fn database_sql_json_returns_rows_for_readers_and_public_readers() {
         vec![r#"{"path":"/Wiki/a.md","content":"alpha"}"#]
     );
     assert_eq!(public_result.rows, vec![r#"{"path":"/Wiki/a.md"}"#]);
+}
+
+#[test]
+fn database_sql_json_rejects_internal_tables_for_reader() {
+    let service = service();
+    service
+        .create_database("reader-table-guard-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .grant_database_access(
+            "reader-table-guard-sql-db",
+            "owner",
+            "reader",
+            DatabaseRole::Reader,
+            2,
+        )
+        .expect("reader grant should succeed");
+
+    for sql in [
+        "SELECT json_object('version', version) FROM schema_migrations LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_change_log LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_path_state LIMIT 1",
+    ] {
+        let error = service
+            .query_database_sql_json("reader-table-guard-sql-db", "reader", sql, 10)
+            .expect_err("internal table should reject for reader");
+        assert!(
+            error.contains("table is not allowed"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
 }
 
 #[test]
