@@ -4745,13 +4745,25 @@ fn database_sql_json_rejects_raw_sql_over_byte_limit_before_trimming() {
         .expect("database should create");
     let sql_body = "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1";
     let padding_len = 4_097_usize.saturating_sub(sql_body.len());
-    let sql = format!("{}{}", " ".repeat(padding_len), sql_body);
+    let cases = [
+        (
+            "valid SELECT after trimming",
+            format!("{}{}", " ".repeat(padding_len), sql_body),
+        ),
+        ("spaces only", " ".repeat(4_097)),
+        ("non-SELECT", "x".repeat(4_097)),
+    ];
 
-    let error = service
-        .query_database_sql_json("raw-size-guard-sql-db", "owner", &sql, 10)
-        .expect_err("raw SQL over byte limit should reject");
+    for (label, sql) in cases {
+        let error = service
+            .query_database_sql_json("raw-size-guard-sql-db", "owner", &sql, 10)
+            .expect_err("raw SQL over byte limit should reject");
 
-    assert!(error.contains("must be at most 4096 bytes"));
+        assert!(
+            error.contains("must be at most 4096 bytes"),
+            "unexpected error for {label}: {error}"
+        );
+    }
 }
 
 #[test]
