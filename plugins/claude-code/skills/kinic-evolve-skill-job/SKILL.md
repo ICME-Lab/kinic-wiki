@@ -7,6 +7,8 @@ description: Process a queued Kinic skill evolution job using Claude Code as the
 
 Use this skill when Claude Code should turn recorded Kinic run evidence into a skill improvement proposal.
 
+Process exactly one queued job. Do not loop.
+
 1. Run the plugin-local script `scripts/evolve-job.sh prepare [job-id]`.
 2. Read the returned JSON. If it reports no queued job, stop and report that no job exists.
 3. Use the returned `messages` as the evolution prompt. Follow them exactly.

@@ -7,6 +7,8 @@ description: Process a queued Kinic skill evolution job using Codex as the LLM. 
 
 Use this skill when Codex should turn recorded Kinic run evidence into a skill improvement proposal.
 
+Process exactly one queued job. Do not loop.
+
 1. Run `${PLUGIN_ROOT}/scripts/evolve-job.sh prepare [job-id]`.
 2. Read the returned JSON. If it reports no queued job, stop and report that no job exists.
 3. Use the returned `messages` as the evolution prompt. Follow them exactly.

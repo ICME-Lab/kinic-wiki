@@ -1,0 +1,18 @@
+{
+  "description": "Persist completed Claude Code sessions to Kinic raw sources.",
+  "hooks": {
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/record-session.sh",
+            "args": [],
+            "async": true,
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

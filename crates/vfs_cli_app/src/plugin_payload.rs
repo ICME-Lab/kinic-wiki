@@ -60,6 +60,16 @@ pub const CLAUDE_PLUGIN_FILES: &[PayloadFile] = &[
         executable: true,
     },
     PayloadFile {
+        path: "scripts/record-session.sh",
+        content: include_str!("../../../plugins/claude-code/scripts/record-session.sh"),
+        executable: true,
+    },
+    PayloadFile {
+        path: "hooks/hooks.json",
+        content: include_str!("../../../plugins/claude-code/hooks/hooks.json"),
+        executable: false,
+    },
+    PayloadFile {
         path: "skills/kinic-evolve-skill-job/SKILL.md",
         content: include_str!(
             "../../../plugins/claude-code/skills/kinic-evolve-skill-job/SKILL.md"
@@ -134,6 +144,11 @@ pub const RUNTIME_FILES: &[PayloadFile] = &[
         content: include_str!("../../../plugins/runtime/kinic_agent_runtime/evolve.py"),
         executable: false,
     },
+    PayloadFile {
+        path: "kinic_agent_runtime/session.py",
+        content: include_str!("../../../plugins/runtime/kinic_agent_runtime/session.py"),
+        executable: false,
+    },
 ];
 
 pub fn replace_dir_with_payload(target: &Path, groups: &[&[PayloadFile]]) -> Result<()> {
@@ -192,6 +207,27 @@ pub fn replace_dir_with_payload(target: &Path, groups: &[&[PayloadFile]]) -> Res
     )
     .with_context(|| format!("failed to write managed marker in {}", target.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CLAUDE_PLUGIN_FILES, RUNTIME_FILES};
+
+    #[test]
+    fn claude_payload_includes_session_hook_files() {
+        let claude_paths = CLAUDE_PLUGIN_FILES
+            .iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+        let runtime_paths = RUNTIME_FILES
+            .iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+
+        assert!(claude_paths.contains(&"hooks/hooks.json"));
+        assert!(claude_paths.contains(&"scripts/record-session.sh"));
+        assert!(runtime_paths.contains(&"kinic_agent_runtime/session.py"));
+    }
 }
 
 fn directory_has_entries(path: &Path) -> Result<bool> {
