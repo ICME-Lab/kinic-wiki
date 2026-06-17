@@ -80,6 +80,25 @@ class HermesKinicPluginTests(unittest.TestCase):
         self.assertFalse(evidence["redacted"])
         self.assertFalse(evidence["truncated"])
 
+    def test_run_buffer_caps_tool_trace_items(self) -> None:
+        from kinic_hermes.schemas import RunBuffer, ToolTrace
+
+        buffer = RunBuffer(
+            tool_trace=[
+                ToolTrace(f"browser-step-{index}", {"payload": "x" * 100}, "dom snapshot " + ("y" * 100))
+                for index in range(8)
+            ],
+            final_response="done",
+        )
+        with mock.patch.dict(os.environ, {"KINIC_HERMES_MAX_TOOL_TRACE_ITEMS": "3"}, clear=False):
+            evidence = buffer.to_json("browser-skill", {})
+
+        self.assertEqual(evidence["tool_trace_total"], 8)
+        self.assertEqual(evidence["tool_trace_omitted"], 5)
+        self.assertEqual([item["name"] for item in evidence["tool_trace"]], ["browser-step-5", "browser-step-6", "browser-step-7"])
+        self.assertTrue(evidence["truncated"])
+        self.assertEqual(evidence["max_chars"]["tool_trace_items"], 3)
+
     def test_missing_cli_saves_pending_with_metadata(self) -> None:
         from kinic_hermes import client as client_module
 

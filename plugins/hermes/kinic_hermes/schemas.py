@@ -15,6 +15,7 @@ DEFAULT_MAX_TOOL_ARGS_CHARS = 2000
 DEFAULT_MAX_TOOL_RESULT_CHARS = 2000
 DEFAULT_MAX_FINAL_RESPONSE_CHARS = 2000
 DEFAULT_MAX_RAW_EXCERPT_CHARS = 4000
+DEFAULT_MAX_TOOL_TRACE_ITEMS = 20
 SECRET_KEY_PATTERN = re.compile(r"(api[_-]?key|authorization|bearer|credential|password|secret|token)", re.I)
 SECRET_VALUE_PATTERNS = [
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
@@ -52,11 +53,13 @@ class RunBuffer:
             "final_response": max_chars_from_env("KINIC_HERMES_MAX_FINAL_RESPONSE_CHARS", DEFAULT_MAX_FINAL_RESPONSE_CHARS),
             "raw_evidence_excerpt": max_chars_from_env("KINIC_HERMES_MAX_RAW_EXCERPT_CHARS", DEFAULT_MAX_RAW_EXCERPT_CHARS),
         }
+        max_tool_trace_items = max_chars_from_env("KINIC_HERMES_MAX_TOOL_TRACE_ITEMS", DEFAULT_MAX_TOOL_TRACE_ITEMS)
+        selected_tool_trace = select_tool_trace(self.tool_trace, max_tool_trace_items, stats) if capture_raw else []
         tool_trace = [
-            sanitize_tool_trace(trace, max_chars, stats) for trace in self.tool_trace
+            sanitize_tool_trace(trace, max_chars, stats) for trace in selected_tool_trace
         ] if capture_raw else []
         final_response = sanitize_text(self.final_response, max_chars["final_response"], stats) if capture_raw else ""
-        raw_evidence_excerpt = self._excerpt(max_chars, stats) if capture_raw else ""
+        raw_evidence_excerpt = self._excerpt(selected_tool_trace, max_chars, stats) if capture_raw else ""
         return {
             "schema_version": 1,
             "skill_id": skill_id,
@@ -69,10 +72,12 @@ class RunBuffer:
             "raw_evidence_excerpt": raw_evidence_excerpt,
             "usage_delta": usage_delta,
             "tool_trace": tool_trace,
+            "tool_trace_total": len(self.tool_trace),
+            "tool_trace_omitted": max(0, len(self.tool_trace) - len(tool_trace)),
             "final_response": final_response,
             "redacted": stats.redacted,
             "truncated": stats.truncated,
-            "max_chars": max_chars,
+            "max_chars": {**max_chars, "tool_trace_items": max_tool_trace_items},
         }
 
     def _summary(self, final_response: str, capture_raw: bool) -> str:
@@ -82,8 +87,8 @@ class RunBuffer:
             return f"{len(self.tool_trace)} tool calls captured." if capture_raw else "Raw Hermes capture disabled."
         return "Skill usage detected from Hermes usage sidecar."
 
-    def _excerpt(self, max_chars: dict[str, int], stats: CaptureStats) -> str:
-        parts = [sanitize_text(trace.result_excerpt, max_chars["tool_result"], stats) for trace in self.tool_trace if trace.result_excerpt]
+    def _excerpt(self, tool_trace: list[ToolTrace], max_chars: dict[str, int], stats: CaptureStats) -> str:
+        parts = [sanitize_text(trace.result_excerpt, max_chars["tool_result"], stats) for trace in tool_trace if trace.result_excerpt]
         if self.final_response:
             parts.append(sanitize_text(self.final_response, max_chars["final_response"], stats))
         return truncate_text("\n\n".join(parts), max_chars["raw_evidence_excerpt"], stats)
@@ -98,6 +103,17 @@ def max_chars_from_env(name: str, default: int) -> int:
         return max(0, int(os.environ.get(name, str(default))))
     except ValueError:
         return default
+
+
+def select_tool_trace(tool_trace: list[ToolTrace], max_items: int, stats: CaptureStats) -> list[ToolTrace]:
+    if max_items == 0:
+        if tool_trace:
+            stats.truncated = True
+        return []
+    if len(tool_trace) <= max_items:
+        return tool_trace
+    stats.truncated = True
+    return tool_trace[-max_items:]
 
 
 def sanitize_tool_trace(trace: ToolTrace, max_chars: dict[str, int], stats: CaptureStats) -> dict[str, Any]:
