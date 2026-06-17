@@ -72,7 +72,7 @@ export function MetricsClient({ canisterId }: { canisterId: string }) {
   return (
     <AdminContent>
       <AdminPageHeader
-        title="Metrics"
+        title="Public Metrics"
         description="Public usage and KINIC charge totals."
         actions={
           <button

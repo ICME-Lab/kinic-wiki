@@ -46,6 +46,7 @@ assert.match(metrics, /<svg/);
 assert.match(metrics, /No activity in this period/);
 assert.match(metrics, /Activity/);
 assert.match(metrics, /KINIC charge rolling 30d/);
+assert.match(metrics, /title="Public Metrics"/);
 assert.match(metrics, /Public usage and KINIC charge totals/);
 assert.match(metrics, /chartNumberFromDecimal\(value: string, divisor = 1n\): number \| null/);
 assert.match(metrics, /BigInt\(value\)/);
