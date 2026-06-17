@@ -235,7 +235,7 @@ class HermesKinicPluginTests(unittest.TestCase):
         self.assertEqual(hook["command"], "${CLAUDE_PLUGIN_ROOT}/scripts/record-session.sh")
         self.assertEqual(hook["args"], [])
         self.assertTrue(hook["async"])
-        self.assertEqual(hook["timeout"], 120)
+        self.assertNotIn("timeout", hook)
 
     def test_allow_non_ii_env_adds_cli_flag(self) -> None:
         from kinic_hermes import client as client_module

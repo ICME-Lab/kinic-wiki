@@ -209,27 +209,6 @@ pub fn replace_dir_with_payload(target: &Path, groups: &[&[PayloadFile]]) -> Res
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{CLAUDE_PLUGIN_FILES, RUNTIME_FILES};
-
-    #[test]
-    fn claude_payload_includes_session_hook_files() {
-        let claude_paths = CLAUDE_PLUGIN_FILES
-            .iter()
-            .map(|file| file.path)
-            .collect::<Vec<_>>();
-        let runtime_paths = RUNTIME_FILES
-            .iter()
-            .map(|file| file.path)
-            .collect::<Vec<_>>();
-
-        assert!(claude_paths.contains(&"hooks/hooks.json"));
-        assert!(claude_paths.contains(&"scripts/record-session.sh"));
-        assert!(runtime_paths.contains(&"kinic_agent_runtime/session.py"));
-    }
-}
-
 fn directory_has_entries(path: &Path) -> Result<bool> {
     Ok(fs::read_dir(path)
         .with_context(|| format!("failed to read {}", path.display()))?
@@ -287,4 +266,25 @@ fn set_executable(path: &Path) -> Result<()> {
 #[cfg(not(unix))]
 fn set_executable(_path: &Path) -> Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CLAUDE_PLUGIN_FILES, RUNTIME_FILES};
+
+    #[test]
+    fn claude_payload_includes_session_hook_files() {
+        let claude_paths = CLAUDE_PLUGIN_FILES
+            .iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+        let runtime_paths = RUNTIME_FILES
+            .iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+
+        assert!(claude_paths.contains(&"hooks/hooks.json"));
+        assert!(claude_paths.contains(&"scripts/record-session.sh"));
+        assert!(runtime_paths.contains(&"kinic_agent_runtime/session.py"));
+    }
 }

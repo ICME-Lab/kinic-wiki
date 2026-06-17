@@ -6,6 +6,7 @@ Why: SessionEnd hooks must retain evidence without leaking obvious secrets.
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from kinic_agent_runtime import session
@@ -88,6 +89,103 @@ class SessionCaptureTests(unittest.TestCase):
         self.assertNotIn("Bearer real-token-value", source.content)
         self.assertNotIn("nested-auth-secret", source.content)
         self.assertNotIn("nested-password-secret", source.content)
+
+    def test_redacts_common_secret_key_names(self) -> None:
+        for key in [
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "auth_token",
+            "client_secret",
+            "session_cookie",
+            "x_api_key",
+        ]:
+            with self.subTest(key=key):
+                redacted, changed = session.redact_value({key: "shortfixture"})
+
+                self.assertTrue(changed)
+                self.assertEqual(redacted[key], session.REDACTED)
+
+    def test_redacts_dot_separated_api_key_in_raw_text(self) -> None:
+        redacted_text, changed = session.redact('api.key=short-secret\n{"api.key": "json-secret"}')
+
+        self.assertTrue(changed)
+        self.assertIn("api.key=[REDACTED]", redacted_text)
+        self.assertIn('"api.key": "[REDACTED]"', redacted_text)
+        self.assertNotIn("short-secret", redacted_text)
+        self.assertNotIn("json-secret", redacted_text)
+
+    def test_build_source_redacts_common_secret_key_names_in_tool_io(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "assistant",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "tool_use",
+                                            "id": "toolu_secret",
+                                            "name": "Fetch",
+                                            "input": {
+                                                "access_token": "short-access",
+                                                "refresh_token": "short-refresh",
+                                                "id_token": "short-id",
+                                                "auth_token": "short-auth",
+                                                "client_secret": "short-client",
+                                                "session_cookie": "short-cookie",
+                                                "x_api_key": "short-key",
+                                            },
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "assistant",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "tool_result",
+                                            "tool_use_id": "toolu_secret",
+                                            "content": "client_secret=result-client\naccess_token=result-access\napi.key=result-api-key",
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                    ]
+                )
+            )
+            hook = session.HookInput("session-common-secrets", transcript, "/repo", "exit")
+
+            source = session.build_source(hook)
+            pending = session.save_pending(Path(tmp) / "pending", source, now_ms=1)
+            pending_payload = pending.read_text()
+
+        self.assertTrue(source.metadata["redacted"])
+        for leaked in [
+            "short-access",
+            "short-refresh",
+            "short-id",
+            "short-auth",
+            "short-client",
+            "short-cookie",
+            "short-key",
+            "result-client",
+            "result-access",
+            "result-api-key",
+        ]:
+            self.assertNotIn(leaked, source.content)
+            self.assertNotIn(leaked, pending_payload)
+        self.assertIn('"access_token": "[REDACTED]"', source.content)
+        self.assertIn('"client_secret": "[REDACTED]"', source.content)
 
     def test_build_source_redacts_hook_metadata_before_saving(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -543,6 +641,70 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(result["recorded"])
             self.assertTrue(pending.is_file())
 
+    def test_record_session_saves_current_pending_before_flushing_old_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            old_pending = pending_dir / "1-old.json"
+            old_pending.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/old.md",
+                        "content": "# Old\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            transcript = root / "session.jsonl"
+            transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}))
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.jsonl"
+            fake_cli.write_text(
+                "#!/usr/bin/env bash\n"
+                "python3 - \"$@\" <<'PY'\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                "path = args[args.index('--path') + 1]\n"
+                f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
+                "PY\n"
+            )
+            fake_cli.chmod(0o755)
+            hook = json.dumps(
+                {"session_id": "session-current", "transcript_path": str(transcript), "cwd": "/repo", "reason": "exit"}
+            )
+
+            result = session.record_session(hook, str(fake_cli), pending_dir, now_ms=1000)
+
+            paths = [json.loads(line) for line in calls.read_text().splitlines()]
+            self.assertTrue(result["recorded"])
+            self.assertEqual(paths[0], "/Sources/raw/claudecode/session-current.md")
+            self.assertEqual(paths[1], "/Sources/raw/claudecode/old.md")
+            self.assertFalse(old_pending.exists())
+
+    def test_record_session_keeps_current_pending_when_old_pending_is_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            invalid = pending_dir / "1-bad.json"
+            invalid.write_text("{bad")
+            transcript = root / "session.jsonl"
+            transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}))
+            fake_cli = root / "kinic-vfs-cli"
+            fake_cli.write_text("#!/usr/bin/env bash\nexit 3\n")
+            fake_cli.chmod(0o755)
+            hook = json.dumps({"session_id": "session-1", "transcript_path": str(transcript), "cwd": "/repo", "reason": "exit"})
+
+            result = session.record_session(hook, str(fake_cli), pending_dir, now_ms=1000)
+
+            current_pending = Path(result["pending_path"])
+            self.assertFalse(result["recorded"])
+            self.assertTrue(current_pending.is_file())
+            self.assertFalse(invalid.exists())
+            self.assertTrue((pending_dir / "1-bad.json.invalid").is_file())
+            self.assertEqual(result["invalid_pending"], 1)
+
     def test_record_session_pending_payload_redacts_json_tool_input_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -635,6 +797,133 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertIn("write-node", argv)
             self.assertIn("--kind", argv)
             self.assertIn("source", argv)
+
+    def test_flush_pending_quarantines_invalid_file_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            invalid = pending_dir / "1-bad.json"
+            invalid.write_text("{bad")
+            good = pending_dir / "2-good.json"
+            good.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/good.md",
+                        "content": "# Good\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.txt"
+            fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
+            fake_cli.chmod(0o755)
+
+            result = session.flush_pending_report(str(fake_cli), pending_dir)
+
+            self.assertEqual(result.flushed, [good])
+            self.assertEqual(result.invalid, [pending_dir / "1-bad.json.invalid"])
+            self.assertEqual(result.failed, [])
+            self.assertFalse(good.exists())
+            self.assertFalse(invalid.exists())
+            self.assertTrue((pending_dir / "1-bad.json.invalid").is_file())
+            self.assertIn("/Sources/raw/claudecode/good.md", calls.read_text())
+
+    def test_flush_pending_quarantines_failed_write_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            failed = pending_dir / "1-fail.json"
+            failed.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/fail.md",
+                        "content": "# Fail\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            good = pending_dir / "2-good.json"
+            good.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/good.md",
+                        "content": "# Good\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.txt"
+            fake_cli.write_text(
+                "#!/usr/bin/env bash\n"
+                "for arg in \"$@\"; do\n"
+                "  if [ \"$arg\" = \"/Sources/raw/claudecode/fail.md\" ]; then exit 7; fi\n"
+                "done\n"
+                f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n"
+            )
+            fake_cli.chmod(0o755)
+
+            result = session.flush_pending_report(str(fake_cli), pending_dir)
+
+            self.assertEqual(result.flushed, [good])
+            self.assertEqual(result.failed, [pending_dir / "1-fail.json.failed"])
+            self.assertEqual(result.invalid, [])
+            self.assertFalse(good.exists())
+            self.assertFalse(failed.exists())
+            self.assertTrue((pending_dir / "1-fail.json.failed").is_file())
+            self.assertIn("/Sources/raw/claudecode/good.md", calls.read_text())
+
+    def test_flush_pending_quarantines_unlink_failure_and_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            unlink_fail = pending_dir / "1-unlink-fail.json"
+            unlink_fail.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/unlink-fail.md",
+                        "content": "# Unlink fail\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            good = pending_dir / "2-good.json"
+            good.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/good.md",
+                        "content": "# Good\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.txt"
+            fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
+            fake_cli.chmod(0o755)
+            original_unlink = Path.unlink
+
+            def unlink_with_failure(path: Path, *args: object, **kwargs: object) -> None:
+                if path == unlink_fail:
+                    raise OSError("unlink failed")
+                original_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", unlink_with_failure):
+                result = session.flush_pending_report(str(fake_cli), pending_dir)
+
+            self.assertEqual(result.flushed, [good])
+            self.assertEqual(result.failed, [pending_dir / "1-unlink-fail.json.failed"])
+            self.assertEqual(result.invalid, [])
+            self.assertFalse(good.exists())
+            self.assertFalse(unlink_fail.exists())
+            self.assertTrue((pending_dir / "1-unlink-fail.json.failed").is_file())
+            calls_text = calls.read_text()
+            self.assertIn("/Sources/raw/claudecode/unlink-fail.md", calls_text)
+            self.assertIn("/Sources/raw/claudecode/good.md", calls_text)
 
 
 if __name__ == "__main__":

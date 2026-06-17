@@ -33,16 +33,18 @@ TOOL_USE_BUDGET_CHARS = 40_000
 TOOL_RESULT_BUDGET_CHARS = 120_000
 METADATA_BUDGET_CHARS = 20_000
 REDACTED = "[REDACTED]"
-SECRET_KEY_NAMES = {"apikey", "token", "secret", "password", "cookie", "authorization"}
+SECRET_KEY_PATTERN = re.compile(r"token|secret|password|cookie|authorization|credential|apikey|bearer")
 SECRET_PATTERNS = [
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"),
     re.compile(
-        r'(?i)(?P<prefix>"(?:api[_-]?key|token|secret|password|cookie|authorization)"\s*:\s*")'
+        r'(?i)(?P<prefix>"[^"\\]*(?:api[_.-]?key|token|secret|password|cookie|authorization|credential|bearer)[^"\\]*"\s*:\s*")'
         r'(?P<secret>(?:\\.|[^"\\])*)'
         r'(?P<suffix>")'
     ),
-    re.compile(r"(?i)\b(api[_-]?key|token|secret|password|cookie)\b(\s*[:=]\s*)([^\s'\"`]+)"),
+    re.compile(
+        r"(?i)\b([A-Za-z0-9_.-]*(?:api[_.-]?key|token|secret|password|cookie|credential|bearer)[A-Za-z0-9_.-]*)\b(\s*[:=]\s*)([^\s'\"`]+)"
+    ),
     re.compile(r"(?i)\b(authorization)(\s*[:=]\s*)([^\n]+)"),
 ]
 
@@ -71,6 +73,13 @@ class RenderedText:
     tool_result_original_chars: int = 0
     tool_result_saved_chars: int = 0
     tool_result_refs: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FlushPendingResult:
+    flushed: list[Path] = field(default_factory=list)
+    failed: list[Path] = field(default_factory=list)
+    invalid: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -790,7 +799,7 @@ def redact_value(value: Any) -> tuple[Any, bool]:
 
 def is_secret_key(value: str) -> bool:
     normalized = re.sub(r"[^a-z0-9]", "", value.lower())
-    return normalized in SECRET_KEY_NAMES
+    return bool(SECRET_KEY_PATTERN.search(normalized))
 
 
 def redact_match(match: re.Match[str]) -> str:
@@ -838,15 +847,59 @@ def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = 
 
 
 def flush_pending(cli: str, pending_dir: Path) -> list[Path]:
+    return flush_pending_report(cli, pending_dir).flushed
+
+
+def flush_pending_report(cli: str, pending_dir: Path, skip_paths: set[Path] | None = None) -> FlushPendingResult:
     flushed: list[Path] = []
+    failed: list[Path] = []
+    invalid: list[Path] = []
     if not pending_dir.is_dir():
-        return flushed
+        return FlushPendingResult(flushed=flushed, failed=failed, invalid=invalid)
+    skipped = {path.resolve() for path in skip_paths or set()}
     for path in sorted(pending_dir.glob("*.json")):
-        payload = json.loads(path.read_text())
-        write_payload(cli, payload)
-        path.unlink()
+        if path.resolve() in skipped:
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            invalid.append(quarantine_pending(path, "invalid"))
+            continue
+        except OSError:
+            failed.append(quarantine_pending(path, "failed"))
+            continue
+        try:
+            write_payload(cli, payload)
+        except ValueError:
+            invalid.append(quarantine_pending(path, "invalid"))
+            continue
+        except (OSError, subprocess.CalledProcessError):
+            failed.append(quarantine_pending(path, "failed"))
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            failed.append(quarantine_pending(path, "failed"))
+            continue
         flushed.append(path)
-    return flushed
+    return FlushPendingResult(flushed=flushed, failed=failed, invalid=invalid)
+
+
+def quarantine_pending(path: Path, suffix: str) -> Path:
+    target = unique_quarantine_path(path, suffix)
+    try:
+        path.replace(target)
+        return target
+    except OSError:
+        return path
+
+
+def unique_quarantine_path(path: Path, suffix: str) -> Path:
+    target = path.with_name(f"{path.name}.{suffix}")
+    if not target.exists():
+        return target
+    millis = int(time.time() * 1000)
+    return path.with_name(f"{path.name}.{millis}.{suffix}")
 
 
 def write_payload(cli: str, payload: dict[str, Any]) -> None:
@@ -875,18 +928,15 @@ def write_payload(cli: str, payload: dict[str, Any]) -> None:
 
 
 def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: int | None = None) -> dict[str, Any]:
-    resolved_cli = resolve_cli(cli)
-    flushed = 0
-    if resolved_cli:
-        try:
-            flushed = len(flush_pending(resolved_cli, pending_dir))
-        except (OSError, json.JSONDecodeError, subprocess.CalledProcessError):
-            flushed = 0
     hook = parse_hook_input(raw_input)
     source = build_source(hook, now_ms=now_ms)
     pending_path = save_pending(pending_dir, source, now_ms=now_ms)
+    resolved_cli = resolve_cli(cli)
     recorded = False
     error = ""
+    flushed = 0
+    failed = 0
+    invalid = 0
     if resolved_cli:
         try:
             write_payload(
@@ -901,6 +951,10 @@ def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: i
             recorded = True
         except (OSError, subprocess.CalledProcessError) as cause:
             error = str(cause)[:800]
+        flush_result = flush_pending_report(resolved_cli, pending_dir, skip_paths=set() if recorded else {pending_path})
+        flushed = len(flush_result.flushed)
+        failed = len(flush_result.failed)
+        invalid = len(flush_result.invalid)
     else:
         error = "kinic-vfs-cli not found"
     return {
@@ -908,6 +962,8 @@ def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: i
         "pending_path": str(pending_path),
         "source_path": source.path,
         "flushed_pending": flushed,
+        "failed_pending": failed,
+        "invalid_pending": invalid,
         "error": error,
     }
 
