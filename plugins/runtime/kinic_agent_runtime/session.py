@@ -13,7 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,15 @@ from .cli import resolve_cli, run_cli
 PROVIDER = "claude-code"
 SOURCE_PROVIDER = "claudecode"
 MAX_SOURCE_CHARS = 300_000
+MAX_TEXT_PART_CHARS = 32_000
+MAX_TOOL_INPUT_CHARS = 8_000
+SMALL_TOOL_RESULT_CHARS = 4_096
+TOOL_RESULT_HEAD_CHARS = 4_096
+TOOL_RESULT_TAIL_CHARS = 4_096
+TEXT_BUDGET_CHARS = 120_000
+TOOL_USE_BUDGET_CHARS = 40_000
+TOOL_RESULT_BUDGET_CHARS = 120_000
+METADATA_BUDGET_CHARS = 20_000
 REDACTED = "[REDACTED]"
 SECRET_KEY_NAMES = {"apikey", "token", "secret", "password", "cookie", "authorization"}
 SECRET_PATTERNS = [
@@ -57,6 +66,49 @@ class SourcePayload:
 class RenderedText:
     text: str
     redacted: bool = False
+    truncated_parts: int = 0
+    omitted_chars: int = 0
+    tool_result_original_chars: int = 0
+    tool_result_saved_chars: int = 0
+    tool_result_refs: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class CaptureContext:
+    text_remaining: int = TEXT_BUDGET_CHARS
+    tool_use_remaining: int = TOOL_USE_BUDGET_CHARS
+    tool_result_remaining: int = TOOL_RESULT_BUDGET_CHARS
+    last_tool_name: str = "unknown"
+    last_tool_input: dict[str, Any] = field(default_factory=dict)
+    tool_names_by_id: dict[str, str] = field(default_factory=dict)
+    tool_inputs_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+    def consume(self, bucket: str, requested: int) -> int:
+        if bucket == "text":
+            saved = min(requested, self.text_remaining)
+            self.text_remaining -= saved
+            return saved
+        if bucket == "tool_use":
+            saved = min(requested, self.tool_use_remaining)
+            self.tool_use_remaining -= saved
+            return saved
+        if bucket == "tool_result":
+            saved = min(requested, self.tool_result_remaining)
+            self.tool_result_remaining -= saved
+            return saved
+        return requested
+
+    def budget_metadata(self) -> dict[str, dict[str, int]]:
+        return {
+            "text": {"limit": TEXT_BUDGET_CHARS, "used": TEXT_BUDGET_CHARS - self.text_remaining},
+            "tool_use": {"limit": TOOL_USE_BUDGET_CHARS, "used": TOOL_USE_BUDGET_CHARS - self.tool_use_remaining},
+            "tool_result": {
+                "limit": TOOL_RESULT_BUDGET_CHARS,
+                "used": TOOL_RESULT_BUDGET_CHARS - self.tool_result_remaining,
+            },
+            "metadata": {"limit": METADATA_BUDGET_CHARS, "used": 0},
+            "total": {"limit": MAX_SOURCE_CHARS, "used": 0},
+        }
 
 
 def parse_hook_input(raw: str) -> HookInput:
@@ -83,7 +135,16 @@ def text_value(value: Any) -> str:
 
 def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MAX_SOURCE_CHARS) -> SourcePayload:
     captured_at = rfc3339_now(now_ms)
-    entries, structured_redacted = parse_transcript(hook.transcript_path)
+    context = CaptureContext()
+    (
+        entries,
+        structured_redacted,
+        truncated_parts,
+        omitted_chars,
+        tool_result_original_chars,
+        tool_result_saved_chars,
+        tool_result_refs,
+    ) = parse_transcript(hook.transcript_path, context)
     transcript = transcript_markdown(entries)
     redacted_transcript, text_redacted = redact(transcript)
     session_id, session_id_redacted = redact(hook.session_id)
@@ -100,8 +161,8 @@ def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MA
             transcript_path_redacted,
         ]
     )
-    limited, truncated = limit_text(redacted_transcript, max_chars)
     source_id = safe_source_stem(session_id)
+    budget = context.budget_metadata()
     metadata = {
         "provider": PROVIDER,
         "session_id": session_id,
@@ -111,41 +172,138 @@ def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MA
         "transcript_path": transcript_path,
         "message_count": len(entries),
         "redacted": redacted,
-        "truncated": truncated,
-        "original_chars": len(redacted_transcript),
-        "saved_chars": len(limited),
+        "truncated": truncated_parts > 0,
+        "truncated_parts": truncated_parts,
+        "omitted_chars": omitted_chars,
+        "tool_result_original_chars": tool_result_original_chars,
+        "tool_result_saved_chars": tool_result_saved_chars,
+        "tool_result_refs": tool_result_refs,
+        "budget": budget,
+        "original_chars": 0,
+        "saved_chars": 0,
     }
+    content = source_content_with_cap(metadata, redacted_transcript, max_chars)
+    return SourcePayload(
+        path=f"/Sources/raw/{SOURCE_PROVIDER}/{source_id}.md",
+        content=content,
+        metadata=metadata,
+    )
+
+
+def source_content_with_cap(metadata: dict[str, Any], transcript: str, max_chars: int) -> str:
+    base_truncated = bool(metadata["truncated"])
+    base_truncated_parts = int(metadata["truncated_parts"])
+    base_omitted_chars = int(metadata["omitted_chars"])
+    metadata["budget"]["metadata"]["used"] = len(render_source_content(metadata, ""))
+    for _ in range(8):
+        original_chars = len(render_source_content(metadata, transcript))
+        if metadata["original_chars"] == original_chars:
+            break
+        metadata["original_chars"] = original_chars
+
+    transcript_limit = len(transcript)
+    final_content = ""
+    final_metadata = metadata
+    while True:
+        final_truncated = transcript_limit < len(transcript)
+        if final_truncated:
+            limited_transcript, _ = limit_text(transcript, transcript_limit)
+            final_omitted_chars = max(0, len(transcript) - transcript_limit)
+        else:
+            limited_transcript = transcript
+            final_omitted_chars = 0
+        final_metadata = finalized_source_metadata(
+            metadata,
+            base_truncated,
+            base_truncated_parts,
+            base_omitted_chars,
+            final_truncated,
+            final_omitted_chars,
+        )
+        final_content = stabilize_saved_source_content(final_metadata, limited_transcript)
+        if len(final_content) <= max_chars:
+            break
+        if transcript_limit <= 0:
+            final_content = final_content[:max_chars]
+            break
+        transcript_limit = max(0, transcript_limit - (len(final_content) - max_chars) - 128)
+
+    final_metadata["saved_chars"] = len(final_content)
+    final_metadata["budget"]["total"]["used"] = len(final_content)
+    final_metadata["budget"]["metadata"]["used"] = len(render_source_content(final_metadata, ""))
+    metadata.clear()
+    metadata.update(final_metadata)
+    return final_content
+
+
+def finalized_source_metadata(
+    metadata: dict[str, Any],
+    base_truncated: bool,
+    base_truncated_parts: int,
+    base_omitted_chars: int,
+    final_truncated: bool,
+    final_omitted_chars: int,
+) -> dict[str, Any]:
+    next_metadata = dict(metadata)
+    next_budget = {key: dict(value) for key, value in metadata["budget"].items()}
+    next_metadata["budget"] = next_budget
+    next_metadata["truncated"] = base_truncated or final_truncated
+    next_metadata["truncated_parts"] = base_truncated_parts + (1 if final_truncated else 0)
+    next_metadata["omitted_chars"] = base_omitted_chars + final_omitted_chars
+    return next_metadata
+
+
+def stabilize_saved_source_content(metadata: dict[str, Any], transcript: str) -> str:
+    for _ in range(8):
+        metadata["budget"]["metadata"]["used"] = len(render_source_content(metadata, ""))
+        content = render_source_content(metadata, transcript)
+        saved_chars = len(content)
+        if metadata["saved_chars"] == saved_chars and metadata["budget"]["total"]["used"] == saved_chars:
+            return content
+        metadata["saved_chars"] = saved_chars
+        metadata["budget"]["total"]["used"] = saved_chars
+    return render_source_content(metadata, transcript)
+
+
+def render_source_content(metadata: dict[str, Any], transcript: str) -> str:
     lines = [
         "# Raw Claude Code Session",
         "",
         "## Metadata",
         "",
         f"- provider: {json.dumps(PROVIDER)}",
-        f"- session_id: {json.dumps(session_id)}",
-        f"- cwd: {json.dumps(cwd)}",
-        f"- ended_reason: {json.dumps(reason)}",
-        f"- captured_at: {json.dumps(captured_at)}",
-        f"- transcript_path: {json.dumps(transcript_path)}",
-        f"- message_count: {len(entries)}",
-        f"- redacted: {str(redacted).lower()}",
-        f"- truncated: {str(truncated).lower()}",
-        f"- original_chars: {len(redacted_transcript)}",
-        f"- saved_chars: {len(limited)}",
+        f"- session_id: {json.dumps(metadata['session_id'])}",
+        f"- cwd: {json.dumps(metadata['cwd'])}",
+        f"- ended_reason: {json.dumps(metadata['ended_reason'])}",
+        f"- captured_at: {json.dumps(metadata['captured_at'])}",
+        f"- transcript_path: {json.dumps(metadata['transcript_path'])}",
+        f"- message_count: {metadata['message_count']}",
+        f"- redacted: {str(metadata['redacted']).lower()}",
+        f"- truncated: {str(metadata['truncated']).lower()}",
+        f"- truncated_parts: {metadata['truncated_parts']}",
+        f"- omitted_chars: {metadata['omitted_chars']}",
+        f"- tool_result_original_chars: {metadata['tool_result_original_chars']}",
+        f"- tool_result_saved_chars: {metadata['tool_result_saved_chars']}",
+        f"- original_chars: {metadata['original_chars']}",
+        f"- saved_chars: {metadata['saved_chars']}",
         "",
         "## Transcript",
         "",
-        limited,
+        transcript,
     ]
-    return SourcePayload(
-        path=f"/Sources/raw/{SOURCE_PROVIDER}/{source_id}.md",
-        content="\n".join(lines).rstrip() + "\n",
-        metadata=metadata,
-    )
+    return "\n".join(lines).rstrip() + "\n"
 
 
-def parse_transcript(path: Path) -> tuple[list[tuple[str, str]], bool]:
+def parse_transcript(
+    path: Path, context: CaptureContext
+) -> tuple[list[tuple[str, str]], bool, int, int, int, int, list[dict[str, Any]]]:
     entries: list[tuple[str, str]] = []
     redacted = False
+    truncated_parts = 0
+    omitted_chars = 0
+    tool_result_original_chars = 0
+    tool_result_saved_chars = 0
+    tool_result_refs: list[dict[str, Any]] = []
     for line in path.read_text(errors="replace").splitlines():
         if not line.strip():
             continue
@@ -154,11 +312,24 @@ def parse_transcript(path: Path) -> tuple[list[tuple[str, str]], bool]:
         except json.JSONDecodeError:
             continue
         role = role_from_entry(data)
-        content = content_from_entry(data)
+        content = content_from_entry(data, context)
         if role and content.text:
             entries.append((role, content.text))
             redacted = redacted or content.redacted
-    return entries, redacted
+            truncated_parts += content.truncated_parts
+            omitted_chars += content.omitted_chars
+            tool_result_original_chars += content.tool_result_original_chars
+            tool_result_saved_chars += content.tool_result_saved_chars
+            tool_result_refs.extend(content.tool_result_refs)
+    return (
+        entries,
+        redacted,
+        truncated_parts,
+        omitted_chars,
+        tool_result_original_chars,
+        tool_result_saved_chars,
+        tool_result_refs,
+    )
 
 
 def role_from_entry(data: Any) -> str:
@@ -177,47 +348,101 @@ def role_from_entry(data: Any) -> str:
     return ""
 
 
-def content_from_entry(data: Any) -> RenderedText:
+def content_from_entry(data: Any, context: CaptureContext) -> RenderedText:
     if not isinstance(data, dict):
         return RenderedText("")
     if isinstance(data.get("message"), dict):
-        return content_text(data["message"].get("content"))
-    return content_text(data.get("content"))
+        return content_text(data["message"].get("content"), context)
+    return content_text(data.get("content"), context)
 
 
-def content_text(value: Any) -> RenderedText:
+def content_text(
+    value: Any,
+    context: CaptureContext,
+    text_limit: int | None = MAX_TEXT_PART_CHARS,
+    bucket: str | None = "text",
+) -> RenderedText:
     if isinstance(value, str):
-        return RenderedText(value.strip())
+        return redact_and_limit_text(value.strip(), text_limit, bucket, context)
     if isinstance(value, list):
-        parts = [content_part_text(part) for part in value]
+        parts = [content_part_text(part, context, text_limit, bucket) for part in value]
         text = "\n".join(part.text for part in parts if part.text).strip()
-        return RenderedText(text, any(part.redacted for part in parts))
+        return RenderedText(
+            text,
+            any(part.redacted for part in parts),
+            sum(part.truncated_parts for part in parts),
+            sum(part.omitted_chars for part in parts),
+            sum(part.tool_result_original_chars for part in parts),
+            sum(part.tool_result_saved_chars for part in parts),
+            [item for part in parts for item in part.tool_result_refs],
+        )
     if isinstance(value, dict):
-        part = content_part_text(value)
-        return RenderedText(part.text.strip(), part.redacted)
+        if not looks_like_content_part(value):
+            redacted_value, redacted = redact_value(value)
+            rendered = json.dumps(redacted_value, ensure_ascii=False, sort_keys=True)
+            limited = limit_rendered(rendered, text_limit, bucket, context)
+            return RenderedText(
+                limited.text,
+                redacted or limited.redacted,
+                limited.truncated_parts,
+                limited.omitted_chars,
+            )
+        part = content_part_text(value, context, text_limit, bucket)
+        return RenderedText(
+            part.text.strip(),
+            part.redacted,
+            part.truncated_parts,
+            part.omitted_chars,
+            part.tool_result_original_chars,
+            part.tool_result_saved_chars,
+            part.tool_result_refs,
+        )
     return RenderedText("")
 
 
-def content_part_text(part: Any) -> RenderedText:
+def looks_like_content_part(value: dict[str, Any]) -> bool:
+    return "type" in value or "text" in value or "content" in value
+
+
+def content_part_text(
+    part: Any,
+    context: CaptureContext,
+    text_limit: int | None = MAX_TEXT_PART_CHARS,
+    bucket: str | None = "text",
+) -> RenderedText:
     if isinstance(part, str):
-        return RenderedText(part.strip())
+        return redact_and_limit_text(part.strip(), text_limit, bucket, context)
     if not isinstance(part, dict):
         return RenderedText("")
     part_type = part.get("type")
     if part_type == "text" and isinstance(part.get("text"), str):
-        return RenderedText(part["text"].strip())
+        return redact_and_limit_text(part["text"].strip(), text_limit, bucket, context)
     if part_type == "tool_use":
         name = text_value(part.get("name")) or "tool"
+        context.last_tool_name = name
+        tool_id = text_value(part.get("id")) or text_value(part.get("tool_use_id"))
         redacted_input, input_redacted = redact_value(part.get("input", {}))
+        context.last_tool_input = redacted_input if isinstance(redacted_input, dict) else {}
+        if tool_id:
+            context.tool_names_by_id[tool_id] = name
+            context.tool_inputs_by_id[tool_id] = context.last_tool_input
         tool_input = json.dumps(redacted_input, ensure_ascii=False, sort_keys=True)
-        return RenderedText(f"[tool_use: {name}]\n{tool_input}", input_redacted)
+        limited_input = limit_rendered(tool_input, MAX_TOOL_INPUT_CHARS, "tool_use", context)
+        return RenderedText(
+            f"[tool_use: {name}]\n{limited_input.text}",
+            input_redacted,
+            limited_input.truncated_parts,
+            limited_input.omitted_chars,
+        )
     if part_type == "tool_result":
-        tool_content = content_text(part.get("content"))
-        return RenderedText(f"[tool_result]\n{tool_content.text}".strip(), tool_content.redacted)
+        tool_name = tool_name_for_result(part, context)
+        tool_use_id = tool_use_id_for_result(part, context)
+        tool_input = tool_input_for_result(part, context)
+        return render_tool_result(tool_name, tool_use_id, tool_input, part, context)
     if isinstance(part.get("text"), str):
-        return RenderedText(part["text"].strip())
+        return redact_and_limit_text(part["text"].strip(), text_limit, bucket, context)
     if isinstance(part.get("content"), (str, list, dict)):
-        return content_text(part.get("content"))
+        return content_text(part.get("content"), context, text_limit, bucket)
     return RenderedText("")
 
 
@@ -235,6 +460,298 @@ def transcript_markdown(entries: list[tuple[str, str]]) -> str:
             ]
         )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def tool_name_for_result(part: dict[str, Any], context: CaptureContext) -> str:
+    tool_id = text_value(part.get("tool_use_id")) or text_value(part.get("id"))
+    if tool_id and tool_id in context.tool_names_by_id:
+        return context.tool_names_by_id[tool_id]
+    return text_value(part.get("name")) or context.last_tool_name or "unknown"
+
+
+def tool_use_id_for_result(part: dict[str, Any], context: CaptureContext) -> str:
+    tool_id = text_value(part.get("tool_use_id")) or text_value(part.get("id"))
+    if tool_id:
+        return tool_id
+    return ""
+
+
+def tool_input_for_result(part: dict[str, Any], context: CaptureContext) -> dict[str, Any]:
+    tool_id = text_value(part.get("tool_use_id")) or text_value(part.get("id"))
+    if tool_id and tool_id in context.tool_inputs_by_id:
+        return context.tool_inputs_by_id[tool_id]
+    return context.last_tool_input
+
+
+def render_tool_result(
+    tool_name: str, tool_use_id: str, tool_input: dict[str, Any], part: dict[str, Any], context: CaptureContext
+) -> RenderedText:
+    value = part.get("content")
+    redacted_value, value_redacted = redact_value(value)
+    body = tool_result_body(tool_name, redacted_value)
+    redacted_text, text_redacted = redact(body)
+    status = tool_result_status(part, redacted_value)
+    result_fields = tool_result_fields(tool_name, redacted_value)
+    compacted = compact_tool_result(tool_name, tool_use_id, tool_input, result_fields, redacted_text, status, context)
+    return RenderedText(
+        compacted.text,
+        value_redacted or text_redacted,
+        compacted.truncated_parts,
+        compacted.omitted_chars,
+        compacted.tool_result_original_chars,
+        compacted.tool_result_saved_chars,
+        compacted.tool_result_refs,
+    )
+
+
+def tool_result_status(part: dict[str, Any], value: Any) -> str:
+    if part.get("is_error") is True:
+        return "error"
+    if isinstance(value, dict):
+        for key in ("status", "exit_code", "exitCode"):
+            if key in value:
+                return str(value[key])
+    return "unknown"
+
+
+def tool_result_fields(tool_name: str, value: Any) -> list[tuple[str, Any]]:
+    normalized = tool_name.lower()
+    fields: list[tuple[str, Any]] = []
+    if normalized == "bash" and isinstance(value, dict):
+        for key in ("exit_code", "exitCode", "status"):
+            if key in value:
+                fields.append(("exit_code" if key == "exitCode" else key, value[key]))
+                break
+    return fields
+
+
+def tool_result_body(tool_name: str, value: Any) -> str:
+    normalized = tool_name.lower()
+    if normalized == "bash" and isinstance(value, dict):
+        lines: list[str] = []
+        for key in ("stdout", "stderr"):
+            if key in value:
+                lines.extend([f"--- {key} ---", text_or_json(value[key]), ""])
+        rest = {key: item for key, item in value.items() if key not in {"stdout", "stderr", "exit_code", "exitCode", "status"}}
+        if rest:
+            lines.extend(["--- result ---", json.dumps(rest, ensure_ascii=False, sort_keys=True)])
+        return "\n".join(lines).strip()
+    return text_or_json(value).strip()
+
+
+def text_or_json(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def compact_tool_result(
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, Any],
+    result_fields: list[tuple[str, Any]],
+    value: str,
+    status: str,
+    context: CaptureContext,
+) -> RenderedText:
+    original_chars = len(value)
+    if original_chars <= SMALL_TOOL_RESULT_CHARS:
+        allowed = context.consume("tool_result", original_chars)
+        if allowed >= original_chars:
+            body = "\n".join(
+                [*tool_result_header(tool_name, tool_use_id, tool_input, result_fields, status, False), "", value]
+            ).rstrip()
+            ref = tool_result_ref(tool_name, tool_use_id, original_chars, original_chars, False)
+            return RenderedText(
+                body,
+                tool_result_original_chars=original_chars,
+                tool_result_saved_chars=original_chars,
+                tool_result_refs=[ref],
+            )
+        if allowed <= 0:
+            text = tool_result_placeholder(tool_name, tool_use_id, tool_input, result_fields, status, original_chars)
+            ref = tool_result_ref(tool_name, tool_use_id, original_chars, 0, True)
+            return RenderedText(
+                text,
+                truncated_parts=1,
+                omitted_chars=original_chars,
+                tool_result_original_chars=original_chars,
+                tool_result_saved_chars=0,
+                tool_result_refs=[ref],
+            )
+        return compact_tool_result_excerpt(
+            tool_name, tool_use_id, tool_input, result_fields, value, status, original_chars, allowed
+        )
+
+    requested = min(TOOL_RESULT_HEAD_CHARS + TOOL_RESULT_TAIL_CHARS, original_chars)
+    allowed = context.consume("tool_result", requested)
+    if allowed <= 0:
+        text = tool_result_placeholder(tool_name, tool_use_id, tool_input, result_fields, status, original_chars)
+        ref = tool_result_ref(tool_name, tool_use_id, original_chars, 0, True)
+        return RenderedText(
+            text,
+            truncated_parts=1,
+            omitted_chars=original_chars,
+            tool_result_original_chars=original_chars,
+            tool_result_saved_chars=0,
+            tool_result_refs=[ref],
+        )
+
+    return compact_tool_result_excerpt(
+        tool_name, tool_use_id, tool_input, result_fields, value, status, original_chars, allowed
+    )
+
+
+def compact_tool_result_excerpt(
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, Any],
+    result_fields: list[tuple[str, Any]],
+    value: str,
+    status: str,
+    original_chars: int,
+    allowed: int,
+) -> RenderedText:
+    allowed = min(allowed, original_chars)
+    head_chars = min(TOOL_RESULT_HEAD_CHARS, (allowed + 1) // 2)
+    tail_chars = max(0, allowed - head_chars)
+    head = value[:head_chars]
+    tail = value[-tail_chars:] if tail_chars else ""
+    saved_chars = len(head) + len(tail)
+    truncated = saved_chars < original_chars
+    text = "\n".join(
+        [
+            *tool_result_header(tool_name, tool_use_id, tool_input, result_fields, status, truncated),
+            f"original_chars: {original_chars}",
+            f"saved_chars: {saved_chars}",
+            "",
+            "--- head ---",
+            head,
+            "",
+            "--- tail ---",
+            tail,
+        ]
+    ).rstrip()
+    ref = tool_result_ref(tool_name, tool_use_id, original_chars, saved_chars, False)
+    return RenderedText(
+        text,
+        truncated_parts=1 if truncated else 0,
+        omitted_chars=max(0, original_chars - saved_chars),
+        tool_result_original_chars=original_chars,
+        tool_result_saved_chars=saved_chars,
+        tool_result_refs=[ref],
+    )
+
+
+def tool_result_header(
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, Any],
+    result_fields: list[tuple[str, Any]],
+    status: str,
+    truncated: bool,
+) -> list[str]:
+    lines = [
+        f"[tool_result: {tool_name}]",
+        f"status: {status}",
+        f"truncated: {str(truncated).lower()}",
+    ]
+    if tool_use_id:
+        lines.append(f"tool_use_id: {json.dumps(tool_use_id, ensure_ascii=False)}")
+    for key, value in tool_policy_fields(tool_name, tool_input):
+        lines.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+    for key, value in result_fields:
+        lines.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+    return lines
+
+
+def tool_policy_fields(tool_name: str, tool_input: dict[str, Any]) -> list[tuple[str, Any]]:
+    normalized = tool_name.lower()
+    fields: list[tuple[str, Any]] = []
+    if normalized == "bash":
+        command = tool_input.get("command")
+        if isinstance(command, str):
+            fields.append(("command", command))
+    elif normalized == "read":
+        for key in ("file_path", "path", "offset", "limit"):
+            if key in tool_input:
+                fields.append((key, tool_input[key]))
+    elif normalized in {"edit", "write"}:
+        for key in ("file_path", "path"):
+            if key in tool_input:
+                fields.append((key, tool_input[key]))
+    elif normalized in {"grep", "search"}:
+        for key in ("pattern", "path", "glob"):
+            if key in tool_input:
+                fields.append((key, tool_input[key]))
+    elif normalized == "webfetch":
+        for key in ("url", "prompt"):
+            if key in tool_input:
+                fields.append((key, tool_input[key]))
+    return fields
+
+
+def tool_result_placeholder(
+    tool_name: str,
+    tool_use_id: str,
+    tool_input: dict[str, Any],
+    result_fields: list[tuple[str, Any]],
+    status: str,
+    original_chars: int,
+) -> str:
+    return "\n".join(
+        [
+            *tool_result_header(tool_name, tool_use_id, tool_input, result_fields, status, True),
+            f"original_chars: {original_chars}",
+            "saved_chars: 0",
+            "budget_exhausted: true",
+        ]
+    )
+
+
+def tool_result_ref(
+    tool_name: str, tool_use_id: str, original_chars: int, saved_chars: int, budget_exhausted: bool
+) -> dict[str, Any]:
+    ref: dict[str, Any] = {
+        "tool": tool_name,
+        "original_chars": original_chars,
+        "saved_chars": saved_chars,
+        "omitted_chars": max(0, original_chars - saved_chars),
+        "budget_exhausted": budget_exhausted,
+    }
+    if tool_use_id:
+        ref["tool_use_id"] = tool_use_id
+    return ref
+
+
+def limit_rendered(value: str, max_chars: int | None, bucket: str | None, context: CaptureContext) -> RenderedText:
+    if max_chars is None:
+        return RenderedText(value)
+    requested = min(len(value), max_chars)
+    allowed = requested if bucket is None else min(max_chars, context.consume(bucket, requested))
+    if len(value) <= allowed:
+        return RenderedText(value)
+    if allowed <= 0:
+        placeholder = f"[omitted: original_chars={len(value)} saved_chars=0]"
+        return RenderedText(placeholder, truncated_parts=1, omitted_chars=len(value))
+    limited, _ = limit_text(value, allowed)
+    return RenderedText(limited, truncated_parts=1, omitted_chars=len(value) - allowed)
+
+
+def redact_and_limit_text(
+    value: str, max_chars: int | None, bucket: str | None, context: CaptureContext
+) -> RenderedText:
+    redacted_value, redacted = redact(value)
+    limited = limit_rendered(redacted_value, max_chars, bucket, context)
+    return RenderedText(
+        limited.text,
+        redacted or limited.redacted,
+        limited.truncated_parts,
+        limited.omitted_chars,
+        limited.tool_result_original_chars,
+        limited.tool_result_saved_chars,
+        limited.tool_result_refs,
+    )
 
 
 def redact(value: str) -> tuple[str, bool]:
@@ -290,7 +807,17 @@ def redact_match(match: re.Match[str]) -> str:
 def limit_text(value: str, max_chars: int) -> tuple[str, bool]:
     if len(value) <= max_chars:
         return value, False
-    return value[:max_chars].rstrip() + "\n\n[truncated]\n", True
+    limited = value[:max_chars].rstrip()
+    limited = complete_trailing_redaction_marker(limited, max_chars)
+    return limited + f"\n\n[truncated: original_chars={len(value)} saved_chars={len(limited)}]\n", True
+
+
+def complete_trailing_redaction_marker(value: str, max_chars: int) -> str:
+    for size in range(len(REDACTED) - 1, 0, -1):
+        if value.endswith(REDACTED[:size]):
+            prefix = value[: -size]
+            return prefix[: max(0, max_chars - len(REDACTED))].rstrip() + REDACTED
+    return value
 
 
 def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = None) -> Path:
