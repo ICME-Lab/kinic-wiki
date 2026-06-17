@@ -167,6 +167,30 @@ export type DatabaseCycleEntryPage = {
   nextCursor: string | null;
 };
 
+export type IndexSqlJsonQueryResult = {
+  rows: string[];
+  rowCount: string;
+  limit: string;
+};
+
+export type WikiMetrics = {
+  usersTotal: string;
+  usersActive30d: string;
+  usersNew30d: string;
+  databasesTotal: string;
+  databasesActive30d: string;
+  databasesNew30d: string;
+  paidUsersTotal: string;
+  chargedKinicTotalE8s: string;
+  chargedKinic30dE8s: string;
+  lastActivityAtMs: string | null;
+};
+
+export type WikiMetricsPoint = {
+  bucketStartMs: string;
+  metrics: WikiMetrics;
+};
+
 export type DatabaseCyclesPendingPurchase = {
   operationId: string;
   databaseId: string;

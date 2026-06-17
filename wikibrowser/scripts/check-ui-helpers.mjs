@@ -84,7 +84,7 @@ assert.doesNotMatch(wikiBrowserSource, /path: indexNode\.path/);
 assert.match(wikiBrowserSource, /expectedFolderIndexEtag: indexNode\?\.etag \?\? null/);
 assert.doesNotMatch(wikiBrowserSource, /currentFolderIndexNode\.data\?\.path === folderIndexPath\(target\.path\)/);
 assert.match(wikiBrowserSource, /memberDatabases\.find/);
-assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest"\]/);
+assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest", "clipper"\]/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
 assert.match(wikiBrowserSource, /databaseName=\{currentDatabase\?\.name \?\? databaseId\}/);
 assert.match(inspectorSource, /databaseName: string/);
@@ -182,6 +182,9 @@ assert.match(markdownEditorSource, /saveState === "dirty" \|\| saveState === "er
 assert.match(markdownEditorSource, /warning: string \| null/);
 assert.match(vfsClientSource, /deleteNodeAuthenticated/);
 assert.match(vfsClientSource, /delete_node/);
+assert.match(vfsClientSource, /wikiMetricsSeries/);
+assert.match(vfsClientSource, /wiki_metrics_series/);
+assert.match(vfsClientSource, /normalizeWikiMetricsPoint/);
 assert.match(markdownEditorSource, /@uiw\/react-codemirror/);
 assert.match(markdownEditorSource, /Cmd\/Ctrl\+S|Save/);
 assert.match(globalsCss, /button:not\(:disabled\):active/);
@@ -263,6 +266,13 @@ assert.equal(readIdentityMode(true, false, false, true), "anonymous");
 assert.equal(readIdentityMode(true, false, false, false), "user");
 assert.equal(readIdentityMode(false, false, false, true), "anonymous");
 assert.equal(classifyQueryInput("https://example.com/a", "/Wiki", "user").kind, "queue_url");
+assert.deepEqual(classifyQueryInput("sql: SELECT json_object('url', 'https://example.com/a')", "/Wiki", "anonymous"), {
+  kind: "sql",
+  targetPath: "current database",
+  sideEffect: "none",
+  identityMode: "anonymous",
+  sql: "SELECT json_object('url', 'https://example.com/a')"
+});
 assert.deepEqual(classifyQueryInput("topic", "/Wiki", "user"), {
   kind: "search",
   targetPath: "/Wiki",

@@ -6,3 +6,6 @@ allowBuilds:
   unrs-resolver@1.11.1: true
   workerd: true
   workerd@1.20260507.1: true
+overrides:
+  js-yaml: 4.2.0
+  postcss: 8.5.12

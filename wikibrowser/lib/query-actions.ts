@@ -2,6 +2,7 @@ export type QueryIdentityMode = "anonymous" | "user";
 
 export type QueryAction =
   | { kind: "lint"; targetPath: string; sideEffect: "none"; identityMode: QueryIdentityMode }
+  | { kind: "sql"; targetPath: "current database"; sideEffect: "none"; identityMode: QueryIdentityMode; sql: string }
   | { kind: "search"; targetPath: "/Wiki"; sideEffect: "none"; identityMode: QueryIdentityMode; query: string }
   | { kind: "queue_url"; targetPath: "/Sources/ingest-requests"; sideEffect: "queue request"; identityMode: "user"; url: string }
   | { kind: "ask"; targetPath: "/Wiki"; sideEffect: "none"; identityMode: QueryIdentityMode; question: string };
@@ -9,6 +10,8 @@ export type QueryAction =
 export function classifyQueryInput(value: string, selectedPath: string, identityMode: QueryIdentityMode): QueryAction | null {
   const text = value.trim();
   if (!text) return null;
+  const sqlText = prefixedText(text, "sql");
+  if (sqlText) return { kind: "sql", targetPath: "current database", sideEffect: "none", identityMode, sql: sqlText };
   const url = firstHttpUrl(text);
   if (url) return { kind: "queue_url", targetPath: "/Sources/ingest-requests", sideEffect: "queue request", identityMode: "user", url };
   if (/(lint|点検|検査)/i.test(text)) {
@@ -38,8 +41,9 @@ function firstHttpUrl(value: string): string | null {
   return match?.[0] ?? null;
 }
 
-function prefixedText(value: string, prefix: "ask" | "search"): string | null {
-  const match = value.match(new RegExp(`^(?:${prefix}|${prefix === "ask" ? "質問" : "検索"})\\s*[:：]\\s*(.+)$`, "i"));
+function prefixedText(value: string, prefix: "ask" | "search" | "sql"): string | null {
+  const localized = prefix === "ask" ? "質問" : prefix === "search" ? "検索" : "sql";
+  const match = value.match(new RegExp(`^(?:${prefix}|${localized})\\s*[:：]\\s*(.+)$`, "i"));
   const text = match?.[1]?.trim();
   return text || null;
 }

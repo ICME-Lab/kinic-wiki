@@ -59,9 +59,9 @@ use vfs_types::{
     OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
     SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult, kinic_base_units_per_token,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -683,6 +683,27 @@ fn list_database_cycle_entries(
 fn query_index_sql_json(sql: String, limit: u32) -> Result<IndexSqlJsonQueryResult, String> {
     require_controller_caller()?;
     with_service(|service| service.query_index_sql_json(&sql, limit))
+}
+
+#[query]
+fn query_database_sql_json(
+    database_id: String,
+    sql: String,
+    limit: u32,
+) -> Result<IndexSqlJsonQueryResult, String> {
+    with_service(|service| {
+        service.query_database_sql_json(&database_id, &caller_text(), &sql, limit)
+    })
+}
+
+#[query]
+fn wiki_metrics() -> Result<WikiMetrics, String> {
+    with_service(|service| service.wiki_metrics(now_millis()))
+}
+
+#[query]
+fn wiki_metrics_series(days: u32) -> Result<Vec<WikiMetricsPoint>, String> {
+    with_service(|service| service.wiki_metrics_series(now_millis(), days))
 }
 
 #[update]

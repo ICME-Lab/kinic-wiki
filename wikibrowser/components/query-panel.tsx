@@ -3,7 +3,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
-import { AlertTriangle, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Database, Link2, LoaderCircle, MessageSquareText, Search, ShieldCheck } from "lucide-react";
 import { createUrlIngestRequest } from "@/lib/url-ingest";
 import { collectLintHints, type LintHint } from "@/lib/lint-hints";
 import { classifyQueryInput, type QueryAction } from "@/lib/query-actions";
@@ -12,12 +12,15 @@ import { hrefForPath } from "@/lib/paths";
 import type { ReadIdentityMode } from "@/lib/wiki-helpers";
 import { errorMessage } from "@/lib/wiki-helpers";
 import type { SearchNodeHit, WikiNode } from "@/lib/types";
-import { authorizeQueryAnswerSession, readNode, searchNodes } from "@/lib/vfs-client";
+import { authorizeQueryAnswerSession, queryDatabaseSqlJson, readNode, searchNodes } from "@/lib/vfs-client";
+
+const SQL_QUERY_LIMIT = 100;
 
 type QueryResult =
   | { kind: "message"; text: string; tone: "info" | "error" }
   | { kind: "lint"; targetPath: string; hints: LintHint[] }
   | { kind: "search"; query: string; hits: SearchNodeHit[] }
+  | { kind: "sql"; sql: string; rows: string[]; rowCount: string; limit: string }
   | { kind: "answer"; answer: string; citations: string[]; abstained: boolean };
 
 export function QueryPanel({
@@ -70,6 +73,10 @@ export function QueryPanel({
       await searchWiki(action);
       return;
     }
+    if (action.kind === "sql") {
+      await queryDatabaseSql(action);
+      return;
+    }
     if (action.kind === "ask") {
       await answerQuestion(action);
       return;
@@ -94,6 +101,24 @@ export function QueryPanel({
     try {
       const hits = await searchNodes(canisterId, databaseId, action.query, 10, action.targetPath, readIdentity ?? undefined);
       setResult({ kind: "search", query: action.query, hits });
+    } catch (cause) {
+      setResult({ kind: "message", tone: "error", text: errorMessage(cause) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function queryDatabaseSql(action: Extract<QueryAction, { kind: "sql" }>) {
+    setBusy(true);
+    try {
+      const sqlResult = await queryDatabaseSqlJson(canisterId, databaseId, action.sql, SQL_QUERY_LIMIT, readIdentity ?? undefined);
+      setResult({
+        kind: "sql",
+        sql: action.sql,
+        rows: formatSqlJsonRows(sqlResult.rows),
+        rowCount: sqlResult.rowCount,
+        limit: sqlResult.limit
+      });
     } catch (cause) {
       setResult({ kind: "message", tone: "error", text: errorMessage(cause) });
     } finally {
@@ -174,7 +199,7 @@ export function QueryPanel({
           <textarea
             id="query-command"
             className="min-h-[112px] w-full resize-none rounded-lg border border-line bg-white px-3 py-2.5 text-sm leading-5 outline-none placeholder:text-muted focus:border-accent"
-            placeholder="Search keywords, or type: ask: question, lint facts, https://..."
+            placeholder="Search keywords, or type: sql: SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
             rows={4}
             value={input}
             onChange={(event) => setInput(event.target.value)}
@@ -192,9 +217,9 @@ export function QueryPanel({
 }
 
 function ActionPreview({ action, busy, onConfirm }: { action: QueryAction; busy: boolean; onConfirm: (() => void) | null }) {
-  const icon = action.kind === "ask" ? <MessageSquareText size={15} /> : action.kind === "search" ? <Search size={15} /> : action.kind === "lint" ? <AlertTriangle size={15} /> : <Link2 size={15} />;
-  const title = action.kind === "ask" ? "LLM answer" : action.kind === "search" ? "Search wiki" : action.kind === "lint" ? "Lint note" : "Queue URL";
-  const target = action.kind === "queue_url" ? action.url : action.targetPath ?? "current database";
+  const icon = action.kind === "ask" ? <MessageSquareText size={15} /> : action.kind === "search" ? <Search size={15} /> : action.kind === "sql" ? <Database size={15} /> : action.kind === "lint" ? <AlertTriangle size={15} /> : <Link2 size={15} />;
+  const title = action.kind === "ask" ? "LLM answer" : action.kind === "search" ? "Search wiki" : action.kind === "sql" ? "Database SQL" : action.kind === "lint" ? "Lint note" : "Queue URL";
+  const target = action.kind === "queue_url" ? action.url : action.kind === "sql" ? action.sql : action.targetPath ?? "current database";
   return (
     <div className="border-b border-line bg-paper px-3 py-2.5 text-xs">
       <div className="flex items-start gap-2">
@@ -270,6 +295,23 @@ function QueryResultView({ canisterId, databaseId, result }: { canisterId: strin
       </div>
     );
   }
+  if (result.kind === "sql") {
+    return (
+      <div className="m-3 space-y-2 rounded-lg border border-line bg-white p-3 text-xs leading-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-semibold text-ink">SQL rows</p>
+          <MetaBadge>{result.rowCount}/{result.limit}</MetaBadge>
+        </div>
+        <p className="truncate font-mono text-[11px] text-muted">{result.sql}</p>
+        {result.rows.length === 0 ? <p className="text-muted">No rows.</p> : null}
+        {result.rows.map((row, index) => (
+          <pre key={`${index}:${row}`} className="max-h-72 overflow-auto rounded border border-line bg-paper p-2 font-mono text-[11px] leading-5 text-ink">
+            {row}
+          </pre>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="m-3 space-y-2 rounded-lg border border-line bg-white p-3 text-xs leading-5">
       <a className="font-mono text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, result.targetPath, "raw", "query")}>
@@ -295,6 +337,17 @@ function resultExcerpt(hit: SearchNodeHit): string | null {
 
 function isAnswerBody(value: unknown): value is { answer: string; citations: string[]; abstained: boolean } {
   return isRecord(value) && typeof value.answer === "string" && Array.isArray(value.citations) && value.citations.every((item) => typeof item === "string") && typeof value.abstained === "boolean";
+}
+
+function formatSqlJsonRows(rows: string[]): string[] {
+  return rows.map((row) => {
+    try {
+      const parsed: unknown = JSON.parse(row);
+      return JSON.stringify(parsed, null, 2) ?? "null";
+    } catch {
+      throw new Error("SQL response is invalid");
+    }
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

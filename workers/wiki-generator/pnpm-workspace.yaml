@@ -8,4 +8,4 @@ allowBuilds:
   workerd@1.20260507.1: true
 overrides:
   esbuild: 0.28.1
-  ws: 8.20.1
+  ws: 8.21.0

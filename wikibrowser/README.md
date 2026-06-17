@@ -73,6 +73,12 @@ Open a database route and select the `ingest` left-pane tab:
 /<database-id>/Wiki?tab=ingest
 ```
 
+Select the `clipper` left-pane tab to check the current database, writer readiness, Chrome extension setup steps, and Clipper storage paths without leaving WikiBrowser:
+
+```text
+/<database-id>/Wiki?tab=clipper
+```
+
 Submitting a URL writes one request node to the same database:
 
 ```text
@@ -166,6 +172,8 @@ Covered methods:
 - `read_node_context`
 - `memory_manifest`
 - `query_context`
+- `query_database_sql_json`
+- `query_index_sql_json`
 - `source_evidence`
 - `search_node_paths`
 - `search_nodes`
@@ -173,7 +181,11 @@ Covered methods:
 ## Public MVP
 
 Initial deployment target is Cloudflare Workers with `NEXT_PUBLIC_WIKI_IC_HOST=https://icp0.io` and `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID=xis3j-paaaa-aaaai-axumq-cai`.
-The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility.
+The app is public read-only and accepts database IDs for the fixed canister. The target DB must grant reader access to anonymous principal `2vxsx-fae`. Anonymous public access also includes read-only member list visibility and restricted database-scoped `sql:` queries.
+`sql:` in the Query panel calls `query_database_sql_json` against the current DB only. It accepts a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, requires SQL `LIMIT 1..100`, allows only one-column `ORDER BY` followed by `LIMIT`, rejects `OFFSET`, and expects exactly one result column containing valid JSON object TEXT.
+The CLI exposes the same database-scoped API as `query-sql`; both surfaces can query only DBs the caller can already read, including owned/member DBs, marketplace-entitled DBs, and public-readable DBs.
+The `/metrics` page calls public unauthenticated `wiki_metrics` and `wiki_metrics_series(days)` telemetry. It exposes aggregate user and database counts, paid user totals, charged KINIC totals in e8s, and `last_activity_at_ms`; series `days` is clamped to `1..7`.
+Controller metrics use `query_index_sql_json`; that method stays controller-only and is not exposed as user input.
 Canister unreachable / API failures are shown as browser errors and are not treated as not-found states.
 The `/<database-id>/...` and `/dashboard/<database-id>` URLs are App Router dynamic routes. Read and authenticated calls go directly from the browser to the configured IC gateway.
 

@@ -90,6 +90,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> da
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- write-node --path /Wiki/file.md --input file.md
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- search-remote "budget" --prefix /Wiki --top-k 10 --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- query-sql "SELECT json_object('path', path, 'updated_at', updated_at) FROM fs_nodes ORDER BY updated_at DESC LIMIT 20" --limit 20 --json
 ```
 
 `cycles config` prints the KINIC ledger canister, billing authority principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `100_000 e8s`.
@@ -120,6 +121,7 @@ Purchased databases also appear in `database list` as `reader`. After selecting 
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link <database-id>
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> list-nodes --prefix /Wiki
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> read-node --path /Wiki/index.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
 ```
 
 The CLI v1 marketplace surface is intentionally read-only. Marketplace purchase, listing creation, listing publication, and deposit flows are not CLI commands.
@@ -128,6 +130,7 @@ For public browser reads, grant anonymous reader access explicitly:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant <database-id> 2vxsx-fae reader
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --identity-mode anonymous --database-id <database-id> query-sql "SELECT json_object('path', path) FROM fs_nodes LIMIT 20"
 ```
 
 ## Identity Mode
@@ -171,6 +174,24 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --iden
 
 `--identity-mode anonymous` is valid only for read-only public operations.
 Writes, database grants, archive operations, private Skill Registry writes, and owner commands require `--identity-mode identity` or `auto`.
+
+## Database SQL
+
+`query-sql` runs one read-only `SELECT` query against the selected wiki DB through `query_database_sql_json`. It uses the same read access as `read-node`, so direct readers, marketplace-entitled buyers, and anonymous callers for public-readable DBs can query only the DB they can already read.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+  query-sql "SELECT json_object('path', path, 'updated_at', updated_at) FROM fs_nodes ORDER BY updated_at DESC LIMIT 20" \
+  --limit 20
+
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+  query-sql "SELECT json_object('path', path, 'kind', kind) FROM fs_nodes LIMIT 20" \
+  --limit 20 --json
+```
+
+Text output prints each returned JSON row on its own line. `--json` prints the result envelope with `rows`, `row_count`, and `limit`. The SQL must be a restricted JSON `SELECT` from `fs_nodes` or `fs_links`, include SQL `LIMIT 1..100`, and return exactly one non-null valid JSON object TEXT column, usually via SQLite `json_object(...)`. Optional `ORDER BY` is limited to one allowed column plus optional `ASC` or `DESC`, followed directly by `LIMIT`; `OFFSET` is rejected. Joins, compound selects, subqueries, grouping, comments, mutating/admin tokens, and large generated/aggregate values are rejected. Each row is capped at 64 KiB and the total rows payload is capped at 256 KiB. This command cannot query the canister index DB, session tables, marketplace orders, or billing tables. Browser Query panel `sql:` uses the same database-scoped API.
+
+`query-sql` uses the same `--identity-mode auto` behavior as read-only DB commands: private DBs use the selected `icp identity`; public-readable DBs use anonymous when the selected identity is not a DB member, and identity when it is a member. Pass `--identity-mode identity` or `--identity-mode anonymous` to force one mode.
 
 ## Archive and Restore
 

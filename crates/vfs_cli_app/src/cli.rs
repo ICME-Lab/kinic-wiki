@@ -331,6 +331,16 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(
+        about = "Run one restricted JSON SELECT against the selected database; auto identity uses anonymous for public DBs unless the selected identity is a member"
+    )]
+    QuerySql {
+        sql: String,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "Show target canister and database access status")]
     Status {
         #[arg(long)]
@@ -704,6 +714,7 @@ impl Command {
             | Self::OutgoingLinks { .. }
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
+            | Self::QuerySql { .. }
             | Self::Status { .. } => false,
         }
     }
@@ -725,6 +736,7 @@ impl Command {
             | Self::OutgoingLinks { .. }
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
+            | Self::QuerySql { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
             | Self::Market { .. }
@@ -966,6 +978,11 @@ impl Command {
                 prefix: prefix.clone(),
                 top_k: *top_k,
                 preview_mode: *preview_mode,
+                json: *json,
+            }),
+            Self::QuerySql { sql, limit, json } => Some(VfsCommand::QuerySql {
+                sql: sql.clone(),
+                limit: *limit,
                 json: *json,
             }),
             _ => None,
@@ -1258,10 +1275,43 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_parses_query_sql_command() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "query-sql",
+            "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1",
+            "--limit",
+            "10",
+            "--json",
+        ]);
+        let Command::QuerySql { sql, limit, json } = &cli.command else {
+            panic!("expected query-sql command");
+        };
+        assert_eq!(sql, "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1");
+        assert_eq!(*limit, 10);
+        assert!(*json);
+
+        let Some(VfsCommand::QuerySql { sql, limit, json }) = cli.command.as_vfs_command() else {
+            panic!("expected VFS query-sql command");
+        };
+        assert_eq!(sql, "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1");
+        assert_eq!(limit, 10);
+        assert!(json);
+    }
+
+    #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
         let read = Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
         assert!(!read.command.requires_identity());
         assert!(read.command.probes_anonymous_database_read());
+
+        let query_sql = Cli::parse_from([
+            "kinic-vfs-cli",
+            "query-sql",
+            "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1",
+        ]);
+        assert!(!query_sql.command.requires_identity());
+        assert!(query_sql.command.probes_anonymous_database_read());
 
         let status = Cli::parse_from(["kinic-vfs-cli", "status"]);
         assert!(!status.command.requires_identity());

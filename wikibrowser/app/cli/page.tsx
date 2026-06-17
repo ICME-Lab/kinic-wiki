@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Bot, CheckCircle2, Database, Search, ShieldCheck, TerminalSquare, Wrench } from "lucide-react";
 import { CliGuideBlock } from "./cli-guide-block";
 import { AdminContent } from "@/components/admin-shell";
@@ -100,7 +101,7 @@ export default function CliPage() {
           </div>
         </AdminPanel>
 
-        <section className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="First Check" commands={checkCommands}>
             Confirm the installed binary, then use <code>--help</code> to inspect the command index before connecting automation to a database.
           </CliGuideBlock>
@@ -116,9 +117,21 @@ export default function CliPage() {
           <CliGuideBlock icon={<CheckCircle2 aria-hidden size={18} />} title="Skill Registry" commands={skillCommands}>
             Find a skill, inspect the package before use, then record run evidence after the agent completes the task.
           </CliGuideBlock>
-        </section>
+          <AdminPanel className="min-w-0" padding="lg">
+            <div className="flex items-center gap-2">
+              <TerminalSquare aria-hidden className="text-accent" size={18} />
+              <h2 className="text-lg font-semibold text-ink">Raw canister calls</h2>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              Use raw calls for endpoint debugging and database SQL without installing <code>kinic-vfs-cli</code>. Use <code>kinic-vfs-cli</code> for scripted reads and safe writes.
+            </p>
+            <Link className="mt-4 inline-flex min-h-10 items-center justify-center rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink no-underline hover:border-accent hover:bg-accentSoft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2" href="/canister-api">
+              Open Canister API
+            </Link>
+          </AdminPanel>
+        </div>
 
-        <section>
+        <div>
           <AdminPanel className="min-w-0" padding="md">
             <div className="flex items-center gap-2">
               <ShieldCheck aria-hidden className="text-accent" size={18} />
@@ -130,7 +143,7 @@ export default function CliPage() {
               ))}
             </ul>
           </AdminPanel>
-        </section>
+        </div>
       </div>
     </AdminContent>
   );

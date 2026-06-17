@@ -13,6 +13,7 @@ const browserRoutes = [
   "/Wiki?view=edit",
   "/Wiki?tab=query",
   "/Wiki?tab=ingest",
+  "/Wiki?tab=clipper",
   "/search?q=Wiki&kind=path",
   "/help",
   "/graph?center=%2FWiki&depth=1",
@@ -109,7 +110,7 @@ function wikiLayoutProbe(route) {
     if (!isVisible(brandLink)) failures.push("brand link disappears after mobile menu opens");
     if (mobileMenuButton?.getAttribute("aria-expanded") !== "true") failures.push("mobile menu button is not expanded after click");
     const visibleTabs = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).filter((link) => isVisible(link)).map((link) => link.textContent?.trim()).join(",");
-    if (visibleTabs !== "explorer,query,ingest") failures.push("mobile sidebar tabs are not visible");
+    if (visibleTabs !== "explorer,query,ingest,clipper") failures.push("mobile sidebar tabs are not visible");
     const ingestLink = Array.from(document.querySelectorAll('[aria-label="Left sidebar mode"] a')).find((link) => link.textContent?.trim() === "ingest");
     ingestLink?.click();
     await new Promise((resolve) => requestAnimationFrame(resolve));

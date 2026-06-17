@@ -322,6 +322,26 @@ pub struct IndexSqlJsonQueryResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WikiMetrics {
+    pub users_total: u64,
+    pub users_active_30d: u64,
+    pub users_new_30d: u64,
+    pub databases_total: u64,
+    pub databases_active_30d: u64,
+    pub databases_new_30d: u64,
+    pub paid_users_total: u64,
+    pub charged_kinic_total_e8s: u64,
+    pub charged_kinic_30d_e8s: u64,
+    pub last_activity_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct WikiMetricsPoint {
+    pub bucket_start_ms: i64,
+    pub metrics: WikiMetrics,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
 }

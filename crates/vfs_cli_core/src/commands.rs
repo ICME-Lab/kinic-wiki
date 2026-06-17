@@ -15,10 +15,10 @@ use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
     DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest,
-    SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
+    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
+    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
     kinic_base_units_per_token,
 };
 use wiki_domain::validate_source_path_for_kind;
@@ -477,6 +477,14 @@ pub async fn run_vfs_command(
                 }
             }
         }
+        VfsCommand::QuerySql { sql, limit, json } => {
+            let result = client
+                .query_database_sql_json(database_id, &sql, limit)
+                .await?;
+            for line in sql_json_query_output_lines(&result, json)? {
+                println!("{line}");
+            }
+        }
     }
     Ok(())
 }
@@ -511,6 +519,16 @@ fn print_links(links: Vec<LinkEdge>, json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn sql_json_query_output_lines(
+    result: &IndexSqlJsonQueryResult,
+    json: bool,
+) -> Result<Vec<String>> {
+    if json {
+        return Ok(vec![serde_json::to_string_pretty(result)?]);
+    }
+    Ok(result.rows.clone())
 }
 
 pub(crate) async fn delete_node_with_folder_index(
@@ -1466,6 +1484,7 @@ mod tests {
         database_cycles_pending: Mutex<Vec<String>>,
         market_entitlements: Mutex<Vec<(Option<String>, u32)>>,
         database_summaries: Mutex<Vec<DatabaseSummary>>,
+        sql_queries: Mutex<Vec<(String, String, u32)>>,
         cycles_configs: Mutex<u32>,
         fail_cycles_config: Mutex<bool>,
         write_cycle_checks: Mutex<Vec<String>>,
@@ -1760,6 +1779,23 @@ mod tests {
         }
         async fn read_node(&self, _database_id: &str, path: &str) -> Result<Option<Node>> {
             Ok(self.nodes.iter().find(|node| node.path == path).cloned())
+        }
+        async fn query_database_sql_json(
+            &self,
+            database_id: &str,
+            sql: &str,
+            limit: u32,
+        ) -> Result<IndexSqlJsonQueryResult> {
+            self.sql_queries.lock().unwrap().push((
+                database_id.to_string(),
+                sql.to_string(),
+                limit,
+            ));
+            Ok(IndexSqlJsonQueryResult {
+                rows: vec![r#"{"ok":1}"#.to_string()],
+                row_count: 1,
+                limit,
+            })
         }
         async fn read_node_context(
             &self,
@@ -2740,6 +2776,50 @@ mod tests {
         .await
         .expect("archive cancel should succeed");
         assert_eq!(client.archive_cancelled.lock().unwrap()[0], "alpha");
+    }
+
+    #[tokio::test]
+    async fn query_sql_sends_database_sql_request() {
+        let client = MockClient::default();
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::QuerySql {
+                sql: "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1".to_string(),
+                limit: 10,
+                json: true,
+            },
+        )
+        .await
+        .expect("query-sql should succeed");
+
+        assert_eq!(
+            client.sql_queries.lock().unwrap().as_slice(),
+            &[(
+                "alpha".to_string(),
+                "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1".to_string(),
+                10
+            )]
+        );
+        assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn sql_json_query_output_formats_rows_and_envelope() {
+        let result = IndexSqlJsonQueryResult {
+            rows: vec![r#"{"path":"/Wiki/a.md"}"#.to_string()],
+            row_count: 1,
+            limit: 20,
+        };
+
+        assert_eq!(
+            super::sql_json_query_output_lines(&result, false).expect("text output"),
+            vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]
+        );
+        let json = super::sql_json_query_output_lines(&result, true).expect("json output");
+        assert_eq!(json.len(), 1);
+        assert!(json[0].contains("\"row_count\": 1"));
+        assert!(json[0].contains("\"limit\": 20"));
     }
 
     #[tokio::test]

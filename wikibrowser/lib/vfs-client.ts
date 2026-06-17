@@ -18,6 +18,7 @@ import type {
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
+  IndexSqlJsonQueryResult,
   LinkEdge,
   MarketCreateListingRequest,
   MarketEntitlementPage,
@@ -45,6 +46,8 @@ import type {
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
+  WikiMetrics,
+  WikiMetricsPoint,
   WikiNode,
   WriteNodeRequest,
   WriteNodeResult,
@@ -117,6 +120,30 @@ type RawDatabaseCycleEntry = {
 type RawDatabaseCycleEntryPage = {
   entries: RawDatabaseCycleEntry[];
   next_cursor: [] | [bigint];
+};
+
+type RawIndexSqlJsonQueryResult = {
+  rows: string[];
+  row_count: number;
+  limit: number;
+};
+
+type RawWikiMetrics = {
+  users_total: bigint;
+  users_active_30d: bigint;
+  users_new_30d: bigint;
+  databases_total: bigint;
+  databases_active_30d: bigint;
+  databases_new_30d: bigint;
+  paid_users_total: bigint;
+  charged_kinic_total_e8s: bigint;
+  charged_kinic_30d_e8s: bigint;
+  last_activity_at_ms: [] | [bigint];
+};
+
+type RawWikiMetricsPoint = {
+  bucket_start_ms: bigint;
+  metrics: RawWikiMetrics;
 };
 
 type RawDatabaseCyclesPendingPurchase = {
@@ -468,6 +495,10 @@ type VfsActor = {
     include_evidence: boolean;
     depth: number;
   }) => Promise<{ Ok: RawQueryContext } | { Err: string }>;
+  query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
+  query_index_sql_json: (sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
+  wiki_metrics: () => Promise<{ Ok: RawWikiMetrics } | { Err: string }>;
+  wiki_metrics_series: (days: number) => Promise<{ Ok: RawWikiMetricsPoint[] } | { Err: string }>;
   search_node_paths: (request: {
     database_id: string;
     query_text: string;
@@ -632,6 +663,57 @@ export async function listDatabasesPublic(canisterId: string): Promise<DatabaseS
       throwCanisterError(result.Err);
     }
     return result.Ok.map((raw) => normalizeDatabaseSummary(raw));
+  });
+}
+
+export async function queryIndexSqlJson(canisterId: string, identity: Identity, sql: string, limit: number): Promise<IndexSqlJsonQueryResult> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.query_index_sql_json(sql, limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeIndexSqlJsonQueryResult(result.Ok);
+  });
+}
+
+export async function queryDatabaseSqlJson(
+  canisterId: string,
+  databaseId: string,
+  sql: string,
+  limit: number,
+  identity?: Identity
+): Promise<IndexSqlJsonQueryResult> {
+  return callVfs(async () => {
+    const actor = await createReadActor(canisterId, identity);
+    const result = await actor.query_database_sql_json(databaseId, sql, limit);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeIndexSqlJsonQueryResult(result.Ok);
+  });
+}
+
+export async function wikiMetrics(canisterId: string): Promise<WikiMetrics> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.wiki_metrics();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeWikiMetrics(result.Ok);
+  });
+}
+
+// Public aggregate telemetry. The canister clamps days to 1..7.
+export async function wikiMetricsSeries(canisterId: string, days: number): Promise<WikiMetricsPoint[]> {
+  return callVfs(async () => {
+    const actor = await createVfsActor(canisterId);
+    const result = await actor.wiki_metrics_series(days);
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return result.Ok.map(normalizeWikiMetricsPoint);
   });
 }
 
@@ -1258,6 +1340,36 @@ function normalizeDatabaseCycleEntryPage(raw: RawDatabaseCycleEntryPage): Databa
   return {
     entries: raw.entries.map(normalizeDatabaseCycleEntry),
     nextCursor: raw.next_cursor[0]?.toString() ?? null
+  };
+}
+
+function normalizeIndexSqlJsonQueryResult(raw: RawIndexSqlJsonQueryResult): IndexSqlJsonQueryResult {
+  return {
+    rows: raw.rows,
+    rowCount: raw.row_count.toString(),
+    limit: raw.limit.toString()
+  };
+}
+
+function normalizeWikiMetrics(raw: RawWikiMetrics): WikiMetrics {
+  return {
+    usersTotal: raw.users_total.toString(),
+    usersActive30d: raw.users_active_30d.toString(),
+    usersNew30d: raw.users_new_30d.toString(),
+    databasesTotal: raw.databases_total.toString(),
+    databasesActive30d: raw.databases_active_30d.toString(),
+    databasesNew30d: raw.databases_new_30d.toString(),
+    paidUsersTotal: raw.paid_users_total.toString(),
+    chargedKinicTotalE8s: raw.charged_kinic_total_e8s.toString(),
+    chargedKinic30dE8s: raw.charged_kinic_30d_e8s.toString(),
+    lastActivityAtMs: raw.last_activity_at_ms[0]?.toString() ?? null
+  };
+}
+
+function normalizeWikiMetricsPoint(raw: RawWikiMetricsPoint): WikiMetricsPoint {
+  return {
+    bucketStartMs: raw.bucket_start_ms.toString(),
+    metrics: normalizeWikiMetrics(raw.metrics)
   };
 }
 

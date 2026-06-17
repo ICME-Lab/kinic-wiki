@@ -18,15 +18,15 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
     MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
     MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
     MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
     MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
     NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, Status, WriteNodeRequest, WriteNodeResult,
-    WriteNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -297,6 +297,25 @@ pub trait VfsApi: Sync {
     async fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>>;
     async fn query_context(&self, _request: QueryContextRequest) -> Result<QueryContext> {
         Err(anyhow!("query_context is not implemented by this client"))
+    }
+    async fn query_database_sql_json(
+        &self,
+        _database_id: &str,
+        _sql: &str,
+        _limit: u32,
+    ) -> Result<IndexSqlJsonQueryResult> {
+        Err(anyhow!(
+            "query_database_sql_json is not implemented by this client"
+        ))
+    }
+    async fn wiki_metrics(&self) -> Result<WikiMetrics> {
+        Err(anyhow!("wiki_metrics is not implemented by this client"))
+    }
+    /// Return public aggregate telemetry buckets. The service clamps days to 1..=7.
+    async fn wiki_metrics_series(&self, _days: u32) -> Result<Vec<WikiMetricsPoint>> {
+        Err(anyhow!(
+            "wiki_metrics_series is not implemented by this client"
+        ))
     }
     async fn source_evidence(&self, _request: SourceEvidenceRequest) -> Result<SourceEvidence> {
         Err(anyhow!("source_evidence is not implemented by this client"))
@@ -933,6 +952,34 @@ impl VfsApi for CanisterVfsClient {
 
     async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
         let result: Result<QueryContext, String> = self.query("query_context", &request).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn query_database_sql_json(
+        &self,
+        database_id: &str,
+        sql: &str,
+        limit: u32,
+    ) -> Result<IndexSqlJsonQueryResult> {
+        let result: Result<IndexSqlJsonQueryResult, String> = self
+            .query3(
+                "query_database_sql_json",
+                &database_id.to_string(),
+                &sql.to_string(),
+                &limit,
+            )
+            .await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn wiki_metrics(&self) -> Result<WikiMetrics> {
+        let result: Result<WikiMetrics, String> = self.query("wiki_metrics", &()).await?;
+        result.map_err(|error| anyhow!(error))
+    }
+
+    async fn wiki_metrics_series(&self, days: u32) -> Result<Vec<WikiMetricsPoint>> {
+        let result: Result<Vec<WikiMetricsPoint>, String> =
+            self.query("wiki_metrics_series", &days).await?;
         result.map_err(|error| anyhow!(error))
     }
 

@@ -50,6 +50,11 @@ cat >"${ARGS_FILE}" <<EOF
 (record {
   kinic_ledger_canister_id = "${KINIC_LEDGER_CANISTER_ID}";
   billing_authority_id = "${BILLING_AUTHORITY_ID}";
+  top_up = record {
+    enabled = true;
+    launcher_principal = "xfug4-5qaaa-aaaak-afowa-cai";
+    threshold_cycles = 2_000_000_000_000 : nat;
+  };
   cycles_per_kinic = 234_500_000_000 : nat64;
   min_update_cycles = 1_000_000 : nat64;
 })

@@ -46,7 +46,7 @@ export function AdminIconButton({ children, label, onClick, title }: { children:
   return (
     <button
       aria-label={label}
-      className="inline-flex size-10 items-center justify-center rounded-lg border border-line bg-white text-muted shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accent"
+      className="inline-flex size-10 items-center justify-center rounded-lg border border-line bg-white text-muted shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:text-accentText focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
       title={title ?? label}
       type="button"
       onClick={onClick}

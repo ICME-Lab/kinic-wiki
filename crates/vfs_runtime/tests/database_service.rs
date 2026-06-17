@@ -4577,6 +4577,664 @@ fn market_purchase_begin_records_listing_payout_for_empty_ledger_recipient() {
 }
 
 #[test]
+fn database_sql_json_returns_rows_for_readers_and_public_readers() {
+    let service = service();
+    service
+        .create_database("sql-db", "owner", 1)
+        .expect("database should create");
+    cycle_database(&service, "sql-db", "owner", 1_000_000, 1, 2);
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "sql-db".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            3,
+        )
+        .expect("node should write");
+    service
+        .grant_database_access("sql-db", "owner", "reader", DatabaseRole::Reader, 4)
+        .expect("reader grant should succeed");
+    service
+        .grant_database_access("sql-db", "owner", "2vxsx-fae", DatabaseRole::Reader, 5)
+        .expect("public reader grant should succeed");
+
+    let reader_result = service
+        .query_database_sql_json(
+            "sql-db",
+            "reader",
+            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            10,
+        )
+        .expect("reader should query database SQL");
+    let public_result = service
+        .query_database_sql_json(
+            "sql-db",
+            "2vxsx-fae",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            10,
+        )
+        .expect("public reader should query database SQL");
+
+    assert_eq!(reader_result.row_count, 1);
+    assert_eq!(
+        reader_result.rows,
+        vec![r#"{"path":"/Wiki/a.md","content":"alpha"}"#]
+    );
+    assert_eq!(public_result.rows, vec![r#"{"path":"/Wiki/a.md"}"#]);
+}
+
+#[test]
+fn database_sql_json_returns_rows_from_links_table() {
+    let service = service();
+    service
+        .create_database("sql-links-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "sql-links-db".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "[b](/Wiki/b.md)".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("node should write");
+
+    let result = service
+        .query_database_sql_json(
+            "sql-links-db",
+            "owner",
+            "SELECT json_object('source', source_path, 'target', target_path) FROM fs_links LIMIT 20",
+            20,
+        )
+        .expect("owner should query link SQL");
+
+    assert_eq!(
+        result.rows,
+        vec![r#"{"source":"/Wiki/a.md","target":"/Wiki/b.md"}"#]
+    );
+}
+
+#[test]
+fn database_sql_json_rejects_non_readers() {
+    let service = service();
+    service
+        .create_database("private-sql-db", "owner", 1)
+        .expect("database should create");
+
+    let error = service
+        .query_database_sql_json(
+            "private-sql-db",
+            "missing",
+            "SELECT json_object('ok', 1) LIMIT 1",
+            10,
+        )
+        .expect_err("non-reader should reject");
+
+    assert!(error.contains("principal has no access"));
+}
+
+#[test]
+fn database_sql_json_rejects_mutating_multi_statement_and_expensive_sql() {
+    let service = service();
+    service
+        .create_database("guarded-sql-db", "owner", 1)
+        .expect("database should create");
+
+    for sql in [
+        "UPDATE fs_nodes SET content = ''",
+        "DELETE FROM fs_nodes",
+        "INSERT INTO fs_nodes (path) VALUES ('/Wiki/x.md')",
+        "CREATE TABLE x (id INTEGER)",
+        "DROP TABLE fs_nodes",
+        "PRAGMA table_info(fs_nodes)",
+        "ATTACH DATABASE 'x' AS x",
+        "DETACH DATABASE x",
+        "SELECT json_object('ok', 1); SELECT json_object('ok', 2)",
+        "SELECT json_object('ok', 1) FROM fs_nodes -- comment LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes /* comment */ LIMIT 1",
+        "WITH x AS (SELECT 1) SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes UNION SELECT json_object('ok', 2) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes JOIN fs_links ON 1 = 1 LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes, fs_links LIMIT 1",
+        "SELECT json_object('ok', 1) FROM fs_nodes WHERE id IN (SELECT id FROM fs_nodes) LIMIT 1",
+        "SELECT json_object('ok', count(*)) FROM fs_nodes LIMIT 1",
+        "SELECT json_group_array(path) FROM fs_nodes LIMIT 1",
+        "SELECT group_concat(path) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('x', hex(content)) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('x', randomblob(4)) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('x', zeroblob(4)) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('x', load_extension('x')) FROM fs_nodes LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_nodes LIMIT 1 OFFSET 10",
+        "SELECT json_object('path', path) FROM fs_nodes LIMIT 1, 2",
+        "SELECT json_object('path', path) FROM fs_nodes ORDER BY random() LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_nodes ORDER BY length(path) LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_nodes ORDER BY path, updated_at LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_nodes ORDER BY content LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_nodes ORDER BY path COLLATE NOCASE LIMIT 1",
+    ] {
+        let error = service
+            .query_database_sql_json("guarded-sql-db", "owner", sql, 10)
+            .expect_err("SQL should reject");
+        assert!(
+            error.contains("database SQL must")
+                || error.contains("database SQL token is not allowed")
+                || error.contains("database SQL comments are not allowed")
+                || error.contains("database SQL ORDER BY")
+                || error.contains("database SQL LIMIT"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_sql_json_rejects_raw_sql_over_byte_limit_before_trimming() {
+    let service = service();
+    service
+        .create_database("raw-size-guard-sql-db", "owner", 1)
+        .expect("database should create");
+    let sql_body = "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 1";
+    let padding_len = 4_097_usize.saturating_sub(sql_body.len());
+    let cases = [
+        (
+            "valid SELECT after trimming",
+            format!("{}{}", " ".repeat(padding_len), sql_body),
+        ),
+        ("spaces only", " ".repeat(4_097)),
+        ("non-SELECT", "x".repeat(4_097)),
+    ];
+
+    for (label, sql) in cases {
+        let error = service
+            .query_database_sql_json("raw-size-guard-sql-db", "owner", &sql, 10)
+            .expect_err("raw SQL over byte limit should reject");
+
+        assert!(
+            error.contains("must be at most 4096 bytes"),
+            "unexpected error for {label}: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_sql_json_api_limit_stops_reading_before_sql_limit() {
+    let service = service();
+    service
+        .create_database("limited-sql-db", "owner", 1)
+        .expect("database should create");
+    for (index, (path, content)) in [("/Wiki/a.md", "alpha"), ("/Wiki/b.md", "beta")]
+        .into_iter()
+        .enumerate()
+    {
+        service
+            .write_node(
+                "owner",
+                WriteNodeRequest {
+                    database_id: "limited-sql-db".to_string(),
+                    path: path.to_string(),
+                    kind: NodeKind::File,
+                    content: content.to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                2 + index as i64,
+            )
+            .expect("node should write");
+    }
+
+    let result = service
+        .query_database_sql_json(
+            "limited-sql-db",
+            "owner",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE kind = 'file' ORDER BY path ASC LIMIT 2",
+            1,
+        )
+        .expect("second row should not be read");
+
+    assert_eq!(result.limit, 1);
+    assert_eq!(result.row_count, 1);
+    assert_eq!(result.rows, vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]);
+
+    let recent = service
+        .query_database_sql_json(
+            "limited-sql-db",
+            "owner",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE kind = 'file' ORDER BY updated_at DESC LIMIT 20",
+            20,
+        )
+        .expect("updated_at DESC should be allowed");
+
+    assert_eq!(recent.row_count, 2);
+    assert_eq!(recent.rows[0], r#"{"path":"/Wiki/b.md"}"#);
+}
+
+#[test]
+fn database_sql_json_requires_sql_limit_in_range() {
+    let service = service();
+    service
+        .create_database("limit-guard-sql-db", "owner", 1)
+        .expect("database should create");
+
+    for sql in [
+        "SELECT json_object('ok', 1) FROM fs_nodes",
+        "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 0",
+        "SELECT json_object('ok', 1) FROM fs_nodes LIMIT 101",
+    ] {
+        let error = service
+            .query_database_sql_json("limit-guard-sql-db", "owner", sql, 10)
+            .expect_err("SQL limit should reject");
+        assert!(
+            error.contains("LIMIT"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_sql_json_rejects_internal_tables() {
+    let service = service();
+    service
+        .create_database("table-guard-sql-db", "owner", 1)
+        .expect("database should create");
+
+    for sql in [
+        "SELECT json_object('name', name) FROM sqlite_master LIMIT 1",
+        "SELECT json_object('name', name) FROM sqlite_schema LIMIT 1",
+        "SELECT json_object('version', version) FROM schema_migrations LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_change_log LIMIT 1",
+        "SELECT json_object('path', path) FROM fs_path_state LIMIT 1",
+    ] {
+        let error = service
+            .query_database_sql_json("table-guard-sql-db", "owner", sql, 10)
+            .expect_err("internal table should reject");
+        assert!(
+            error.contains("table is not allowed"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_sql_json_requires_json_object_text_first_column() {
+    let service = service();
+    service
+        .create_database("typed-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "typed-sql-db".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("node should write");
+
+    for sql in [
+        "SELECT 1 FROM fs_nodes LIMIT 1",
+        "SELECT NULL FROM fs_nodes LIMIT 1",
+        "SELECT 'not-json' FROM fs_nodes LIMIT 1",
+        "SELECT json_array(1, 2) FROM fs_nodes LIMIT 1",
+        "SELECT json_quote('value') FROM fs_nodes LIMIT 1",
+        "SELECT json(1) FROM fs_nodes LIMIT 1",
+        "SELECT json('null') FROM fs_nodes LIMIT 1",
+    ] {
+        let error = service
+            .query_database_sql_json("typed-sql-db", "owner", sql, 10)
+            .expect_err("non-object JSON text first column should reject");
+
+        assert!(
+            error.contains("exactly one non-null valid JSON object TEXT column"),
+            "unexpected error for {sql}: {error}"
+        );
+    }
+}
+
+#[test]
+fn database_sql_json_rejects_extra_result_columns() {
+    let service = service();
+    service
+        .create_database("typed-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "typed-sql-db".to_string(),
+                path: "/Wiki/sql.md".to_string(),
+                kind: NodeKind::File,
+                content: "database sql".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("node should write");
+
+    let error = service
+        .query_database_sql_json(
+            "typed-sql-db",
+            "owner",
+            "SELECT json_object('path', path), kind FROM fs_nodes LIMIT 1",
+            10,
+        )
+        .expect_err("extra result columns should reject");
+
+    assert!(error.contains("exactly one non-null valid JSON object TEXT column"));
+}
+
+#[test]
+fn database_sql_json_accepts_valid_json_object_values() {
+    let service = service();
+    service
+        .create_database("json-sql-db", "owner", 1)
+        .expect("database should create");
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "json-sql-db".to_string(),
+                path: "/Wiki/a.md".to_string(),
+                kind: NodeKind::File,
+                content: "alpha".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("node should write");
+
+    let result = service
+        .query_database_sql_json(
+            "json-sql-db",
+            "owner",
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/a.md' LIMIT 1",
+            10,
+        )
+        .expect("JSON object should be accepted");
+
+    assert_eq!(result.rows, vec![r#"{"path":"/Wiki/a.md"}"#.to_string()]);
+}
+
+#[test]
+fn database_sql_json_rejects_oversized_row_and_response() {
+    let service = service();
+    service
+        .create_database("size-sql-db", "owner", 1)
+        .expect("database should create");
+    let large_write = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "size-sql-db".to_string(),
+                path: "/Wiki/too-large.md".to_string(),
+                kind: NodeKind::File,
+                content: "x".repeat(66 * 1024),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            2,
+        )
+        .expect("large node should write");
+
+    let row_error = service
+        .query_database_sql_json(
+            "size-sql-db",
+            "owner",
+            "SELECT json_object('content', content) FROM fs_nodes WHERE path = '/Wiki/too-large.md' LIMIT 1",
+            1,
+        )
+        .expect_err("oversized row should reject");
+    assert!(row_error.contains("row JSON exceeds"));
+
+    service
+        .delete_node(
+            "owner",
+            DeleteNodeRequest {
+                database_id: "size-sql-db".to_string(),
+                path: "/Wiki/too-large.md".to_string(),
+                expected_etag: Some(large_write.node.etag),
+                expected_folder_index_etag: None,
+            },
+            3,
+        )
+        .expect("large node should delete");
+    for index in 0..5 {
+        service
+            .write_node(
+                "owner",
+                WriteNodeRequest {
+                    database_id: "size-sql-db".to_string(),
+                    path: format!("/Wiki/large-{index}.md"),
+                    kind: NodeKind::File,
+                    content: "x".repeat(60 * 1024),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                4 + index,
+            )
+            .expect("node should write");
+    }
+
+    let response_error = service
+        .query_database_sql_json(
+            "size-sql-db",
+            "owner",
+            "SELECT json_object('content', content) FROM fs_nodes WHERE kind = 'file' ORDER BY path ASC LIMIT 5",
+            5,
+        )
+        .expect_err("oversized response should reject");
+    assert!(response_error.contains("response JSON exceeds"));
+}
+
+#[test]
+fn wiki_metrics_returns_public_aggregate_counts() {
+    const THIRTY_DAYS_MS: i64 = 30 * 24 * 60 * 60 * 1000;
+    const NOW: i64 = 1_800_000_000_000;
+    let old = NOW - THIRTY_DAYS_MS - 1_000;
+    let recent = NOW - 1_000;
+    let (service, root) = service_with_root();
+    service
+        .create_database("old-db", "old-owner", old)
+        .expect("old database should create");
+    cycle_database(&service, "old-db", "old-owner", 1_000_000, 1, old + 1);
+    service
+        .create_database("fresh-db", "fresh-owner", recent)
+        .expect("fresh database should create");
+    cycle_database(&service, "fresh-db", "payer", 2_000_000, 2, recent + 1);
+    service
+        .create_database("anonymous-db", "2vxsx-fae", recent + 10)
+        .expect("anonymous database should create");
+    cycle_database(
+        &service,
+        "anonymous-db",
+        "2vxsx-fae",
+        3_000_000,
+        3,
+        recent + 11,
+    );
+    let listing = service
+        .market_create_listing(
+            "fresh-owner",
+            market_listing_request("fresh-db", 250),
+            recent + 20,
+        )
+        .expect("listing should create");
+    let start = service
+        .begin_market_purchase_with_ledger_details(
+            "buyer",
+            market_purchase_request(&listing, MARKET_BUYER_PRINCIPAL),
+            ledger_details("buyer", "aaaaa-aa", 100_000, recent + 21),
+            recent + 21,
+        )
+        .expect("market purchase should begin");
+    service
+        .complete_market_purchase_ledger_transfer(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            4,
+        )
+        .expect("market purchase ledger transfer should complete");
+    service
+        .apply_market_purchase(
+            start.operation_id,
+            MARKET_BUYER_PRINCIPAL,
+            &listing.listing_id,
+            listing.price_e8s,
+            recent + 30,
+        )
+        .expect("market purchase should apply");
+    Connection::open(root.join("index.sqlite3"))
+        .expect("index should open")
+        .execute(
+            "INSERT INTO database_members (database_id, principal, role, created_at_ms)
+             VALUES (?1, ?2, ?3, ?4)",
+            params!["fresh-db", "", "reader", recent + 40],
+        )
+        .expect("empty principal fixture should insert");
+
+    let metrics = service.wiki_metrics(NOW).expect("wiki metrics should load");
+
+    assert_eq!(metrics.users_total, 6);
+    assert_eq!(metrics.users_active_30d, 5);
+    assert_eq!(metrics.users_new_30d, 4);
+    assert_eq!(metrics.databases_total, 3);
+    assert_eq!(metrics.databases_active_30d, 2);
+    assert_eq!(metrics.databases_new_30d, 2);
+    assert_eq!(metrics.paid_users_total, 3);
+    assert_eq!(metrics.charged_kinic_total_e8s, 6_000_250);
+    assert_eq!(metrics.charged_kinic_30d_e8s, 5_000_250);
+    assert_eq!(metrics.last_activity_at_ms, Some(recent + 40));
+}
+
+#[test]
+fn wiki_metrics_returns_zero_counts_without_activity() {
+    let service = service();
+
+    let metrics = service
+        .wiki_metrics(1_800_000_000_000)
+        .expect("wiki metrics should load");
+
+    assert_eq!(metrics.users_total, 0);
+    assert_eq!(metrics.users_active_30d, 0);
+    assert_eq!(metrics.users_new_30d, 0);
+    assert_eq!(metrics.databases_total, 0);
+    assert_eq!(metrics.databases_active_30d, 0);
+    assert_eq!(metrics.databases_new_30d, 0);
+    assert_eq!(metrics.paid_users_total, 0);
+    assert_eq!(metrics.charged_kinic_total_e8s, 0);
+    assert_eq!(metrics.charged_kinic_30d_e8s, 0);
+    assert_eq!(metrics.last_activity_at_ms, None);
+}
+
+#[test]
+fn wiki_metrics_series_clamps_days_to_one_through_seven_and_excludes_future_events() {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    const NOW: i64 = 1_800_000_000_000;
+    let today_start = (NOW / DAY_MS) * DAY_MS;
+    let previous_start = today_start - DAY_MS;
+    let first_start = today_start - (2 * DAY_MS);
+    let service = service();
+    service
+        .create_database("previous-db", "previous-owner", previous_start + 1_000)
+        .expect("previous database should create");
+    service
+        .create_database("today-db", "today-owner", today_start + 1_000)
+        .expect("today database should create");
+
+    let series = service
+        .wiki_metrics_series(NOW, 3)
+        .expect("wiki metrics series should load");
+    let zero_day = service
+        .wiki_metrics_series(NOW, 0)
+        .expect("zero day should clamp to one point");
+    let one_day = service
+        .wiki_metrics_series(NOW, 1)
+        .expect("one day should return one point");
+    let seven_days = service
+        .wiki_metrics_series(NOW, 7)
+        .expect("seven days should return seven points");
+    let eight_days = service
+        .wiki_metrics_series(NOW, 8)
+        .expect("eight days should clamp to seven points");
+    let thirty_days = service
+        .wiki_metrics_series(NOW, 30)
+        .expect("thirty days should clamp to seven points");
+
+    assert_eq!(zero_day.len(), 1);
+    assert_eq!(one_day.len(), 1);
+    assert_eq!(seven_days.len(), 7);
+    assert_eq!(eight_days.len(), 7);
+    assert_eq!(thirty_days.len(), 7);
+    assert_eq!(series.len(), 3);
+    assert_eq!(series[0].bucket_start_ms, first_start);
+    assert_eq!(series[1].bucket_start_ms, previous_start);
+    assert_eq!(series[2].bucket_start_ms, today_start);
+    assert_eq!(series[0].metrics.databases_total, 0);
+    assert_eq!(series[1].metrics.databases_total, 1);
+    assert_eq!(series[2].metrics.databases_total, 2);
+}
+
+#[test]
+fn wiki_metrics_series_uses_rolling_30d_window_per_bucket() {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    const NOW: i64 = 1_800_000_000_000;
+    let cutoff = NOW - (30 * DAY_MS);
+    let service = service();
+    service
+        .create_database("old-window-db", "old-window-owner", cutoff - 10_000)
+        .expect("old database should create");
+    cycle_database(
+        &service,
+        "old-window-db",
+        "old-window-payer",
+        100,
+        1,
+        cutoff - 1,
+    );
+    service
+        .create_database("recent-window-db", "recent-window-owner", cutoff + 1)
+        .expect("recent database should create");
+    cycle_database(
+        &service,
+        "recent-window-db",
+        "recent-window-payer",
+        200,
+        2,
+        cutoff + 2,
+    );
+
+    let series = service
+        .wiki_metrics_series(NOW, 1)
+        .expect("wiki metrics series should load");
+    let metrics = &series[0].metrics;
+
+    assert_eq!(series.len(), 1);
+    assert_eq!(metrics.databases_total, 2);
+    assert_eq!(metrics.databases_new_30d, 1);
+    assert_eq!(metrics.databases_active_30d, 1);
+    assert_eq!(metrics.charged_kinic_total_e8s, 300);
+    assert_eq!(metrics.charged_kinic_30d_e8s, 200);
+}
+
+#[test]
 fn market_purchase_rejects_ledger_recipient_mismatch() {
     let service = service();
     service
@@ -5615,6 +6273,18 @@ fn market_entitlement_allows_read_surface_but_not_export() {
         .expect("entitled buyer should read")
         .expect("node should exist");
     assert_eq!(node.content, "paid body");
+    let sql_result = service
+        .query_database_sql_json(
+            "read-market",
+            MARKET_BUYER_PRINCIPAL,
+            "SELECT json_object('path', path, 'content', content) FROM fs_nodes WHERE path = '/Wiki/private.md' LIMIT 1",
+            10,
+        )
+        .expect("entitled buyer should query database SQL");
+    assert_eq!(
+        sql_result.rows,
+        vec![r#"{"path":"/Wiki/private.md","content":"paid body"}"#]
+    );
     assert!(
         service
             .export_fs_snapshot(

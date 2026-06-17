@@ -19,11 +19,21 @@ pub(crate) fn invalid_column_type(index: usize, name: String, kind: types::Type)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn invalid_query() -> Error {
+    Error::InvalidQuery
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn row_get<T>(row: &Row<'_>, index: usize) -> Result<T>
 where
     T: rusqlite::types::FromSql,
 {
     row.get(index)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn row_has_column(row: &Row<'_>, index: usize) -> Result<bool> {
+    Ok(index < row.as_ref().column_count())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,6 +43,37 @@ where
     F: FnMut(&Row<'_>) -> Result<T>,
 {
     statement.query_map(params, f)?.collect()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_map_limit<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    limit: usize,
+    mut f: F,
+) -> Result<Vec<T>>
+where
+    P: Params,
+    F: FnMut(&Row<'_>) -> Result<T>,
+{
+    let mut rows = statement.query(params)?;
+    let mut output = Vec::new();
+    while output.len() < limit {
+        let Some(row) = rows.next()? else {
+            break;
+        };
+        output.push(f(row)?);
+    }
+    Ok(output)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
+where
+    P: Params,
+    F: FnOnce(&Row<'_>) -> Result<T>,
+{
+    statement.query_row(params, f)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -240,11 +281,26 @@ pub(crate) fn invalid_column_type(index: usize, _name: String, kind: types::Type
 }
 
 #[cfg(target_arch = "wasm32")]
+pub(crate) fn invalid_query() -> Error {
+    Error::Sqlite(1, "invalid query".to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn row_get<T>(row: &Row<'_>, index: usize) -> Result<T>
 where
     T: FromColumn,
 {
     row.get(index)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn row_has_column(row: &Row<'_>, index: usize) -> Result<bool> {
+    match row_get::<Option<String>>(row, index) {
+        Ok(_) => Ok(true),
+        Err(Error::ColumnOutOfRange { .. }) => Ok(false),
+        Err(Error::TypeMismatch { .. }) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -254,6 +310,37 @@ where
     F: FnMut(&Row<'_>) -> Result<T>,
 {
     statement.query_all(params.as_params(), f)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn query_map_limit<T, P, F>(
+    statement: &mut Statement<'_>,
+    params: P,
+    limit: usize,
+    mut f: F,
+) -> Result<Vec<T>>
+where
+    P: Params,
+    F: FnMut(&Row<'_>) -> Result<T>,
+{
+    let mut rows = statement.query(params.as_params())?;
+    let mut output = Vec::new();
+    while output.len() < limit {
+        let Some(row) = rows.next_row()? else {
+            break;
+        };
+        output.push(f(&row)?);
+    }
+    Ok(output)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn query_one<T, P, F>(statement: &mut Statement<'_>, params: P, f: F) -> Result<T>
+where
+    P: Params,
+    F: FnOnce(&Row<'_>) -> Result<T>,
+{
+    statement.query_one(params.as_params(), f)
 }
 
 #[cfg(target_arch = "wasm32")]

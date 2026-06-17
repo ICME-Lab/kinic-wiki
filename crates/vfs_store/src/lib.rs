@@ -11,6 +11,6 @@ mod hashing;
 mod schema;
 mod sqlite;
 
-pub use crate::fs_store::FsStore;
 #[cfg(target_arch = "wasm32")]
 pub use crate::fs_store::StableFsStore;
+pub use crate::fs_store::{FsStore, validate_sql_json_select};
