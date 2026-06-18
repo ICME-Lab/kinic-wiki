@@ -22,7 +22,11 @@ const TEST_CYCLE_PURCHASE_CYCLES: u64 = 23_450_000_000;
 fn install_test_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");

@@ -289,6 +289,33 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     snippet: idl.Opt(idl.Text),
     score: idl.Float32
   });
+  const SmtPolicySourceRef = idl.Record({
+    etag: idl.Text,
+    path: idl.Text,
+    content_hash: idl.Text,
+    metadata_hash: idl.Text
+  });
+  const SmtPolicyUploadRequest = idl.Record({
+    smt_lib: idl.Text,
+    version: idl.Text,
+    source_refs: idl.Vec(SmtPolicySourceRef),
+    icme_policy_hash: idl.Opt(idl.Text),
+    compiler_version: idl.Opt(idl.Text),
+    icme_policy_id: idl.Opt(idl.Text)
+  });
+  const SmtPolicySnapshot = idl.Record({
+    smt_lib_hash: idl.Text,
+    smt_lib: idl.Text,
+    created_by: idl.Text,
+    created_at_ms: idl.Int64,
+    version: idl.Text,
+    source_refs: idl.Vec(SmtPolicySourceRef),
+    normalized_ast_hash: idl.Text,
+    icme_policy_hash: idl.Opt(idl.Text),
+    compiler_version: idl.Opt(idl.Text),
+    icme_policy_id: idl.Opt(idl.Text)
+  });
+  const SetSmtPolicyResult = idl.Record({ policy: SmtPolicySnapshot });
   const MemoryCapability = idl.Record({ name: idl.Text, description: idl.Text });
   const MemoryRoot = idl.Record({ kind: idl.Text, path: idl.Text });
   const CanonicalRole = idl.Record({ name: idl.Text, path_pattern: idl.Text, purpose: idl.Text });
@@ -427,6 +454,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
+  const ResultSmtPolicy = idl.Variant({ Ok: idl.Opt(SmtPolicySnapshot), Err: idl.Text });
+  const ResultSetSmtPolicy = idl.Variant({ Ok: SetSmtPolicyResult, Err: idl.Text });
   const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
   const ResultIndexSqlJsonQuery = idl.Variant({ Ok: IndexSqlJsonQueryResult, Err: idl.Text });
   const ResultWikiMetrics = idl.Variant({ Ok: WikiMetrics, Err: idl.Text });
@@ -473,10 +502,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     check_ops_answer_session: idl.Func([OpsAnswerSessionCheckRequest], [ResultOpsAnswerSessionCheck], ["query"]),
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
+    clear_database_smt_policy: idl.Func([idl.Text, idl.Opt(idl.Text)], [ResultUnit], []),
+    clear_operator_smt_policy: idl.Func([idl.Opt(idl.Text)], [ResultUnit], []),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
     delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
+    get_database_smt_policy: idl.Func([idl.Text], [ResultSmtPolicy], ["query"]),
+    get_operator_smt_policy: idl.Func([], [ResultSmtPolicy], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),
@@ -515,6 +548,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
+    set_database_smt_policy: idl.Func([idl.Text, SmtPolicyUploadRequest, idl.Opt(idl.Text)], [ResultSetSmtPolicy], []),
+    set_operator_smt_policy: idl.Func([SmtPolicyUploadRequest, idl.Opt(idl.Text)], [ResultSetSmtPolicy], []),
     settle_database_storage_charges_batch: idl.Func([StorageBillingBatchRequest], [ResultStorageBillingBatch], []),
     source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
     update_cycles_billing_config: idl.Func([CyclesBillingConfigUpdate], [ResultUnit], []),

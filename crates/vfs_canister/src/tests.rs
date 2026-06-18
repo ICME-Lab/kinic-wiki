@@ -57,7 +57,11 @@ use super::{
 fn install_test_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -174,7 +178,11 @@ fn cycles_for_test_payment(service: &VfsService, payment_amount_e8s: u64) -> u64
 fn install_empty_test_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -263,7 +271,11 @@ fn test_cycles_top_up_config(enabled: bool, threshold_cycles: u128) -> CyclesTop
 fn cycles_billing_config_rejects_anonymous_principals() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     let mut config = explicit_cycles_billing_config();
     config.billing_authority_id = Principal::anonymous().to_text();
 
@@ -1765,7 +1777,11 @@ fn database_charge_methods(database_id: &str) -> Vec<String> {
 fn install_unfunded_default_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -1778,7 +1794,11 @@ fn install_unfunded_default_service() {
 fn install_suspended_default_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -1791,7 +1811,11 @@ fn install_suspended_default_service() {
 fn install_low_balance_default_service() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -1866,7 +1890,11 @@ fn ensure_parent_folders(path: &str) {
 fn empty_index_does_not_create_default_database() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -1881,7 +1909,11 @@ fn empty_index_does_not_create_default_database() {
 fn existing_database_index_is_loaded_without_implicit_default() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -2553,7 +2585,11 @@ fn check_database_write_cycles_requires_authenticated_writer() {
 fn write_nodes_rejects_reader_role() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -2813,7 +2849,11 @@ fn revoke_database_access_validates_and_canonicalizes_principal() {
 fn anonymous_reader_grant_allows_public_read() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");
@@ -3699,7 +3739,11 @@ fn cancel_database_archive_entrypoint_returns_database_to_active() {
 fn cancel_database_archive_entrypoint_rejects_non_owner() {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.keep();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");

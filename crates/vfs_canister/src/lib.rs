@@ -57,8 +57,9 @@ use vfs_types::{
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    SearchNodePathsRequest, SearchNodesRequest, SetSmtPolicyResult, SmtPolicySnapshot,
+    SmtPolicyUploadRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -66,6 +67,8 @@ use vfs_types::{
 
 #[cfg(not(target_arch = "wasm32"))]
 const INDEX_DB_PATH: &str = "./DB/index.sqlite3";
+#[cfg(not(target_arch = "wasm32"))]
+const POLICY_DB_PATH: &str = "./DB/policy.sqlite3";
 #[cfg(not(target_arch = "wasm32"))]
 const DATABASES_DIR: &str = "./DB/databases";
 const II_ALTERNATIVE_ORIGINS_PATH: &str = "/.well-known/ii-alternative-origins";
@@ -456,6 +459,68 @@ fn list_database_members(database_id: String) -> Result<Vec<DatabaseMember>, Str
 #[query]
 fn list_databases() -> Result<Vec<DatabaseSummary>, String> {
     with_service(|service| service.list_database_summaries_for_caller(&caller_text()))
+}
+
+#[update]
+fn set_operator_smt_policy(
+    request: SmtPolicyUploadRequest,
+    expected_version: Option<String>,
+) -> Result<SetSmtPolicyResult, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update("set_operator_smt_policy", None, |service, caller, now| {
+        service.set_operator_smt_policy(caller, request, expected_version, now)
+    })
+}
+
+#[query]
+fn get_operator_smt_policy() -> Result<Option<SmtPolicySnapshot>, String> {
+    with_service(|service| service.get_operator_smt_policy(&caller_text()))
+}
+
+#[update]
+fn clear_operator_smt_policy(expected_version: Option<String>) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "clear_operator_smt_policy",
+        None,
+        |service, caller, _now| service.clear_operator_smt_policy(caller, expected_version),
+    )
+}
+
+#[update]
+fn set_database_smt_policy(
+    database_id: String,
+    request: SmtPolicyUploadRequest,
+    expected_version: Option<String>,
+) -> Result<SetSmtPolicyResult, String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "set_database_smt_policy",
+        Some(database_id.clone()),
+        |service, caller, now| {
+            service.set_database_smt_policy(&database_id, caller, request, expected_version, now)
+        },
+    )
+}
+
+#[query]
+fn get_database_smt_policy(database_id: String) -> Result<Option<SmtPolicySnapshot>, String> {
+    with_service(|service| service.get_database_smt_policy(&database_id, &caller_text()))
+}
+
+#[update]
+fn clear_database_smt_policy(
+    database_id: String,
+    expected_version: Option<String>,
+) -> Result<(), String> {
+    require_authenticated_caller()?;
+    with_unmetered_update(
+        "clear_database_smt_policy",
+        Some(database_id.clone()),
+        |service, caller, _now| {
+            service.clear_database_smt_policy(&database_id, caller, expected_version)
+        },
+    )
 }
 
 #[query]
@@ -1475,7 +1540,11 @@ fn run_storage_billing_timer_batches() {
 fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
-    let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
+    let service = VfsService::new(
+        PathBuf::from(INDEX_DB_PATH),
+        PathBuf::from(POLICY_DB_PATH),
+        PathBuf::from(DATABASES_DIR),
+    );
     #[cfg(target_arch = "wasm32")]
     let service = VfsService::stable(database_handle);
     if let Some(config) = config {
@@ -1493,7 +1562,11 @@ fn initialize_service_with_config(config: Option<CyclesBillingConfig>) -> Result
 fn initialize_service_for_upgrade(config: Option<CyclesBillingConfig>) -> Result<(), String> {
     initialize_sqlite_storage()?;
     #[cfg(not(target_arch = "wasm32"))]
-    let service = VfsService::new(PathBuf::from(INDEX_DB_PATH), PathBuf::from(DATABASES_DIR));
+    let service = VfsService::new(
+        PathBuf::from(INDEX_DB_PATH),
+        PathBuf::from(POLICY_DB_PATH),
+        PathBuf::from(DATABASES_DIR),
+    );
     #[cfg(target_arch = "wasm32")]
     let service = VfsService::stable(database_handle);
     service.run_index_migrations_for_upgrade(config)?;

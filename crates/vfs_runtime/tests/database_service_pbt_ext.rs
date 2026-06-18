@@ -48,7 +48,11 @@ fn property_config() -> ProptestConfig {
 fn service_with_root() -> TestService {
     let dir = tempdir().expect("tempdir should create");
     let root = dir.path().to_path_buf();
-    let service = VfsService::new(root.join("index.sqlite3"), root.join("databases"));
+    let service = VfsService::new(
+        root.join("index.sqlite3"),
+        root.join("policy.sqlite3"),
+        root.join("databases"),
+    );
     service
         .run_index_migrations()
         .expect("index migrations should run");

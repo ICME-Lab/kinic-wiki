@@ -491,41 +491,43 @@ type QueryContextRequest = record {
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : CyclesBillingConfig; Err : text };
-type Result_11 = variant { Ok : vec GlobNodeHit; Err : text };
-type Result_12 = variant { Ok : vec LinkEdge; Err : text };
-type Result_13 = variant { Ok : vec ChildNode; Err : text };
-type Result_14 = variant { Ok : DatabaseCycleEntryPage; Err : text };
-type Result_15 = variant { Ok : vec DatabaseCyclesPendingPurchase; Err : text };
-type Result_16 = variant { Ok : vec DatabaseMember; Err : text };
-type Result_17 = variant { Ok : vec DatabaseSummary; Err : text };
-type Result_18 = variant { Ok : vec NodeEntry; Err : text };
-type Result_19 = variant { Ok : nat64; Err : text };
+type Result_11 = variant { Ok : opt SmtPolicySnapshot; Err : text };
+type Result_12 = variant { Ok : vec GlobNodeHit; Err : text };
+type Result_13 = variant { Ok : vec LinkEdge; Err : text };
+type Result_14 = variant { Ok : vec ChildNode; Err : text };
+type Result_15 = variant { Ok : DatabaseCycleEntryPage; Err : text };
+type Result_16 = variant { Ok : vec DatabaseCyclesPendingPurchase; Err : text };
+type Result_17 = variant { Ok : vec DatabaseMember; Err : text };
+type Result_18 = variant { Ok : vec DatabaseSummary; Err : text };
+type Result_19 = variant { Ok : vec NodeEntry; Err : text };
 type Result_2 = variant { Ok : DatabaseArchiveInfo; Err : text };
-type Result_20 = variant { Ok : MarketListing; Err : text };
-type Result_21 = variant { Ok : MarketListingDetail; Err : text };
-type Result_22 = variant { Ok : MarketEntitlementPage; Err : text };
-type Result_23 = variant { Ok : vec MarketListing; Err : text };
-type Result_24 = variant { Ok : MarketListingPage; Err : text };
-type Result_25 = variant { Ok : MarketOrderPage; Err : text };
-type Result_26 = variant { Ok : MarketPurchasePreview; Err : text };
-type Result_27 = variant { Ok : MarketOrder; Err : text };
-type Result_28 = variant { Ok : MkdirNodeResult; Err : text };
-type Result_29 = variant { Ok : MoveNodeResult; Err : text };
+type Result_20 = variant { Ok : nat64; Err : text };
+type Result_21 = variant { Ok : MarketListing; Err : text };
+type Result_22 = variant { Ok : MarketListingDetail; Err : text };
+type Result_23 = variant { Ok : MarketEntitlementPage; Err : text };
+type Result_24 = variant { Ok : vec MarketListing; Err : text };
+type Result_25 = variant { Ok : MarketListingPage; Err : text };
+type Result_26 = variant { Ok : MarketOrderPage; Err : text };
+type Result_27 = variant { Ok : MarketPurchasePreview; Err : text };
+type Result_28 = variant { Ok : MarketOrder; Err : text };
+type Result_29 = variant { Ok : MkdirNodeResult; Err : text };
 type Result_3 = variant { Ok : CyclesTopUpCheckResult; Err : text };
-type Result_30 = variant { Ok : CyclesPurchaseResult; Err : text };
-type Result_31 = variant { Ok : QueryContext; Err : text };
-type Result_32 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
-type Result_33 = variant { Ok : DatabaseArchiveChunk; Err : text };
-type Result_34 = variant { Ok : opt Node; Err : text };
-type Result_35 = variant { Ok : opt NodeContext; Err : text };
-type Result_36 = variant { Ok : vec SearchNodeHit; Err : text };
-type Result_37 = variant { Ok : StorageBillingBatchResult; Err : text };
-type Result_38 = variant { Ok : SourceEvidence; Err : text };
-type Result_39 = variant { Ok : WikiMetrics; Err : text };
+type Result_30 = variant { Ok : MoveNodeResult; Err : text };
+type Result_31 = variant { Ok : CyclesPurchaseResult; Err : text };
+type Result_32 = variant { Ok : QueryContext; Err : text };
+type Result_33 = variant { Ok : IndexSqlJsonQueryResult; Err : text };
+type Result_34 = variant { Ok : DatabaseArchiveChunk; Err : text };
+type Result_35 = variant { Ok : opt Node; Err : text };
+type Result_36 = variant { Ok : opt NodeContext; Err : text };
+type Result_37 = variant { Ok : vec SearchNodeHit; Err : text };
+type Result_38 = variant { Ok : SetSmtPolicyResult; Err : text };
+type Result_39 = variant { Ok : StorageBillingBatchResult; Err : text };
 type Result_4 = variant { Ok : OpsAnswerSessionCheckResult; Err : text };
-type Result_40 = variant { Ok : vec WikiMetricsPoint; Err : text };
-type Result_41 = variant { Ok : vec WriteNodeResult; Err : text };
-type Result_42 = variant { Ok : WriteSourceForGenerationResult; Err : text };
+type Result_40 = variant { Ok : SourceEvidence; Err : text };
+type Result_41 = variant { Ok : WikiMetrics; Err : text };
+type Result_42 = variant { Ok : vec WikiMetricsPoint; Err : text };
+type Result_43 = variant { Ok : vec WriteNodeResult; Err : text };
+type Result_44 = variant { Ok : WriteSourceForGenerationResult; Err : text };
 type Result_5 = variant { Ok : CreateDatabaseResult; Err : text };
 type Result_6 = variant { Ok : DeleteNodeResult; Err : text };
 type Result_7 = variant { Ok : EditNodeResult; Err : text };
@@ -561,6 +563,33 @@ type SearchPreview = record {
 };
 type SearchPreviewField = variant { Path; Content };
 type SearchPreviewMode = variant { Light; ContentStart; None };
+type SetSmtPolicyResult = record { policy : SmtPolicySnapshot };
+type SmtPolicySnapshot = record {
+  smt_lib_hash : text;
+  smt_lib : text;
+  created_by : text;
+  created_at_ms : int64;
+  version : text;
+  source_refs : vec SmtPolicySourceRef;
+  normalized_ast_hash : text;
+  icme_policy_hash : opt text;
+  compiler_version : opt text;
+  icme_policy_id : opt text;
+};
+type SmtPolicySourceRef = record {
+  etag : text;
+  path : text;
+  content_hash : text;
+  metadata_hash : text;
+};
+type SmtPolicyUploadRequest = record {
+  smt_lib : text;
+  version : text;
+  source_refs : vec SmtPolicySourceRef;
+  icme_policy_hash : opt text;
+  compiler_version : opt text;
+  icme_policy_id : opt text;
+};
 type SourceEvidence = record { node_path : text; refs : vec SourceEvidenceRef };
 type SourceEvidenceRef = record {
   link_text : text;
@@ -662,6 +691,8 @@ service : (CyclesBillingConfig) -> {
   check_url_ingest_trigger_session : (UrlIngestTriggerSessionCheckRequest) -> (
       Result_1,
     ) query;
+  clear_database_smt_policy : (text, opt text) -> (Result_1);
+  clear_operator_smt_policy : (opt text) -> (Result_1);
   create_database : (CreateDatabaseRequest) -> (Result_5);
   delete_database : (DeleteDatabaseRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_6);
@@ -671,66 +702,72 @@ service : (CyclesBillingConfig) -> {
   finalize_database_archive : (text, blob) -> (Result_1);
   finalize_database_restore : (text) -> (Result_1);
   get_cycles_billing_config : () -> (Result_10) query;
-  glob_nodes : (GlobNodesRequest) -> (Result_11) query;
+  get_database_smt_policy : (text) -> (Result_11) query;
+  get_operator_smt_policy : () -> (Result_11) query;
+  glob_nodes : (GlobNodesRequest) -> (Result_12) query;
   grant_database_access : (text, text, DatabaseRole) -> (Result_1);
-  graph_links : (GraphLinksRequest) -> (Result_12) query;
-  graph_neighborhood : (GraphNeighborhoodRequest) -> (Result_12) query;
+  graph_links : (GraphLinksRequest) -> (Result_13) query;
+  graph_neighborhood : (GraphNeighborhoodRequest) -> (Result_13) query;
   http_request : (HttpRequest) -> (HttpResponse) query;
   icrc10_supported_standards : () -> (vec Icrc10SupportedStandard) query;
   icrc21_canister_call_consent_message : (Icrc21ConsentMessageRequest) -> (
       Icrc21ConsentMessageResponse,
     );
-  incoming_links : (IncomingLinksRequest) -> (Result_12) query;
-  list_children : (ListChildrenRequest) -> (Result_13) query;
-  list_database_cycle_entries : (text, opt nat64, nat32) -> (Result_14) query;
-  list_database_cycles_pending_purchases : (text) -> (Result_15) query;
-  list_database_members : (text) -> (Result_16) query;
-  list_databases : () -> (Result_17) query;
-  list_nodes : (ListNodesRequest) -> (Result_18) query;
-  market_count_active_entitlements : (text) -> (Result_19) query;
-  market_create_listing : (MarketCreateListingRequest) -> (Result_20);
-  market_get_listing : (text) -> (Result_21) query;
+  incoming_links : (IncomingLinksRequest) -> (Result_13) query;
+  list_children : (ListChildrenRequest) -> (Result_14) query;
+  list_database_cycle_entries : (text, opt nat64, nat32) -> (Result_15) query;
+  list_database_cycles_pending_purchases : (text) -> (Result_16) query;
+  list_database_members : (text) -> (Result_17) query;
+  list_databases : () -> (Result_18) query;
+  list_nodes : (ListNodesRequest) -> (Result_19) query;
+  market_count_active_entitlements : (text) -> (Result_20) query;
+  market_create_listing : (MarketCreateListingRequest) -> (Result_21);
+  market_get_listing : (text) -> (Result_22) query;
   market_list_database_entitlements : (text, opt text, nat32) -> (
-      Result_22,
+      Result_23,
     ) query;
-  market_list_database_listings : (text) -> (Result_23) query;
-  market_list_entitlements : (opt text, nat32) -> (Result_22) query;
-  market_list_listings : (opt text, nat32) -> (Result_24) query;
-  market_list_orders : (opt text, nat32) -> (Result_25) query;
-  market_list_seller_listings : (text, opt text, nat32) -> (Result_24) query;
-  market_pause_listing : (text) -> (Result_20);
-  market_preview_purchase : (text) -> (Result_26) query;
-  market_publish_listing : (text) -> (Result_20);
-  market_purchase_access : (MarketPurchaseRequest) -> (Result_27);
-  market_update_listing : (MarketUpdateListingRequest) -> (Result_20);
+  market_list_database_listings : (text) -> (Result_24) query;
+  market_list_entitlements : (opt text, nat32) -> (Result_23) query;
+  market_list_listings : (opt text, nat32) -> (Result_25) query;
+  market_list_orders : (opt text, nat32) -> (Result_26) query;
+  market_list_seller_listings : (text, opt text, nat32) -> (Result_25) query;
+  market_pause_listing : (text) -> (Result_21);
+  market_preview_purchase : (text) -> (Result_27) query;
+  market_publish_listing : (text) -> (Result_21);
+  market_purchase_access : (MarketPurchaseRequest) -> (Result_28);
+  market_update_listing : (MarketUpdateListingRequest) -> (Result_21);
   memory_manifest : () -> (MemoryManifest) query;
-  mkdir_node : (MkdirNodeRequest) -> (Result_28);
-  move_node : (MoveNodeRequest) -> (Result_29);
+  mkdir_node : (MkdirNodeRequest) -> (Result_29);
+  move_node : (MoveNodeRequest) -> (Result_30);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_7);
-  outgoing_links : (OutgoingLinksRequest) -> (Result_12) query;
-  purchase_database_cycles : (DatabaseCyclesPurchaseRequest) -> (Result_30);
-  query_context : (QueryContextRequest) -> (Result_31) query;
-  query_database_sql_json : (text, text, nat32) -> (Result_32) query;
-  query_index_sql_json : (text, nat32) -> (Result_32) query;
-  read_database_archive_chunk : (text, nat64, nat32) -> (Result_33) query;
-  read_node : (text, text) -> (Result_34) query;
-  read_node_context : (NodeContextRequest) -> (Result_35) query;
+  outgoing_links : (OutgoingLinksRequest) -> (Result_13) query;
+  purchase_database_cycles : (DatabaseCyclesPurchaseRequest) -> (Result_31);
+  query_context : (QueryContextRequest) -> (Result_32) query;
+  query_database_sql_json : (text, text, nat32) -> (Result_33) query;
+  query_index_sql_json : (text, nat32) -> (Result_33) query;
+  read_database_archive_chunk : (text, nat64, nat32) -> (Result_34) query;
+  read_node : (text, text) -> (Result_35) query;
+  read_node_context : (NodeContextRequest) -> (Result_36) query;
   rename_database : (RenameDatabaseRequest) -> (Result_1);
   revoke_database_access : (text, text) -> (Result_1);
-  search_node_paths : (SearchNodePathsRequest) -> (Result_36) query;
-  search_nodes : (SearchNodesRequest) -> (Result_36) query;
-  settle_database_storage_charges_batch : (StorageBillingBatchRequest) -> (
-      Result_37,
+  search_node_paths : (SearchNodePathsRequest) -> (Result_37) query;
+  search_nodes : (SearchNodesRequest) -> (Result_37) query;
+  set_database_smt_policy : (text, SmtPolicyUploadRequest, opt text) -> (
+      Result_38,
     );
-  source_evidence : (SourceEvidenceRequest) -> (Result_38) query;
+  set_operator_smt_policy : (SmtPolicyUploadRequest, opt text) -> (Result_38);
+  settle_database_storage_charges_batch : (StorageBillingBatchRequest) -> (
+      Result_39,
+    );
+  source_evidence : (SourceEvidenceRequest) -> (Result_40) query;
   status : (text) -> (Status) query;
   update_cycles_billing_config : (CyclesBillingConfigUpdate) -> (Result_1);
-  wiki_metrics : () -> (Result_39) query;
-  wiki_metrics_series : (nat32) -> (Result_40) query;
+  wiki_metrics : () -> (Result_41) query;
+  wiki_metrics_series : (nat32) -> (Result_42) query;
   write_database_restore_chunk : (DatabaseRestoreChunkRequest) -> (Result_1);
   write_node : (WriteNodeRequest) -> (Result);
-  write_nodes : (WriteNodesRequest) -> (Result_41);
+  write_nodes : (WriteNodesRequest) -> (Result_43);
   write_source_for_generation : (WriteSourceForGenerationRequest) -> (
-      Result_42,
+      Result_44,
     );
 }
