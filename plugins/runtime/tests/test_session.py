@@ -38,7 +38,12 @@ class SessionCaptureTests(unittest.TestCase):
 
             source = session.build_source(hook, now_ms=1_714_521_600_123)
 
-        self.assertEqual(source.path, "/Sources/raw/claudecode/abc-session.md")
+        expected_source_id = session.source_id_for_session(
+            "abc/../session",
+            transcript,
+            "2024-05-01T00:00:00.123Z",
+        )
+        self.assertEqual(source.path, f"/Sources/raw/claudecode/{expected_source_id}.md")
         self.assertEqual(source.metadata["message_count"], 3)
         self.assertTrue(source.metadata["redacted"])
         self.assertIn("[REDACTED]", source.content)
@@ -204,7 +209,12 @@ class SessionCaptureTests(unittest.TestCase):
             pending_content = pending.read_text()
 
         self.assertTrue(source.metadata["redacted"])
-        self.assertEqual(source.path, "/Sources/raw/claudecode/sess-token-REDACTED.md")
+        expected_source_id = session.source_id_for_session(
+            "sess-token=abc123456789012345",
+            transcript,
+            "2024-05-01T00:00:00.123Z",
+        )
+        self.assertEqual(source.path, f"/Sources/raw/claudecode/{expected_source_id}.md")
         for leaked in [
             "abc123456789012345",
             "meta-secret-value-123",
@@ -214,6 +224,27 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertNotIn(leaked, source.content)
             self.assertNotIn(leaked, source.path)
             self.assertNotIn(leaked, pending_content)
+
+    def test_build_source_avoids_source_path_collision_for_redacted_session_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "session.jsonl"
+            transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}))
+
+            first = session.build_source(
+                session.HookInput("sess-token=firstsecret1234567890", transcript, "/repo", "exit"),
+                now_ms=1_714_521_600_123,
+            )
+            second = session.build_source(
+                session.HookInput("sess-token=secondsecret1234567890", transcript, "/repo", "exit"),
+                now_ms=1_714_521_600_123,
+            )
+
+        self.assertNotEqual(first.path, second.path)
+        self.assertNotIn("firstsecret1234567890", first.path)
+        self.assertNotIn("secondsecret1234567890", second.path)
+        self.assertEqual(first.metadata["session_id"], "sess-token=[REDACTED]")
+        self.assertEqual(second.metadata["session_id"], "sess-token=[REDACTED]")
 
     def test_build_source_marks_truncated_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -614,6 +645,26 @@ class SessionCaptureTests(unittest.TestCase):
         self.assertEqual(source.metadata["budget"]["metadata"]["used"], len(session.render_source_content(source.metadata, "")))
         self.assertIn("[truncated: original_chars=", source.content)
 
+    def test_build_source_streams_transcript_lines_without_read_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "session.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"type": "user", "message": {"role": "user", "content": "first"}}),
+                        json.dumps({"type": "assistant", "message": {"role": "assistant", "content": "second"}}),
+                    ]
+                )
+            )
+            hook = session.HookInput("session-streaming", transcript, "/repo", "exit")
+
+            with mock.patch.object(Path, "read_text", side_effect=AssertionError("read_text called")):
+                source = session.build_source(hook)
+
+        self.assertEqual(source.metadata["message_count"], 2)
+        self.assertIn("first", source.content)
+        self.assertIn("second", source.content)
+
     def test_build_source_hard_caps_tiny_max_chars(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             transcript = Path(tmp) / "session.jsonl"
@@ -677,12 +728,17 @@ class SessionCaptureTests(unittest.TestCase):
             result = session.record_session(hook, str(fake_cli), pending_dir, now_ms=1000)
 
             paths = [json.loads(line) for line in calls.read_text().splitlines()]
+            expected_current = (
+                "/Sources/raw/claudecode/"
+                + session.source_id_for_session("session-current", transcript, "1970-01-01T00:00:01.000Z")
+                + ".md"
+            )
             self.assertTrue(result["recorded"])
-            self.assertEqual(paths[0], "/Sources/raw/claudecode/session-current.md")
+            self.assertEqual(paths[0], expected_current)
             self.assertEqual(paths[1], "/Sources/raw/claudecode/old.md")
             self.assertFalse(old_pending.exists())
 
-    def test_record_session_keeps_current_pending_when_old_pending_is_invalid(self) -> None:
+    def test_record_session_skips_old_pending_flush_when_current_write_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pending_dir = root / "pending"
@@ -701,9 +757,50 @@ class SessionCaptureTests(unittest.TestCase):
             current_pending = Path(result["pending_path"])
             self.assertFalse(result["recorded"])
             self.assertTrue(current_pending.is_file())
-            self.assertFalse(invalid.exists())
-            self.assertTrue((pending_dir / "1-bad.json.invalid").is_file())
-            self.assertEqual(result["invalid_pending"], 1)
+            self.assertTrue(invalid.is_file())
+            self.assertFalse((pending_dir / "1-bad.json.invalid").exists())
+            self.assertEqual(result["invalid_pending"], 0)
+
+    def test_record_session_leaves_old_pending_when_current_cli_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            old_pending = pending_dir / "1-old.json"
+            old_pending.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/old.md",
+                        "content": "# Old\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            transcript = root / "session.jsonl"
+            transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}))
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.jsonl"
+            fake_cli.write_text(
+                "#!/usr/bin/env bash\n"
+                "python3 - \"$@\" <<'PY'\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                "path = args[args.index('--path') + 1]\n"
+                f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
+                "PY\n"
+                "exit 7\n"
+            )
+            fake_cli.chmod(0o755)
+            hook = json.dumps({"session_id": "session-1", "transcript_path": str(transcript), "cwd": "/repo", "reason": "exit"})
+
+            result = session.record_session(hook, str(fake_cli), pending_dir, now_ms=1000)
+
+            paths = [json.loads(line) for line in calls.read_text().splitlines()]
+            self.assertFalse(result["recorded"])
+            self.assertEqual(len(paths), 1)
+            self.assertTrue(old_pending.is_file())
+            self.assertEqual(result["flushed_pending"], 0)
+            self.assertEqual(result["failed_pending"], 0)
 
     def test_record_session_pending_payload_redacts_json_tool_input_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -830,7 +927,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertTrue((pending_dir / "1-bad.json.invalid").is_file())
             self.assertIn("/Sources/raw/claudecode/good.md", calls.read_text())
 
-    def test_flush_pending_quarantines_failed_write_and_continues(self) -> None:
+    def test_flush_pending_keeps_failed_write_for_retry_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             pending_dir = root / "pending"
@@ -869,12 +966,19 @@ class SessionCaptureTests(unittest.TestCase):
             result = session.flush_pending_report(str(fake_cli), pending_dir)
 
             self.assertEqual(result.flushed, [good])
-            self.assertEqual(result.failed, [pending_dir / "1-fail.json.failed"])
+            self.assertEqual(result.failed, [failed])
             self.assertEqual(result.invalid, [])
             self.assertFalse(good.exists())
-            self.assertFalse(failed.exists())
-            self.assertTrue((pending_dir / "1-fail.json.failed").is_file())
+            self.assertTrue(failed.is_file())
+            self.assertFalse((pending_dir / "1-fail.json.failed").exists())
             self.assertIn("/Sources/raw/claudecode/good.md", calls.read_text())
+
+            fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
+            result = session.flush_pending_report(str(fake_cli), pending_dir)
+
+            self.assertEqual(result.flushed, [failed])
+            self.assertEqual(result.failed, [])
+            self.assertFalse(failed.exists())
 
     def test_flush_pending_quarantines_unlink_failure_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

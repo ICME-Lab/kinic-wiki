@@ -6,6 +6,7 @@ Why: Agent conversations should be retained as source evidence without blocking 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -170,7 +171,7 @@ def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MA
             transcript_path_redacted,
         ]
     )
-    source_id = safe_source_stem(session_id)
+    source_id = source_id_for_session(hook.session_id, hook.transcript_path, captured_at)
     budget = context.budget_metadata()
     metadata = {
         "provider": PROVIDER,
@@ -313,23 +314,24 @@ def parse_transcript(
     tool_result_original_chars = 0
     tool_result_saved_chars = 0
     tool_result_refs: list[dict[str, Any]] = []
-    for line in path.read_text(errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        role = role_from_entry(data)
-        content = content_from_entry(data, context)
-        if role and content.text:
-            entries.append((role, content.text))
-            redacted = redacted or content.redacted
-            truncated_parts += content.truncated_parts
-            omitted_chars += content.omitted_chars
-            tool_result_original_chars += content.tool_result_original_chars
-            tool_result_saved_chars += content.tool_result_saved_chars
-            tool_result_refs.extend(content.tool_result_refs)
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            role = role_from_entry(data)
+            content = content_from_entry(data, context)
+            if role and content.text:
+                entries.append((role, content.text))
+                redacted = redacted or content.redacted
+                truncated_parts += content.truncated_parts
+                omitted_chars += content.omitted_chars
+                tool_result_original_chars += content.tool_result_original_chars
+                tool_result_saved_chars += content.tool_result_saved_chars
+                tool_result_refs.extend(content.tool_result_refs)
     return (
         entries,
         redacted,
@@ -832,7 +834,7 @@ def complete_trailing_redaction_marker(value: str, max_chars: int) -> str:
 def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = None) -> Path:
     pending_dir.mkdir(parents=True, exist_ok=True)
     millis = now_ms if now_ms is not None else int(time.time() * 1000)
-    stem = safe_source_stem(str(source.metadata.get("session_id", "session")))
+    stem = safe_source_stem(Path(source.path).stem)
     path = pending_dir / f"{millis}-{stem}.json"
     payload = {
         "schema_version": 1,
@@ -874,7 +876,7 @@ def flush_pending_report(cli: str, pending_dir: Path, skip_paths: set[Path] | No
             invalid.append(quarantine_pending(path, "invalid"))
             continue
         except (OSError, subprocess.CalledProcessError):
-            failed.append(quarantine_pending(path, "failed"))
+            failed.append(path)
             continue
         try:
             path.unlink()
@@ -951,10 +953,11 @@ def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: i
             recorded = True
         except (OSError, subprocess.CalledProcessError) as cause:
             error = str(cause)[:800]
-        flush_result = flush_pending_report(resolved_cli, pending_dir, skip_paths=set() if recorded else {pending_path})
-        flushed = len(flush_result.flushed)
-        failed = len(flush_result.failed)
-        invalid = len(flush_result.invalid)
+        if recorded:
+            flush_result = flush_pending_report(resolved_cli, pending_dir)
+            flushed = len(flush_result.flushed)
+            failed = len(flush_result.failed)
+            invalid = len(flush_result.invalid)
     else:
         error = "kinic-vfs-cli not found"
     return {
@@ -985,6 +988,12 @@ def safe_source_stem(value: str) -> str:
     if len(normalized) <= 128:
         return normalized
     return normalized[:119].rstrip("-._") + f"-{hash_text(normalized)}"
+
+
+def source_id_for_session(session_id: str, transcript_path: Path, captured_at: str) -> str:
+    source_key = "\n".join([session_id, str(transcript_path), captured_at])
+    source_hash = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:16]
+    return f"session-{source_hash}"
 
 
 def hash_text(value: str) -> str:
