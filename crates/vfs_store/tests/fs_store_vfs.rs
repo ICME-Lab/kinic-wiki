@@ -850,6 +850,80 @@ fn query_context_trims_search_hits_and_preserves_candidate_order() {
 }
 
 #[test]
+fn query_context_filtered_overfetches_after_denied_hits() {
+    let (_dir, store) = new_store();
+    for index in 0..20 {
+        ensure_parent_folders(
+            &store,
+            &format!("/Wiki/filter/aa-denied-{index:03}.md"),
+            index,
+        );
+        store
+            .append_node(
+                AppendNodeRequest {
+                    database_id: "default".to_string(),
+                    path: format!("/Wiki/filter/aa-denied-{index:03}.md"),
+                    content: "needle shared context".to_string(),
+                    expected_etag: None,
+                    separator: None,
+                    metadata_json: None,
+                    kind: Some(NodeKind::File),
+                },
+                index + 1,
+            )
+            .expect("denied node should write");
+    }
+    ensure_parent_folders(&store, "/Wiki/filter/zz-allowed.md", 30);
+    store
+        .append_node(
+            AppendNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Wiki/filter/zz-allowed.md".to_string(),
+                content: "needle shared context".to_string(),
+                expected_etag: None,
+                separator: None,
+                metadata_json: None,
+                kind: Some(NodeKind::File),
+            },
+            31,
+        )
+        .expect("allowed node should write");
+
+    let context = store
+        .query_context_filtered(
+            QueryContextRequest {
+                database_id: "default".to_string(),
+                task: "needle".to_string(),
+                entities: Vec::new(),
+                namespace: Some("/Wiki/filter".to_string()),
+                budget_tokens: 1_000,
+                include_evidence: false,
+                depth: 0,
+            },
+            |path| path == "/Wiki/filter/zz-allowed.md",
+            3,
+        )
+        .expect("filtered context should load");
+
+    assert_eq!(
+        context
+            .search_hits
+            .iter()
+            .map(|hit| hit.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/Wiki/filter/zz-allowed.md"]
+    );
+    assert_eq!(
+        context
+            .nodes
+            .iter()
+            .map(|item| item.node.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/Wiki/filter/zz-allowed.md"]
+    );
+}
+
+#[test]
 fn graph_neighborhood_returns_center_hops() {
     let (_dir, store) = new_store();
     for (path, content) in [

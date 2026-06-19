@@ -504,6 +504,9 @@ impl<'connection> ProgressHandlerGuard<'connection> {
             callbacks: 0,
             callback_budget,
         });
+        // SAFETY: `state` is owned by the guard and outlives the registered callback.
+        // The guard also borrows `conn`, so the raw SQLite handle remains valid until Drop,
+        // where the progress handler is cleared before `state` is freed.
         unsafe {
             ffi::sqlite3_progress_handler(
                 raw,
@@ -523,6 +526,8 @@ impl<'connection> ProgressHandlerGuard<'connection> {
 #[cfg(target_arch = "wasm32")]
 impl Drop for ProgressHandlerGuard<'_> {
     fn drop(&mut self) {
+        // SAFETY: `raw` comes from the borrowed connection held by the guard.
+        // Clearing the handler removes SQLite's pointer to `_state` before `_state` drops.
         unsafe {
             ffi::sqlite3_progress_handler(self.raw, 0, None, std::ptr::null_mut());
         }

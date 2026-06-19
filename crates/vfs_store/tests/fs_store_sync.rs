@@ -875,6 +875,52 @@ fn export_snapshot_pages_by_byte_budget() {
 }
 
 #[test]
+fn export_snapshot_filtered_advances_across_denied_pages() {
+    let (_dir, store) = new_store();
+    for index in 0..25 {
+        write_node(
+            &store,
+            &format!("/Wiki/aa-denied-{index:03}.md"),
+            "denied",
+            None,
+            index,
+        );
+    }
+    write_node(&store, "/Wiki/zz-allowed.md", "allowed", None, 100);
+
+    let mut cursor = None;
+    let mut snapshot_revision = None;
+    let mut allowed_paths = Vec::new();
+    for page_index in 0..5 {
+        let page = store
+            .export_snapshot_filtered(
+                ExportSnapshotRequest {
+                    database_id: "default".to_string(),
+                    prefix: Some("/Wiki".to_string()),
+                    limit: 10,
+                    cursor,
+                    snapshot_revision,
+                    snapshot_session_id: None,
+                },
+                |path| path == "/Wiki/zz-allowed.md",
+            )
+            .expect("filtered snapshot should page");
+        if page_index == 0 {
+            assert!(page.nodes.is_empty());
+            assert!(page.next_cursor.is_some());
+        }
+        allowed_paths.extend(page.nodes.into_iter().map(|node| node.path));
+        if page.next_cursor.is_none() {
+            assert_eq!(allowed_paths, vec!["/Wiki/zz-allowed.md".to_string()]);
+            return;
+        }
+        cursor = page.next_cursor;
+        snapshot_revision = Some(page.snapshot_revision);
+    }
+    panic!("filtered snapshot should reach the allowed path");
+}
+
+#[test]
 fn export_snapshot_rejects_single_node_over_byte_budget() {
     let (_dir, store) = new_store();
     let content = "x".repeat(1_600_000);
@@ -1282,6 +1328,78 @@ fn fetch_updates_pages_by_byte_budget() {
     assert_eq!(second.changed_nodes.len(), 1);
     assert_eq!(second.changed_nodes[0].path, "/Wiki/b.md");
     assert_eq!(second.next_cursor, None);
+}
+
+#[test]
+fn fetch_updates_filtered_advances_across_denied_pages() {
+    let (_dir, store) = new_store();
+    let removed_etag = write_node(&store, "/Wiki/zz-removed.md", "base", None, 0);
+    let base = store
+        .export_snapshot(ExportSnapshotRequest {
+            database_id: "default".to_string(),
+            prefix: Some("/Wiki".to_string()),
+            limit: 100,
+            cursor: None,
+            snapshot_revision: None,
+            snapshot_session_id: None,
+        })
+        .expect("base snapshot should succeed");
+    for index in 0..25 {
+        write_node(
+            &store,
+            &format!("/Wiki/aa-denied-{index:03}.md"),
+            "denied",
+            None,
+            index + 1,
+        );
+    }
+    write_node(&store, "/Wiki/zz-allowed.md", "allowed", None, 100);
+    store
+        .delete_node(
+            DeleteNodeRequest {
+                database_id: "default".to_string(),
+                path: "/Wiki/zz-removed.md".to_string(),
+                expected_etag: Some(removed_etag),
+                expected_folder_index_etag: None,
+            },
+            101,
+        )
+        .expect("allowed removal should delete");
+
+    let mut cursor = None;
+    let mut target_snapshot_revision = None;
+    let mut changed_paths = Vec::new();
+    let mut removed_paths = Vec::new();
+    for page_index in 0..5 {
+        let page = store
+            .fetch_updates_filtered(
+                FetchUpdatesRequest {
+                    database_id: "default".to_string(),
+                    known_snapshot_revision: base.snapshot_revision.clone(),
+                    prefix: Some("/Wiki".to_string()),
+                    limit: 10,
+                    cursor,
+                    target_snapshot_revision,
+                },
+                |path| path.starts_with("/Wiki/zz-"),
+            )
+            .expect("filtered updates should page");
+        if page_index == 0 {
+            assert!(page.changed_nodes.is_empty());
+            assert!(page.removed_paths.is_empty());
+            assert!(page.next_cursor.is_some());
+        }
+        changed_paths.extend(page.changed_nodes.into_iter().map(|node| node.path));
+        removed_paths.extend(page.removed_paths);
+        if page.next_cursor.is_none() {
+            assert_eq!(changed_paths, vec!["/Wiki/zz-allowed.md".to_string()]);
+            assert_eq!(removed_paths, vec!["/Wiki/zz-removed.md".to_string()]);
+            return;
+        }
+        cursor = page.next_cursor;
+        target_snapshot_revision = Some(page.snapshot_revision);
+    }
+    panic!("filtered updates should reach allowed changes");
 }
 
 #[test]

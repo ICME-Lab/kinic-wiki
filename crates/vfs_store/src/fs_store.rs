@@ -121,6 +121,12 @@ enum ChangeKind {
     PathRemoval,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SyncCursorPolicy {
+    Returned,
+    Scanned,
+}
+
 impl ChangeKind {
     fn as_str(self) -> &'static str {
         match self {
@@ -702,7 +708,7 @@ impl FsStore {
     }
 
     pub fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext, String> {
-        self.query_context_filtered(request, |_| true, CONTEXT_SEARCH_LIMIT)
+        self.query_context_with_filter(request, |_| true, CONTEXT_SEARCH_LIMIT, false)
     }
 
     pub fn query_context_filtered(
@@ -711,21 +717,37 @@ impl FsStore {
         mut allow_path: impl FnMut(&str) -> bool,
         search_top_k: u32,
     ) -> Result<QueryContext, String> {
+        self.query_context_with_filter(request, &mut allow_path, search_top_k, true)
+    }
+
+    fn query_context_with_filter(
+        &self,
+        request: QueryContextRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+        search_top_k: u32,
+        overfetch_search: bool,
+    ) -> Result<QueryContext, String> {
         if request.depth > 2 {
             return Err("depth must be 0, 1, or 2".to_string());
         }
         let namespace = normalize_memory_namespace(request.namespace.as_deref())?;
         let budget_chars = budget_chars(request.budget_tokens);
         let query_text = context_query_text(&request.task, &request.entities)?;
+        let target_search_hits = capped_query_limit(search_top_k) as usize;
         let search_hits = self.search_nodes(SearchNodesRequest {
             database_id: request.database_id.clone(),
             query_text,
             prefix: Some(namespace.clone()),
-            top_k: search_top_k,
+            top_k: if overfetch_search {
+                QUERY_RESULT_LIMIT_MAX
+            } else {
+                search_top_k
+            },
             preview_mode: Some(SearchPreviewMode::Light),
         })?;
         let mut search_hits = search_hits;
         search_hits.retain(|hit| allow_path(&hit.path));
+        search_hits.truncate(target_search_hits);
         let (search_hits, mut used_chars, mut truncated) =
             trim_search_hits_to_budget(search_hits, budget_chars);
         let paths = ordered_context_candidate_paths(&namespace, &search_hits);
@@ -961,13 +983,22 @@ impl FsStore {
         &self,
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse, String> {
-        self.export_snapshot_filtered(request, |_| true)
+        self.export_snapshot_with_filter(request, |_| true, SyncCursorPolicy::Returned)
     }
 
     pub fn export_snapshot_filtered(
         &self,
         request: ExportSnapshotRequest,
         mut allow_path: impl FnMut(&str) -> bool,
+    ) -> Result<ExportSnapshotResponse, String> {
+        self.export_snapshot_with_filter(request, &mut allow_path, SyncCursorPolicy::Scanned)
+    }
+
+    fn export_snapshot_with_filter(
+        &self,
+        request: ExportSnapshotRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+        cursor_policy: SyncCursorPolicy,
     ) -> Result<ExportSnapshotResponse, String> {
         let limit = sync_page_limit(request.limit)?;
         let prefix = request
@@ -1005,28 +1036,33 @@ impl FsStore {
             let mut nodes = Vec::new();
             let mut scan_cursor = cursor;
             let mut used_bytes = sync_response_base_bytes("");
+            let scan_limit = sync_scan_limit(limit, cursor_policy);
             loop {
                 let page = load_snapshot_nodes_page(
                     conn,
                     &prefix,
                     scan_cursor.as_deref(),
                     snapshot.revision,
-                    limit + 1,
+                    scan_limit,
                 )?;
                 let page_had_more = page.len() > limit as usize;
                 if page.is_empty() {
                     break;
                 }
-                for node in page {
-                    scan_cursor = Some(node.path.clone());
+                for node in page.into_iter().take(limit as usize) {
                     if !allow_path(&node.path) {
+                        scan_cursor = Some(node.path);
                         continue;
                     }
                     if nodes.len() >= limit as usize {
                         return Ok(ExportSnapshotResponse {
                             snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
                             snapshot_session_id: None,
-                            next_cursor: nodes.last().map(PageCursorPath::cursor_path),
+                            next_cursor: sync_next_cursor(
+                                &nodes,
+                                scan_cursor.as_deref(),
+                                cursor_policy,
+                            ),
                             nodes,
                         });
                     }
@@ -1038,21 +1074,42 @@ impl FsStore {
                         return Ok(ExportSnapshotResponse {
                             snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
                             snapshot_session_id: None,
-                            next_cursor: nodes.last().map(PageCursorPath::cursor_path),
+                            next_cursor: sync_next_cursor(
+                                &nodes,
+                                scan_cursor.as_deref(),
+                                cursor_policy,
+                            ),
                             nodes,
                         });
                     }
                     used_bytes = used_bytes.saturating_add(item_bytes);
+                    scan_cursor = Some(node.path.clone());
                     nodes.push(node);
+                    if nodes.len() >= limit as usize {
+                        return Ok(ExportSnapshotResponse {
+                            snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
+                            snapshot_session_id: None,
+                            next_cursor: sync_next_cursor(
+                                &nodes,
+                                scan_cursor.as_deref(),
+                                cursor_policy,
+                            ),
+                            nodes,
+                        });
+                    }
                 }
                 if !page_had_more {
                     break;
                 }
-                if nodes.len() >= limit as usize {
+                if cursor_policy == SyncCursorPolicy::Scanned {
                     return Ok(ExportSnapshotResponse {
                         snapshot_revision: scoped_snapshot_revision(&prefix, snapshot.revision),
                         snapshot_session_id: None,
-                        next_cursor: nodes.last().map(PageCursorPath::cursor_path),
+                        next_cursor: sync_next_cursor(
+                            &nodes,
+                            scan_cursor.as_deref(),
+                            cursor_policy,
+                        ),
                         nodes,
                     });
                 }
@@ -1070,13 +1127,22 @@ impl FsStore {
         &self,
         request: FetchUpdatesRequest,
     ) -> Result<FetchUpdatesResponse, String> {
-        self.fetch_updates_filtered(request, |_| true)
+        self.fetch_updates_with_filter(request, |_| true, SyncCursorPolicy::Returned)
     }
 
     pub fn fetch_updates_filtered(
         &self,
         request: FetchUpdatesRequest,
         mut allow_path: impl FnMut(&str) -> bool,
+    ) -> Result<FetchUpdatesResponse, String> {
+        self.fetch_updates_with_filter(request, &mut allow_path, SyncCursorPolicy::Scanned)
+    }
+
+    fn fetch_updates_with_filter(
+        &self,
+        request: FetchUpdatesRequest,
+        mut allow_path: impl FnMut(&str) -> bool,
+        cursor_policy: SyncCursorPolicy,
     ) -> Result<FetchUpdatesResponse, String> {
         let limit = sync_page_limit(request.limit)?;
         let prefix = request
@@ -1139,6 +1205,7 @@ impl FsStore {
             let mut scan_cursor = cursor;
             let mut next_cursor = None;
             let mut used_bytes = sync_response_base_bytes(&target_snapshot_revision);
+            let scan_limit = sync_scan_limit(limit, cursor_policy);
             loop {
                 let paths = load_changed_paths_page(
                     conn,
@@ -1146,19 +1213,24 @@ impl FsStore {
                     target_snapshot.revision,
                     &prefix,
                     scan_cursor.as_deref(),
-                    limit + 1,
+                    scan_limit,
                 )?;
                 let page_had_more = paths.len() > limit as usize;
                 if paths.is_empty() {
                     break;
                 }
-                for path in paths {
-                    scan_cursor = Some(path.clone());
+                for path in paths.into_iter().take(limit as usize) {
                     if !allow_path(&path) {
+                        scan_cursor = Some(path);
                         continue;
                     }
                     if changed_nodes.len() + removed_paths.len() >= limit as usize {
-                        next_cursor = last_sync_response_path(&changed_nodes, &removed_paths);
+                        next_cursor = sync_update_next_cursor(
+                            &changed_nodes,
+                            &removed_paths,
+                            scan_cursor.as_deref(),
+                            cursor_policy,
+                        );
                         break;
                     }
                     if load_path_last_change_revision(conn, &path)? > target_snapshot.revision {
@@ -1176,20 +1248,45 @@ impl FsStore {
                         if changed_nodes.is_empty() && removed_paths.is_empty() {
                             return Err(SYNC_RESPONSE_ITEM_TOO_LARGE.to_string());
                         }
-                        next_cursor = last_sync_response_path(&changed_nodes, &removed_paths);
+                        next_cursor = sync_update_next_cursor(
+                            &changed_nodes,
+                            &removed_paths,
+                            scan_cursor.as_deref(),
+                            cursor_policy,
+                        );
                         break;
                     }
                     used_bytes = used_bytes.saturating_add(item_bytes);
                     match current_node {
-                        Some(node) => changed_nodes.push(node),
-                        None => removed_paths.push(path),
+                        Some(node) => {
+                            scan_cursor = Some(node.path.clone());
+                            changed_nodes.push(node);
+                        }
+                        None => {
+                            scan_cursor = Some(path.clone());
+                            removed_paths.push(path);
+                        }
+                    }
+                    if changed_nodes.len() + removed_paths.len() >= limit as usize {
+                        next_cursor = sync_update_next_cursor(
+                            &changed_nodes,
+                            &removed_paths,
+                            scan_cursor.as_deref(),
+                            cursor_policy,
+                        );
+                        break;
                     }
                 }
                 if next_cursor.is_some() || !page_had_more {
                     break;
                 }
-                if changed_nodes.len() + removed_paths.len() >= limit as usize {
-                    next_cursor = last_sync_response_path(&changed_nodes, &removed_paths);
+                if cursor_policy == SyncCursorPolicy::Scanned {
+                    next_cursor = sync_update_next_cursor(
+                        &changed_nodes,
+                        &removed_paths,
+                        scan_cursor.as_deref(),
+                        cursor_policy,
+                    );
                     break;
                 }
             }
@@ -1413,6 +1510,36 @@ fn normalize_sync_cursor(cursor: Option<&str>, prefix: &str) -> Result<Option<St
 
 fn path_in_prefix(path: &str, prefix: &str) -> bool {
     prefix == "/" || path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
+fn sync_scan_limit(limit: i64, cursor_policy: SyncCursorPolicy) -> i64 {
+    match cursor_policy {
+        SyncCursorPolicy::Returned => limit + 1,
+        SyncCursorPolicy::Scanned => limit + 1,
+    }
+}
+
+fn sync_next_cursor(
+    nodes: &[Node],
+    scan_cursor: Option<&str>,
+    cursor_policy: SyncCursorPolicy,
+) -> Option<String> {
+    match cursor_policy {
+        SyncCursorPolicy::Returned => nodes.last().map(PageCursorPath::cursor_path),
+        SyncCursorPolicy::Scanned => scan_cursor.map(str::to_string),
+    }
+}
+
+fn sync_update_next_cursor(
+    changed_nodes: &[Node],
+    removed_paths: &[String],
+    scan_cursor: Option<&str>,
+    cursor_policy: SyncCursorPolicy,
+) -> Option<String> {
+    match cursor_policy {
+        SyncCursorPolicy::Returned => last_sync_response_path(changed_nodes, removed_paths),
+        SyncCursorPolicy::Scanned => scan_cursor.map(str::to_string),
+    }
 }
 
 fn last_sync_response_path(changed_nodes: &[Node], removed_paths: &[String]) -> Option<String> {
