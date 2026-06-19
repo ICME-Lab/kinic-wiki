@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 #[cfg(any(test, debug_assertions))]
 use std::sync::{LazyLock, Mutex};
 
-use crate::sqlite::{Connection, OptionalExtension, Row, Transaction, params};
+use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
 use candid::Principal;
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{Db, DbError, DbHandle};
@@ -5244,7 +5244,9 @@ fn load_database_smt_policy(
     .map_err(|error| error.to_string())
 }
 
-fn map_smt_policy_snapshot(row: &Row<'_>) -> crate::sqlite::Result<SmtPolicySnapshot> {
+fn map_smt_policy_snapshot(
+    row: &crate::sqlite::Row<'_>,
+) -> crate::sqlite::Result<SmtPolicySnapshot> {
     let refs_json: String = crate::sqlite::row_get(row, 4)?;
     let source_refs =
         serde_json::from_str(&refs_json).map_err(|_| crate::sqlite::invalid_query())?;
@@ -5423,7 +5425,7 @@ fn load_wiki_metrics(
     Ok(metrics)
 }
 
-fn metric_u64(row: &Row<'_>, index: usize) -> crate::sqlite::Result<u64> {
+fn metric_u64(row: &crate::sqlite::Row<'_>, index: usize) -> crate::sqlite::Result<u64> {
     let value: i64 = crate::sqlite::row_get(row, index)?;
     u64::try_from(value).map_err(|_| crate::sqlite::integral_value_out_of_range(index, value))
 }
