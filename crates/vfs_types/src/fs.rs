@@ -300,43 +300,6 @@ pub struct MarketEntitlementPage {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SmtPolicySourceRef {
-    pub path: String,
-    pub etag: String,
-    pub content_hash: String,
-    pub metadata_hash: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SmtPolicyUploadRequest {
-    pub version: String,
-    pub smt_lib: String,
-    pub source_refs: Vec<SmtPolicySourceRef>,
-    pub compiler_version: Option<String>,
-    pub icme_policy_id: Option<String>,
-    pub icme_policy_hash: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SmtPolicySnapshot {
-    pub version: String,
-    pub smt_lib: String,
-    pub smt_lib_hash: String,
-    pub normalized_ast_hash: String,
-    pub source_refs: Vec<SmtPolicySourceRef>,
-    pub compiler_version: Option<String>,
-    pub icme_policy_id: Option<String>,
-    pub icme_policy_hash: Option<String>,
-    pub created_by: String,
-    pub created_at_ms: i64,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SetSmtPolicyResult {
-    pub policy: SmtPolicySnapshot,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct StorageBillingBatchRequest {
     pub cursor_mount_id: Option<u16>,
     pub limit: Option<u32>,

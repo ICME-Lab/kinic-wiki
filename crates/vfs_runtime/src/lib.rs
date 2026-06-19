@@ -1,7 +1,6 @@
 // Where: crates/vfs_runtime/src/lib.rs
 // What: Service orchestration for multiple SQLite-backed VFS databases.
 // Why: One canister can host isolated databases while sharing one VFS store implementation.
-pub mod smt_policy;
 mod sqlite;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,7 +18,6 @@ use candid::Principal;
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{Db, DbError, DbHandle};
 use sha2::{Digest, Sha256};
-use smt_policy::{ActionFacts, PolicyDecision, SmtPolicy, parse_smt_policy};
 use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
@@ -37,8 +35,7 @@ use vfs_types::{
     MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
     NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
     OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SetSmtPolicyResult, SmtPolicySnapshot, SmtPolicySourceRef,
-    SmtPolicyUploadRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
     Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
@@ -98,8 +95,6 @@ const SQL_JSON_PROGRESS_OP_INTERVAL: i32 = 1_000;
 const SQL_JSON_PROGRESS_CALLBACK_BUDGET: u32 = 200;
 const INDEX_SQL_JSON_EXECUTION_BUDGET_EXCEEDED: &str = "index SQL execution budget exceeded";
 const PENDING_DATABASE_MOUNT_ID: u16 = 0;
-#[cfg(target_arch = "wasm32")]
-const POLICY_DB_MOUNT_ID: u16 = 9;
 const DATABASE_SCHEMA_VERSION: &str = "vfs_store:current";
 const MIN_DATABASE_MOUNT_ID: u16 = 11;
 const MAX_DATABASE_MOUNT_ID: u16 = 32767;
@@ -118,74 +113,6 @@ const GENERATED_DATABASE_ID_HASH_CHARS: usize = 12;
 const FRESH_INDEX_SCHEMA_SQL: &str = include_str!("../migrations/index_db/fresh_index_schema.sql");
 const INDEX_011_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/011_to_latest.sql");
 const INDEX_026_TO_LATEST_SQL: &str = include_str!("../migrations/index_db/026_to_latest.sql");
-const POLICY_SCHEMA_VERSION_INITIAL: &str = "policy_db:000_initial";
-const POLICY_SCHEMA_SQL: &str = r#"
-CREATE TABLE policy_schema_migrations (
-  version TEXT PRIMARY KEY,
-  applied_at INTEGER NOT NULL
-);
-CREATE TABLE operator_smt_policies (
-  scope TEXT PRIMARY KEY,
-  version TEXT NOT NULL,
-  smt_lib TEXT NOT NULL,
-  smt_lib_hash TEXT NOT NULL,
-  normalized_ast_hash TEXT NOT NULL,
-  source_refs_json TEXT NOT NULL,
-  compiler_version TEXT,
-  icme_policy_id TEXT,
-  icme_policy_hash TEXT,
-  created_by TEXT NOT NULL,
-  created_at_ms INTEGER NOT NULL
-);
-CREATE TABLE database_smt_policies (
-  database_id TEXT PRIMARY KEY,
-  version TEXT NOT NULL,
-  smt_lib TEXT NOT NULL,
-  smt_lib_hash TEXT NOT NULL,
-  normalized_ast_hash TEXT NOT NULL,
-  source_refs_json TEXT NOT NULL,
-  compiler_version TEXT,
-  icme_policy_id TEXT,
-  icme_policy_hash TEXT,
-  created_by TEXT NOT NULL,
-  created_at_ms INTEGER NOT NULL
-);
-"#;
-const POLICY_REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
-    ("policy_schema_migrations", &["version", "applied_at"]),
-    (
-        "operator_smt_policies",
-        &[
-            "scope",
-            "version",
-            "smt_lib",
-            "smt_lib_hash",
-            "normalized_ast_hash",
-            "source_refs_json",
-            "compiler_version",
-            "icme_policy_id",
-            "icme_policy_hash",
-            "created_by",
-            "created_at_ms",
-        ],
-    ),
-    (
-        "database_smt_policies",
-        &[
-            "database_id",
-            "version",
-            "smt_lib",
-            "smt_lib_hash",
-            "normalized_ast_hash",
-            "source_refs_json",
-            "compiler_version",
-            "icme_policy_id",
-            "icme_policy_hash",
-            "created_by",
-            "created_at_ms",
-        ],
-    ),
-];
 pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL: &str = "xfug4-5qaaa-aaaak-afowa-cai";
@@ -260,62 +187,6 @@ pub enum RequiredRole {
     Owner,
 }
 
-struct PolicyEvaluator {
-    operation: String,
-    policies: Vec<SmtPolicy>,
-    base_facts: ActionFacts,
-}
-
-impl PolicyEvaluator {
-    fn inactive(operation: &str) -> Self {
-        Self {
-            operation: operation.to_string(),
-            policies: Vec::new(),
-            base_facts: ActionFacts::new(),
-        }
-    }
-
-    fn is_active(&self) -> bool {
-        !self.policies.is_empty()
-    }
-
-    fn check_operation(&self) -> Result<(), String> {
-        self.evaluate(None, true)
-    }
-
-    fn check_path(&self, path: &str) -> Result<(), String> {
-        self.evaluate(Some(path), false)
-    }
-
-    fn allows_path(&self, path: &str) -> bool {
-        self.check_path(path).is_ok()
-    }
-
-    fn evaluate(&self, path: Option<&str>, allow_blocked: bool) -> Result<(), String> {
-        if self.policies.is_empty() {
-            return Ok(());
-        }
-        let mut facts = self.base_facts.clone();
-        if let Some(path) = path {
-            facts.insert_scalar("path", path);
-            facts.insert_scalar("target_path", path);
-        }
-        for policy in &self.policies {
-            match policy.evaluate(&facts) {
-                PolicyDecision::Allow => {}
-                PolicyDecision::Deny => {
-                    return Err(format!("SMT policy denied {}", self.operation));
-                }
-                PolicyDecision::Blocked if allow_blocked => {}
-                PolicyDecision::Blocked => {
-                    return Err(format!("SMT policy blocked {}", self.operation));
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 pub struct CyclesPendingLedgerDetailsInput<'a> {
     pub from_owner: &'a str,
     pub from_subaccount: Option<&'a [u8]>,
@@ -351,8 +222,6 @@ pub struct VfsService {
     #[cfg(not(target_arch = "wasm32"))]
     index_path: PathBuf,
     #[cfg(not(target_arch = "wasm32"))]
-    policy_path: PathBuf,
-    #[cfg(not(target_arch = "wasm32"))]
     databases_dir: PathBuf,
     #[cfg(target_arch = "wasm32")]
     database_handle: fn(u16) -> Result<DbHandle, String>,
@@ -360,10 +229,9 @@ pub struct VfsService {
 
 impl VfsService {
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(index_path: PathBuf, policy_path: PathBuf, databases_dir: PathBuf) -> Self {
+    pub fn new(index_path: PathBuf, databases_dir: PathBuf) -> Self {
         Self {
             index_path,
-            policy_path,
             databases_dir,
         }
     }
@@ -390,7 +258,7 @@ impl VfsService {
         {
             self.write_index(|conn| run_index_migrations_in_tx(conn, &config))?;
         }
-        self.run_policy_migrations()
+        Ok(())
     }
 
     pub fn run_index_migrations_for_upgrade(
@@ -406,24 +274,7 @@ impl VfsService {
         {
             self.write_index(|conn| run_index_migrations_in_tx_for_upgrade(conn, config.as_ref()))?;
         }
-        self.run_policy_migrations()
-    }
-
-    pub fn run_policy_migrations(&self) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut conn = self.open_policy()?;
-            run_policy_migrations(&mut conn)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let handle = (self.database_handle)(POLICY_DB_MOUNT_ID)?;
-            handle
-                .update(|tx| {
-                    run_policy_migrations_in_tx(tx).map_err(|error| DbError::Sqlite(1, error))
-                })
-                .map_err(|error| error.to_string())
-        }
+        Ok(())
     }
 
     pub fn list_databases(&self) -> Result<Vec<DatabaseMeta>, String> {
@@ -494,122 +345,8 @@ impl VfsService {
         sql: &str,
         limit: u32,
     ) -> Result<IndexSqlJsonQueryResult, String> {
-        if self.database_policy_enabled(database_id)? {
-            return Err("database SQL is disabled when SMT policy is configured".to_string());
-        }
         self.with_market_read_database_store(database_id, caller, |store| {
             store.query_sql_json(sql, limit)
-        })
-    }
-
-    pub fn set_operator_smt_policy(
-        &self,
-        caller: &str,
-        request: SmtPolicyUploadRequest,
-        expected_version: Option<String>,
-        now: i64,
-    ) -> Result<SetSmtPolicyResult, String> {
-        self.require_billing_authority(caller)?;
-        let prepared = prepare_smt_policy_snapshot(caller, request, now)?;
-        self.write_policy(|tx| {
-            ensure_policy_expected_version(
-                tx,
-                "operator_smt_policies",
-                "scope",
-                "global",
-                expected_version.as_deref(),
-            )?;
-            upsert_operator_smt_policy(tx, &prepared)?;
-            Ok(())
-        })?;
-        Ok(SetSmtPolicyResult { policy: prepared })
-    }
-
-    pub fn get_operator_smt_policy(
-        &self,
-        caller: &str,
-    ) -> Result<Option<SmtPolicySnapshot>, String> {
-        self.require_billing_authority(caller)?;
-        self.read_policy(load_operator_smt_policy)
-    }
-
-    pub fn clear_operator_smt_policy(
-        &self,
-        caller: &str,
-        expected_version: Option<String>,
-    ) -> Result<(), String> {
-        self.require_billing_authority(caller)?;
-        self.write_policy(|tx| {
-            ensure_policy_expected_version(
-                tx,
-                "operator_smt_policies",
-                "scope",
-                "global",
-                expected_version.as_deref(),
-            )?;
-            tx.execute(
-                "DELETE FROM operator_smt_policies WHERE scope = 'global'",
-                params![],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
-        })
-    }
-
-    pub fn set_database_smt_policy(
-        &self,
-        database_id: &str,
-        caller: &str,
-        request: SmtPolicyUploadRequest,
-        expected_version: Option<String>,
-        now: i64,
-    ) -> Result<SetSmtPolicyResult, String> {
-        self.require_database_owner_or_billing_admin(database_id, caller)?;
-        let prepared = prepare_smt_policy_snapshot(caller, request, now)?;
-        self.write_policy(|tx| {
-            ensure_policy_expected_version(
-                tx,
-                "database_smt_policies",
-                "database_id",
-                database_id,
-                expected_version.as_deref(),
-            )?;
-            upsert_database_smt_policy(tx, database_id, &prepared)?;
-            Ok(())
-        })?;
-        Ok(SetSmtPolicyResult { policy: prepared })
-    }
-
-    pub fn get_database_smt_policy(
-        &self,
-        database_id: &str,
-        caller: &str,
-    ) -> Result<Option<SmtPolicySnapshot>, String> {
-        self.require_database_owner_or_billing_admin(database_id, caller)?;
-        self.read_policy(|conn| load_database_smt_policy(conn, database_id))
-    }
-
-    pub fn clear_database_smt_policy(
-        &self,
-        database_id: &str,
-        caller: &str,
-        expected_version: Option<String>,
-    ) -> Result<(), String> {
-        self.require_database_owner_or_billing_admin(database_id, caller)?;
-        self.write_policy(|tx| {
-            ensure_policy_expected_version(
-                tx,
-                "database_smt_policies",
-                "database_id",
-                database_id,
-                expected_version.as_deref(),
-            )?;
-            tx.execute(
-                "DELETE FROM database_smt_policies WHERE database_id = ?1",
-                params![database_id],
-            )
-            .map_err(|error| error.to_string())?;
-            Ok(())
         })
     }
 
@@ -1760,14 +1497,10 @@ impl VfsService {
             require_market_listing_seller_or_admin(conn, caller, &listing)?;
             Ok(listing)
         })?;
-        self.market_listing_detail(caller, listing)
+        self.market_listing_detail(listing)
     }
 
-    fn market_listing_detail(
-        &self,
-        caller: &str,
-        listing: MarketListing,
-    ) -> Result<MarketListingDetail, String> {
+    fn market_listing_detail(&self, listing: MarketListing) -> Result<MarketListingDetail, String> {
         let Ok(meta) = self.database_meta_with_statuses(
             &listing.database_id,
             &[
@@ -1778,14 +1511,6 @@ impl VfsService {
         ) else {
             return Ok(empty_market_listing_detail(listing));
         };
-        let evaluator =
-            match self.policy_evaluator(caller, &listing.database_id, "marketplace_preview") {
-                Ok(evaluator) => evaluator,
-                Err(_) => return Ok(empty_market_listing_detail(listing)),
-            };
-        if evaluator.is_active() {
-            return Ok(empty_market_listing_detail(listing));
-        }
         let store = self.database_store(&meta)?;
         let (verified_stats, mut preview) = store.marketplace_preview()?;
         preview.preview_stale = false;
@@ -2881,8 +2606,6 @@ impl VfsService {
         caller: &str,
         path: &str,
     ) -> Result<Option<Node>, String> {
-        let evaluator = self.policy_evaluator(caller, database_id, "read_node")?;
-        evaluator.check_path(path)?;
         self.with_market_read_database_store(database_id, caller, |store| store.read_node(path))
     }
 
@@ -3071,12 +2794,8 @@ impl VfsService {
         request: ListNodesRequest,
     ) -> Result<Vec<NodeEntry>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "list_nodes")?;
-        evaluator.check_operation()?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut nodes = store.list_nodes(request)?;
-            nodes.retain(|node| evaluator.allows_path(&node.path));
-            Ok(nodes)
+            store.list_nodes(request)
         })
     }
 
@@ -3086,12 +2805,8 @@ impl VfsService {
         request: ListChildrenRequest,
     ) -> Result<Vec<ChildNode>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "list_children")?;
-        evaluator.check_operation()?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut children = store.list_children(request)?;
-            children.retain(|child| evaluator.allows_path(&child.path));
-            Ok(children)
+            store.list_children(request)
         })
     }
 
@@ -3281,12 +2996,8 @@ impl VfsService {
         request: GlobNodesRequest,
     ) -> Result<Vec<GlobNodeHit>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "glob_nodes")?;
-        evaluator.check_operation()?;
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            let mut hits = store.glob_nodes(request)?;
-            hits.retain(|hit| evaluator.allows_path(&hit.path));
-            Ok(hits)
+            store.glob_nodes(request)
         })
     }
 
@@ -3296,12 +3007,8 @@ impl VfsService {
         request: IncomingLinksRequest,
     ) -> Result<Vec<LinkEdge>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "incoming_links")?;
-        evaluator.check_path(&request.path)?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut links = store.incoming_links(request)?;
-            links.retain(|link| Self::policy_allows_link(&evaluator, link));
-            Ok(links)
+            store.incoming_links(request)
         })
     }
 
@@ -3311,12 +3018,8 @@ impl VfsService {
         request: OutgoingLinksRequest,
     ) -> Result<Vec<LinkEdge>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "outgoing_links")?;
-        evaluator.check_path(&request.path)?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut links = store.outgoing_links(request)?;
-            links.retain(|link| Self::policy_allows_link(&evaluator, link));
-            Ok(links)
+            store.outgoing_links(request)
         })
     }
 
@@ -3326,12 +3029,8 @@ impl VfsService {
         request: GraphLinksRequest,
     ) -> Result<Vec<LinkEdge>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "graph_links")?;
-        evaluator.check_operation()?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut links = store.graph_links(request)?;
-            links.retain(|link| Self::policy_allows_link(&evaluator, link));
-            Ok(links)
+            store.graph_links(request)
         })
     }
 
@@ -3341,12 +3040,8 @@ impl VfsService {
         request: GraphNeighborhoodRequest,
     ) -> Result<Vec<LinkEdge>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "graph_neighborhood")?;
-        evaluator.check_operation()?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut links = store.graph_neighborhood(request)?;
-            links.retain(|link| Self::policy_allows_link(&evaluator, link));
-            Ok(links)
+            store.graph_neighborhood(request)
         })
     }
 
@@ -3356,11 +3051,8 @@ impl VfsService {
         request: NodeContextRequest,
     ) -> Result<Option<NodeContext>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "read_node_context")?;
-        evaluator.check_path(&request.path)?;
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let context = store.read_node_context(request)?;
-            Ok(context.and_then(|context| self.filter_node_context(&evaluator, context)))
+            store.read_node_context(request)
         })
     }
 
@@ -3370,15 +3062,8 @@ impl VfsService {
         request: QueryContextRequest,
     ) -> Result<QueryContext, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "query_context")?;
-        evaluator.check_operation()?;
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            let context = if evaluator.is_active() {
-                store.query_context_filtered(request, |path| evaluator.allows_path(path), 100)?
-            } else {
-                store.query_context(request)?
-            };
-            Ok(self.filter_query_context(&evaluator, context))
+            store.query_context(request)
         })
     }
 
@@ -3388,11 +3073,8 @@ impl VfsService {
         request: SourceEvidenceRequest,
     ) -> Result<SourceEvidence, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "source_evidence")?;
-        evaluator.check_path(&request.node_path)?;
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            let evidence = store.source_evidence(request)?;
-            Ok(self.filter_source_evidence(&evaluator, evidence))
+            store.source_evidence(request)
         })
     }
 
@@ -3416,40 +3098,22 @@ impl VfsService {
     pub fn search_nodes(
         &self,
         caller: &str,
-        mut request: SearchNodesRequest,
+        request: SearchNodesRequest,
     ) -> Result<Vec<SearchNodeHit>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "search_nodes")?;
-        evaluator.check_operation()?;
-        let requested_top_k = request.top_k.clamp(1, 100) as usize;
-        if evaluator.is_active() {
-            request.top_k = 100;
-        }
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut hits = store.search_nodes(request)?;
-            hits.retain(|hit| evaluator.allows_path(&hit.path));
-            hits.truncate(requested_top_k);
-            Ok(hits)
+            store.search_nodes(request)
         })
     }
 
     pub fn search_node_paths(
         &self,
         caller: &str,
-        mut request: SearchNodePathsRequest,
+        request: SearchNodePathsRequest,
     ) -> Result<Vec<SearchNodeHit>, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "search_node_paths")?;
-        evaluator.check_operation()?;
-        let requested_top_k = request.top_k.clamp(1, 100) as usize;
-        if evaluator.is_active() {
-            request.top_k = 100;
-        }
         self.with_market_read_database_store(&database_id, caller, |store| {
-            let mut hits = store.search_node_paths(request)?;
-            hits.retain(|hit| evaluator.allows_path(&hit.path));
-            hits.truncate(requested_top_k);
-            Ok(hits)
+            store.search_node_paths(request)
         })
     }
 
@@ -3459,10 +3123,8 @@ impl VfsService {
         request: ExportSnapshotRequest,
     ) -> Result<ExportSnapshotResponse, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "export_snapshot")?;
-        evaluator.check_operation()?;
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.export_snapshot_filtered(request, |path| evaluator.allows_path(path))
+            store.export_snapshot(request)
         })
     }
 
@@ -3472,10 +3134,8 @@ impl VfsService {
         request: FetchUpdatesRequest,
     ) -> Result<FetchUpdatesResponse, String> {
         let database_id = request.database_id.clone();
-        let evaluator = self.policy_evaluator(caller, &database_id, "fetch_updates")?;
-        evaluator.check_operation()?;
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.fetch_updates_filtered(request, |path| evaluator.allows_path(path))
+            store.fetch_updates(request)
         })
     }
 
@@ -3511,160 +3171,6 @@ impl VfsService {
         required_role: RequiredRole,
     ) -> Result<(), String> {
         self.require_role(database_id, caller, required_role)
-    }
-
-    fn require_billing_authority(&self, caller: &str) -> Result<(), String> {
-        self.read_index(|conn| {
-            let config = load_cycles_billing_config(conn)?;
-            if caller == config.billing_authority_id {
-                Ok(())
-            } else {
-                Err("billing authority required".to_string())
-            }
-        })
-    }
-
-    fn require_database_owner_or_billing_admin(
-        &self,
-        database_id: &str,
-        caller: &str,
-    ) -> Result<(), String> {
-        self.read_index(|conn| require_database_owner_or_billing_admin(conn, caller, database_id))
-    }
-
-    fn database_policy_enabled(&self, database_id: &str) -> Result<bool, String> {
-        self.read_policy(|conn| {
-            Ok(load_operator_smt_policy(conn)?.is_some()
-                || load_database_smt_policy(conn, database_id)?.is_some())
-        })
-    }
-
-    fn policy_evaluator(
-        &self,
-        caller: &str,
-        database_id: &str,
-        operation: &str,
-    ) -> Result<PolicyEvaluator, String> {
-        let policies = self.read_policy(|conn| {
-            Ok((
-                load_operator_smt_policy(conn)?,
-                load_database_smt_policy(conn, database_id)?,
-            ))
-        })?;
-        if policies.0.is_none() && policies.1.is_none() {
-            return Ok(PolicyEvaluator::inactive(operation));
-        }
-        let base_facts = self.policy_action_facts(caller, database_id, operation, None)?;
-        let policies = [policies.0.as_ref(), policies.1.as_ref()]
-            .into_iter()
-            .flatten()
-            .map(|policy| parse_smt_policy(&policy.smt_lib).map_err(|error| error.to_string()))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(PolicyEvaluator {
-            operation: operation.to_string(),
-            policies,
-            base_facts,
-        })
-    }
-
-    fn policy_allows_link(evaluator: &PolicyEvaluator, link: &LinkEdge) -> bool {
-        evaluator.allows_path(&link.source_path) && evaluator.allows_path(&link.target_path)
-    }
-
-    fn filter_node_context(
-        &self,
-        evaluator: &PolicyEvaluator,
-        mut context: NodeContext,
-    ) -> Option<NodeContext> {
-        if !evaluator.allows_path(&context.node.path) {
-            return None;
-        }
-        context
-            .incoming_links
-            .retain(|link| Self::policy_allows_link(evaluator, link));
-        context
-            .outgoing_links
-            .retain(|link| Self::policy_allows_link(evaluator, link));
-        Some(context)
-    }
-
-    fn filter_query_context(
-        &self,
-        evaluator: &PolicyEvaluator,
-        mut context: QueryContext,
-    ) -> QueryContext {
-        context
-            .search_hits
-            .retain(|hit| evaluator.allows_path(&hit.path));
-        context.nodes = context
-            .nodes
-            .into_iter()
-            .filter_map(|node_context| self.filter_node_context(evaluator, node_context))
-            .collect();
-        context
-            .graph_links
-            .retain(|link| Self::policy_allows_link(evaluator, link));
-        context.evidence = context
-            .evidence
-            .into_iter()
-            .map(|evidence| self.filter_source_evidence(evaluator, evidence))
-            .filter(|evidence| !evidence.refs.is_empty())
-            .collect();
-        context
-    }
-
-    fn filter_source_evidence(
-        &self,
-        evaluator: &PolicyEvaluator,
-        mut evidence: SourceEvidence,
-    ) -> SourceEvidence {
-        if !evaluator.allows_path(&evidence.node_path) {
-            evidence.refs.clear();
-            return evidence;
-        }
-        evidence.refs.retain(|reference| {
-            evaluator.allows_path(&reference.source_path)
-                && evaluator.allows_path(&reference.via_path)
-        });
-        evidence
-    }
-
-    fn policy_action_facts(
-        &self,
-        caller: &str,
-        database_id: &str,
-        operation: &str,
-        path: Option<&str>,
-    ) -> Result<ActionFacts, String> {
-        let (role, has_entitlement) = self.read_index(|conn| {
-            Ok((
-                load_member_role(conn, database_id, caller)?,
-                has_active_market_entitlement(conn, database_id, caller)?,
-            ))
-        })?;
-        let role_text = role.map(role_to_db).unwrap_or("none");
-        let can_read =
-            role.is_some_and(|role| role_allows(role, RequiredRole::Reader)) || has_entitlement;
-        let mut facts = ActionFacts::new();
-        facts.insert_scalar("action", operation);
-        facts.insert_scalar("operation", operation);
-        facts.insert_scalar("database_id", database_id);
-        facts.insert_scalar("caller", caller);
-        if let Some(path) = path {
-            facts.insert_scalar("path", path);
-            facts.insert_scalar("target_path", path);
-        }
-        facts.insert_scalar("role", role_text);
-        facts.insert_bool("has_entitlement", has_entitlement);
-        facts.insert_bool("can_read", can_read);
-        facts.insert_bool("is_owner", role == Some(DatabaseRole::Owner));
-        facts.insert_bool(
-            "is_writer",
-            matches!(role, Some(DatabaseRole::Writer | DatabaseRole::Owner)),
-        );
-        facts.insert_bool("is_reader", can_read);
-        facts.insert_bool("is_anonymous", caller == ANONYMOUS_PRINCIPAL);
-        Ok(facts)
     }
 
     fn require_role(
@@ -4022,53 +3528,9 @@ impl VfsService {
         }
     }
 
-    fn read_policy<T>(
-        &self,
-        f: impl FnOnce(&Connection) -> Result<T, String>,
-    ) -> Result<T, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let conn = self.open_policy()?;
-            f(&conn)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let handle = (self.database_handle)(POLICY_DB_MOUNT_ID)?;
-            handle
-                .query(|conn| f(conn).map_err(|error| DbError::Sqlite(1, error)))
-                .map_err(|error| error.to_string())
-        }
-    }
-
-    fn write_policy<T>(
-        &self,
-        f: impl FnOnce(&Transaction<'_>) -> Result<T, String>,
-    ) -> Result<T, String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut conn = self.open_policy()?;
-            let tx = conn.transaction().map_err(|error| error.to_string())?;
-            let value = f(&tx)?;
-            tx.commit().map_err(|error| error.to_string())?;
-            Ok(value)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let handle = (self.database_handle)(POLICY_DB_MOUNT_ID)?;
-            handle
-                .update(|tx| f(tx).map_err(|error| DbError::Sqlite(1, error)))
-                .map_err(|error| error.to_string())
-        }
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     fn open_index(&self) -> Result<Connection, String> {
         Connection::open(&self.index_path).map_err(|error| error.to_string())
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn open_policy(&self) -> Result<Connection, String> {
-        Connection::open(&self.policy_path).map_err(|error| error.to_string())
     }
 }
 
@@ -4169,78 +3631,6 @@ enum IndexSchemaState {
     Mainnet011,
     Mainnet026,
     Mainnet031,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn run_policy_migrations(conn: &mut Connection) -> Result<(), String> {
-    let tx = conn.transaction().map_err(|error| error.to_string())?;
-    run_policy_migrations_in_tx(&tx)?;
-    tx.commit().map_err(|error| error.to_string())
-}
-
-fn run_policy_migrations_in_tx(conn: &Transaction<'_>) -> Result<(), String> {
-    if !policy_table_exists(conn, "policy_schema_migrations")? {
-        conn.execute_batch(POLICY_SCHEMA_SQL)
-            .map_err(|error| error.to_string())?;
-        conn.execute(
-            "INSERT INTO policy_schema_migrations (version, applied_at) VALUES (?1, strftime('%s','now'))",
-            params![POLICY_SCHEMA_VERSION_INITIAL],
-        )
-        .map_err(|error| error.to_string())?;
-        return validate_policy_schema(conn);
-    }
-    if policy_migration_applied_tx(conn, POLICY_SCHEMA_VERSION_INITIAL)? {
-        return validate_policy_schema(conn);
-    }
-    Err("unsupported policy schema: missing initial migration".to_string())
-}
-
-fn validate_policy_schema(conn: &Transaction<'_>) -> Result<(), String> {
-    for (table, columns) in POLICY_REQUIRED_COLUMNS {
-        if !policy_table_exists(conn, table)? {
-            return Err(format!("unsupported policy schema: missing table {table}"));
-        }
-        for column in *columns {
-            if !policy_column_exists(conn, table, column)? {
-                return Err(format!(
-                    "unsupported policy schema: missing column {table}.{column}"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn policy_migration_applied_tx(conn: &Transaction<'_>, version: &str) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM policy_schema_migrations WHERE version = ?1",
-        params![version],
-        |row| crate::sqlite::row_get::<i64>(row, 0),
-    )
-    .optional()
-    .map(|row| row.is_some())
-    .map_err(|error| error.to_string())
-}
-
-fn policy_table_exists(conn: &Transaction<'_>, table: &str) -> Result<bool, String> {
-    conn.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-        params![table],
-        |row| crate::sqlite::row_get::<i64>(row, 0),
-    )
-    .optional()
-    .map(|row| row.is_some())
-    .map_err(|error| error.to_string())
-}
-
-fn policy_column_exists(conn: &Transaction<'_>, table: &str, column: &str) -> Result<bool, String> {
-    let sql = format!("PRAGMA table_info({table})");
-    let mut stmt = conn.prepare(&sql).map_err(|error| error.to_string())?;
-    let columns = crate::sqlite::query_map(&mut stmt, params![], |row| {
-        crate::sqlite::row_get::<String>(row, 1)
-    })
-    .map_err(|error| error.to_string())?;
-    Ok(columns.iter().any(|name| name == column))
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -5052,251 +4442,6 @@ fn sqlite_master_entry_exists(
     .optional()
     .map(|row| row.is_some())
     .map_err(|error| error.to_string())
-}
-
-fn prepare_smt_policy_snapshot(
-    caller: &str,
-    request: SmtPolicyUploadRequest,
-    now: i64,
-) -> Result<SmtPolicySnapshot, String> {
-    validate_smt_policy_upload(&request)?;
-    let smt_lib_hash = sha256_hex(request.smt_lib.as_bytes());
-    let policy = parse_smt_policy(&request.smt_lib).map_err(|error| error.to_string())?;
-    let normalized_ast_hash = format!("sha256:{}", policy.normalized_hash_hex());
-    Ok(SmtPolicySnapshot {
-        version: request.version,
-        smt_lib: request.smt_lib,
-        smt_lib_hash: smt_lib_hash.clone(),
-        normalized_ast_hash,
-        source_refs: request.source_refs,
-        compiler_version: request.compiler_version,
-        icme_policy_id: request.icme_policy_id,
-        icme_policy_hash: request.icme_policy_hash,
-        created_by: caller.to_string(),
-        created_at_ms: now,
-    })
-}
-
-fn validate_smt_policy_upload(request: &SmtPolicyUploadRequest) -> Result<(), String> {
-    if request.version.trim().is_empty() || request.version.len() > 128 {
-        return Err("policy version must be 1..128 bytes".to_string());
-    }
-    if request.smt_lib.trim().is_empty() || request.smt_lib.len() > 64 * 1024 {
-        return Err("smt_lib must be 1..65536 bytes".to_string());
-    }
-    if request.source_refs.len() > 32 {
-        return Err("too many policy source refs".to_string());
-    }
-    for source in &request.source_refs {
-        validate_policy_source_ref(source)?;
-    }
-    if let Some(value) = request.compiler_version.as_deref()
-        && value.len() > 128
-    {
-        return Err("compiler_version is too long".to_string());
-    }
-    if let Some(value) = request.icme_policy_id.as_deref()
-        && value.len() > 256
-    {
-        return Err("icme_policy_id is too long".to_string());
-    }
-    if let Some(value) = request.icme_policy_hash.as_deref() {
-        validate_sha256_label(value, "icme_policy_hash")?;
-    }
-    Ok(())
-}
-
-fn validate_policy_source_ref(source: &SmtPolicySourceRef) -> Result<(), String> {
-    if source.path.trim().is_empty() || source.path.len() > 512 {
-        return Err("policy source path must be 1..512 bytes".to_string());
-    }
-    if source.etag.trim().is_empty() || source.etag.len() > 256 {
-        return Err("policy source etag must be 1..256 bytes".to_string());
-    }
-    validate_sha256_label(&source.content_hash, "content_hash")?;
-    validate_sha256_label(&source.metadata_hash, "metadata_hash")
-}
-
-fn validate_sha256_label(value: &str, name: &str) -> Result<(), String> {
-    let Some(hex) = value.strip_prefix("sha256:") else {
-        return Err(format!("{name} must start with sha256:"));
-    };
-    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(format!("{name} must be a sha256 hex digest"));
-    }
-    Ok(())
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn ensure_policy_expected_version(
-    conn: &Transaction<'_>,
-    table: &str,
-    key_column: &str,
-    key_value: &str,
-    expected_version: Option<&str>,
-) -> Result<(), String> {
-    let sql = format!("SELECT version FROM {table} WHERE {key_column} = ?1");
-    let current = conn
-        .query_row(&sql, params![key_value], |row| {
-            crate::sqlite::row_get::<String>(row, 0)
-        })
-        .optional()
-        .map_err(|error| error.to_string())?;
-    match (current.as_deref(), expected_version) {
-        (None, None) => Ok(()),
-        (Some(current), Some(expected)) if current == expected => Ok(()),
-        (None, Some(_)) => Err("policy expected_version mismatch: policy is absent".to_string()),
-        (Some(_), None) => Err("policy expected_version is required".to_string()),
-        (Some(_), Some(_)) => Err("policy expected_version mismatch".to_string()),
-    }
-}
-
-fn upsert_operator_smt_policy(
-    conn: &Transaction<'_>,
-    policy: &SmtPolicySnapshot,
-) -> Result<(), String> {
-    let refs = policy_source_refs_json(&policy.source_refs)?;
-    let compiler_version = crate::sqlite::nullable_text_value(policy.compiler_version.clone());
-    let icme_policy_id = crate::sqlite::nullable_text_value(policy.icme_policy_id.clone());
-    let icme_policy_hash = crate::sqlite::nullable_text_value(policy.icme_policy_hash.clone());
-    conn.execute(
-        "INSERT INTO operator_smt_policies
-         (scope, version, smt_lib, smt_lib_hash, normalized_ast_hash, source_refs_json,
-          compiler_version, icme_policy_id, icme_policy_hash, created_by, created_at_ms)
-         VALUES ('global', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-         ON CONFLICT(scope) DO UPDATE SET
-           version = excluded.version,
-           smt_lib = excluded.smt_lib,
-           smt_lib_hash = excluded.smt_lib_hash,
-           normalized_ast_hash = excluded.normalized_ast_hash,
-           source_refs_json = excluded.source_refs_json,
-           compiler_version = excluded.compiler_version,
-           icme_policy_id = excluded.icme_policy_id,
-           icme_policy_hash = excluded.icme_policy_hash,
-           created_by = excluded.created_by,
-           created_at_ms = excluded.created_at_ms",
-        params![
-            policy.version,
-            policy.smt_lib,
-            policy.smt_lib_hash,
-            policy.normalized_ast_hash,
-            refs,
-            compiler_version,
-            icme_policy_id,
-            icme_policy_hash,
-            policy.created_by,
-            policy.created_at_ms,
-        ],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn upsert_database_smt_policy(
-    conn: &Transaction<'_>,
-    database_id: &str,
-    policy: &SmtPolicySnapshot,
-) -> Result<(), String> {
-    let refs = policy_source_refs_json(&policy.source_refs)?;
-    let compiler_version = crate::sqlite::nullable_text_value(policy.compiler_version.clone());
-    let icme_policy_id = crate::sqlite::nullable_text_value(policy.icme_policy_id.clone());
-    let icme_policy_hash = crate::sqlite::nullable_text_value(policy.icme_policy_hash.clone());
-    conn.execute(
-        "INSERT INTO database_smt_policies
-         (database_id, version, smt_lib, smt_lib_hash, normalized_ast_hash, source_refs_json,
-          compiler_version, icme_policy_id, icme_policy_hash, created_by, created_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-         ON CONFLICT(database_id) DO UPDATE SET
-           version = excluded.version,
-           smt_lib = excluded.smt_lib,
-           smt_lib_hash = excluded.smt_lib_hash,
-           normalized_ast_hash = excluded.normalized_ast_hash,
-           source_refs_json = excluded.source_refs_json,
-           compiler_version = excluded.compiler_version,
-           icme_policy_id = excluded.icme_policy_id,
-           icme_policy_hash = excluded.icme_policy_hash,
-           created_by = excluded.created_by,
-           created_at_ms = excluded.created_at_ms",
-        params![
-            database_id,
-            policy.version,
-            policy.smt_lib,
-            policy.smt_lib_hash,
-            policy.normalized_ast_hash,
-            refs,
-            compiler_version,
-            icme_policy_id,
-            icme_policy_hash,
-            policy.created_by,
-            policy.created_at_ms,
-        ],
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-fn load_operator_smt_policy(conn: &Connection) -> Result<Option<SmtPolicySnapshot>, String> {
-    conn.query_row(
-        "SELECT version, smt_lib, smt_lib_hash, normalized_ast_hash, source_refs_json,
-                compiler_version, icme_policy_id, icme_policy_hash, created_by, created_at_ms
-         FROM operator_smt_policies
-         WHERE scope = 'global'",
-        params![],
-        map_smt_policy_snapshot,
-    )
-    .optional()
-    .map_err(|error| error.to_string())
-}
-
-fn load_database_smt_policy(
-    conn: &Connection,
-    database_id: &str,
-) -> Result<Option<SmtPolicySnapshot>, String> {
-    conn.query_row(
-        "SELECT version, smt_lib, smt_lib_hash, normalized_ast_hash, source_refs_json,
-                compiler_version, icme_policy_id, icme_policy_hash, created_by, created_at_ms
-         FROM database_smt_policies
-         WHERE database_id = ?1",
-        params![database_id],
-        map_smt_policy_snapshot,
-    )
-    .optional()
-    .map_err(|error| error.to_string())
-}
-
-fn map_smt_policy_snapshot(
-    row: &crate::sqlite::Row<'_>,
-) -> crate::sqlite::Result<SmtPolicySnapshot> {
-    let refs_json: String = crate::sqlite::row_get(row, 4)?;
-    let source_refs =
-        serde_json::from_str(&refs_json).map_err(|_| crate::sqlite::invalid_query())?;
-    Ok(SmtPolicySnapshot {
-        version: crate::sqlite::row_get(row, 0)?,
-        smt_lib: crate::sqlite::row_get(row, 1)?,
-        smt_lib_hash: crate::sqlite::row_get(row, 2)?,
-        normalized_ast_hash: crate::sqlite::row_get(row, 3)?,
-        source_refs,
-        compiler_version: crate::sqlite::row_get(row, 5)?,
-        icme_policy_id: crate::sqlite::row_get(row, 6)?,
-        icme_policy_hash: crate::sqlite::row_get(row, 7)?,
-        created_by: crate::sqlite::row_get(row, 8)?,
-        created_at_ms: crate::sqlite::row_get(row, 9)?,
-    })
-}
-
-fn policy_source_refs_json(source_refs: &[SmtPolicySourceRef]) -> Result<String, String> {
-    serde_json::to_string(source_refs).map_err(|error| error.to_string())
 }
 
 fn load_cycles_billing_config(conn: &Connection) -> Result<CyclesBillingConfig, String> {
@@ -9011,11 +8156,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let index_path = dir.path().join("index.sqlite3");
         write_pre_cycles_schema(&index_path);
-        let service = VfsService::new(
-            index_path,
-            dir.path().join("policy.sqlite3"),
-            dir.path().join("databases"),
-        );
+        let service = VfsService::new(index_path, dir.path().join("databases"));
 
         let error = service
             .run_index_migrations_for_upgrade(None)
@@ -9029,11 +8170,7 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let index_path = dir.path().join("index.sqlite3");
         write_pre_cycles_schema(&index_path);
-        let service = VfsService::new(
-            index_path.clone(),
-            dir.path().join("policy.sqlite3"),
-            dir.path().join("databases"),
-        );
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
         let config = test_cycles_billing_config();
 
         service
@@ -9070,7 +8207,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         let config = test_cycles_billing_config();
@@ -9094,11 +8230,7 @@ mod tests {
         let index_path = dir.path().join("index.sqlite3");
         let config = test_cycles_billing_config();
         write_mainnet_026_schema(&index_path, &config);
-        let service = VfsService::new(
-            index_path.clone(),
-            dir.path().join("policy.sqlite3"),
-            dir.path().join("databases"),
-        );
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
 
         service
             .run_index_migrations_for_upgrade(None)
@@ -9136,11 +8268,7 @@ mod tests {
         let index_path = dir.path().join("index.sqlite3");
         let old_config = test_cycles_billing_config();
         write_mainnet_031_schema(&index_path, &old_config);
-        let service = VfsService::new(
-            index_path.clone(),
-            dir.path().join("policy.sqlite3"),
-            dir.path().join("databases"),
-        );
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
         let mut next_config = old_config.clone();
         next_config.top_up = CyclesTopUpConfig {
             enabled: false,
@@ -9185,11 +8313,7 @@ mod tests {
         )
         .expect("legacy billing marker should insert");
         drop(conn);
-        let service = VfsService::new(
-            index_path,
-            dir.path().join("policy.sqlite3"),
-            dir.path().join("databases"),
-        );
+        let service = VfsService::new(index_path, dir.path().join("databases"));
 
         let error = service
             .run_index_migrations_for_upgrade(Some(test_cycles_billing_config()))
@@ -9204,7 +8328,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9233,11 +8356,7 @@ mod tests {
     fn ambiguous_database_cycles_purchase_blocks_duplicate_until_repair() {
         let dir = tempdir().expect("tempdir should create");
         let index_path = dir.path().join("index.sqlite3");
-        let service = VfsService::new(
-            index_path.clone(),
-            dir.path().join("policy.sqlite3"),
-            dir.path().join("databases"),
-        );
+        let service = VfsService::new(index_path.clone(), dir.path().join("databases"));
         service
             .run_index_migrations()
             .expect("index migrations should run");
@@ -9280,7 +8399,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9337,7 +8455,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9361,7 +8478,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9407,7 +8523,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9439,7 +8554,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9494,7 +8608,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9548,7 +8661,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9590,7 +8702,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9675,7 +8786,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9714,7 +8824,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9753,7 +8862,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9797,7 +8905,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9855,7 +8962,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9904,7 +9010,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -9939,7 +9044,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -10000,7 +9104,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -10149,7 +9252,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
@@ -10219,7 +9321,6 @@ mod tests {
         let dir = tempdir().expect("tempdir should create");
         let service = VfsService::new(
             dir.path().join("index.sqlite3"),
-            dir.path().join("policy.sqlite3"),
             dir.path().join("databases"),
         );
         service
