@@ -270,6 +270,27 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
             errors.push(format!("{}: type is required", relative.display()));
         }
         if let Some(kinic) = &frontmatter.kinic {
+            if frontmatter.concept_type != "Reference"
+                && !path_has_component(relative, "references")
+            {
+                if let Some(expected_hash) = &kinic.content_hash {
+                    match okf_body_text(&file) {
+                        Ok(body) => {
+                            let actual_hash = sha256_hex(body.as_bytes());
+                            if expected_hash != &actual_hash {
+                                errors.push(format!(
+                                    "{}: kinic.content_hash mismatch",
+                                    relative.display()
+                                ));
+                            }
+                        }
+                        Err(error) => errors.push(format!(
+                            "{}: failed to verify kinic.content_hash: {error}",
+                            relative.display()
+                        )),
+                    }
+                }
+            }
             if let Some(expires_at) = &kinic.expires_at {
                 match parse_timestamp(expires_at) {
                     Ok(value) if value <= Utc::now() => errors.push(format!(
@@ -431,6 +452,7 @@ fn build_okf_concepts(
     for item in wiki_nodes {
         let slug = unique_slug(&item.node.path, &mut used_paths);
         let relative_path = PathBuf::from(item.bucket.directory()).join(format!("{slug}.md"));
+        let body = rendered_concept_body(&item.node.content);
         concepts.push(OkfConcept {
             relative_path,
             frontmatter: OkfFrontmatter {
@@ -445,13 +467,13 @@ fn build_okf_concepts(
                     root: Some(root.to_string()),
                     source_path: None,
                     etag: Some(item.node.etag.clone()),
-                    content_hash: Some(sha256_hex(item.node.content.as_bytes())),
+                    content_hash: Some(sha256_hex(body.as_bytes())),
                     trust_level: Some(trust_level.to_string()),
                     approved_by: approved_by.to_vec(),
                     expires_at: Some(expires_at.to_string()),
                 }),
             },
-            body: item.node.content.clone(),
+            body,
         });
     }
 
@@ -508,8 +530,12 @@ fn render_concept(concept: &OkfConcept) -> Result<String> {
     let frontmatter = serde_yaml::to_string(&concept.frontmatter)?;
     Ok(format!(
         "---\n{frontmatter}---\n\n{}\n",
-        concept.body.trim()
+        rendered_concept_body(&concept.body)
     ))
+}
+
+fn rendered_concept_body(body: &str) -> String {
+    body.trim().to_string()
 }
 
 fn render_index(root: &str, concepts: &[OkfConcept]) -> String {
@@ -651,6 +677,19 @@ fn read_okf_frontmatter(path: &Path) -> Result<OkfFrontmatter> {
     let frontmatter = frontmatter_text(&text)
         .ok_or_else(|| anyhow!("missing YAML frontmatter delimited by ---"))?;
     Ok(serde_yaml::from_str(frontmatter)?)
+}
+
+fn okf_body_text(path: &Path) -> Result<String> {
+    let text = fs::read_to_string(path)?;
+    let rest = text
+        .strip_prefix("---\n")
+        .ok_or_else(|| anyhow!("missing YAML frontmatter delimited by ---"))?;
+    let end = rest
+        .find("\n---")
+        .ok_or_else(|| anyhow!("missing YAML frontmatter delimited by ---"))?;
+    let body_start = end + "\n---".len();
+    let body = rest[body_start..].trim_start_matches('\n');
+    Ok(body.trim_end_matches('\n').to_string())
 }
 
 fn frontmatter_text(text: &str) -> Option<&str> {
@@ -915,7 +954,7 @@ mod tests {
             test_node(
                 "/Wiki/projects/acme/facts.md",
                 NodeKind::File,
-                "Fact from /Sources/raw/web/source.md",
+                "Fact from /Sources/raw/web/source.md\n",
                 "wiki-etag",
             ),
         );
@@ -963,6 +1002,19 @@ mod tests {
                 .starts_with("---\n")
         );
         assert!(verify_okf_bundle_dir(out.path()).expect("verify").valid);
+
+        let fact_path = out.path().join("facts/wiki-projects-acme-facts.md");
+        let mut tampered = fs::read_to_string(&fact_path).expect("fact read");
+        tampered.push_str("\nTampered line\n");
+        fs::write(&fact_path, tampered).expect("tamper fact");
+        let tampered_verify = verify_okf_bundle_dir(out.path()).expect("tampered verify");
+        assert!(!tampered_verify.valid);
+        assert!(
+            tampered_verify
+                .errors
+                .iter()
+                .any(|error| error.contains("kinic.content_hash mismatch"))
+        );
     }
 
     #[tokio::test]

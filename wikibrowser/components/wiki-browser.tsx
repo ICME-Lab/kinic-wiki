@@ -24,6 +24,7 @@ import { databaseCyclesDisabledReason, databaseCyclesHref, databaseCyclesView, f
 import { readBrowserNodeCache } from "@/lib/browser-node-cache";
 import { hrefForDatabaseSwitch, hrefForGraph, hrefForHelp, hrefForPath, hrefForSearch, parentPath } from "@/lib/paths";
 import { nodeRequestKey } from "@/lib/request-keys";
+import { parseSearchOptions, type SearchOptions } from "@/lib/search-options";
 import { databaseRouteBase, xShareDatabaseHref } from "@/lib/share-links";
 import type { CyclesBillingConfig, ChildNode, DatabaseRole, DatabaseSummary, NodeContext, WikiNode } from "@/lib/types";
 import { getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic } from "@/lib/vfs-client";
@@ -91,6 +92,7 @@ export function WikiBrowser() {
   const tab = parseTab(searchParams.get("tab"));
   const query = isSearchPage ? searchParams.get("q") ?? "" : "";
   const searchKind = parseSearchKind(searchParams.get("kind"));
+  const searchOptions = useMemo(() => parseSearchOptions(searchParams), [searchParams]);
   const [authClient, setAuthClient] = useState<AuthClient | null>(null);
   const [readIdentity, setReadIdentity] = useState<Identity | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -617,6 +619,7 @@ export function WikiBrowser() {
         principal={authPrincipal}
         query={query}
         searchKind={searchKind}
+        searchOptions={searchOptions}
         graphDepth={graphDepth}
         isHelpPage={isHelpPage}
         isGraphPage={isGraphPage}
@@ -743,7 +746,7 @@ export function WikiBrowser() {
           ) : isGraphPage ? (
             <GraphPanel canisterId={canisterId} databaseId={databaseId} centerPath={graphCenter} depth={graphDepth} readIdentity={effectiveReadIdentity} />
           ) : isSearchPage ? (
-            <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} readIdentity={effectiveReadIdentity} />
+            <SearchPanel canisterId={canisterId} databaseId={databaseId} query={query} initialKind={searchKind} searchOptions={searchOptions} readIdentity={effectiveReadIdentity} />
           ) : (
             <>
               <DocumentHeader
@@ -784,6 +787,24 @@ export function WikiBrowser() {
             </>
           )}
         </section>
+        {!isSearchPage && !isGraphPage && !isHelpPage ? (
+          <details className="order-3 rounded-2xl border border-line bg-paper/90 shadow-sm lg:hidden">
+            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink">Details</summary>
+            <Inspector
+              canisterId={canisterId}
+              databaseId={databaseId}
+              databaseName={currentDatabase?.name ?? databaseId}
+              path={selectedPath}
+              node={currentNode.data}
+              childNodes={currentChildren.data ?? []}
+              noteRole={noteRole}
+              incomingLinks={currentNodeContext.data?.incomingLinks ?? null}
+              incomingError={currentNodeContext.error}
+              outgoingLinks={currentNodeContext.data?.outgoingLinks ?? []}
+              readIdentity={effectiveReadIdentity}
+            />
+          </details>
+        ) : null}
         {!isSearchPage && !isGraphPage && !isHelpPage ? (
           <aside data-tid="wiki-inspector-panel" className="order-3 hidden min-h-0 flex-col rounded-2xl border border-line bg-paper/90 shadow-sm lg:flex lg:overflow-hidden">
             <PanelHeader icon={<PanelRight size={15} />} title="Inspector" subtitle="metadata and hints" />
@@ -1277,6 +1298,7 @@ function TopBar({
   principal,
   query,
   searchKind,
+  searchOptions,
   graphDepth,
   isHelpPage,
   isGraphPage,
@@ -1302,6 +1324,7 @@ function TopBar({
   principal: string | null;
   query: string;
   searchKind: "path" | "full";
+  searchOptions: SearchOptions;
   graphDepth: 1 | 2;
   isHelpPage: boolean;
   isGraphPage: boolean;
@@ -1340,6 +1363,7 @@ function TopBar({
         isHelpPage,
         query,
         searchKind,
+        searchOptions,
         graphDepth
       })
     );

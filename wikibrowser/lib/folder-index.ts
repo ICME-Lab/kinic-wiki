@@ -21,3 +21,9 @@ export function visibleChildren(children: ChildNode[], parentPath?: string): Chi
 export function isReservedFolderIndexName(fileName: string): boolean {
   return fileName.toLocaleLowerCase() === FOLDER_INDEX_NAME;
 }
+
+export function displayPathForFolderIndex(path: string): string {
+  const suffix = `/${FOLDER_INDEX_NAME}`;
+  if (path === `/${FOLDER_INDEX_NAME}`) return "/";
+  return path.endsWith(suffix) ? path.slice(0, -suffix.length) : path;
+}

@@ -1,8 +1,8 @@
 # Kinic Wiki Clipper Usage
 
-Usage guide for exporting recent ChatGPT/Claude conversations and active-tab URLs into the mainnet Kinic Wiki canister.
+Usage guide for exporting recent ChatGPT/Claude conversations and active-tab raw sources into the mainnet Kinic Wiki canister.
 
-ChatGPT/Claude raw-source export and URL ingest use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude raw-source export and active-tab raw-source capture use Internet Identity and require writer access for the selected database.
 
 ## Prerequisites
 
@@ -82,13 +82,13 @@ Raw sources are saved as:
 /Sources/raw/claude/<conversationId>.md
 ```
 
-## URL Ingest
+## Active Tab Capture
 
 1. Open any public `http` / `https` page.
 2. Click the extension toolbar icon.
-3. The extension writes `/Sources/ingest-requests/<request-id>.md`.
-4. The extension asks the VFS canister to authorize a 30 minute session trigger ticket for the same II principal.
-5. WikiBrowser checks the session ticket and configured canister id through `https://wiki.kinic.xyz/api/url-ingest/trigger`, then triggers the generator Worker.
+3. The extension captures the active tab DOM and writes `/Sources/raw/web/<source_id>.md`.
+4. The extension asks the VFS canister to authorize a 30 minute source-run ticket for the same II principal.
+5. WikiBrowser checks the session ticket and configured canister id through `https://wiki.kinic.xyz/api/source/run`, then triggers the generator Worker.
 
 Writer access is checked when the session ticket is issued. Revoking writer access does not immediately invalidate an already issued ticket before its TTL.
 
@@ -96,7 +96,7 @@ Non-web pages such as `chrome://extensions` are rejected.
 
 ## Verify
 
-Confirm that `/Sources/raw/...` or `/Sources/ingest-requests/...` is created in the selected database after successful exports.
+Confirm that `/Sources/raw/...` is created in the selected database after successful exports.
 
 ## Generate Wiki Pages
 

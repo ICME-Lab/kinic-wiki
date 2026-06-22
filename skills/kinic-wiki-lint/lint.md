@@ -22,16 +22,17 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
    - unresolved contradiction state
 6. Report findings first.
 7. Only edit pages if the user asks for fixes or the workflow explicitly includes a repair step.
+8. For OKF bundle validation, use `kinic-context-pack` and `context-pack verify` instead of wiki lint rules.
 
 ## Working Rules
 
-- Current repo-local note schema lives in [docs/internal/WIKI_CANONICALITY.md](../../docs/internal/WIKI_CANONICALITY.md). Use it for concrete note names and current role mapping.
+- Current repo-local note roles live in [docs/AGENT_MEMORY_API.md](../../docs/AGENT_MEMORY_API.md). Use it for concrete note names, role mapping, and trust model.
 - When `/Wiki/index.md` is stale, recommend a focused root catalog edit first. Recommend `rebuild-index` only for broad repair.
 - Treat `/Wiki/index.md` as the only required catalog. Do not flag missing `<scope>/index.md`, `overview.md`, `schema.md`, `log.md`, or `topics/*.md` unless the user explicitly requested that scoped structure.
 - Flag folders, scoped indexes, and scaffold pages that were created without a clear user request or retrieval need.
 - Recommend `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Do not require rebuilds for routine small edits.
 - Keep local lint separate from remote content review.
-- Treat note role violations from `WIKI_CANONICALITY.md` as first-class findings.
+- Treat note role violations from `AGENT_MEMORY_API.md` as first-class findings.
 - Flag exact-value evidence leaking into `summary.md` or unresolved conflict leaking into settled notes as canonicality findings, not style notes.
 - For target-note guidance, treat `facts.md` as the canonical note for exact stable fact, current value, selected option, and stable relationship-duration.
 - Treat `events.md` as the canonical note for chronology-only completed events, `plans.md` for future / pending / next action, and `summary.md` for recap only.
@@ -51,6 +52,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 ## Repo Contract
 
 - Local lint: inspect Markdown files directly; no local mirror lint command exists.
+- OKF bundle validation: use `kinic-vfs-cli context-pack verify <bundle-dir>` through `kinic-context-pack`.
 - Remote inspection primitives:
   - CLI commands: `read-node-context`, `read-node`, `list-nodes`, `glob-nodes`, `search-remote`, `search-path-remote`, `graph-neighborhood`, `incoming-links`, `outgoing-links`, `rebuild-scope-index`, `rebuild-index`
   - Use `list-children` for one-level tree navigation.

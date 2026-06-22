@@ -41,13 +41,15 @@ export function handleOffscreenMessage(message) {
       ? saveRawSource(message.rawSource, message.config)
       : message?.type === "trigger-source-generation"
         ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
-        : message?.type === "auth-status"
-          ? authStatus()
-          : message?.type === "list-writable-databases"
-            ? listWritableDatabases(message.config)
-            : message?.type === "reset-auth-client"
-              ? resetOffscreenAuthState()
-              : null;
+        : message?.type === "web-source-exists"
+          ? webSourceExists(message.sourcePath, message.config)
+          : message?.type === "auth-status"
+            ? authStatus()
+            : message?.type === "list-writable-databases"
+              ? listWritableDatabases(message.config)
+              : message?.type === "reset-auth-client"
+                ? resetOffscreenAuthState()
+                : null;
 }
 
 export async function queueUrlIngest(tab, config) {
@@ -129,6 +131,22 @@ export async function triggerSourceGeneration(config, sourcePath, sourceEtag, se
     sourceEtag,
     triggered: trigger.ok,
     triggerError: trigger.error
+  };
+}
+
+export async function webSourceExists(sourcePath, config) {
+  if (typeof sourcePath !== "string" || !sourcePath) throw new Error("source path is required");
+  if (!config?.canisterId) throw new Error("canister id is required");
+  if (!config?.databaseId) throw new Error("database id is required");
+  const snapshot = await authenticatedSnapshot();
+  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
+  const result = await actor.read_node(config.databaseId, sourcePath);
+  if ("Err" in result) throw new Error(result.Err);
+  const node = result.Ok[0] || null;
+  return {
+    exists: Boolean(node),
+    path: sourcePath,
+    etag: node?.etag || null
   };
 }
 

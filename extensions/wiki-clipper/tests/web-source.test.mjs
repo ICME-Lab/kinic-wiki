@@ -3,7 +3,7 @@
 // Why: Web captures must save canonical raw sources before generation is queued.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWebRawSource, collectWebPageSnapshot } from "../src/web-source.js";
+import { buildWebRawSource, collectWebPageSnapshot, webSourcePathForUrl } from "../src/web-source.js";
 
 test("buildWebRawSource emits canonical browser DOM source", async () => {
   const raw = await buildWebRawSource(
@@ -15,9 +15,9 @@ test("buildWebRawSource emits canonical browser DOM source", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/raw\/web\/Example-Post-[a-f0-9]{8}\.md$/);
+  assert.match(raw.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
   assert.equal(raw.path.split("/").at(-2), "web");
-  assert.equal(raw.sourceId, `web-${raw.path.split("-").at(-1)?.replace(".md", "")}`);
+  assert.equal(raw.sourceId, `web-${raw.path.split("/").at(-1)?.replace(".md", "")}`);
   assert.match(raw.content, /kind: kinic\.raw_web_source/);
   assert.match(raw.content, /schema_version: 1/);
   assert.match(raw.content, /capture_method: browser_dom/);
@@ -42,8 +42,8 @@ test("buildWebRawSource emits canonical browser DOM source", async () => {
   });
 });
 
-test("buildWebRawSource makes title hash filenames safe", async () => {
-  const raw = await buildWebRawSource(
+test("buildWebRawSource path does not depend on title", async () => {
+  const first = await buildWebRawSource(
     {
       url: "https://example.com/post",
       title: ' 日本語 / Path: *Bad? "Title" <x> | end. ',
@@ -52,11 +52,7 @@ test("buildWebRawSource makes title hash filenames safe", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/raw\/web\/日本語-Path-Bad-Title-x-end-[a-f0-9]{8}\.md$/);
-});
-
-test("buildWebRawSource uses hostname when title is empty", async () => {
-  const raw = await buildWebRawSource(
+  const second = await buildWebRawSource(
     {
       url: "https://example.com/post",
       title: "",
@@ -65,22 +61,15 @@ test("buildWebRawSource uses hostname when title is empty", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/raw\/web\/example.com-[a-f0-9]{8}\.md$/);
+  assert.equal(first.path, second.path);
+  assert.match(first.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
 });
 
-test("buildWebRawSource keeps short hash when title is long", async () => {
-  const raw = await buildWebRawSource(
-    {
-      url: "https://example.com/long",
-      title: "Long Title ".repeat(30),
-      text: "Body"
-    },
-    new Date("2026-05-01T00:00:00.000Z")
+test("webSourcePathForUrl ignores hash fragments", async () => {
+  assert.equal(
+    await webSourcePathForUrl("https://example.com/post#section"),
+    await webSourcePathForUrl("https://example.com/post")
   );
-  const filename = raw.path.split("/").at(-1) || "";
-
-  assert.match(filename, /-[a-f0-9]{8}\.md$/);
-  assert.ok(filename.length <= 131);
 });
 
 test("buildWebRawSource truncates oversized browser DOM text", async () => {

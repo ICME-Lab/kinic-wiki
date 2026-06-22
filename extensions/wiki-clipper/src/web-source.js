@@ -8,7 +8,6 @@ const MAX_WEB_SOURCE_CHARS = 300_000;
 export async function buildWebRawSource(snapshot, now = new Date()) {
   const finalUrl = normalizedHttpUrl(snapshot?.url);
   const sourceId = await webSourceId(finalUrl);
-  const sourceHash = sourceId.slice("web-".length);
   const text = String(snapshot?.text || "").trim();
   if (!text) {
     throw new Error("page text is empty");
@@ -39,7 +38,7 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
     ""
   ].join("\n");
   return {
-    path: `/Sources/raw/web/${webSourceFileStem(title, sourceHash)}.md`,
+    path: webSourcePathFromId(sourceId),
     sourceId,
     content,
     metadataJson: JSON.stringify({
@@ -55,6 +54,11 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
       saved_chars: sourceText.savedChars
     })
   };
+}
+
+export async function webSourcePathForUrl(value) {
+  const finalUrl = normalizedHttpUrl(value);
+  return webSourcePathFromId(await webSourceId(finalUrl));
 }
 
 export function collectWebPageSnapshot() {
@@ -201,7 +205,7 @@ export function collectWebPageSnapshot() {
 }
 
 async function webSourceId(finalUrl) {
-  return `web-${(await sha256Hex(finalUrl)).slice(0, 8)}`;
+  return `web-${(await sha256Hex(finalUrl)).slice(0, 16)}`;
 }
 
 function webSourceTitle(value, finalUrl) {
@@ -214,22 +218,8 @@ function webSourceTitle(value, finalUrl) {
   }
 }
 
-function webSourceFileStem(title, sourceHash) {
-  const hash = String(sourceHash || "").trim() || "source";
-  const maxTitleLength = Math.max(1, 128 - hash.length - 1);
-  const slug = safeWebSourceTitleSlug(title).slice(0, maxTitleLength).replace(/[-.]+$/g, "") || "web-source";
-  return `${slug}-${hash}`;
-}
-
-function safeWebSourceTitleSlug(value) {
-  const normalized = String(value || "")
-    .normalize("NFKC")
-    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/\.{2,}/g, ".")
-    .replace(/^[-.]+|[-.]+$/g, "");
-  return normalized || "web-source";
+function webSourcePathFromId(sourceId) {
+  return `/Sources/raw/web/${sourceId.slice("web-".length)}.md`;
 }
 
 function limitSourceText(text, maxChars) {

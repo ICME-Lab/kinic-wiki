@@ -1,5 +1,5 @@
 // Where: workers/wiki-generator/tests/openai.test.ts
-// What: Generated draft response parsing tests.
+// What: LLM response parsing tests.
 // Why: The model boundary must stay schema-checked before rendering or writes.
 import assert from "node:assert/strict";
 import test from "node:test";

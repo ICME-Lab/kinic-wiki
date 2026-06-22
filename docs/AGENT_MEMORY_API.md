@@ -6,6 +6,33 @@ It returns wiki context, local graph context, and source evidence without requir
 Use this API when the caller already has an IC canister client and wants long-term wiki memory as structured context.
 Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenAI-compatible or Anthropic-compatible tool schemas.
 
+## Trust Model
+
+Kinic Wiki memory follows this lifecycle:
+
+```text
+/Sources/raw/... -> human review -> role page -> agent memory query
+```
+
+- `/Sources/raw/...` is canonical raw evidence.
+- `/Wiki/...` is organized knowledge, but not automatically canonical.
+- Working notes can help review, but they are not a separate canonical lifecycle state.
+- Role pages are the agent memory layer when their claims are backed by source evidence or human review.
+- Agents should prefer role-page claims plus `source_evidence` over working-note text or search previews.
+
+Role-page responsibilities:
+
+- `facts.md`: stable facts, current values, selected options, and stable relationships.
+- `events.md`: completed dated events.
+- `plans.md`: future or pending items, next actions, temporary constraints, and active operational policies.
+- `preferences.md`: preferences, decision criteria, and durable choices.
+- `open_questions.md`: unresolved items, conflicts, and evidence gaps.
+- `provenance.md`: raw source ids, source paths, import metadata, and review trace.
+- `summary.md`, `overview.md`, and `topics/*.md`: synthesis and orientation, not final evidence for exact claims.
+
+Do not place future, pending, unresolved, chronology-only, or recap content in `facts.md`.
+Do not answer from working notes as if they were canonical memory.
+
 ## Prerequisites
 
 - `canister_id`: the Kinic Wiki canister to query.
@@ -36,6 +63,7 @@ These methods are canister query methods. They do not mutate wiki content.
 
 Treat `capabilities` and `canonical_roles` as discovery data.
 Do not use `memory_manifest()` as content evidence for an answer.
+The `canonical_roles` list mirrors the current wiki schema. Agents should use it to find role pages before relying on broad search results.
 
 ## Query Context
 
@@ -72,13 +100,20 @@ The response includes:
 - `truncated`: true when the response was cut to fit the approximate budget.
 
 Agents should answer from returned nodes and evidence, not from search hits alone.
+Treat `search_hits` as recall and routing data.
+Treat `nodes` from canonical role pages as the primary memory payload.
+Treat working-note nodes as unreviewed unless the same claim is present in a role page.
 If `truncated` is true, narrow the `namespace`, reduce `entities`, or issue a follow-up query for a more specific task.
+`query_context` reserves budget for node context and evidence before adding search hit previews, so small budgets still return answerable node content when at least one candidate fits the namespace.
 
 ## Source Evidence
 
 Use `source_evidence` when the caller already knows the exact wiki node path and needs source refs for trust checking or citations.
 The request takes `database_id` and `node_path`.
 The response returns the wiki `node_path` and refs with source path, linking path, raw href, and link text.
+Refs also include source freshness metadata when the source node can be read: `source_etag`, `source_updated_at`, and `source_content_hash`.
+Use freshness metadata to detect whether a citation was checked against the same source revision.
+Freshness metadata does not make a working note canonical.
 
 `source_evidence` returns an error when the wiki node does not exist.
 

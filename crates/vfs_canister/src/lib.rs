@@ -2274,6 +2274,24 @@ fn canonical_roles() -> Vec<CanonicalRole> {
             "Scope-local conventions and write rules",
         ),
         ("topics", "topics/*.md", "Topic-level synthesis pages"),
+        ("facts", "facts.md", "Settled stable facts and attributes"),
+        ("events", "events.md", "Completed dated events"),
+        (
+            "plans",
+            "plans.md",
+            "Future, pending, and next-action items",
+        ),
+        (
+            "preferences",
+            "preferences.md",
+            "Decision criteria, preferences, and choices",
+        ),
+        (
+            "open_questions",
+            "open_questions.md",
+            "Unresolved questions, conflicts, and verification gaps",
+        ),
+        ("summary", "summary.md", "Human-facing recap, not evidence"),
         (
             "provenance",
             "provenance.md",

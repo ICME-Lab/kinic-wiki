@@ -71,12 +71,34 @@ pub async fn handle_openai_tool_call(
     dispatch_tool_call(client, name, input).await
 }
 
+pub async fn handle_openai_read_only_tool_call(
+    client: &impl VfsApi,
+    name: &str,
+    arguments_json: &str,
+) -> Result<ToolResult> {
+    if !READ_ONLY_TOOL_NAMES.contains(&name) {
+        return Ok(tool_error(format!("read-only tool set rejects: {name}")));
+    }
+    handle_openai_tool_call(client, name, arguments_json).await
+}
+
 pub async fn handle_anthropic_tool_call(
     client: &impl VfsApi,
     name: &str,
     input: Value,
 ) -> Result<ToolResult> {
     dispatch_tool_call(client, name, input).await
+}
+
+pub async fn handle_anthropic_read_only_tool_call(
+    client: &impl VfsApi,
+    name: &str,
+    input: Value,
+) -> Result<ToolResult> {
+    if !READ_ONLY_TOOL_NAMES.contains(&name) {
+        return Ok(tool_error(format!("read-only tool set rejects: {name}")));
+    }
+    handle_anthropic_tool_call(client, name, input).await
 }
 
 async fn dispatch_tool_call(client: &impl VfsApi, name: &str, input: Value) -> Result<ToolResult> {

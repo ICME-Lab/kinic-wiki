@@ -369,12 +369,28 @@ export type NodeContext = {
   outgoingLinks: LinkEdge[];
 };
 
+export type SourceEvidenceRef = {
+  sourcePath: string;
+  viaPath: string;
+  rawHref: string;
+  linkText: string;
+  sourceEtag: string | null;
+  sourceUpdatedAt: string | null;
+  sourceContentHash: string | null;
+};
+
+export type SourceEvidence = {
+  nodePath: string;
+  refs: SourceEvidenceRef[];
+};
+
 export type QueryContext = {
   namespace: string;
   task: string;
   searchHits: SearchNodeHit[];
   nodes: NodeContext[];
   graphLinks: LinkEdge[];
+  evidence: SourceEvidence[];
   truncated: boolean;
 };
 

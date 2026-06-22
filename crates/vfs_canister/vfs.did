@@ -565,7 +565,10 @@ type SourceEvidence = record { node_path : text; refs : vec SourceEvidenceRef };
 type SourceEvidenceRef = record {
   link_text : text;
   via_path : text;
+  source_content_hash : opt text;
   source_path : text;
+  source_updated_at : opt int64;
+  source_etag : opt text;
   raw_href : text;
 };
 type SourceEvidenceRequest = record { node_path : text; database_id : text };

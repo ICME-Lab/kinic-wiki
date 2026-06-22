@@ -82,8 +82,15 @@ export function inferNoteRole(path: string): string {
   if (name === "facts.md") return "facts";
   if (name === "events.md") return "events";
   if (name === "plans.md") return "plans";
+  if (name === "preferences.md") return "preferences";
   if (name === "summary.md") return "summary";
   if (name === "open_questions.md") return "open_questions";
+  if (name === "index.md") return "index";
+  if (name === "overview.md") return "overview";
+  if (name === "log.md") return "log";
+  if (name === "schema.md") return "schema";
+  if (name === "provenance.md") return "provenance";
+  if (path.includes("/topics/") && path.endsWith(".md")) return "topics";
   if (path === "/Sources/raw" || path.startsWith("/Sources/raw/")) return "raw_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";

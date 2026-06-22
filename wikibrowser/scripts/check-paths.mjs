@@ -51,6 +51,23 @@ assert.equal(
   "/db/alpha/search?q=alpha+beta&kind=full"
 );
 assert.equal(
+  hrefForSearch("t63gs-up777-77776-aaaba-cai", "alpha", "alpha beta", "full", {
+    scope: "sources",
+    limit: 50,
+    preview: "content-start"
+  }),
+  "/db/alpha/search?q=alpha+beta&kind=full&scope=sources&limit=50&preview=content-start"
+);
+assert.equal(
+  hrefForSearch("t63gs-up777-77776-aaaba-cai", "alpha", "alpha beta", "path", {
+    scope: "custom",
+    prefix: "/Wiki/project notes",
+    limit: 100,
+    preview: "none"
+  }),
+  "/db/alpha/search?q=alpha+beta&kind=path&scope=custom&prefix=%2FWiki%2Fproject+notes&limit=100&preview=none"
+);
+assert.equal(
   hrefForGraph("t63gs-up777-77776-aaaba-cai", "alpha", "/Wiki/index.md", 2),
   "/db/alpha/graph?center=%2FWiki%2Findex.md&depth=2"
 );
@@ -74,9 +91,10 @@ assert.equal(
     isGraphPage: false,
     query: "alpha beta",
     searchKind: "full",
+    searchOptions: { scope: "sources", limit: 50, preview: "light" },
     graphDepth: 1
   }),
-  "/db/beta/search?q=alpha+beta&kind=full"
+  "/db/beta/search?q=alpha+beta&kind=full&scope=sources&limit=50&preview=light"
 );
 assert.equal(
   hrefForDatabaseSwitch("t63gs-up777-77776-aaaba-cai", "beta", {

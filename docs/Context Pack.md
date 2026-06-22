@@ -102,6 +102,7 @@ Raw source content is not copied into this OKF bundle.
 
 - `/Wiki/...` is the organized knowledge layer.
 - `/Sources/raw/...` is the canonical raw evidence layer.
+- Prefer reviewed role-page concepts over unreviewed working-note concepts for trusted agent handoff.
 - Raw source body text is not copied into `references/*.md`.
 - `index.md` and `log.md` are OKF reserved files and must not carry frontmatter.
 - Unknown frontmatter keys are allowed.
@@ -137,6 +138,7 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 
 - every non-reserved `.md` file has parseable YAML frontmatter
 - every concept has non-empty `type`
+- non-reference concepts with `kinic.content_hash` match the exported Markdown body
 - `index.md` and `log.md` do not use frontmatter
 - `kinic.expires_at` is in the future when present
 - `references/*.md` uses `kinic.source_path` under `/Sources/raw/...`

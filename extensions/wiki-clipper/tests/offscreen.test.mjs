@@ -10,7 +10,8 @@ import {
   queueUrlIngest,
   saveRawSource,
   setOffscreenDepsForTest,
-  triggerSourceGeneration
+  triggerSourceGeneration,
+  webSourceExists
 } from "../src/offscreen.js";
 
 test("queueUrlIngest writes request and triggers via wiki route", async () => {
@@ -233,6 +234,67 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   });
   try {
     await assert.rejects(() => saveRawSource(rawSource(), config()), /UNAUTHENTICATED/);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("webSourceExists returns false when raw source is missing", async () => {
+  const calls = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async (config) => {
+      calls.push(["create", config.identity, config.databaseId]);
+      return {
+        async read_node(databaseId, path) {
+          calls.push(["read", databaseId, path]);
+          return { Ok: [] };
+        }
+      };
+    }
+  });
+  try {
+    const result = await handleOffscreenMessage({
+      target: "offscreen",
+      type: "web-source-exists",
+      sourcePath: "/Sources/raw/web/abc.md",
+      config: config()
+    });
+
+    assert.deepEqual(result, { exists: false, path: "/Sources/raw/web/abc.md", etag: null });
+    assert.deepEqual(calls, [
+      ["create", { tag: "identity" }, "team-db"],
+      ["read", "team-db", "/Sources/raw/web/abc.md"]
+    ]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("webSourceExists returns true when raw source exists", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      async read_node() {
+        return { Ok: [{ etag: "etag-source" }] };
+      }
+    })
+  });
+  try {
+    const result = await webSourceExists("/Sources/raw/web/abc.md", config());
+
+    assert.deepEqual(result, { exists: true, path: "/Sources/raw/web/abc.md", etag: "etag-source" });
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("webSourceExists rejects unauthenticated sessions", async () => {
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
+  });
+  try {
+    await assert.rejects(() => webSourceExists("/Sources/raw/web/abc.md", config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }

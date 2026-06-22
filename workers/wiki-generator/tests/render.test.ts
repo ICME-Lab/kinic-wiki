@@ -34,12 +34,13 @@ const draft: WikiDraft = {
   follow_ups: []
 };
 
-test("slug and markdown include generated provenance without draft state", () => {
+test("slug and markdown include generated provenance without status frontmatter", () => {
   assert.equal(slugForGeneratedPage(draft, "web-abc123"), "project-notes");
   const markdown = renderGeneratedMarkdown(draft, source, []);
-  assert.doesNotMatch(markdown, /State: Draft/);
+  assert.doesNotMatch(markdown, /^---\n/m);
   assert.doesNotMatch(markdown, /## Status/);
   assert.match(markdown, /source_path: \/Sources\/raw\/a\/a\.md/);
+  assert.match(markdown, /source_etag: etag-1/);
 });
 
 test("Japanese-only generated slug is preserved as the page slug", () => {

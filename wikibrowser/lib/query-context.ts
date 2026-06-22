@@ -34,7 +34,7 @@ export async function collectQueryAnswerContext(input: {
   }
   for (const term of queryAnswerSearchTerms(input.question)) {
     if (nodes.size >= MAX_CONTEXT_ITEMS) break;
-    const hits = await searchNodes(input.canisterId, input.databaseId, term, 4, "/Wiki", input.readIdentity ?? undefined);
+    const hits = await searchNodes(input.canisterId, input.databaseId, term, 4, "/Wiki", "light", input.readIdentity ?? undefined);
     for (const hit of hits) {
       if (nodes.size >= MAX_CONTEXT_ITEMS) break;
       if (nodes.has(hit.path)) continue;

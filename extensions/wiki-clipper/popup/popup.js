@@ -209,6 +209,11 @@ async function refreshLatestStatus() {
 }
 
 function latestStatusLabel(value) {
-  const prefix = value.status === "setup_required" ? "setup required" : value.status;
+  const prefix =
+    value.status === "setup_required"
+      ? "setup required"
+      : value.status === "source_exists"
+        ? "already saved"
+        : value.status;
   return `${prefix}: ${value.message}${value.requestPath ? ` ${value.requestPath}` : ""}`;
 }

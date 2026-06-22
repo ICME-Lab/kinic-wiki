@@ -22,6 +22,7 @@ export function MarkdownPreview({
   const markdown = renderWikilinksAsMarkdown(frontmatter ? frontmatter.body : content);
   return (
     <>
+      {frontmatter ? <TrustBanner canisterId={canisterId} databaseId={databaseId} fields={frontmatter.fields} /> : null}
       {frontmatter && frontmatter.fields.length > 0 ? <FrontmatterSummary fields={frontmatter.fields} /> : null}
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -38,6 +39,40 @@ export function MarkdownPreview({
         {markdown}
       </ReactMarkdown>
     </>
+  );
+}
+
+function TrustBanner({
+  canisterId,
+  databaseId,
+  fields
+}: {
+  canisterId: string;
+  databaseId: string;
+  fields: { key: string; value: string }[];
+}) {
+  const status = valueFor(fields, "status");
+  const sourcePath = valueFor(fields, "source_path") ?? valueFor(fields, "kinic.source_path");
+  const canonicalizedBy = valueFor(fields, "canonicalized_by");
+  const canonicalizedAt = valueFor(fields, "canonicalized_at");
+  if (!status && !sourcePath && !canonicalizedBy && !canonicalizedAt) return null;
+  const tone = status === "canonical" ? "green" : status === "archived" ? "muted" : "yellow";
+  return (
+    <section className={`mb-5 rounded-lg border px-4 py-3 text-sm ${tone === "green" ? "border-green-200 bg-green-50 text-green-950" : tone === "yellow" ? "border-yellow-200 bg-yellow-50 text-yellow-950" : "border-line bg-paper text-ink"}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        {status ? <span className="rounded border border-current/20 bg-white/60 px-2 py-1 font-mono text-[11px] uppercase">{status}</span> : null}
+        {canonicalizedBy ? <span className="rounded border border-current/20 bg-white/60 px-2 py-1 font-mono text-[11px]">canonicalized_by {canonicalizedBy}</span> : null}
+        {canonicalizedAt ? <span className="rounded border border-current/20 bg-white/60 px-2 py-1 font-mono text-[11px]">canonicalized_at {canonicalizedAt}</span> : null}
+      </div>
+      {sourcePath ? (
+        <p className="mt-2 truncate font-mono text-xs">
+          source{" "}
+          <Link className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Wiki/index.md", sourcePath) ?? "#"}>
+            {sourcePath}
+          </Link>
+        </p>
+      ) : null}
+    </section>
   );
 }
 

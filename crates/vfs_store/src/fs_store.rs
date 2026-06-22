@@ -47,6 +47,7 @@ use crate::{
     },
     fs_search_bench::{self, SearchBenchStage},
     glob_match::{matches_path, validate_pattern},
+    hashing::sha256_hex,
     schema,
 };
 
@@ -695,19 +696,19 @@ impl FsStore {
             top_k: CONTEXT_SEARCH_LIMIT,
             preview_mode: Some(SearchPreviewMode::Light),
         })?;
-        let (search_hits, mut used_chars, mut truncated) =
-            trim_search_hits_to_budget(search_hits, budget_chars);
         let paths = ordered_context_candidate_paths(&namespace, &search_hits);
 
         self.read_conn(|conn| {
             let mut nodes = Vec::new();
+            let mut used_chars = 0usize;
+            let mut truncated = false;
             for path in paths {
                 let Some(context) = load_node_context_for_memory(conn, &path, CONTEXT_LINK_LIMIT)?
                 else {
                     continue;
                 };
                 let context_chars = estimate_node_context_chars(&context);
-                if used_chars.saturating_add(context_chars) > budget_chars {
+                if !nodes.is_empty() && used_chars.saturating_add(context_chars) > budget_chars {
                     truncated = true;
                     break;
                 }
@@ -759,7 +760,8 @@ impl FsStore {
                 for context in &nodes {
                     let evidence = source_evidence_for_path(conn, &context.node.path)?;
                     let evidence_chars = estimate_source_evidence_chars(&evidence);
-                    if used_chars.saturating_add(evidence_chars) > budget_chars {
+                    if !items.is_empty() && used_chars.saturating_add(evidence_chars) > budget_chars
+                    {
                         truncated = true;
                         break;
                     }
@@ -770,6 +772,12 @@ impl FsStore {
             } else {
                 Vec::new()
             };
+            let (search_hits, search_chars, search_truncated) =
+                trim_search_hits_to_remaining_budget(search_hits, used_chars, budget_chars);
+            used_chars = used_chars.saturating_add(search_chars);
+            if search_truncated || used_chars > budget_chars {
+                truncated = true;
+            }
 
             Ok(QueryContext {
                 namespace,
@@ -2269,29 +2277,45 @@ fn context_query_text(task: &str, entities: &[String]) -> Result<String, String>
 }
 
 fn canonical_context_paths(namespace: &str) -> Vec<String> {
-    ["index.md", "overview.md", "schema.md"]
-        .into_iter()
-        .map(|name| format!("{}/{}", namespace.trim_end_matches('/'), name))
-        .collect()
+    [
+        "index.md",
+        "facts.md",
+        "preferences.md",
+        "plans.md",
+        "open_questions.md",
+        "overview.md",
+        "schema.md",
+        "events.md",
+        "summary.md",
+        "provenance.md",
+    ]
+    .into_iter()
+    .map(|name| format!("{}/{}", namespace.trim_end_matches('/'), name))
+    .collect()
 }
 
-fn trim_search_hits_to_budget(
+fn trim_search_hits_to_remaining_budget(
     hits: Vec<SearchNodeHit>,
+    used_chars: usize,
     budget_chars: usize,
 ) -> (Vec<SearchNodeHit>, usize, bool) {
     let mut kept = Vec::new();
-    let mut used_chars = 0usize;
+    let mut used_search_chars = 0usize;
     let mut truncated = false;
     for hit in hits {
         let hit_chars = estimate_search_hit_chars(&hit);
-        if used_chars.saturating_add(hit_chars) > budget_chars {
+        if used_chars
+            .saturating_add(used_search_chars)
+            .saturating_add(hit_chars)
+            > budget_chars
+        {
             truncated = true;
             break;
         }
-        used_chars = used_chars.saturating_add(hit_chars);
+        used_search_chars = used_search_chars.saturating_add(hit_chars);
         kept.push(hit);
     }
-    (kept, used_chars, truncated)
+    (kept, used_search_chars, truncated)
 }
 
 fn ordered_context_candidate_paths(namespace: &str, search_hits: &[SearchNodeHit]) -> Vec<String> {
@@ -2376,11 +2400,15 @@ fn collect_source_refs_from_path(
             edge.raw_href.clone(),
         );
         if seen.insert(key) {
+            let source_node = load_node(conn, &edge.target_path)?;
             refs.push(SourceEvidenceRef {
                 source_path: edge.target_path,
                 via_path: edge.source_path,
                 raw_href: edge.raw_href,
                 link_text: edge.link_text,
+                source_etag: source_node.as_ref().map(|node| node.etag.clone()),
+                source_updated_at: source_node.as_ref().map(|node| node.updated_at),
+                source_content_hash: source_node.as_ref().map(|node| sha256_hex(&node.content)),
             });
         }
     }

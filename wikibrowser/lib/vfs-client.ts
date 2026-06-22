@@ -3,6 +3,7 @@ import { Principal } from "@icp-sdk/core/principal";
 import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
+import type { SearchPreviewMode } from "@/lib/search-options";
 import { idlFactory } from "@/lib/vfs-idl";
 import type {
   CanisterHealth,
@@ -43,6 +44,7 @@ import type {
   QueryAnswerSessionRequest,
   RecentNode,
   SearchNodeHit,
+  SourceEvidence,
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
@@ -434,12 +436,28 @@ type RawNodeContext = {
   outgoing_links: RawLinkEdge[];
 };
 
+type RawSourceEvidenceRef = {
+  source_path: string;
+  via_path: string;
+  raw_href: string;
+  link_text: string;
+  source_etag: [] | [string];
+  source_updated_at: [] | [bigint];
+  source_content_hash: [] | [string];
+};
+
+type RawSourceEvidence = {
+  node_path: string;
+  refs: RawSourceEvidenceRef[];
+};
+
 type RawQueryContext = {
   namespace: string;
   task: string;
   search_hits: RawSearchHit[];
   nodes: RawNodeContext[];
   graph_links: RawLinkEdge[];
+  evidence: RawSourceEvidence[];
   truncated: boolean;
 };
 
@@ -1248,6 +1266,7 @@ export async function searchNodePaths(
   queryText: string,
   limit: number,
   prefix: string | null,
+  previewMode: SearchPreviewMode = "content-start",
   identity?: Identity
 ): Promise<SearchNodeHit[]> {
   return callVfs(async () => {
@@ -1257,7 +1276,7 @@ export async function searchNodePaths(
       query_text: queryText,
       prefix: prefix ? [prefix] : [],
       top_k: limit,
-      preview_mode: [{ ContentStart: null }]
+      preview_mode: searchPreviewModeArg(previewMode)
     });
     if ("Err" in result) {
       throwCanisterError(result.Err);
@@ -1272,6 +1291,7 @@ export async function searchNodes(
   queryText: string,
   limit: number,
   prefix: string | null,
+  previewMode: SearchPreviewMode = "light",
   identity?: Identity
 ): Promise<SearchNodeHit[]> {
   return callVfs(async () => {
@@ -1281,13 +1301,20 @@ export async function searchNodes(
       query_text: queryText,
       prefix: prefix ? [prefix] : [],
       top_k: limit,
-      preview_mode: [{ ContentStart: null }]
+      preview_mode: searchPreviewModeArg(previewMode)
     });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
     return result.Ok.map(normalizeSearchHit);
   });
+}
+
+function searchPreviewModeArg(mode: SearchPreviewMode): [] | [Variant] {
+  if (mode === "none") return [{ None: null }];
+  if (mode === "light") return [{ Light: null }];
+  if (mode === "content-start") return [{ ContentStart: null }];
+  return [];
 }
 
 function normalizeNode(raw: RawNode): WikiNode {
@@ -1604,7 +1631,23 @@ function normalizeQueryContext(raw: RawQueryContext): QueryContext {
     searchHits: raw.search_hits.map(normalizeSearchHit),
     nodes: raw.nodes.map(normalizeNodeContext),
     graphLinks: raw.graph_links.map(normalizeLinkEdge),
+    evidence: raw.evidence.map(normalizeSourceEvidence),
     truncated: raw.truncated
+  };
+}
+
+function normalizeSourceEvidence(raw: RawSourceEvidence): SourceEvidence {
+  return {
+    nodePath: raw.node_path,
+    refs: raw.refs.map((ref) => ({
+      sourcePath: ref.source_path,
+      viaPath: ref.via_path,
+      rawHref: ref.raw_href,
+      linkText: ref.link_text,
+      sourceEtag: ref.source_etag[0] ?? null,
+      sourceUpdatedAt: ref.source_updated_at[0]?.toString() ?? null,
+      sourceContentHash: ref.source_content_hash[0] ?? null
+    }))
   };
 }
 

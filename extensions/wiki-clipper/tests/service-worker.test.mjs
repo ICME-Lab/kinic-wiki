@@ -8,6 +8,7 @@ import {
   handleActionClick,
   handleContextMenuClickForTest,
   handleMessage,
+  refreshTabBadgeForTest,
   resetSettingsOpenThrottleForTest,
   resetUrlIngestInFlightForTest,
   setOffscreenBridgeForTest
@@ -372,8 +373,9 @@ test("action click opens settings when source save is unauthenticated", async ()
 
 test("action click saves browser source then queues generation", async () => {
   const messages = [];
+  const badges = [];
   const response = await handleActionClick(
-    { url: "https://example.com/#section", title: "Example" },
+    { id: 3, url: "https://example.com/#section", title: "Example" },
     actionDeps({
       sendOffscreen: async (message) => {
         messages.push(message);
@@ -384,19 +386,66 @@ test("action click saves browser source then queues generation", async () => {
           };
         }
         return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
-      }
+      },
+      setBadge: async (text, _color, tabId) => badges.push({ text, tabId })
     })
   );
   assert.equal(response.ok, true);
-  assert.equal(messages[0].type, "save-raw-source");
-  assert.equal(messages[0].rawSource.path, "/Sources/raw/web/abc.md");
+  assert.equal(messages[0].type, "web-source-exists");
   assert.equal(messages[0].config.databaseId, "team-db");
-  assert.equal(messages[1].type, "trigger-source-generation");
-  assert.equal(messages[1].sourcePath, "/Sources/raw/web/abc.md");
-  assert.equal(messages[1].sourceEtag, "etag-source");
-  assert.equal(messages[1].sessionNonce, "session-source");
+  assert.equal(messages[1].type, "save-raw-source");
+  assert.equal(messages[1].rawSource.path, "/Sources/raw/web/abc.md");
+  assert.equal(messages[1].config.databaseId, "team-db");
+  assert.equal(messages[2].type, "trigger-source-generation");
+  assert.equal(messages[2].sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(messages[2].sourceEtag, "etag-source");
+  assert.equal(messages[2].sessionNonce, "session-source");
   assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
   assert.equal(response.result.generationQueued, true);
+  assert.deepEqual(badges, [
+    { text: "...", tabId: 3 },
+    { text: "IN", tabId: 3 }
+  ]);
+});
+
+test("action click refreshes existing browser source for only the current tab", async () => {
+  const calls = [];
+  const response = await handleActionClick(
+    { id: 7, url: "https://example.com/#section", title: "Example" },
+    actionDeps({
+      findWebSource: async (_config, sourcePath) => {
+        calls.push(["lookup", sourcePath]);
+        return { exists: true, path: sourcePath, etag: "etag-source" };
+      },
+      sendOffscreen: async (message) => {
+        calls.push(["message", message.type]);
+        if (message.type === "save-raw-source") {
+          return {
+            ok: true,
+            result: { path: message.rawSource.path, created: false, etag: "etag-refreshed", sourceRunSessionNonce: "session-source" }
+          };
+        }
+        return { ok: true, result: { sourcePath: message.sourcePath, triggered: true } };
+      },
+      writeStatus: async (status) => calls.push(["status", status.status, status.sourcePath]),
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.sourceCreated, false);
+  assert.equal(response.result.sourceEtag, "etag-refreshed");
+  assert.equal(response.result.generationQueued, true);
+  const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
+  assert.match(String(lookupPath), /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.deepEqual(calls, [
+    ["badge", "...", 7],
+    ["lookup", lookupPath],
+    ["message", "save-raw-source"],
+    ["message", "trigger-source-generation"],
+    ["status", "ok", response.result.sourcePath],
+    ["badge", "IN", 7]
+  ]);
 });
 
 test("action click keeps source result when generation trigger fails", async () => {
@@ -456,6 +505,9 @@ test("action click can save browser source without queueing generation", async (
     actionDeps({
       sendOffscreen: async (message) => {
         messages.push(message);
+        if (message.type === "web-source-exists") {
+          return { ok: true, result: { exists: false, path: message.sourcePath, etag: null } };
+        }
         return {
           ok: true,
           result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
@@ -468,8 +520,9 @@ test("action click can save browser source without queueing generation", async (
   );
 
   assert.equal(response.ok, true);
-  assert.equal(messages.length, 1);
-  assert.equal(messages[0].type, "save-raw-source");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].type, "web-source-exists");
+  assert.equal(messages[1].type, "save-raw-source");
   assert.equal(response.result.generationSkipped, true);
   assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
@@ -489,8 +542,9 @@ test("context menu raw save skips generation trigger", async () => {
     );
 
     assert.equal(response, undefined);
-    assert.equal(restore.messages.length, 1);
-    assert.equal(restore.messages[0].type, "save-raw-source");
+    assert.equal(restore.messages.length, 2);
+    assert.equal(restore.messages[0].type, "web-source-exists");
+    assert.equal(restore.messages[1].type, "save-raw-source");
     assert.ok(restore.badges.some((badge) => badge.text === "RAW"));
   } finally {
     resetUrlIngestInFlightForTest();
@@ -501,10 +555,12 @@ test("context menu raw save skips generation trigger", async () => {
 test("action click rejects duplicate in-flight URL ingest", async () => {
   resetUrlIngestInFlightForTest();
   const deferred = createDeferred();
+  let saveCalls = 0;
   const restore = installChromeForAction({
-    sendOffscreen(message, callCount) {
-      if (callCount === 1) return deferred.promise;
+    sendOffscreen(message) {
       if (message.type === "save-raw-source") {
+        saveCalls += 1;
+        if (saveCalls === 1) return deferred.promise;
         return {
           ok: true,
           result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
@@ -515,12 +571,12 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
   });
   try {
     const first = handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
-    await waitUntil(() => restore.messages.length === 1);
+    await waitUntil(() => restore.messages.length === 2);
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
     assert.equal(duplicate.error, "URL ingest is already running for this page.");
-    assert.equal(restore.messages.length, 1);
+    assert.equal(restore.messages.length, 3);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
     deferred.resolve({
@@ -531,7 +587,7 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
 
     const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(retry.ok, true);
-    assert.equal(restore.messages.length, 4);
+    assert.equal(restore.messages.length, 7);
   } finally {
     resetUrlIngestInFlightForTest();
     restore();
@@ -541,10 +597,12 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
 test("action click allows a different URL while another URL is in flight", async () => {
   resetUrlIngestInFlightForTest();
   const deferred = createDeferred();
+  let saveCalls = 0;
   const restore = installChromeForAction({
-    sendOffscreen(message, callCount) {
-      if (callCount === 1) return deferred.promise;
+    sendOffscreen(message) {
       if (message.type === "save-raw-source") {
+        saveCalls += 1;
+        if (saveCalls === 1) return deferred.promise;
         return {
           ok: true,
           result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
@@ -555,14 +613,14 @@ test("action click allows a different URL while another URL is in flight", async
   });
   try {
     const first = handleActionClick({ id: 1, url: "https://example.com/a", title: "A" });
-    await waitUntil(() => restore.messages.length === 1);
+    await waitUntil(() => restore.messages.length === 2);
 
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
-    assert.equal(restore.messages.length, 3);
-    assert.match(restore.messages[0].rawSource.path, /^\/Sources\/raw\/web\/Example-[a-f0-9]{8}\.md$/);
-    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/Example-[a-f0-9]{8}\.md$/);
-    assert.notEqual(restore.messages[0].rawSource.path, restore.messages[1].rawSource.path);
+    assert.equal(restore.messages.length, 5);
+    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+    assert.notEqual(restore.messages[1].rawSource.path, restore.messages[3].rawSource.path);
 
     deferred.resolve({
       ok: true,
@@ -587,7 +645,7 @@ test("action click honors session in-flight TTL", async () => {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
     assert.equal(busy.error, "URL ingest is already running for this page.");
-    assert.equal(restore.messages.length, 0);
+    assert.equal(restore.messages.length, 1);
 
     sessionStorage.setItem(
       "kinic-url-ingest-in-flight-v1",
@@ -595,11 +653,92 @@ test("action click honors session in-flight TTL", async () => {
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
-    assert.equal(restore.messages.length, 2);
+    assert.equal(restore.messages.length, 4);
   } finally {
     resetUrlIngestInFlightForTest();
     restore();
   }
+});
+
+test("tab badge refresh marks existing sources imported", async () => {
+  const calls = [];
+  const result = await refreshTabBadgeForTest(
+    { id: 9, url: "https://example.com/post#section", title: "Example" },
+    actionDeps({
+      findWebSource: async (_config, sourcePath) => {
+        calls.push(["lookup", sourcePath]);
+        return { exists: true, path: sourcePath, etag: "etag-source" };
+      },
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(result.state, "source_exists");
+  assert.deepEqual(calls, [
+    ["lookup", result.sourcePath],
+    ["badge", "IN", 9]
+  ]);
+});
+
+test("tab badge refresh clears missing sources and unsupported pages", async () => {
+  const calls = [];
+  const missing = await refreshTabBadgeForTest(
+    { id: 10, url: "https://example.com/post", title: "Example" },
+    actionDeps({
+      findWebSource: async (_config, sourcePath) => {
+        calls.push(["lookup", sourcePath]);
+        return { exists: false, path: sourcePath, etag: null };
+      },
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+  const unsupported = await refreshTabBadgeForTest(
+    { id: 11, url: "chrome://extensions" },
+    actionDeps({
+      findWebSource: async () => {
+        calls.push(["unexpected lookup"]);
+        return { exists: true, path: "/Sources/raw/web/nope.md", etag: "etag" };
+      },
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(missing.state, "clear");
+  assert.equal(unsupported.reason, "unsupported url");
+  assert.deepEqual(calls, [
+    ["lookup", missing.sourcePath],
+    ["badge", "", 10],
+    ["badge", "", 11]
+  ]);
+});
+
+test("tab badge refresh clears without opening settings when config or auth is unavailable", async () => {
+  const calls = [];
+  const missingConfig = await refreshTabBadgeForTest(
+    { id: 12, url: "https://example.com/post" },
+    actionDeps({
+      loadConfig: async () => ({ canisterId: "aaaaa-aa", databaseId: "", host: "https://icp0.io" }),
+      openSettings: async () => calls.push(["settings"]),
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+  const authError = await refreshTabBadgeForTest(
+    { id: 13, url: "https://example.com/post" },
+    actionDeps({
+      findWebSource: async () => {
+        throw new Error("UNAUTHENTICATED");
+      },
+      openSettings: async () => calls.push(["settings"]),
+      setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
+    })
+  );
+
+  assert.equal(missingConfig.reason, "config required");
+  assert.equal(authError.reason, "UNAUTHENTICATED");
+  assert.deepEqual(calls, [
+    ["badge", "", 12],
+    ["badge", "", 13]
+  ]);
 });
 
 function capture() {
@@ -767,8 +906,8 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
     configurable: true,
     value: {
       action: {
-        async setBadgeText({ text }) {
-          badges.push({ text });
+        async setBadgeText({ text, tabId }) {
+          badges.push({ text, tabId });
         },
         async setBadgeBackgroundColor() {}
       },
@@ -839,6 +978,15 @@ function storageArea(storage) {
 }
 
 function actionDeps(overrides = {}) {
+  const sendOffscreen =
+    overrides.sendOffscreen ||
+    (async (message) =>
+      message.type === "save-raw-source"
+        ? {
+            ok: true,
+            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+          }
+        : { ok: true, result: { sourcePath: message.sourcePath, triggered: true } });
   return {
     loadConfig: async () => ({
       canisterId: "aaaaa-aa",
@@ -846,13 +994,18 @@ function actionDeps(overrides = {}) {
       host: "https://icp0.io"
     }),
     ensureOffscreen: async () => {},
-    sendOffscreen: async (message) =>
-      message.type === "save-raw-source"
-        ? {
-            ok: true,
-            result: { path: message.rawSource.path, created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
-          }
-        : { ok: true, result: { sourcePath: message.sourcePath, triggered: true } },
+    sendOffscreen,
+    findWebSource: async (config, sourcePath) => {
+      const response = await sendOffscreen({ target: "offscreen", type: "web-source-exists", sourcePath, config });
+      if (!response?.ok) {
+        throw new Error(response?.error || "source lookup failed");
+      }
+      return {
+        exists: Boolean(response.result?.exists),
+        path: response.result?.path || sourcePath,
+        etag: response.result?.etag || null
+      };
+    },
     writeStatus: async () => {},
     setBadge: async () => {},
     openSettings: async () => {},

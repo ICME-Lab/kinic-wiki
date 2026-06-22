@@ -853,6 +853,125 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertIn('"password": "[REDACTED]"', pending_content)
             self.assertIn('"authorization": "[REDACTED]"', pending_content)
 
+    def test_build_codex_source_reads_transcript_and_skips_reasoning_ciphertext(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "codex.jsonl"
+            transcript.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "type": "session_meta",
+                                "payload": {"id": "codex-session", "cwd": "/repo"},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "event_msg",
+                                "payload": {
+                                    "type": "user_message",
+                                    "message": "hello token=abc123456789012345",
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "reasoning",
+                                    "encrypted_content": "ciphertext-secret",
+                                    "summary": [],
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "function_call",
+                                    "call_id": "call_1",
+                                    "name": "Bash",
+                                    "arguments": json.dumps({"command": "echo ok", "api_key": "tool-secret"}),
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response_item",
+                                "payload": {
+                                    "type": "function_call_output",
+                                    "call_id": "call_1",
+                                    "output": "authorization=Bearer output-secret-value",
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "event_msg",
+                                "payload": {"type": "agent_message", "message": "done"},
+                            }
+                        ),
+                    ]
+                )
+            )
+            hook = session.HookInput("codex-session", transcript, "/repo", "Stop")
+
+            source = session.build_codex_source(hook, now_ms=1_714_521_600_123)
+
+        expected_source_id = session.source_id_for_session(
+            "codex-session",
+            transcript,
+            "2024-05-01T00:00:00.123Z",
+        )
+        self.assertEqual(source.path, f"/Sources/raw/codex/{expected_source_id}.md")
+        self.assertEqual(source.metadata["provider"], "codex")
+        self.assertTrue(source.metadata["redacted"])
+        self.assertIn("# Raw Codex Session", source.content)
+        self.assertIn("[tool_use: Bash]", source.content)
+        self.assertIn("done", source.content)
+        self.assertNotIn("ciphertext-secret", source.content)
+        self.assertNotIn("abc123456789012345", source.content)
+        self.assertNotIn("tool-secret", source.content)
+        self.assertNotIn("output-secret-value", source.content)
+
+    def test_record_codex_session_keeps_pending_when_cli_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "codex.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "user_message",
+                            "message": "hello token=abc123456789012345",
+                        },
+                    }
+                )
+            )
+            fake_cli = root / "kinic-vfs-cli"
+            fake_cli.write_text("#!/usr/bin/env bash\nexit 3\n")
+            fake_cli.chmod(0o755)
+            hook = json.dumps(
+                {
+                    "session_id": "codex-session",
+                    "transcript_path": str(transcript),
+                    "cwd": "/repo",
+                    "hook_event_name": "Stop",
+                }
+            )
+
+            result = session.record_codex_session(hook, str(fake_cli), root / "pending", now_ms=1000)
+
+            pending = Path(result["pending_path"])
+            pending_payload = json.loads(pending.read_text())
+            self.assertFalse(result["recorded"])
+            self.assertTrue(pending.is_file())
+            self.assertEqual(pending_payload["kind"], "codex_session_source")
+            self.assertEqual(pending_payload["path"].split("/")[3], "codex")
+            self.assertNotIn("abc123456789012345", pending_payload["content"])
+
     def test_runtime_cli_repo_root_points_to_checkout_root(self) -> None:
         from kinic_agent_runtime import cli as runtime_cli
 

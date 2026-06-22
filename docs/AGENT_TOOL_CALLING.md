@@ -35,8 +35,9 @@ async fn run() -> Result<()> {
 ```
 
 The dispatcher also exposes Anthropic-format schemas through `create_anthropic_tools` and `handle_anthropic_tool_call`.
-Use `create_openai_read_only_tools` when an agent should only inspect wiki and skill content.
+Use `create_openai_read_only_tools` and `handle_openai_read_only_tool_call` when an agent should only inspect wiki and skill content.
 Write tools such as `write`, `append`, `edit`, `multi_edit`, `rm`, and `skill_record_run` require a client identity with writer access to the selected database.
+The read-only dispatcher rejects any tool name outside the read-only set even if a caller forwards an unexpected write tool call.
 
 ## Tool Names
 
