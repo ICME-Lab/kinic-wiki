@@ -51,6 +51,12 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /type: "open-settings"/);
   assert.match(contentUi, /type: "list-writable-databases"/);
   assert.match(contentUi, /type: "save-config"/);
+  assert.match(contentUi, /onClick=\{openPanel\}/);
+  assert.match(contentUi, /let configLoadPromise = Promise\.resolve\(\)/);
+  assert.match(contentUi, /configLoadPromise = loadConfig\(\)/);
+  assert.match(contentUi, /async function openPanel\(\)/);
+  assert.match(contentUi, /await refreshDatabases\(\)/);
+  assert.match(contentUi, /await configLoadPromise/);
   assert.match(contentUi, /<select value=\{config\.value\.databaseId\}/);
   assert.match(contentUi, /writeCyclesAvailable !== false/);
   assert.match(contentUi, /saveDatabase\(""\)/);
@@ -64,6 +70,7 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /providerLabel/);
   assert.doesNotMatch(contentUi, /Database ID/);
   assert.doesNotMatch(contentUi, /Kinic Memory/);
+  assert.doesNotMatch(loadConfigFunction(contentUi), /refreshDatabases/);
 });
 
 test("manifest exposes settings as options page without popup", () => {
@@ -275,4 +282,10 @@ function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSu
     archived_at_ms: [],
     deleted_at_ms: []
   };
+}
+
+function loadConfigFunction(source) {
+  const match = /async function loadConfig\(\) \{([\s\S]*?)\n\}/.exec(source);
+  assert.ok(match, "loadConfig function should exist");
+  return match[0];
 }

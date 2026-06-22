@@ -182,6 +182,51 @@ test("list-writable-databases delegates to offscreen with fixed runtime config",
   }
 });
 
+test("unauthenticated database list does not open settings", async () => {
+  const settingsTabs = [];
+  resetSettingsOpenThrottleForTest();
+  const restore = installChromeForSettings(memoryStorage(), settingsTabs);
+  setOffscreenBridgeForTest(async () => ({ ok: false, error: "UNAUTHENTICATED" }));
+  try {
+    await assert.rejects(() => handleMessage({ type: "list-writable-databases" }, null), /UNAUTHENTICATED/);
+
+    assert.deepEqual(settingsTabs, []);
+  } finally {
+    setOffscreenBridgeForTest(null);
+    resetSettingsOpenThrottleForTest();
+    restore();
+  }
+});
+
+test("auth-session-changed resets an existing offscreen auth client", async () => {
+  const calls = [];
+  const restore = installChromeForOffscreenReset(calls, true);
+  try {
+    const response = await handleMessage({ type: "auth-session-changed" }, null);
+
+    assert.deepEqual(response, { ok: true, reset: true });
+    assert.deepEqual(calls, [
+      ["contexts", "chrome-extension://id/offscreen/offscreen.html"],
+      ["message", { target: "offscreen", type: "reset-auth-client" }]
+    ]);
+  } finally {
+    restore();
+  }
+});
+
+test("auth-session-changed does not create a missing offscreen document", async () => {
+  const calls = [];
+  const restore = installChromeForOffscreenReset(calls, false);
+  try {
+    const response = await handleMessage({ type: "auth-session-changed" }, null);
+
+    assert.deepEqual(response, { ok: true, reset: false });
+    assert.deepEqual(calls, [["contexts", "chrome-extension://id/offscreen/offscreen.html"]]);
+  } finally {
+    restore();
+  }
+});
+
 test("open-settings message opens settings once", async () => {
   const settingsTabs = [];
   resetSettingsOpenThrottleForTest();
@@ -300,6 +345,26 @@ test("action click opens settings and stores status when cycles is disabled", as
   assert.deepEqual(calls, [
     ["badge", "..."],
     ["status", "error", "Database cycles are suspended."],
+    ["badge", "ERR"],
+    ["settings"]
+  ]);
+});
+
+test("action click opens settings when source save is unauthenticated", async () => {
+  const calls = [];
+  const response = await handleActionClick(
+    { url: "https://example.com/", title: "Example" },
+    actionDeps({
+      sendOffscreen: async () => ({ ok: false, error: "UNAUTHENTICATED" }),
+      openSettings: async () => calls.push(["settings"]),
+      writeStatus: async (status) => calls.push(["status", status.status, status.message]),
+      setBadge: async (text) => calls.push(["badge", text])
+    })
+  );
+  assert.equal(response.ok, false);
+  assert.deepEqual(calls, [
+    ["badge", "..."],
+    ["status", "error", "UNAUTHENTICATED"],
     ["badge", "ERR"],
     ["settings"]
   ]);
@@ -656,6 +721,32 @@ function installChromeForContextMenu(createdMenus, onOpenOptions) {
       },
       runtime: {
         openOptionsPage: onOpenOptions
+      }
+    }
+  });
+  return () => {
+    if (descriptor) Object.defineProperty(globalThis, "chrome", descriptor);
+    else delete globalThis.chrome;
+  };
+}
+
+function installChromeForOffscreenReset(calls, hasOffscreen) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+  Object.defineProperty(globalThis, "chrome", {
+    configurable: true,
+    value: {
+      runtime: {
+        getURL(path) {
+          return `chrome-extension://id/${path}`;
+        },
+        async getContexts(options) {
+          calls.push(["contexts", options.documentUrls[0]]);
+          return hasOffscreen ? [{ documentUrl: options.documentUrls[0] }] : [];
+        },
+        async sendMessage(message) {
+          calls.push(["message", message]);
+          return { ok: true, result: { reset: true } };
+        }
       }
     }
   });

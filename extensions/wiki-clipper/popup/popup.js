@@ -27,6 +27,7 @@ loginButton.addEventListener("click", async () => {
   try {
     statusText.textContent = "Opening Internet Identity...";
     await loginWithInternetIdentity();
+    await notifyAuthSessionChanged();
     await refreshAuthAndDatabases();
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message : String(error);
@@ -36,6 +37,7 @@ loginButton.addEventListener("click", async () => {
 logoutButton.addEventListener("click", async () => {
   try {
     await logoutInternetIdentity();
+    await notifyAuthSessionChanged();
     await refreshAuthAndDatabases();
     statusText.textContent = "Logged out";
   } catch (error) {
@@ -96,6 +98,14 @@ async function send(message) {
     throw new Error(response?.error || "extension request failed");
   }
   return response;
+}
+
+async function notifyAuthSessionChanged() {
+  try {
+    await send({ type: "auth-session-changed" });
+  } catch (error) {
+    console.warn("failed to notify auth session change", error);
+  }
 }
 
 async function saveDatabaseSelection(databaseId) {

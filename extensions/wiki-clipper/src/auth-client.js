@@ -26,6 +26,10 @@ export function getAuthClient() {
   return clientPromise;
 }
 
+export function resetAuthClient() {
+  clientPromise = null;
+}
+
 export async function authSnapshot() {
   const client = await getAuthClient();
   const isAuthenticated = await client.isAuthenticated();

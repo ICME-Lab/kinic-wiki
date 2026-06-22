@@ -32,6 +32,7 @@ const exportProvider = computed(() => providerFromLocation(location) || "chatgpt
 const exportProviderLabel = computed(() => providerLabel(exportProvider.value));
 const logoUrl = chrome.runtime.getURL("icons/icon-32.png");
 let resumeStarted = false;
+let configLoadPromise = Promise.resolve();
 
 ensureMounted();
 new MutationObserver(() => ensureMounted()).observe(document.documentElement, { childList: true, subtree: true });
@@ -42,7 +43,7 @@ function ensureMounted() {
   host.id = ROOT_ID;
   document.body.append(host);
   render(<App />, host.attachShadow({ mode: "open" }));
-  loadConfig();
+  configLoadPromise = loadConfig();
   resumeExport();
 }
 
@@ -50,7 +51,7 @@ function App() {
   return (
     <>
       <style>{styles}</style>
-      <button class="kinic-fab" type="button" onClick={() => (panelOpen.value = true)}>
+      <button class="kinic-fab" type="button" onClick={openPanel}>
         <img class="kinic-logo" src={logoUrl} alt="" />
         <span>Kinic Wiki Clipper</span>
       </button>
@@ -196,15 +197,20 @@ async function loadConfig() {
   try {
     const response = await send({ type: "load-config" });
     config.value = configWithDefaults(response.config);
-    await refreshDatabases();
   } catch (nextError) {
     error.value = messageForError(nextError);
   }
 }
 
+async function openPanel() {
+  panelOpen.value = true;
+  await refreshDatabases();
+}
+
 async function refreshDatabases() {
   try {
     databaseStatus.value = "loading";
+    await configLoadPromise;
     const response = await send({ type: "list-writable-databases" });
     const selectableDatabases = (response.result || []).filter((database) => database.writeCyclesAvailable !== false);
     databases.value = selectableDatabases;
@@ -216,8 +222,9 @@ async function refreshDatabases() {
     if (!databases.value.some((database) => database.databaseId === config.value.databaseId)) {
       await saveDatabase(databases.value[0].databaseId);
     }
-  } catch {
+  } catch (nextError) {
     databases.value = [];
+    error.value = messageForError(nextError);
     databaseStatus.value = "error";
   }
 }

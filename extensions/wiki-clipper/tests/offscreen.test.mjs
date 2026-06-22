@@ -3,7 +3,15 @@
 // Why: Service workers delegate II-backed writes to offscreen documents.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { authStatus, listWritableDatabases, queueUrlIngest, saveRawSource, setOffscreenDepsForTest, triggerSourceGeneration } from "../src/offscreen.js";
+import {
+  authStatus,
+  handleOffscreenMessage,
+  listWritableDatabases,
+  queueUrlIngest,
+  saveRawSource,
+  setOffscreenDepsForTest,
+  triggerSourceGeneration
+} from "../src/offscreen.js";
 
 test("queueUrlIngest writes request and triggers via wiki route", async () => {
   const calls = [];
@@ -230,6 +238,92 @@ test("saveRawSource rejects unauthenticated sessions", async () => {
   }
 });
 
+test("saveRawSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
+  const calls = [];
+  let snapshotCalls = 0;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => {
+      snapshotCalls += 1;
+      return snapshotCalls === 1
+        ? { isAuthenticated: false, identity: null, principal: null }
+        : { isAuthenticated: true, identity: { tag: "identity-2" }, principal: "principal-2" };
+    },
+    resetAuthClient: async () => calls.push(["reset"]),
+    createVfsActor: async (config) => {
+      calls.push(["create", config.identity]);
+      return {
+        ...writeCyclesActorMethods(),
+        async read_node() {
+          return { Ok: [] };
+        },
+        async mkdir_node(request) {
+          calls.push(["mkdir", request.path]);
+          return { Ok: { created: true, path: request.path } };
+        },
+        async write_source_for_generation(request) {
+          calls.push(["write", request.database_id, request.path]);
+          return {
+            Ok: {
+              write: { created: true, node: { etag: "etag-after-reset" } },
+              session_nonce: request.session_nonce
+            }
+          };
+        }
+      };
+    }
+  });
+  try {
+    const result = await saveRawSource(rawSource(), config());
+
+    assert.equal(result.principal, "principal-2");
+    assert.equal(result.etag, "etag-after-reset");
+    assert.deepEqual(calls[0], ["reset"]);
+    assert.deepEqual(calls[1], ["create", { tag: "identity-2" }]);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("listWritableDatabases reloads auth client once before listing databases", async () => {
+  let snapshotCalls = 0;
+  let resetCount = 0;
+  setOffscreenDepsForTest({
+    authSnapshot: async () => {
+      snapshotCalls += 1;
+      return snapshotCalls === 1
+        ? { isAuthenticated: false, identity: null, principal: null }
+        : { isAuthenticated: true, identity: { tag: "identity-2" }, principal: "principal-2" };
+    },
+    resetAuthClient: async () => {
+      resetCount += 1;
+    },
+    createVfsActor: async () => ({
+      async list_databases() {
+        return { Ok: [rawDatabase("team-db", "Team DB", "Writer", "Active")] };
+      },
+      async get_cycles_billing_config() {
+        return {
+          Ok: {
+            kinic_ledger_canister_id: "ryjl3-tyaaa-aaaaa-aaaba-cai",
+            billing_authority_id: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+            cycles_per_kinic: 1n,
+            min_update_cycles: 10_000n
+          }
+        };
+      }
+    })
+  });
+  try {
+    const result = await listWritableDatabases(config());
+
+    assert.equal(resetCount, 1);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].databaseId, "team-db");
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
 test("queueUrlIngest rejects low cycle balance before writing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
@@ -257,6 +351,38 @@ test("queueUrlIngest rejects low cycle balance before writing", async () => {
     );
 
     assert.deepEqual(calls, []);
+  } finally {
+    setOffscreenDepsForTest();
+  }
+});
+
+test("reset-auth-client message clears cached trigger sessions", async () => {
+  const sessionNonces = [];
+  setOffscreenDepsForTest({
+    authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
+    createVfsActor: async () => ({
+      ...writeCyclesActorMethods(),
+      async authorize_url_ingest_trigger_session(request) {
+        sessionNonces.push(request.session_nonce);
+        return { Ok: null };
+      },
+      async mkdir_node(request) {
+        return { Ok: { created: true, path: request.path } };
+      },
+      async write_node() {
+        return { Ok: { created: true, node: { etag: "etag-request" } } };
+      }
+    }),
+    fetch: async () => Response.json({ accepted: true })
+  });
+  try {
+    await queueUrlIngest({ url: "https://example.com/a", title: "A" }, config());
+    await queueUrlIngest({ url: "https://example.com/b", title: "B" }, config());
+    await handleOffscreenMessage({ target: "offscreen", type: "reset-auth-client" });
+    await queueUrlIngest({ url: "https://example.com/c", title: "C" }, config());
+
+    assert.equal(sessionNonces.length, 2);
+    assert.notEqual(sessionNonces[0], sessionNonces[1]);
   } finally {
     setOffscreenDepsForTest();
   }
