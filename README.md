@@ -98,6 +98,7 @@ The Chrome extension connects browser work to Kinic Wiki. It can save recent Cha
 Developer and operator guides:
 
 - CLI setup and database operations: [docs/CLI.md](docs/CLI.md)
+- OKF Context Pack export and verification: [docs/Context Pack.md](docs/Context%20Pack.md)
 - Skill Registry workflows: [docs/SKILL_REGISTRY.md](docs/SKILL_REGISTRY.md)
 - Canister Agent Memory API: [docs/AGENT_MEMORY_API.md](docs/AGENT_MEMORY_API.md)
 - Shared Rust library tool calling: [docs/AGENT_TOOL_CALLING.md](docs/AGENT_TOOL_CALLING.md)
