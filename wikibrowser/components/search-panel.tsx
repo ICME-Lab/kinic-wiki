@@ -50,7 +50,8 @@ export function SearchPanel({
   const urlQuery = query.trim();
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const urlSearchKey = `${searchRequestKey(canisterId, databaseId, initialKind, urlQuery, readPrincipal)}\n${searchOptions.prefix}\n${searchOptions.limit}\n${searchOptions.preview}`;
-  const [customPrefixDraft, setCustomPrefixDraft] = useState(searchOptions.scope === "custom" ? searchOptions.prefix : "");
+  const customPrefixSeed = searchOptions.scope === "custom" ? searchOptions.prefix : "";
+  const [customPrefixDraftState, setCustomPrefixDraftState] = useState({ seed: customPrefixSeed, value: customPrefixSeed });
   const [searchState, setSearchState] = useState<SearchState>({
     key: null,
     results: [],
@@ -64,10 +65,10 @@ export function SearchPanel({
   const error = isCurrentSearchState ? searchState.error : null;
   const loading = (isCurrentSearchState && searchState.loading) || (Boolean(urlQuery) && !isCurrentSearchState);
   const hasSearched = isCurrentSearchState ? searchState.hasSearched : Boolean(urlQuery);
-
-  useEffect(() => {
-    setCustomPrefixDraft(searchOptions.scope === "custom" ? searchOptions.prefix : "");
-  }, [searchOptions.prefix, searchOptions.scope]);
+  const customPrefixDraft = customPrefixDraftState.seed === customPrefixSeed ? customPrefixDraftState.value : customPrefixSeed;
+  const setCustomPrefixDraft = useCallback((value: string) => {
+    setCustomPrefixDraftState({ seed: customPrefixSeed, value });
+  }, [customPrefixSeed]);
 
   const startSearch = useCallback((searchText: string, searchKind: SearchKind, requestKey: string, syncState: boolean) => {
     lastRequestedKey.current = requestKey;

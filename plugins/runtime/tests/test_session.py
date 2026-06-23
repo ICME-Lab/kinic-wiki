@@ -928,6 +928,7 @@ class SessionCaptureTests(unittest.TestCase):
         self.assertEqual(source.metadata["provider"], "codex")
         self.assertTrue(source.metadata["redacted"])
         self.assertIn("# Raw Codex Session", source.content)
+        self.assertIn('- provider: "codex"', source.content)
         self.assertIn("[tool_use: Bash]", source.content)
         self.assertIn("done", source.content)
         self.assertNotIn("ciphertext-secret", source.content)

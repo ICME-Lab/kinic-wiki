@@ -314,7 +314,7 @@ def render_source_content(metadata: dict[str, Any], transcript: str) -> str:
         "",
         "## Metadata",
         "",
-        f"- provider: {json.dumps(PROVIDER)}",
+        f"- provider: {json.dumps(metadata['provider'])}",
         f"- session_id: {json.dumps(metadata['session_id'])}",
         f"- cwd: {json.dumps(metadata['cwd'])}",
         f"- ended_reason: {json.dumps(metadata['ended_reason'])}",

@@ -118,6 +118,16 @@ struct OkfConcept {
     body: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct OkfBuildMetadata<'a> {
+    database_id: &'a str,
+    root: &'a str,
+    generated_at: &'a str,
+    expires_at: &'a str,
+    trust_level: &'a str,
+    approved_by: &'a [String],
+}
+
 #[derive(Debug, Clone)]
 struct BucketedNode {
     node: Node,
@@ -219,16 +229,15 @@ async fn export_okf_bundle(
     let wiki_nodes = collect_wiki_nodes(client, database_id, &root).await?;
     let source_paths = collect_source_refs(&wiki_nodes);
     let source_nodes = collect_sources(client, database_id, &source_paths).await?;
-    let concepts = build_okf_concepts(
+    let metadata = OkfBuildMetadata {
         database_id,
-        &root,
-        &generated_at,
-        &options.expires_at,
-        &options.trust_level,
-        &options.approved_by,
-        &wiki_nodes,
-        &source_nodes,
-    );
+        root: &root,
+        generated_at: &generated_at,
+        expires_at: &options.expires_at,
+        trust_level: &options.trust_level,
+        approved_by: &options.approved_by,
+    };
+    let concepts = build_okf_concepts(metadata, &wiki_nodes, &source_nodes);
 
     write_okf_bundle(&options.out, &root, &generated_at, &concepts)?;
 
@@ -263,32 +272,30 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
             }
         };
         concept_count += 1;
-        if frontmatter.concept_type == "Reference" || path_has_component(relative, "references") {
+        let is_reference =
+            frontmatter.concept_type == "Reference" || path_has_component(relative, "references");
+        if is_reference {
             reference_count += 1;
         }
         if frontmatter.concept_type.trim().is_empty() {
             errors.push(format!("{}: type is required", relative.display()));
         }
         if let Some(kinic) = &frontmatter.kinic {
-            if frontmatter.concept_type != "Reference"
-                && !path_has_component(relative, "references")
-            {
-                if let Some(expected_hash) = &kinic.content_hash {
-                    match okf_body_text(&file) {
-                        Ok(body) => {
-                            let actual_hash = sha256_hex(body.as_bytes());
-                            if expected_hash != &actual_hash {
-                                errors.push(format!(
-                                    "{}: kinic.content_hash mismatch",
-                                    relative.display()
-                                ));
-                            }
+            if !is_reference && let Some(expected_hash) = &kinic.content_hash {
+                match okf_body_text(&file) {
+                    Ok(body) => {
+                        let actual_hash = sha256_hex(body.as_bytes());
+                        if expected_hash != &actual_hash {
+                            errors.push(format!(
+                                "{}: kinic.content_hash mismatch",
+                                relative.display()
+                            ));
                         }
-                        Err(error) => errors.push(format!(
-                            "{}: failed to verify kinic.content_hash: {error}",
-                            relative.display()
-                        )),
                     }
+                    Err(error) => errors.push(format!(
+                        "{}: failed to verify kinic.content_hash: {error}",
+                        relative.display()
+                    )),
                 }
             }
             if let Some(expires_at) = &kinic.expires_at {
@@ -304,7 +311,7 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
                     )),
                 }
             }
-            if path_has_component(relative, "references") {
+            if is_reference {
                 match &kinic.source_path {
                     Some(source_path) if path_under_prefix(source_path, RAW_SOURCES_PREFIX) => {}
                     Some(source_path) => errors.push(format!(
@@ -317,6 +324,11 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
                     )),
                 }
             }
+        } else if is_reference {
+            errors.push(format!(
+                "{}: reference concept requires kinic.source_path",
+                relative.display()
+            ));
         }
     }
 
@@ -357,10 +369,10 @@ pub fn inspect_okf_bundle_dir(path: &Path) -> Result<OkfInspectResult> {
             if let Some(root) = kinic.root {
                 roots.insert(root);
             }
-            if let Some(expires_at) = kinic.expires_at {
-                if parse_timestamp(&expires_at).is_ok_and(|value| value <= now) {
-                    expired_concept_count += 1;
-                }
+            if let Some(expires_at) = kinic.expires_at
+                && parse_timestamp(&expires_at).is_ok_and(|value| value <= now)
+            {
+                expired_concept_count += 1;
             }
         }
     }
@@ -396,10 +408,10 @@ async fn collect_wiki_nodes(
         .filter(|entry| matches!(entry.kind, NodeEntryKind::File | NodeEntryKind::Source))
         .map(|entry| entry.path)
         .collect::<BTreeSet<_>>();
-    if let Some(root_node) = client.read_node(database_id, root).await? {
-        if matches!(root_node.kind, NodeKind::File | NodeKind::Source) {
-            paths.insert(root_node.path);
-        }
+    if let Some(root_node) = client.read_node(database_id, root).await?
+        && matches!(root_node.kind, NodeKind::File | NodeKind::Source)
+    {
+        paths.insert(root_node.path);
     }
 
     let mut nodes = Vec::new();
@@ -438,12 +450,7 @@ async fn collect_sources(
 }
 
 fn build_okf_concepts(
-    database_id: &str,
-    root: &str,
-    generated_at: &str,
-    expires_at: &str,
-    trust_level: &str,
-    approved_by: &[String],
+    metadata: OkfBuildMetadata<'_>,
     wiki_nodes: &[BucketedNode],
     source_nodes: &[Node],
 ) -> Vec<OkfConcept> {
@@ -459,18 +466,18 @@ fn build_okf_concepts(
                 concept_type: item.bucket.concept_type().to_string(),
                 title: Some(title_from_path(&item.node.path)),
                 description: Some(format!("Generated from Kinic Wiki node {}", item.node.path)),
-                resource: Some(kinic_resource(database_id, &item.node.path)),
+                resource: Some(kinic_resource(metadata.database_id, &item.node.path)),
                 tags: vec!["kinic".to_string(), item.bucket.directory().to_string()],
-                timestamp: Some(generated_at.to_string()),
+                timestamp: Some(metadata.generated_at.to_string()),
                 kinic: Some(KinicFrontmatter {
-                    database_id: Some(database_id.to_string()),
-                    root: Some(root.to_string()),
+                    database_id: Some(metadata.database_id.to_string()),
+                    root: Some(metadata.root.to_string()),
                     source_path: None,
                     etag: Some(item.node.etag.clone()),
                     content_hash: Some(sha256_hex(body.as_bytes())),
-                    trust_level: Some(trust_level.to_string()),
-                    approved_by: approved_by.to_vec(),
-                    expires_at: Some(expires_at.to_string()),
+                    trust_level: Some(metadata.trust_level.to_string()),
+                    approved_by: metadata.approved_by.to_vec(),
+                    expires_at: Some(metadata.expires_at.to_string()),
                 }),
             },
             body,
@@ -486,18 +493,18 @@ fn build_okf_concepts(
                 concept_type: "Reference".to_string(),
                 title: Some(title_from_path(&source.path)),
                 description: Some(format!("Kinic raw source reference for {}", source.path)),
-                resource: Some(kinic_resource(database_id, &source.path)),
+                resource: Some(kinic_resource(metadata.database_id, &source.path)),
                 tags: vec!["kinic".to_string(), "reference".to_string()],
-                timestamp: Some(generated_at.to_string()),
+                timestamp: Some(metadata.generated_at.to_string()),
                 kinic: Some(KinicFrontmatter {
-                    database_id: Some(database_id.to_string()),
-                    root: Some(root.to_string()),
+                    database_id: Some(metadata.database_id.to_string()),
+                    root: Some(metadata.root.to_string()),
                     source_path: Some(source.path.clone()),
                     etag: Some(source.etag.clone()),
                     content_hash: Some(sha256_hex(source.content.as_bytes())),
-                    trust_level: Some(trust_level.to_string()),
-                    approved_by: approved_by.to_vec(),
-                    expires_at: Some(expires_at.to_string()),
+                    trust_level: Some(metadata.trust_level.to_string()),
+                    approved_by: metadata.approved_by.to_vec(),
+                    expires_at: Some(metadata.expires_at.to_string()),
                 }),
             },
             body: reference_body(source),
@@ -1091,6 +1098,40 @@ mod tests {
                 .errors
                 .iter()
                 .any(|error| error.contains("kinic.expires_at"))
+        );
+    }
+
+    #[test]
+    fn verify_rejects_reference_without_kinic_source_path() {
+        let dir = tempdir().expect("tempdir");
+        fs::create_dir_all(dir.path().join("references")).expect("refs");
+        fs::write(
+            dir.path().join("references/missing-kinic.md"),
+            "---\ntype: Reference\n---\n\n# Reference\n",
+        )
+        .expect("write missing kinic");
+        fs::write(
+            dir.path().join("reference-no-source-path.md"),
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n---\n\n# Reference\n",
+        )
+        .expect("write missing source path");
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert_eq!(result.reference_count, 2);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("missing-kinic.md")
+                    && error.contains("kinic.source_path"))
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("reference-no-source-path.md")
+                    && error.contains("kinic.source_path"))
         );
     }
 

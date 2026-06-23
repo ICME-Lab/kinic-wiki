@@ -79,7 +79,7 @@ test("manifest exposes settings as options page without popup", () => {
   assert.equal(manifest.action.default_popup, undefined);
   assert.ok(manifest.permissions.includes("contextMenus"));
   assert.ok(manifest.permissions.includes("scripting"));
-  assert.ok(manifest.permissions.includes("tabs"));
+  assert.equal(manifest.permissions.includes("tabs"), false);
   assert.ok(manifest.host_permissions.includes("https://wiki.kinic.xyz/*"));
   assert.ok(manifest.host_permissions.includes("https://claude.ai/*"));
   assert.equal(manifest.host_permissions.includes("https://*.icp0.io/*"), false);
