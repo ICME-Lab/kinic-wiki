@@ -4,6 +4,8 @@ Why: SessionEnd hooks must retain evidence without leaking obvious secrets.
 """
 
 import json
+import os
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -111,6 +113,54 @@ class SessionCaptureTests(unittest.TestCase):
                 self.assertTrue(changed)
                 self.assertEqual(redacted[key], session.REDACTED)
 
+    def test_build_source_redacts_common_raw_secret_shapes(self) -> None:
+        # GitHub push protection rejects committed Slack token-shaped fixtures.
+        # Keep coverage by assembling the exact raw shape only at test runtime.
+        slack_token = "".join(
+            [
+                "xo",
+                "xb",
+                "-",
+                "123456789012",
+                "-",
+                "123456789012",
+                "-",
+                "abcdefghijklmnopqrstuv",
+            ]
+        )
+        secrets = [
+            "AKIAIOSFODNN7EXAMPLE",
+            "ASIAIOSFODNN7EXAMPLE",
+            "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+            "github_pat_abcdefghijklmnopqrstuvwxyz_1234567890",
+            slack_token,
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nopenssh-private\n-----END OPENSSH PRIVATE KEY-----",
+            "-----BEGIN PRIVATE KEY-----\npem-private\n-----END PRIVATE KEY-----",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": "\n".join(secrets),
+                        },
+                    }
+                )
+            )
+            hook = session.HookInput("session-raw-secrets", transcript, "/repo", "exit")
+
+            source = session.build_source(hook)
+
+        self.assertTrue(source.metadata["redacted"])
+        for leaked in secrets:
+            self.assertNotIn(leaked, source.content)
+        self.assertNotIn("openssh-private", source.content)
+        self.assertNotIn("pem-private", source.content)
+        self.assertIn(session.REDACTED, source.content)
+
     def test_redacts_dot_separated_api_key_in_raw_text(self) -> None:
         redacted_text, changed = session.redact('api.key=short-secret\n{"api.key": "json-secret"}')
 
@@ -191,6 +241,28 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertNotIn(leaked, pending_payload)
         self.assertIn('"access_token": "[REDACTED]"', source.content)
         self.assertIn('"client_secret": "[REDACTED]"', source.content)
+
+    def test_save_pending_uses_owner_only_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pending_dir = Path(tmp) / "pending"
+            pending_dir.mkdir(mode=0o755)
+            pending_dir.chmod(0o755)
+            source = session.SourcePayload(
+                "/Sources/raw/claudecode/session.md",
+                "# Session\n",
+                {"provider": "claude-code"},
+            )
+            old_umask = os.umask(0o022)
+            try:
+                pending = session.save_pending(pending_dir, source, now_ms=1)
+            finally:
+                os.umask(old_umask)
+            payload = json.loads(pending.read_text())
+
+            self.assertEqual(stat.S_IMODE(pending_dir.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(pending.stat().st_mode), 0o600)
+            self.assertEqual(payload["path"], "/Sources/raw/claudecode/session.md")
+            self.assertEqual(payload["content"], "# Session\n")
 
     def test_build_source_redacts_hook_metadata_before_saving(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -736,6 +808,73 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertTrue(result["recorded"])
             self.assertEqual(paths[0], expected_current)
             self.assertEqual(paths[1], "/Sources/raw/claudecode/old.md")
+            self.assertFalse(old_pending.exists())
+
+    def test_record_session_reports_success_when_current_pending_cleanup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            old_pending = pending_dir / "1-old.json"
+            old_pending.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/raw/claudecode/old.md",
+                        "content": "# Old\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            transcript = root / "session.jsonl"
+            transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}))
+            current_source_id = session.source_id_for_session(
+                "session-current",
+                transcript,
+                "1970-01-01T00:00:01.000Z",
+            )
+            current_pending = pending_dir / f"1000-{current_source_id}.json"
+            current_recorded = pending_dir / f"{current_pending.name}.recorded"
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.jsonl"
+            fake_cli.write_text(
+                "#!/usr/bin/env bash\n"
+                "python3 - \"$@\" <<'PY'\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                "path = args[args.index('--path') + 1]\n"
+                f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
+                "PY\n"
+            )
+            fake_cli.chmod(0o755)
+            hook = json.dumps(
+                {"session_id": "session-current", "transcript_path": str(transcript), "cwd": "/repo", "reason": "exit"}
+            )
+            original_unlink = Path.unlink
+
+            def unlink_with_current_failure(path: Path, *args: object, **kwargs: object) -> None:
+                if path == current_pending:
+                    raise OSError("current pending cleanup failed")
+                original_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", unlink_with_current_failure):
+                result = session.record_session(hook, str(fake_cli), pending_dir, now_ms=1000)
+
+            paths = [json.loads(line) for line in calls.read_text().splitlines()]
+
+            self.assertTrue(result["recorded"])
+            self.assertIn("current pending cleanup failed", result["cleanup_error"])
+            self.assertEqual(result["flushed_pending"], 1)
+            self.assertEqual(result["failed_pending"], 0)
+            self.assertEqual(result["invalid_pending"], 0)
+            self.assertEqual(
+                paths,
+                [
+                    f"/Sources/raw/claudecode/{current_source_id}.md",
+                    "/Sources/raw/claudecode/old.md",
+                ],
+            )
+            self.assertFalse(current_pending.exists())
+            self.assertTrue(current_recorded.is_file())
             self.assertFalse(old_pending.exists())
 
     def test_record_session_skips_old_pending_flush_when_current_write_fails(self) -> None:

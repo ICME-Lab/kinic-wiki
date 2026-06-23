@@ -123,7 +123,8 @@ Use `query_database_sql_json` when a caller needs direct structured inspection o
 The method uses the same read access as `read_node`: database members, marketplace-entitled readers, and anonymous callers for public-readable DBs can query the DB they can already read.
 The browser Query panel `sql:` action and CLI `query-sql` command both call this same database-scoped API.
 
-The method only runs against the specified wiki DB. It cannot read the canister index DB, controller metrics tables, session tables, marketplace orders, or billing tables.
+The method only runs against the specified wiki DB. Reader, public reader, and marketplace-entitled callers can only issue the restricted JSON `SELECT` below against `fs_nodes` or `fs_links`.
+It cannot read the canister index DB, controller metrics tables, session tables, marketplace orders, billing tables, migration tables, change-log tables, path-state tables, or other internal tables.
 
 SQL constraints:
 
@@ -161,7 +162,7 @@ The response shape is:
 `wiki_metrics` and `wiki_metrics_series(days)` are unauthenticated public aggregate telemetry APIs.
 They expose user and database counts, paid user totals, charged KINIC totals in e8s, and `last_activity_at_ms`.
 `wiki_metrics_series(days)` clamps `days` to `1..7`; `0` returns one point and values above `7` return seven points.
-Controller-only operational SQL remains separate in `query_index_sql_json`.
+Controller-only operational SQL remains separate in `query_index_sql_json`; database readers cannot call that index DB API.
 
 ## v1 Limits
 

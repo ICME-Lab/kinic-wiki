@@ -228,6 +228,20 @@ test("auth-session-changed does not create a missing offscreen document", async 
   }
 });
 
+test("auth-session-changed fails when existing offscreen auth reset fails", async () => {
+  const calls = [];
+  const restore = installChromeForOffscreenReset(calls, true, { ok: false, error: "auth reset failed" });
+  try {
+    await assert.rejects(() => handleMessage({ type: "auth-session-changed" }, null), /auth reset failed/);
+    assert.deepEqual(calls, [
+      ["contexts", "chrome-extension://id/offscreen/offscreen.html"],
+      ["message", { target: "offscreen", type: "reset-auth-client" }]
+    ]);
+  } finally {
+    restore();
+  }
+});
+
 test("open-settings message opens settings once", async () => {
   const settingsTabs = [];
   resetSettingsOpenThrottleForTest();
@@ -953,7 +967,7 @@ function installChromeForContextMenu(createdMenus, onOpenOptions) {
   };
 }
 
-function installChromeForOffscreenReset(calls, hasOffscreen) {
+function installChromeForOffscreenReset(calls, hasOffscreen, resetResponse = { ok: true, result: { reset: true } }) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
@@ -968,7 +982,7 @@ function installChromeForOffscreenReset(calls, hasOffscreen) {
         },
         async sendMessage(message) {
           calls.push(["message", message]);
-          return { ok: true, result: { reset: true } };
+          return resetResponse;
         }
       }
     }

@@ -7,6 +7,8 @@ pub(crate) use rusqlite::{
     Connection, Error, OpenFlags, OptionalExtension, Params, Result, Row, Statement, Transaction,
     params, params_from_iter,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::ffi::c_int;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod types {
@@ -46,20 +48,33 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn query_map_limit<T, P, F>(
+pub(crate) enum QueryTryMapError<E> {
+    Sqlite(Error),
+    Validation(E),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<E> From<Error> for QueryTryMapError<E> {
+    fn from(error: Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn query_try_map_limit<T, P, F, E>(
     statement: &mut Statement<'_>,
     params: P,
     limit: usize,
     mut f: F,
-) -> Result<Vec<T>>
+) -> std::result::Result<Vec<T>, QueryTryMapError<E>>
 where
     P: Params,
-    F: FnMut(&Row<'_>) -> Result<T>,
+    F: FnMut(&Row<'_>) -> std::result::Result<T, QueryTryMapError<E>>,
 {
-    let mut rows = statement.query(params)?;
+    let mut rows = statement.query(params).map_err(QueryTryMapError::Sqlite)?;
     let mut output = Vec::new();
     while output.len() < limit {
-        let Some(row) = rows.next()? else {
+        let Some(row) = rows.next().map_err(QueryTryMapError::Sqlite)? else {
             break;
         };
         output.push(f(row)?);
@@ -119,6 +134,55 @@ pub(crate) fn execute_values(
     conn.execute_values(sql, values)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) struct ProgressHandlerGuard<'connection> {
+    conn: &'connection Connection,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'connection> ProgressHandlerGuard<'connection> {
+    pub(crate) fn new(
+        conn: &'connection Connection,
+        op_interval: c_int,
+        callback_budget: u32,
+    ) -> Self {
+        let mut callbacks = 0_u32;
+        conn.progress_handler(
+            op_interval,
+            Some(move || {
+                callbacks = callbacks.saturating_add(1);
+                callbacks > callback_budget
+            }),
+        );
+        Self { conn }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for ProgressHandlerGuard<'_> {
+    fn drop(&mut self) {
+        self.conn.progress_handler(0, None::<fn() -> bool>);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn install_progress_handler(
+    conn: &Connection,
+    op_interval: c_int,
+    callback_budget: u32,
+) -> ProgressHandlerGuard<'_> {
+    ProgressHandlerGuard::new(conn, op_interval, callback_budget)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn is_interrupted(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::SqliteFailure(sqlite_error, _)
+            if sqlite_error.code == rusqlite::ErrorCode::OperationInterrupted
+    )
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::db::connection::Connection;
 #[cfg(target_arch = "wasm32")]
@@ -128,10 +192,27 @@ pub(crate) use ic_sqlite_vfs::db::transaction::UpdateConnection as Transaction;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::db::{FromColumn, Row, ToSql};
 #[cfg(target_arch = "wasm32")]
+use ic_sqlite_vfs::sqlite_vfs::ffi;
+#[cfg(target_arch = "wasm32")]
 pub(crate) use ic_sqlite_vfs::{DbError as Error, params};
+#[cfg(target_arch = "wasm32")]
+use std::ffi::{c_int, c_void};
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) enum QueryTryMapError<E> {
+    Sqlite(Error),
+    Validation(E),
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<E> From<Error> for QueryTryMapError<E> {
+    fn from(error: Error) -> Self {
+        Self::Sqlite(error)
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) trait OptionalExtension<T> {
@@ -313,20 +394,22 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn query_map_limit<T, P, F>(
+pub(crate) fn query_try_map_limit<T, P, F, E>(
     statement: &mut Statement<'_>,
     params: P,
     limit: usize,
     mut f: F,
-) -> Result<Vec<T>>
+) -> std::result::Result<Vec<T>, QueryTryMapError<E>>
 where
     P: Params,
-    F: FnMut(&Row<'_>) -> Result<T>,
+    F: FnMut(&Row<'_>) -> std::result::Result<T, QueryTryMapError<E>>,
 {
-    let mut rows = statement.query(params.as_params())?;
+    let mut rows = statement
+        .query(params.as_params())
+        .map_err(QueryTryMapError::Sqlite)?;
     let mut output = Vec::new();
     while output.len() < limit {
-        let Some(row) = rows.next_row()? else {
+        let Some(row) = rows.next_row().map_err(QueryTryMapError::Sqlite)? else {
             break;
         };
         output.push(f(&row)?);
@@ -388,6 +471,76 @@ pub(crate) fn execute_values(
     values: &[types::Value],
 ) -> Result<()> {
     conn.execute_values(sql, values)
+}
+
+#[cfg(target_arch = "wasm32")]
+struct ProgressHandlerState {
+    callbacks: u32,
+    callback_budget: u32,
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct ProgressHandlerGuard<'connection> {
+    raw: *mut ffi::sqlite3,
+    _conn: &'connection Connection,
+    _state: Box<ProgressHandlerState>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<'connection> ProgressHandlerGuard<'connection> {
+    pub(crate) fn new(
+        conn: &'connection Connection,
+        op_interval: c_int,
+        callback_budget: u32,
+    ) -> Self {
+        unsafe extern "C" fn progress_callback(state: *mut c_void) -> c_int {
+            let state = unsafe { &mut *(state.cast::<ProgressHandlerState>()) };
+            state.callbacks = state.callbacks.saturating_add(1);
+            c_int::from(state.callbacks > state.callback_budget)
+        }
+
+        let raw = conn.raw();
+        let mut state = Box::new(ProgressHandlerState {
+            callbacks: 0,
+            callback_budget,
+        });
+        unsafe {
+            ffi::sqlite3_progress_handler(
+                raw,
+                op_interval,
+                Some(progress_callback),
+                state.as_mut() as *mut ProgressHandlerState as *mut c_void,
+            );
+        }
+        Self {
+            raw,
+            _conn: conn,
+            _state: state,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for ProgressHandlerGuard<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            ffi::sqlite3_progress_handler(self.raw, 0, None, std::ptr::null_mut());
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn install_progress_handler(
+    conn: &Connection,
+    op_interval: c_int,
+    callback_budget: u32,
+) -> ProgressHandlerGuard<'_> {
+    ProgressHandlerGuard::new(conn, op_interval, callback_budget)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn is_interrupted(error: &Error) -> bool {
+    matches!(error, Error::Sqlite(code, _) if *code == ffi::SQLITE_INTERRUPT)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
