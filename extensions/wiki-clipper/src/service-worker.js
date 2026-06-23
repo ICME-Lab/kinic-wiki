@@ -99,6 +99,9 @@ export async function handleMessage(message, sender) {
   if (message?.type === "list-writable-databases") {
     return { ok: true, result: await listWritableDatabases() };
   }
+  if (message?.type === "auth-session-changed") {
+    return { ok: true, reset: await resetExistingOffscreenAuthState() };
+  }
   if (message?.type === "open-settings") {
     await openSettingsOnce();
     return { ok: true };
@@ -301,12 +304,24 @@ async function listWritableDatabases() {
     config: withFixedRuntimeConfig(await loadConfig())
   });
   if (!response?.ok) {
-    if (response?.error === "UNAUTHENTICATED") {
-      await openSettingsOnce();
-    }
     throw new Error(response?.error || "database list failed");
   }
   return response.result || [];
+}
+
+async function resetExistingOffscreenAuthState() {
+  if (!globalThis.chrome?.runtime?.getContexts) return false;
+  const url = chrome.runtime.getURL("offscreen/offscreen.html");
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [url]
+  });
+  if (contexts.length === 0) return false;
+  const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "reset-auth-client" });
+  if (!response?.ok) {
+    throw new Error(response?.error || "auth reset failed");
+  }
+  return true;
 }
 
 async function readSessionValue(key) {

@@ -12,7 +12,7 @@ import {
 } from "./current-tab-export.js";
 import { DEFAULT_EXPORT_LIMIT, normalizeExportLimit } from "./history-links.js";
 import { DEFAULT_CANISTER_ID, DEFAULT_IC_HOST } from "./url-ingest-request.js";
-import { databaseOptionLabel } from "../popup/popup-state.js";
+import { databaseOptionLabel, isSelectedWritableDatabase } from "../popup/popup-state.js";
 
 const ROOT_ID = "kinic-wiki-clipper-root";
 const DEFAULT_DATABASE_ID = "";
@@ -26,12 +26,22 @@ const phase = signal("idle");
 const progress = signal({ total: 0, done: 0, ok: 0, failed: 0 });
 const databases = signal([]);
 const databaseStatus = signal("loading");
+const exportStartInFlight = signal(false);
 const hasDatabaseConfig = computed(() => config.value.databaseId.trim().length > 0);
-const canExport = computed(() => status.value !== "exporting" && hasDatabaseConfig.value);
+const selectedWritableDatabase = computed(() =>
+  isSelectedWritableDatabase({
+    databaseStatus: databaseStatus.value,
+    databaseId: config.value.databaseId,
+    databases: databases.value
+  })
+);
+const exportLocked = computed(() => exportStartInFlight.value || status.value === "exporting");
+const canExport = computed(() => !exportLocked.value && selectedWritableDatabase.value);
 const exportProvider = computed(() => providerFromLocation(location) || "chatgpt");
 const exportProviderLabel = computed(() => providerLabel(exportProvider.value));
 const logoUrl = chrome.runtime.getURL("icons/icon-32.png");
 let resumeStarted = false;
+let configLoadPromise = Promise.resolve();
 
 ensureMounted();
 new MutationObserver(() => ensureMounted()).observe(document.documentElement, { childList: true, subtree: true });
@@ -42,7 +52,7 @@ function ensureMounted() {
   host.id = ROOT_ID;
   document.body.append(host);
   render(<App />, host.attachShadow({ mode: "open" }));
-  loadConfig();
+  configLoadPromise = loadConfig();
   resumeExport();
 }
 
@@ -50,7 +60,7 @@ function App() {
   return (
     <>
       <style>{styles}</style>
-      <button class="kinic-fab" type="button" onClick={() => (panelOpen.value = true)}>
+      <button class="kinic-fab" type="button" onClick={openPanel}>
         <img class="kinic-logo" src={logoUrl} alt="" />
         <span>Kinic Wiki Clipper</span>
       </button>
@@ -79,7 +89,7 @@ function Modal() {
         <div class="export-block">
           <label class="database-field">
             <span>Database</span>
-            <select value={config.value.databaseId} disabled={status.value === "exporting" || databases.value.length === 0} onChange={selectDatabase}>
+            <select value={config.value.databaseId} disabled={exportLocked.value || databaseStatus.value !== "ready"} onChange={selectDatabase}>
               {databaseOptions()}
             </select>
           </label>
@@ -152,11 +162,20 @@ function LogItem({ log }) {
 }
 
 async function startExport() {
+  if (exportLocked.value) return;
+  exportStartInFlight.value = true;
   error.value = "";
   logs.value = [];
   try {
     const nextConfig = normalizedConfig();
-    if (!nextConfig.databaseId) {
+    const requestedDatabaseId = nextConfig.databaseId;
+    await refreshDatabases({ repairSelection: false });
+    const requestedWritableDatabase = isSelectedWritableDatabase({
+      databaseStatus: databaseStatus.value,
+      databaseId: requestedDatabaseId,
+      databases: databases.value
+    });
+    if (!requestedDatabaseId || !requestedWritableDatabase) {
       error.value = "Select a writable database in settings.";
       status.value = "idle";
       await openSettings();
@@ -181,6 +200,8 @@ async function startExport() {
   } catch (nextError) {
     error.value = messageForError(nextError);
     status.value = "error";
+  } finally {
+    exportStartInFlight.value = false;
   }
 }
 
@@ -196,19 +217,25 @@ async function loadConfig() {
   try {
     const response = await send({ type: "load-config" });
     config.value = configWithDefaults(response.config);
-    await refreshDatabases();
   } catch (nextError) {
     error.value = messageForError(nextError);
   }
 }
 
-async function refreshDatabases() {
+async function openPanel() {
+  panelOpen.value = true;
+  await refreshDatabases();
+}
+
+async function refreshDatabases({ repairSelection = true } = {}) {
   try {
     databaseStatus.value = "loading";
+    await configLoadPromise;
     const response = await send({ type: "list-writable-databases" });
     const selectableDatabases = (response.result || []).filter((database) => database.writeCyclesAvailable !== false);
     databases.value = selectableDatabases;
     databaseStatus.value = databases.value.length > 0 ? "ready" : "empty";
+    if (!repairSelection) return;
     if (databases.value.length === 0) {
       if (config.value.databaseId) await saveDatabase("");
       return;
@@ -216,8 +243,9 @@ async function refreshDatabases() {
     if (!databases.value.some((database) => database.databaseId === config.value.databaseId)) {
       await saveDatabase(databases.value[0].databaseId);
     }
-  } catch {
+  } catch (nextError) {
     databases.value = [];
+    error.value = messageForError(nextError);
     databaseStatus.value = "error";
   }
 }

@@ -9,6 +9,7 @@ import { createDatabaseWithActor, normalizeWritableDatabases } from "../src/vfs-
 import {
   DEFAULT_DATABASE_NAME,
   databaseOptionLabel,
+  isSelectedWritableDatabase,
   mergePreferredDatabase,
   shouldShowCreateDatabaseForm,
   validateCreateDatabaseName
@@ -51,9 +52,29 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /type: "open-settings"/);
   assert.match(contentUi, /type: "list-writable-databases"/);
   assert.match(contentUi, /type: "save-config"/);
+  assert.match(contentUi, /onClick=\{openPanel\}/);
+  assert.match(contentUi, /isSelectedWritableDatabase/);
+  assert.match(contentUi, /const exportStartInFlight = signal\(false\)/);
+  assert.match(contentUi, /const exportLocked = computed\(\(\) => exportStartInFlight\.value \|\| status\.value === "exporting"\)/);
+  assert.match(contentUi, /const canExport = computed\(\(\) => !exportLocked\.value && selectedWritableDatabase\.value\)/);
+  assert.match(contentUi, /disabled=\{exportLocked\.value \|\| databaseStatus\.value !== "ready"\}/);
+  assert.match(contentUi, /let configLoadPromise = Promise\.resolve\(\)/);
+  assert.match(contentUi, /configLoadPromise = loadConfig\(\)/);
+  assert.match(contentUi, /async function openPanel\(\)/);
+  assert.match(contentUi, /await refreshDatabases\(\)/);
+  assert.match(contentUi, /await configLoadPromise/);
   assert.match(contentUi, /<select value=\{config\.value\.databaseId\}/);
   assert.match(contentUi, /writeCyclesAvailable !== false/);
   assert.match(contentUi, /saveDatabase\(""\)/);
+  assert.match(startExportFunction(contentUi), /const requestedDatabaseId = nextConfig\.databaseId/);
+  assert.match(startExportFunction(contentUi), /await refreshDatabases\(\{ repairSelection: false \}\)/);
+  assert.match(startExportFunction(contentUi), /databaseId: requestedDatabaseId/);
+  assert.match(startExportFunction(contentUi), /!requestedDatabaseId \|\| !requestedWritableDatabase/);
+  assert.match(refreshDatabasesFunction(contentUi), /repairSelection = true/);
+  assert.match(refreshDatabasesFunction(contentUi), /if \(!repairSelection\) return/);
+  assertExportLockBeforeClearingLogs(startExportFunction(contentUi));
+  assert.match(startExportFunction(contentUi), /exportStartInFlight\.value = true/);
+  assert.match(startExportFunction(contentUi), /finally \{\s+exportStartInFlight\.value = false;\s+\}/);
   assert.match(contentUi, /databaseOptionLabel/);
   assert.match(contentUi, /exportProviderLabel/);
   assert.match(contentUi, /onFocus=\{\(event\) => event\.currentTarget\.select\(\)\}/);
@@ -64,6 +85,19 @@ test("settings and ChatGPT export use Kinic brand colors", () => {
   assert.match(contentUi, /providerLabel/);
   assert.doesNotMatch(contentUi, /Database ID/);
   assert.doesNotMatch(contentUi, /Kinic Memory/);
+  assert.doesNotMatch(loadConfigFunction(contentUi), /refreshDatabases/);
+});
+
+test("settings popup clears database on logout and fails closed on auth reset errors", () => {
+  const popupJs = readFileSync(new URL("../popup/popup.js", import.meta.url), "utf8");
+  const logoutHandler = eventHandlerFunction(popupJs, "logoutButton");
+  const notifyAuthSessionChanged = namedFunction(popupJs, "notifyAuthSessionChanged");
+  assert.match(logoutHandler, /await logoutInternetIdentity\(\)/);
+  assert.match(logoutHandler, /await saveDatabaseSelection\(""\)/);
+  assert.match(logoutHandler, /await notifyAuthSessionChanged\(\)/);
+  assert.match(logoutHandler, /await refreshAuthAndDatabases\(\)/);
+  assert.doesNotMatch(notifyAuthSessionChanged, /catch/);
+  assert.match(notifyAuthSessionChanged, /await send\(\{ type: "auth-session-changed" \}\)/);
 });
 
 test("manifest exposes settings as options page without popup", () => {
@@ -186,6 +220,13 @@ test("database dropdown labels prefer names and disambiguate duplicates", () => 
   assert.equal(databaseOptionLabel(rawDatabase("legacy-db", "Writer", "Active", "")), "legacy-db (Writer, legacy-db)");
 });
 
+test("export requires the selected database to be verified writable", () => {
+  const databases = [{ databaseId: "team-db" }];
+  assert.equal(isSelectedWritableDatabase({ databaseStatus: "loading", databaseId: "team-db", databases }), false);
+  assert.equal(isSelectedWritableDatabase({ databaseStatus: "ready", databaseId: "missing-db", databases }), false);
+  assert.equal(isSelectedWritableDatabase({ databaseStatus: "ready", databaseId: "  team-db  ", databases }), true);
+});
+
 test("preferred created database is kept only when it is active and writable", () => {
   assert.deepEqual(mergePreferredDatabase([], { databaseId: "db_created", name: "Created Wiki" }), []);
   assert.deepEqual(mergePreferredDatabase([], rawDatabase("pending-db", "Owner", "Pending", "Pending Wiki")), []);
@@ -275,4 +316,43 @@ function rawDatabase(databaseId, role, status, nameOrBalance = 20_000n, cyclesSu
     archived_at_ms: [],
     deleted_at_ms: []
   };
+}
+
+function loadConfigFunction(source) {
+  const match = /async function loadConfig\(\) \{([\s\S]*?)\n\}/.exec(source);
+  assert.ok(match, "loadConfig function should exist");
+  return match[0];
+}
+
+function startExportFunction(source) {
+  return namedFunction(source, "startExport");
+}
+
+function refreshDatabasesFunction(source) {
+  const match = /async function refreshDatabases\(\{ repairSelection = true \} = \{\}\) \{([\s\S]*?)\n\}/.exec(source);
+  assert.ok(match, "refreshDatabases function should exist");
+  return match[0];
+}
+
+function namedFunction(source, name) {
+  const match = new RegExp(`async function ${name}\\(\\) \\{([\\s\\S]*?)\\n\\}`).exec(source);
+  assert.ok(match, `${name} function should exist`);
+  return match[0];
+}
+
+function eventHandlerFunction(source, targetName) {
+  const match = new RegExp(`${targetName}\\.addEventListener\\("click", async \\(\\) => \\{([\\s\\S]*?)\\n\\}\\);`).exec(source);
+  assert.ok(match, `${targetName} click handler should exist`);
+  return match[0];
+}
+
+function assertExportLockBeforeClearingLogs(source) {
+  const guardIndex = source.indexOf("if (exportLocked.value) return;");
+  const lockIndex = source.indexOf("exportStartInFlight.value = true;");
+  const errorClearIndex = source.indexOf('error.value = "";');
+  const logsClearIndex = source.indexOf("logs.value = [];");
+  assert.ok(guardIndex >= 0, "startExport should guard on exportLocked");
+  assert.ok(lockIndex > guardIndex, "startExport should lock after the guard");
+  assert.ok(errorClearIndex > lockIndex, "startExport should preserve existing error on duplicate clicks");
+  assert.ok(logsClearIndex > lockIndex, "startExport should preserve existing logs on duplicate clicks");
 }

@@ -1,7 +1,7 @@
 // Where: extensions/wiki-clipper/src/offscreen.js
 // What: DOM-backed authenticated URL/source ingest worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
-import { authSnapshot as defaultAuthSnapshot } from "./auth-client.js";
+import { authSnapshot as defaultAuthSnapshot, resetAuthClient as defaultResetAuthClient } from "./auth-client.js";
 import { buildUrlIngestRequest } from "./url-ingest-request.js";
 import {
   createVfsActor as defaultCreateVfsActor,
@@ -16,6 +16,7 @@ const TRIGGER_SESSION_TTL_MS = 30 * 60 * 1000;
 const TRIGGER_SESSION_REFRESH_MS = 2 * 60 * 1000;
 
 let authSnapshotFactory = defaultAuthSnapshot;
+let resetAuthClientFactory = defaultResetAuthClient;
 let vfsActorFactory = defaultCreateVfsActor;
 let fetchFactory = (...args) => fetch(...args);
 const triggerSessionCache = new Map();
@@ -23,18 +24,7 @@ const triggerSessionCache = new Map();
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.target !== "offscreen") return false;
-    const task =
-      message?.type === "queue-url-ingest"
-        ? queueUrlIngest(message.tab, message.config)
-        : message?.type === "save-raw-source"
-          ? saveRawSource(message.rawSource, message.config)
-          : message?.type === "trigger-source-generation"
-            ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
-            : message?.type === "auth-status"
-              ? authStatus()
-              : message?.type === "list-writable-databases"
-                ? listWritableDatabases(message.config)
-                : null;
+    const task = handleOffscreenMessage(message);
     if (!task) return false;
     task.then(
       (result) => sendResponse({ ok: true, result }),
@@ -42,6 +32,22 @@ if (globalThis.chrome?.runtime?.onMessage) {
     );
     return true;
   });
+}
+
+export function handleOffscreenMessage(message) {
+  return message?.type === "queue-url-ingest"
+    ? queueUrlIngest(message.tab, message.config)
+    : message?.type === "save-raw-source"
+      ? saveRawSource(message.rawSource, message.config)
+      : message?.type === "trigger-source-generation"
+        ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
+        : message?.type === "auth-status"
+          ? authStatus()
+          : message?.type === "list-writable-databases"
+            ? listWritableDatabases(message.config)
+            : message?.type === "reset-auth-client"
+              ? resetOffscreenAuthState()
+              : null;
 }
 
 export async function queueUrlIngest(tab, config) {
@@ -158,13 +164,24 @@ export async function listWritableDatabases(config) {
 
 export function setOffscreenDepsForTest(deps = {}) {
   authSnapshotFactory = deps.authSnapshot || defaultAuthSnapshot;
+  resetAuthClientFactory = deps.resetAuthClient || defaultResetAuthClient;
   vfsActorFactory = deps.createVfsActor || defaultCreateVfsActor;
   fetchFactory = deps.fetch || ((...args) => fetch(...args));
   triggerSessionCache.clear();
 }
 
+export async function resetOffscreenAuthState() {
+  await resetAuthClientFactory();
+  triggerSessionCache.clear();
+  return { reset: true };
+}
+
 async function authenticatedSnapshot() {
-  const snapshot = await authSnapshotFactory();
+  let snapshot = await authSnapshotFactory();
+  if (!snapshot.isAuthenticated || !snapshot.identity || !snapshot.principal) {
+    await resetAuthClientFactory();
+    snapshot = await authSnapshotFactory();
+  }
   if (!snapshot.isAuthenticated || !snapshot.identity || !snapshot.principal) {
     throw new Error("UNAUTHENTICATED");
   }
