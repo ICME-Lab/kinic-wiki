@@ -3,11 +3,13 @@
 // Why: The repo now has one node-based schema, so migration history only tracks FS tables.
 use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
 
+use crate::fs_helpers::{compute_node_etag, node_kind_from_db};
 use crate::fs_links::backfill_node_links;
+use vfs_types::Node;
 
 // Keep the persisted version token stable so existing local databases do not
 // require a forced migration just because the crate naming moved from wiki_* to vfs_*.
-const CURRENT_SCHEMA_VERSION: &str = "wiki_store:005_seed_raw_sources_root";
+const CURRENT_SCHEMA_VERSION: &str = "wiki_store:005_okf_metadata";
 const INITIAL_FS_SCHEMA_SQL: &str = include_str!("../migrations/000_fs_schema.sql");
 const MIGRATIONS: &[(&str, &str)] = &[
     ("wiki_store:000_fs_schema", INITIAL_FS_SCHEMA_SQL),
@@ -29,22 +31,22 @@ const MIGRATIONS: &[(&str, &str)] = &[
     ),
     (
         CURRENT_SCHEMA_VERSION,
-        include_str!("../migrations/005_seed_raw_sources_root.sql"),
+        include_str!("../migrations/005_okf_metadata.sql"),
     ),
 ];
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
     include_str!("../migrations/000_schema_migrations.sql");
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_fs_migrations(conn: &mut Connection) -> Result<(), String> {
+pub fn run_fs_migrations(conn: &mut Connection, database_id: &str) -> Result<(), String> {
     ensure_schema_migrations_table(conn)?;
 
     let tx = conn.transaction().map_err(|error| error.to_string())?;
-    run_fs_migrations_in_tx(&tx)?;
+    run_fs_migrations_in_tx(&tx, database_id)?;
     tx.commit().map_err(|error| error.to_string())
 }
 
-pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
+pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>, database_id: &str) -> Result<(), String> {
     ensure_schema_migrations_table(tx)?;
     reject_legacy_schema(tx)?;
     for (version, sql) in MIGRATIONS {
@@ -52,7 +54,7 @@ pub fn run_fs_migrations_in_tx(tx: &Transaction<'_>) -> Result<(), String> {
             continue;
         }
         tx.execute_batch(sql).map_err(|error| error.to_string())?;
-        run_post_migration_hook(tx, version)?;
+        run_post_migration_hook(tx, version, database_id)?;
         record_schema_migration(tx, version)?;
     }
     Ok(())
@@ -81,6 +83,7 @@ fn record_schema_migration(conn: &Transaction<'_>, version: &str) -> Result<(), 
 fn run_post_migration_hook(
     conn: &crate::sqlite::Transaction<'_>,
     version: &str,
+    database_id: &str,
 ) -> Result<(), String> {
     if version == "wiki_store:001_fs_links" {
         backfill_node_links(conn)?;
@@ -94,8 +97,8 @@ fn run_post_migration_hook(
     if version == "wiki_store:004_rebuild_links_after_code_filter" {
         backfill_node_links(conn)?;
     }
-    if version == "wiki_store:005_seed_raw_sources_root" {
-        seed_sources_root_folders(conn)?;
+    if version == "wiki_store:005_okf_metadata" {
+        backfill_okf_metadata(conn, database_id)?;
     }
     Ok(())
 }
@@ -127,6 +130,16 @@ fn reject_legacy_schema(conn: &Connection) -> Result<(), String> {
         ));
     }
     if !base_schema_shape_is_present(conn)? {
+        return Err(format!(
+            "legacy wiki_store schema is unsupported; recreate database: {}",
+            versions.join(", ")
+        ));
+    }
+    if versions
+        .iter()
+        .any(|version| version == "wiki_store:004_rebuild_links_after_code_filter")
+        && !current_schema_shape_is_present(conn)?
+    {
         return Err(format!(
             "legacy wiki_store schema is unsupported; recreate database: {}",
             versions.join(", ")
@@ -232,11 +245,8 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
     let mut folders = std::collections::BTreeMap::<String, (i64, i64)>::new();
     folders.insert("/Memory".to_string(), (0, 0));
     folders.insert("/Sessions".to_string(), (0, 0));
-    folders.insert("/Knowledge".to_string(), (0, 0));
-    folders.insert("/Skills".to_string(), (0, 0));
+    folders.insert("/Wiki".to_string(), (0, 0));
     folders.insert("/Sources".to_string(), (0, 0));
-    folders.insert("/Sources/sessions".to_string(), (0, 0));
-    folders.insert("/Sources/skill-runs".to_string(), (0, 0));
     for (path, created_at, updated_at) in &nodes {
         let mut current = String::new();
         let mut segments = path
@@ -330,71 +340,87 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
     .map_err(|error| error.to_string())
 }
 
-fn seed_sources_root_folders(conn: &crate::sqlite::Transaction<'_>) -> Result<(), String> {
-    let mut changed_folder_paths = Vec::new();
-    // This migration is limited to /Sources evidence subroots. Full store root
-    // seeding is handled when creating stores and by the runtime index migration.
-    for folder_path in ["/Sources", "/Sources/sessions", "/Sources/skill-runs"] {
-        if ensure_folder_backfill_node(conn, folder_path, 0, 0)? != FolderBackfillChange::Existing {
-            changed_folder_paths.push(folder_path.to_string());
-        }
-    }
-
+fn backfill_okf_metadata(
+    conn: &crate::sqlite::Transaction<'_>,
+    database_id: &str,
+) -> Result<(), String> {
     let mut stmt = conn
-        .prepare("SELECT id, path FROM fs_nodes ORDER BY length(path), path")
+        .prepare(
+            "SELECT id, path, kind, content, created_at, updated_at, etag, metadata_json
+             FROM fs_nodes
+             WHERE kind IN ('file', 'source')
+             ORDER BY path ASC",
+        )
         .map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        let kind = node_kind_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?;
         Ok((
             crate::sqlite::row_get::<i64>(row, 0)?,
-            crate::sqlite::row_get::<String>(row, 1)?,
+            Node {
+                path: crate::sqlite::row_get(row, 1)?,
+                kind,
+                content: crate::sqlite::row_get(row, 3)?,
+                created_at: crate::sqlite::row_get(row, 4)?,
+                updated_at: crate::sqlite::row_get(row, 5)?,
+                etag: crate::sqlite::row_get(row, 6)?,
+                metadata_json: crate::sqlite::row_get(row, 7)?,
+            },
         ))
     })
     .map_err(|error| error.to_string())?;
-    let id_by_path = rows
-        .iter()
-        .map(|(id, path)| (path.clone(), *id))
-        .collect::<std::collections::BTreeMap<_, _>>();
 
-    for (id, path) in rows {
-        let (parent_path, name) = split_parent_and_name(&path)?;
-        let parent_id = parent_path
-            .as_deref()
-            .map(|parent| {
-                id_by_path
-                    .get(parent)
-                    .copied()
-                    .ok_or_else(|| format!("parent folder does not exist: {parent}"))
-            })
-            .transpose()?;
-        let values = vec![
-            crate::sqlite::nullable_integer_value(parent_id),
-            crate::sqlite::text_value(name),
-            crate::sqlite::integer_value(id),
-        ];
-        crate::sqlite::execute_values(
-            conn,
-            "UPDATE fs_nodes SET parent_id = ?1, name = ?2 WHERE id = ?3",
-            &values,
-        )
-        .map_err(|error| error.to_string())?;
-    }
-
-    for folder_path in changed_folder_paths {
+    for (row_id, mut node) in rows {
+        let metadata_json = wiki_domain::apply_okf_metadata(
+            database_id,
+            &node.path,
+            &node.kind,
+            &node.content,
+            &node.metadata_json,
+        )?;
+        if metadata_json == node.metadata_json {
+            continue;
+        }
+        node.metadata_json = metadata_json;
+        node.etag = compute_node_etag(&node);
         conn.execute(
-            "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, 'upsert')",
-            params![folder_path],
+            "UPDATE fs_nodes
+             SET etag = ?1,
+                 metadata_json = ?2
+             WHERE id = ?3",
+            params![node.etag, node.metadata_json, row_id],
         )
         .map_err(|error| error.to_string())?;
-        let revision = crate::sqlite::last_insert_rowid(conn).map_err(|error| error.to_string())?;
-        conn.execute(
-            "INSERT INTO fs_path_state (path, last_change_revision)
-             VALUES (?1, ?2)
-             ON CONFLICT(path) DO UPDATE SET last_change_revision = excluded.last_change_revision",
-            params![folder_path, revision],
-        )
-        .map_err(|error| error.to_string())?;
+        let revision = record_okf_backfill_change(conn, &node.path)?;
+        update_okf_backfill_path_state(conn, &node.path, revision)?;
     }
     Ok(())
+}
+
+fn record_okf_backfill_change(
+    conn: &crate::sqlite::Transaction<'_>,
+    path: &str,
+) -> Result<i64, String> {
+    conn.execute(
+        "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, 'upsert')",
+        params![path],
+    )
+    .map_err(|error| error.to_string())?;
+    crate::sqlite::last_insert_rowid(conn).map_err(|error| error.to_string())
+}
+
+fn update_okf_backfill_path_state(
+    conn: &crate::sqlite::Transaction<'_>,
+    path: &str,
+    revision: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO fs_path_state (path, last_change_revision)
+         VALUES (?1, ?2)
+         ON CONFLICT(path) DO UPDATE SET last_change_revision = excluded.last_change_revision",
+        params![path, revision],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -3032,6 +3032,106 @@ fn isolates_nodes_between_databases() {
 }
 
 #[test]
+fn write_node_applies_okf_metadata() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("alpha should create");
+    ensure_parent_folders(&service, "owner", "alpha", "/Wiki/project/facts.md", 9);
+
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/facts.md".to_string(),
+                kind: NodeKind::File,
+                content: "Stable fact from /Sources/raw/web/source.md".to_string(),
+                metadata_json: "{}".to_string(),
+                expected_etag: None,
+            },
+            10,
+        )
+        .expect("write should succeed");
+    let node = service
+        .read_node("alpha", "owner", "/Wiki/project/facts.md")
+        .expect("read should succeed")
+        .expect("node should exist");
+    assert!(node.metadata_json.contains("\"okf_type\":\"Fact\""));
+    assert!(
+        node.metadata_json
+            .contains("\"resource\":\"kinic://alpha/Wiki/project/facts.md\"")
+    );
+    assert!(
+        node.metadata_json
+            .contains("\"trust_level\":\"unreviewed\"")
+    );
+    assert!(
+        node.metadata_json
+            .contains("\"path\":\"/Sources/raw/web/source.md\"")
+    );
+
+    service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/manual.md".to_string(),
+                kind: NodeKind::File,
+                content: "Manual decision".to_string(),
+                metadata_json: r#"{"okf_type":"Decision"}"#.to_string(),
+                expected_etag: None,
+            },
+            11,
+        )
+        .expect("explicit okf_type should be accepted");
+    let manual = service
+        .read_node("alpha", "owner", "/Wiki/project/manual.md")
+        .expect("manual read should succeed")
+        .expect("manual node should exist");
+    assert!(manual.metadata_json.contains("\"okf_type\":\"Decision\""));
+    let moved = service
+        .move_node(
+            "owner",
+            MoveNodeRequest {
+                database_id: "alpha".to_string(),
+                from_path: "/Wiki/project/manual.md".to_string(),
+                to_path: "/Wiki/project/moved.md".to_string(),
+                expected_etag: Some(manual.etag),
+                overwrite: false,
+            },
+            12,
+        )
+        .expect("move should refresh OKF resource");
+    let moved_node = service
+        .read_node("alpha", "owner", "/Wiki/project/moved.md")
+        .expect("moved read should succeed")
+        .expect("moved node should exist");
+    assert_eq!(moved.node.etag, moved_node.etag);
+    assert!(
+        moved_node
+            .metadata_json
+            .contains("\"resource\":\"kinic://alpha/Wiki/project/moved.md\"")
+    );
+
+    let error = service
+        .write_node(
+            "owner",
+            WriteNodeRequest {
+                database_id: "alpha".to_string(),
+                path: "/Wiki/project/bad.md".to_string(),
+                kind: NodeKind::File,
+                content: "Bad".to_string(),
+                metadata_json: r#"{"okf_type":"Question"}"#.to_string(),
+                expected_etag: None,
+            },
+            13,
+        )
+        .expect_err("invalid okf_type should be rejected");
+    assert!(error.contains("unsupported okf_type"));
+}
+
+#[test]
 fn tracks_logical_size_and_does_not_reuse_deleted_slots() {
     let (service, root) = service_with_root();
     let alpha = service

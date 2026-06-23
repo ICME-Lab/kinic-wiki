@@ -1,13 +1,13 @@
 # Kinic Wiki
 
 Kinic Wiki is a canister-backed four-store interface for coding agents.
-It stores durable knowledge nodes in an Internet Computer canister and exposes them through a browser UI, `kinic-vfs-cli`, and agent-readable APIs.
+It stores durable wiki nodes in an Internet Computer canister and exposes them through a browser UI, `kinic-vfs-cli`, and agent-readable APIs.
 
 ## Why Kinic Wiki
 
 Vector databases are useful for retrieving nearby text fragments from large corpora. Agent memory has a different shape. Agents need stable places for current decisions, source evidence, open questions, operating procedures, and relationships between notes.
 
-Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Knowledge/...`; raw evidence lives under `/Sources/<provider>/...`. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
+Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/raw/...`. Wiki nodes store OKF concept metadata in `metadata_json` while keeping the Markdown body human-readable. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
 
 For many medium-sized agent workflows, structured file-system search is often more useful than embedding-only retrieval. A result is not just a similar chunk; it is a named, linked, updateable knowledge node.
 
@@ -22,12 +22,12 @@ For many medium-sized agent workflows, structured file-system search is often mo
 
 ## Four Stores
 
-- `memory`: short facts, preferences, and active context recalled through `query_context`.
-- `knowledge`: long-term notes under `/Knowledge/...`, connected by wiki links and raw evidence under `/Sources/<provider>/...`.
-- `skill`: reusable `SKILL.md` packages under `/Skills/...`, with manifests, snapshots, status, and run evidence.
-- `session`: agent session state under `/Sessions/...` and session transcript evidence under `/Sources/sessions/...`; resumable summaries are a later workflow.
+- `memory`: short facts, preferences, and active context recalled through `memory_recall`.
+- `knowledge`: long-term notes under `/Wiki/...`, connected by wiki links and source evidence.
+- `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`, with manifests, status, proposals, and run evidence.
+- `session`: agent conversation audit sources under `/Sources/raw/...`; resumable summaries are a later workflow.
 
-Context Pack is not a fifth store. It is an OKF handoff artifact generated from store content.
+Context Pack is not a fifth store. It is an OKF handoff artifact generated from node metadata and Markdown bodies.
 Curator is not a store. It is a future maintenance workflow for skill and knowledge stale/archive/promote decisions.
 
 The public browser entry point is:
@@ -36,7 +36,7 @@ https://wiki.kinic.xyz
 
 The official Kinic Wiki database is:
 
-https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Knowledge
+https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Wiki
 
 Database ID:
 
@@ -63,25 +63,33 @@ Current npm binaries support macOS arm64 and Linux x64.
 Most commands need a database id. Pass it per command, link it once for a workspace, or set `VFS_DATABASE_ID`.
 
 ```bash
-kinic-vfs-cli database create "My agent memory"
+kinic-vfs-cli database create --profile memory "My agent memory"
 kinic-vfs-cli --database-id <database-id> status --json
 kinic-vfs-cli database link <database-id>
-VFS_DATABASE_ID=<database-id> kinic-vfs-cli search-remote "query text" --prefix /Knowledge --json
+VFS_DATABASE_ID=<database-id> kinic-vfs-cli search-remote "query text" --prefix /Wiki --json
 ```
 
-Every database uses the same four-store roots and the same physical VFS schema.
+Database profiles choose seed roots, Browser empty state, Store API manifest, and agent entrypoint. They do not change the physical VFS schema.
+
+| Profile | Use |
+| --- | --- |
+| `workspace` | Default four-store workspace |
+| `knowledge` | Human long-term wiki or digital garden |
+| `memory` | Agent memory and recall |
+| `skill` | Skill Registry database |
+| `session` | Agent session audit sources |
 
 Read exact nodes when a path is known:
 
 ```bash
-kinic-vfs-cli read-node --path /Knowledge/page.md --json
-kinic-vfs-cli read-node-context --path /Knowledge/page.md --json
+kinic-vfs-cli read-node --path /Wiki/page.md --json
+kinic-vfs-cli read-node-context --path /Wiki/page.md --json
 ```
 
 For writes, read first, keep the returned `etag`, then mutate with an expected etag:
 
 ```bash
-kinic-vfs-cli edit-node --path /Knowledge/page.md --old-text before --new-text after --expected-etag <etag> --json
+kinic-vfs-cli edit-node --path /Wiki/page.md --old-text before --new-text after --expected-etag <etag> --json
 ```
 
 Public databases can be read anonymously only when the database grants reader access to the anonymous principal.
@@ -103,11 +111,11 @@ Agents should discover relevant skills, inspect the package, use the instruction
 
 - Browser: browse, search, edit, and manage database access
 - CLI: scripted database operations and skill store workflows
-- Chrome extension: ChatGPT export and active-tab source capture
-- Store API: direct read-only canister queries such as `memory_manifest`, `query_context`, and `source_evidence`
+- Chrome extension: ChatGPT export and active-tab URL ingest
+- Store API: direct read-only canister queries such as `store_manifest`, `memory_recall`, and `knowledge_evidence`
 - Agent Tool Calling: embedded OpenAI-compatible and Anthropic-compatible tool schemas
 
-The Chrome extension connects browser work to Kinic Wiki. It saves recent ChatGPT conversations and active web page snapshots as raw knowledge evidence under `/Sources/<provider>/...`. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
+The Chrome extension connects browser work to Kinic Wiki. It can save recent ChatGPT conversations as session audit sources and queue active web pages for URL ingest. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
 
 Developer and operator guides:
 

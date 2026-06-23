@@ -1916,6 +1916,8 @@ name = "kinic-wiki-domain"
 version = "0.1.0"
 dependencies = [
  "kinic-vfs-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3535,6 +3537,7 @@ dependencies = [
  "hex",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
+ "kinic-wiki-domain",
  "proptest",
  "pulldown-cmark",
  "rusqlite",
