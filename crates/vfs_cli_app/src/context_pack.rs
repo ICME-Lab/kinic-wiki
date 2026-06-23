@@ -15,6 +15,15 @@ use wiki_domain::{RAW_SOURCES_PREFIX, WIKI_ROOT_PATH};
 const OKF_VERSION: &str = "0.1";
 const INDEX_FILE: &str = "index.md";
 const LOG_FILE: &str = "log.md";
+const OKF_OWNED_DIRS: &[&str] = &[
+    "facts",
+    "decisions",
+    "tasks",
+    "policies",
+    "notes",
+    "references",
+];
+const LEGACY_TOP_LEVEL_JSON: &[&str] = &["manifest.json", "sources.json", "provenance.json"];
 
 #[derive(Debug, Clone)]
 pub struct ContextPackExportOptions {
@@ -253,6 +262,12 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
     let mut errors = Vec::new();
     let mut concept_count = 0;
     let mut reference_count = 0;
+    for reserved in [INDEX_FILE, LOG_FILE] {
+        let reserved_path = path.join(reserved);
+        if !reserved_path.is_file() {
+            errors.push(format!("missing required reserved file: {reserved}"));
+        }
+    }
     for file in collect_markdown_files(path)? {
         let relative = file.strip_prefix(path).unwrap_or(&file);
         if is_reserved_markdown(relative) {
@@ -272,28 +287,47 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
             }
         };
         concept_count += 1;
-        let is_reference =
-            frontmatter.concept_type == "Reference" || path_has_component(relative, "references");
-        if is_reference {
+        let is_reference_type = frontmatter.concept_type == "Reference";
+        let is_under_references = path_under_top_level_dir(relative, "references");
+        let is_verified_reference_shape = is_reference_type && is_under_references;
+        if is_reference_type {
             reference_count += 1;
         }
         if frontmatter.concept_type.trim().is_empty() {
             errors.push(format!("{}: type is required", relative.display()));
         }
+        if is_under_references && !is_reference_type {
+            errors.push(format!(
+                "{}: references files must use type: Reference",
+                relative.display()
+            ));
+        }
+        if is_reference_type && !is_under_references {
+            errors.push(format!(
+                "{}: type: Reference must be under references/",
+                relative.display()
+            ));
+        }
         if let Some(kinic) = &frontmatter.kinic {
-            if !is_reference && let Some(expected_hash) = &kinic.content_hash {
-                match okf_body_text(&file) {
-                    Ok(body) => {
-                        let actual_hash = sha256_hex(body.as_bytes());
-                        if expected_hash != &actual_hash {
-                            errors.push(format!(
-                                "{}: kinic.content_hash mismatch",
-                                relative.display()
-                            ));
+            if !is_verified_reference_shape && is_kinic_wiki_concept(&frontmatter) {
+                match &kinic.content_hash {
+                    Some(expected_hash) => match okf_body_text(&file) {
+                        Ok(body) => {
+                            let actual_hash = sha256_hex(body.as_bytes());
+                            if expected_hash != &actual_hash {
+                                errors.push(format!(
+                                    "{}: kinic.content_hash mismatch",
+                                    relative.display()
+                                ));
+                            }
                         }
-                    }
-                    Err(error) => errors.push(format!(
-                        "{}: failed to verify kinic.content_hash: {error}",
+                        Err(error) => errors.push(format!(
+                            "{}: failed to verify kinic.content_hash: {error}",
+                            relative.display()
+                        )),
+                    },
+                    None => errors.push(format!(
+                        "{}: kinic.content_hash is required",
                         relative.display()
                     )),
                 }
@@ -311,7 +345,7 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
                     )),
                 }
             }
-            if is_reference {
+            if is_reference_type {
                 match &kinic.source_path {
                     Some(source_path) if path_under_prefix(source_path, RAW_SOURCES_PREFIX) => {}
                     Some(source_path) => errors.push(format!(
@@ -324,12 +358,23 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
                     )),
                 }
             }
-        } else if is_reference {
-            errors.push(format!(
-                "{}: reference concept requires kinic.source_path",
-                relative.display()
-            ));
+        } else {
+            if is_kinic_wiki_concept(&frontmatter) {
+                errors.push(format!(
+                    "{}: kinic.content_hash is required",
+                    relative.display()
+                ));
+            }
+            if is_reference_type {
+                errors.push(format!(
+                    "{}: reference concept requires kinic.source_path",
+                    relative.display()
+                ));
+            }
         }
+    }
+    if concept_count == 0 {
+        errors.push("OKF bundle must contain at least one concept".to_string());
     }
 
     Ok(OkfVerifyResult {
@@ -721,28 +766,80 @@ fn path_has_component(path: &Path, expected: &str) -> bool {
         .any(|component| component.as_os_str() == std::ffi::OsStr::new(expected))
 }
 
+fn path_under_top_level_dir(path: &Path, expected: &str) -> bool {
+    path.components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == std::ffi::OsStr::new(expected))
+}
+
+fn is_kinic_wiki_concept(frontmatter: &OkfFrontmatter) -> bool {
+    let has_kinic_wiki_resource = frontmatter
+        .resource
+        .as_deref()
+        .is_some_and(resource_points_to_wiki);
+    let has_kinic_metadata = frontmatter.kinic.as_ref().is_some_and(|kinic| {
+        kinic.database_id.is_some()
+            || kinic
+                .root
+                .as_deref()
+                .is_some_and(|root| path_under_prefix(root, WIKI_ROOT_PATH))
+    });
+    has_kinic_wiki_resource || has_kinic_metadata
+}
+
+fn resource_points_to_wiki(resource: &str) -> bool {
+    let Some((scheme, rest)) = resource.split_once("://") else {
+        return false;
+    };
+    if scheme != "kinic" {
+        return false;
+    }
+    let Some(path_start) = rest.find('/') else {
+        return false;
+    };
+    path_under_prefix(&rest[path_start..], WIKI_ROOT_PATH)
+}
+
 fn ensure_output_dir(out: &Path, overwrite: bool) -> Result<()> {
     if out.exists() && !out.is_dir() {
         bail!("OKF output path is not a directory: {}", out.display());
     }
     fs::create_dir_all(out)?;
-    let existing = collect_markdown_files(out)?;
-    if !existing.is_empty() && !overwrite {
-        bail!(
-            "OKF markdown files already exist in {}; pass --overwrite to replace them",
-            out.display()
-        );
-    }
     if overwrite {
-        for file in existing {
-            fs::remove_file(file)?;
+        remove_owned_bundle_paths(out)?;
+    } else {
+        let existing = collect_markdown_files(out)?;
+        if !existing.is_empty() {
+            bail!(
+                "OKF markdown files already exist in {}; pass --overwrite to replace them",
+                out.display()
+            );
         }
-        for legacy_name in ["manifest.json", "sources.json", "provenance.json"] {
-            let legacy_path = out.join(legacy_name);
-            if legacy_path.exists() {
-                fs::remove_file(legacy_path)?;
-            }
-        }
+    }
+    Ok(())
+}
+
+fn remove_owned_bundle_paths(out: &Path) -> Result<()> {
+    for file_name in [INDEX_FILE, LOG_FILE] {
+        remove_path_if_exists(&out.join(file_name))?;
+    }
+    for dir_name in OKF_OWNED_DIRS {
+        remove_path_if_exists(&out.join(dir_name))?;
+    }
+    for legacy_name in LEGACY_TOP_LEVEL_JSON {
+        remove_path_if_exists(&out.join(legacy_name))?;
+    }
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
     }
     Ok(())
 }
@@ -952,6 +1049,27 @@ mod tests {
         }
     }
 
+    fn write_reserved_files(dir: &Path) {
+        fs::write(dir.join(INDEX_FILE), "# Index\n").expect("index");
+        fs::write(dir.join(LOG_FILE), "# Log\n").expect("log");
+    }
+
+    fn write_kinic_fact(dir: &Path, content_hash: Option<String>, body: &str) -> PathBuf {
+        fs::create_dir_all(dir.join("facts")).expect("facts");
+        let hash_yaml = content_hash
+            .map(|hash| format!("  content_hash: {hash}\n"))
+            .unwrap_or_default();
+        let path = dir.join("facts/fact.md");
+        fs::write(
+            &path,
+            format!(
+                "---\ntype: Fact\nresource: kinic://alpha/Wiki/projects/acme/facts.md\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n{hash_yaml}---\n\n{body}\n"
+            ),
+        )
+        .expect("fact");
+        path
+    }
+
     #[tokio::test]
     async fn export_writes_okf_concepts_without_raw_source_text() {
         let out = tempdir().expect("tempdir");
@@ -1074,8 +1192,7 @@ mod tests {
             "---\ntitle: Broken\n---\n\n# Broken\n",
         )
         .expect("write");
-        fs::write(dir.path().join(INDEX_FILE), "# Index\n").expect("index");
-        fs::write(dir.path().join(LOG_FILE), "# Log\n").expect("log");
+        write_reserved_files(dir.path());
 
         let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
         assert!(!result.valid);
@@ -1083,8 +1200,108 @@ mod tests {
     }
 
     #[test]
+    fn verify_rejects_missing_content_hash_for_kinic_concept() {
+        let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
+        write_kinic_fact(dir.path(), None, "# Fact\n\nOriginal");
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| {
+            error.contains("facts/fact.md") && error.contains("kinic.content_hash is required")
+        }));
+    }
+
+    #[test]
+    fn verify_rejects_tampered_body_after_hash_removed() {
+        let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
+        let fact = write_kinic_fact(
+            dir.path(),
+            Some(sha256_hex("# Fact\n\nOriginal".as_bytes())),
+            "# Fact\n\nOriginal",
+        );
+        let mut tampered = fs::read_to_string(&fact)
+            .expect("fact read")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("content_hash:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        tampered.push_str("\nTampered line\n");
+        fs::write(&fact, tampered).expect("tamper");
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| {
+            error.contains("facts/fact.md") && error.contains("kinic.content_hash is required")
+        }));
+    }
+
+    #[test]
+    fn verify_rejects_empty_dir() {
+        let dir = tempdir().expect("tempdir");
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| error.contains("index.md")));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("at least one concept"))
+        );
+    }
+
+    #[test]
+    fn verify_rejects_missing_index_or_log() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join(INDEX_FILE), "# Index\n").expect("index");
+        write_kinic_fact(
+            dir.path(),
+            Some(sha256_hex("# Fact\n\nOriginal".as_bytes())),
+            "# Fact\n\nOriginal",
+        );
+
+        let missing_log = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!missing_log.valid);
+        assert!(
+            missing_log
+                .errors
+                .iter()
+                .any(|error| error.contains("log.md"))
+        );
+
+        fs::remove_file(dir.path().join(INDEX_FILE)).expect("remove index");
+        fs::write(dir.path().join(LOG_FILE), "# Log\n").expect("log");
+        let missing_index = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!missing_index.valid);
+        assert!(
+            missing_index
+                .errors
+                .iter()
+                .any(|error| error.contains("index.md"))
+        );
+    }
+
+    #[test]
+    fn verify_rejects_only_reserved_files() {
+        let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("at least one concept"))
+        );
+    }
+
+    #[test]
     fn verify_rejects_expired_kinic_context() {
         let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
         fs::write(
             dir.path().join("expired.md"),
             "---\ntype: Fact\nkinic:\n  expires_at: 2000-01-01T00:00:00Z\n---\n\n# Expired\n",
@@ -1104,6 +1321,7 @@ mod tests {
     #[test]
     fn verify_rejects_reference_without_kinic_source_path() {
         let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/missing-kinic.md"),
@@ -1133,6 +1351,95 @@ mod tests {
                 .any(|error| error.contains("reference-no-source-path.md")
                     && error.contains("kinic.source_path"))
         );
+    }
+
+    #[test]
+    fn verify_rejects_non_reference_type_under_references() {
+        let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
+        fs::create_dir_all(dir.path().join("references")).expect("refs");
+        fs::write(
+            dir.path().join("references/source.md"),
+            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  source_path: /Sources/raw/web/source.md\n---\n\n# Source\n",
+        )
+        .expect("write");
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| {
+            error.contains("references/source.md") && error.contains("type: Reference")
+        }));
+    }
+
+    #[test]
+    fn verify_rejects_reference_type_outside_references() {
+        let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
+        fs::write(
+            dir.path().join("source.md"),
+            "---\ntype: Reference\nkinic:\n  source_path: /Sources/raw/web/source.md\n---\n\n# Source\n",
+        )
+        .expect("write");
+
+        let result = verify_okf_bundle_dir(dir.path()).expect("verify result");
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| {
+            error.contains("source.md") && error.contains("must be under references/")
+        }));
+    }
+
+    #[tokio::test]
+    async fn overwrite_removes_owned_bundle_subdirs() {
+        let out = tempdir().expect("tempdir");
+        for dir_name in OKF_OWNED_DIRS {
+            fs::create_dir_all(out.path().join(dir_name).join("nested")).expect("owned dir");
+            fs::write(
+                out.path().join(dir_name).join("nested/stale.txt"),
+                "stale owned artifact",
+            )
+            .expect("stale owned");
+        }
+        fs::write(out.path().join(INDEX_FILE), "# Old\n").expect("old index");
+        fs::write(out.path().join(LOG_FILE), "# Old\n").expect("old log");
+        fs::write(out.path().join("manifest.json"), "{}").expect("manifest");
+        fs::write(out.path().join("unrelated.txt"), "keep").expect("unrelated");
+
+        let mut client = MockClient::default();
+        client.nodes.insert(
+            "/Wiki/projects/acme/facts.md".to_string(),
+            test_node(
+                "/Wiki/projects/acme/facts.md",
+                NodeKind::File,
+                "Fact",
+                "wiki-etag",
+            ),
+        );
+
+        export_okf_bundle(
+            &client,
+            "alpha",
+            ContextPackExportOptions {
+                root: "/Wiki/projects/acme".to_string(),
+                out: out.path().to_path_buf(),
+                expires_at: "2999-01-01T00:00:00Z".to_string(),
+                trust_level: "team-approved".to_string(),
+                approved_by: Vec::new(),
+                overwrite: true,
+                json: true,
+            },
+        )
+        .await
+        .expect("export");
+
+        assert!(out.path().join("unrelated.txt").is_file());
+        assert!(!out.path().join("manifest.json").exists());
+        assert!(!out.path().join("facts/nested/stale.txt").exists());
+        assert!(
+            out.path()
+                .join("facts/wiki-projects-acme-facts.md")
+                .is_file()
+        );
+        assert!(verify_okf_bundle_dir(out.path()).expect("verify").valid);
     }
 
     #[test]
