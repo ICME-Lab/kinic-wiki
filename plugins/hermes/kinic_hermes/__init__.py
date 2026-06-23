@@ -27,6 +27,8 @@ class KinicPlugin:
         self.client = KinicClient()
         self.checkpoint, _ = read_usage_checked()
         self.buffer = RunBuffer()
+        self.ctx: Any | None = None
+        self._auto_evolve_running = False
 
     def post_tool_call(self, tool_name: str, args: Any = None, result: Any = None, duration_ms: int | None = None, **_: Any) -> None:
         excerpt = "" if result is None else str(result)[:2000]
@@ -52,10 +54,40 @@ class KinicPlugin:
         if not skill_ids:
             self.buffer = RunBuffer()
             return
+        recorded_any = False
+        recording_failed = False
         for skill_id in sorted(skill_ids):
             evidence = self.buffer.to_json(skill_id, deltas.get(skill_id, {}))
-            self.client.record_run(skill_id, evidence)
+            if self.client.record_run(skill_id, evidence):
+                recorded_any = True
+            else:
+                recording_failed = True
         self.buffer = RunBuffer()
+        if recording_failed:
+            self.client._log("auto evolve skipped: run recording saved pending evidence")
+        elif recorded_any:
+            self.auto_evolve_once()
+
+    def auto_evolve_once(self) -> None:
+        """Run at most one queued evolution job after successful run recording."""
+        if self._auto_evolve_running:
+            self.client._log("auto evolve skipped: already running")
+            return
+        if self.ctx is None:
+            self.client._log("auto evolve skipped: Hermes context unavailable")
+            return
+        llm = getattr(self.ctx, "llm", None)
+        if llm is None or not hasattr(llm, "complete"):
+            self.client._log("auto evolve skipped: Hermes ctx.llm unavailable")
+            return
+        self._auto_evolve_running = True
+        try:
+            output = handle_kinic_evolve_job(self.ctx, self.client, "")
+            self.client._log(f"auto evolve result: {output}")
+        except Exception as error:
+            self.client._log(f"auto evolve failed: {error}")
+        finally:
+            self._auto_evolve_running = False
 
     def flush_partial(self, reason: str = "session ended before post_llm_call", **_: Any) -> None:
         current, ok = read_usage_checked()
@@ -71,6 +103,7 @@ class KinicPlugin:
 
 def register(ctx: Any) -> KinicPlugin:
     plugin = KinicPlugin()
+    plugin.ctx = ctx
     if hasattr(ctx, "register_hook"):
         ctx.register_hook("post_tool_call", plugin.post_tool_call)
         ctx.register_hook("transform_llm_output", plugin.transform_llm_output)

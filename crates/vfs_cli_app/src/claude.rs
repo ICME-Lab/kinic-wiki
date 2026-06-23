@@ -220,7 +220,29 @@ mod tests {
         );
         assert!(plugin.join(".claude-plugin/plugin.json").is_file());
         assert!(plugin.join("scripts/record-run.sh").is_file());
+        assert!(plugin.join("scripts/record-session.sh").is_file());
+        assert!(plugin.join("hooks/hooks.json").is_file());
         assert!(plugin.join("kinic_agent_runtime/evidence.py").is_file());
+        assert!(plugin.join("kinic_agent_runtime/session.py").is_file());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let record_session_mode = std::fs::metadata(plugin.join("scripts/record-session.sh"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            let hooks_mode = std::fs::metadata(plugin.join("hooks/hooks.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111;
+
+            assert_eq!(record_session_mode, 0o755);
+            assert_eq!(hooks_mode, 0);
+        }
     }
 
     #[test]

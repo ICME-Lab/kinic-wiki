@@ -11,7 +11,15 @@ import subprocess
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+def discover_repo_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "Cargo.toml").is_file() and (parent / "plugins" / "runtime").is_dir():
+            return parent
+    return current.parents[2]
+
+
+REPO_ROOT = discover_repo_root()
 REPO_DEBUG_CLI = REPO_ROOT / "target" / "debug" / "kinic-vfs-cli"
 
 
