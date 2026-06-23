@@ -1,6 +1,8 @@
 // Where: crates/wiki_domain/src/lib.rs
-// What: Wiki-specific path validation layered on top of the reusable VFS.
-// Why: `/Wiki` and `/Sources/...` semantics must stay centralized outside the generic VFS crates.
+// What: Wiki-specific path validation and OKF metadata helpers layered on top of the reusable VFS.
+// Why: `/Wiki`, `/Sources/...`, and OKF concept semantics must stay centralized outside generic VFS crates.
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use vfs_types::NodeKind;
 
 pub const WIKI_ROOT_PATH: &str = "/Wiki";
@@ -15,6 +17,153 @@ pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 const MAX_SOURCE_PROVIDER_LEN: usize = 32;
 const MAX_SOURCE_ID_LEN: usize = 128;
+const DEFAULT_TRUST_LEVEL: &str = "unreviewed";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OkfType {
+    Fact,
+    Task,
+    Decision,
+    Policy,
+    Note,
+    Reference,
+}
+
+impl OkfType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Fact => "Fact",
+            Self::Task => "Task",
+            Self::Decision => "Decision",
+            Self::Policy => "Policy",
+            Self::Note => "Note",
+            Self::Reference => "Reference",
+        }
+    }
+}
+
+impl std::str::FromStr for OkfType {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "Fact" => Ok(Self::Fact),
+            "Task" => Ok(Self::Task),
+            "Decision" => Ok(Self::Decision),
+            "Policy" => Ok(Self::Policy),
+            "Note" => Ok(Self::Note),
+            "Reference" => Ok(Self::Reference),
+            _ => Err(format!("unsupported okf_type: {value}")),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OkfSourceRef {
+    pub path: String,
+}
+
+pub fn apply_okf_metadata(
+    database_id: &str,
+    path: &str,
+    kind: &NodeKind,
+    content: &str,
+    metadata_json: &str,
+) -> Result<String, String> {
+    let mut metadata = parse_metadata_object(metadata_json)?;
+    let existing_type = okf_type_from_map(&metadata)?;
+    if existing_type.is_none() && !okf_managed_path(path, kind) {
+        validate_optional_okf_fields(&metadata)?;
+        return serialize_metadata(metadata);
+    }
+
+    let okf_type = existing_type.unwrap_or_else(|| infer_okf_type(path, kind));
+    metadata.insert(
+        "okf_type".to_string(),
+        Value::String(okf_type.as_str().to_string()),
+    );
+    metadata.insert(
+        "resource".to_string(),
+        Value::String(kinic_resource(database_id, path)),
+    );
+    if !metadata.contains_key("trust_level") {
+        metadata.insert(
+            "trust_level".to_string(),
+            Value::String(DEFAULT_TRUST_LEVEL.to_string()),
+        );
+    }
+    validate_optional_okf_fields(&metadata)?;
+    if !metadata.contains_key("source_refs") {
+        let refs = extract_raw_source_paths(content)
+            .into_iter()
+            .map(|source_path| {
+                let mut item = Map::new();
+                item.insert("path".to_string(), Value::String(source_path));
+                Value::Object(item)
+            })
+            .collect::<Vec<_>>();
+        metadata.insert("source_refs".to_string(), Value::Array(refs));
+    } else {
+        let _ = metadata_source_ref_paths_from_map(&metadata)?;
+    }
+    serialize_metadata(metadata)
+}
+
+pub fn metadata_okf_type(metadata_json: &str) -> Result<Option<OkfType>, String> {
+    let metadata = parse_metadata_object(metadata_json)?;
+    okf_type_from_map(&metadata)
+}
+
+pub fn metadata_resource(metadata_json: &str) -> Result<Option<String>, String> {
+    optional_string_field(metadata_json, "resource")
+}
+
+pub fn metadata_trust_level(metadata_json: &str) -> Result<Option<String>, String> {
+    optional_string_field(metadata_json, "trust_level")
+}
+
+pub fn metadata_expires_at(metadata_json: &str) -> Result<Option<String>, String> {
+    optional_string_field(metadata_json, "expires_at")
+}
+
+pub fn metadata_source_ref_paths(metadata_json: &str) -> Result<Option<Vec<String>>, String> {
+    let metadata = parse_metadata_object(metadata_json)?;
+    if !metadata.contains_key("source_refs") {
+        return Ok(None);
+    }
+    metadata_source_ref_paths_from_map(&metadata).map(Some)
+}
+
+pub fn infer_okf_type(path: &str, kind: &NodeKind) -> OkfType {
+    if *kind == NodeKind::Source && path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
+        return OkfType::Reference;
+    }
+    let lower = path.to_ascii_lowercase();
+    let file_name = lower.rsplit('/').next().unwrap_or("");
+    if file_name == "facts.md" {
+        OkfType::Fact
+    } else if file_name == "decisions.md"
+        || file_name == "decision.md"
+        || lower.contains("/decisions/")
+    {
+        OkfType::Decision
+    } else if file_name == "tasks.md" || file_name == "plans.md" {
+        OkfType::Task
+    } else if file_name == "style-guide.md"
+        || file_name == "style_guide.md"
+        || file_name == "preferences.md"
+        || file_name == "do-not-do.md"
+        || file_name == "do_not_do.md"
+    {
+        OkfType::Policy
+    } else {
+        OkfType::Note
+    }
+}
+
+pub fn kinic_resource(database_id: &str, path: &str) -> String {
+    format!("kinic://{database_id}{path}")
+}
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
     let is_source_path = path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX)
@@ -72,6 +221,120 @@ pub fn normalize_wiki_remote_path(path: &str) -> Result<String, String> {
 
 pub fn wiki_child_path(segment: &str) -> String {
     format!("{WIKI_ROOT_PATH}/{}", segment.trim_start_matches('/'))
+}
+
+fn parse_metadata_object(metadata_json: &str) -> Result<Map<String, Value>, String> {
+    let trimmed = metadata_json.trim();
+    let value = if trimmed.is_empty() {
+        Value::Object(Map::new())
+    } else {
+        serde_json::from_str(trimmed)
+            .map_err(|error| format!("metadata_json is invalid: {error}"))?
+    };
+    match value {
+        Value::Object(map) => Ok(map),
+        _ => Err("metadata_json must be a JSON object".to_string()),
+    }
+}
+
+fn serialize_metadata(metadata: Map<String, Value>) -> Result<String, String> {
+    serde_json::to_string(&Value::Object(metadata)).map_err(|error| error.to_string())
+}
+
+fn okf_type_from_map(metadata: &Map<String, Value>) -> Result<Option<OkfType>, String> {
+    let Some(value) = metadata.get("okf_type") else {
+        return Ok(None);
+    };
+    let Some(raw_type) = value.as_str() else {
+        return Err("okf_type must be a string".to_string());
+    };
+    raw_type.parse::<OkfType>().map(Some)
+}
+
+fn optional_string_field(metadata_json: &str, key: &str) -> Result<Option<String>, String> {
+    let metadata = parse_metadata_object(metadata_json)?;
+    let Some(value) = metadata.get(key) else {
+        return Ok(None);
+    };
+    value
+        .as_str()
+        .map(|text| Some(text.to_string()))
+        .ok_or_else(|| format!("{key} must be a string"))
+}
+
+fn validate_optional_okf_fields(metadata: &Map<String, Value>) -> Result<(), String> {
+    for key in ["resource", "trust_level", "expires_at"] {
+        if let Some(value) = metadata.get(key)
+            && !value.is_string()
+        {
+            return Err(format!("{key} must be a string"));
+        }
+    }
+    Ok(())
+}
+
+fn metadata_source_ref_paths_from_map(
+    metadata: &Map<String, Value>,
+) -> Result<Vec<String>, String> {
+    let Some(value) = metadata.get("source_refs") else {
+        return Ok(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return Err("source_refs must be an array".to_string());
+    };
+    let mut paths = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(object) = item.as_object() else {
+            return Err("source_refs items must be objects".to_string());
+        };
+        let Some(path) = object.get("path").and_then(Value::as_str) else {
+            return Err("source_refs items require string path".to_string());
+        };
+        validate_raw_source_ref(path)?;
+        paths.push(path.to_string());
+    }
+    Ok(paths)
+}
+
+fn validate_raw_source_ref(path: &str) -> Result<(), String> {
+    if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
+        Ok(())
+    } else {
+        Err(format!(
+            "source_refs path must stay under {RAW_SOURCES_PREFIX}: {path}"
+        ))
+    }
+}
+
+fn okf_managed_path(path: &str, kind: &NodeKind) -> bool {
+    if *kind == NodeKind::Folder {
+        return false;
+    }
+    path_matches_prefix_boundary(path, WIKI_ROOT_PATH)
+        || (*kind == NodeKind::Source && path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX))
+}
+
+fn extract_raw_source_paths(content: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut offset = 0;
+    while let Some(relative_start) = content[offset..].find(RAW_SOURCES_PREFIX) {
+        let start = offset + relative_start;
+        let tail = &content[start..];
+        let end = tail
+            .char_indices()
+            .find_map(|(index, ch)| source_path_terminator(ch).then_some(index))
+            .unwrap_or(tail.len());
+        let candidate = tail[..end].trim_end_matches(['.', ',', ';', ':']);
+        if !candidate.is_empty() {
+            paths.push(candidate.to_string());
+        }
+        offset = start + end;
+    }
+    paths
+}
+
+fn source_path_terminator(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, ')' | ']' | '"' | '\'' | '<' | '>' | '`')
 }
 
 fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {

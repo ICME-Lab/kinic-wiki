@@ -3,7 +3,7 @@
 // Why: One canister can host isolated databases while sharing one VFS store implementation.
 mod sqlite;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::{File, OpenOptions, create_dir_all, remove_file};
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,7 +41,7 @@ use vfs_types::{
     WikiMetricsPoint, WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
-use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
+use wiki_domain::{RAW_SOURCES_PREFIX, apply_okf_metadata, validate_source_path_for_kind};
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
 const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
@@ -2179,7 +2179,9 @@ impl VfsService {
         if let Some(parent) = Path::new(&meta.db_file_name).parent() {
             create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        let result = self.database_store(meta)?.run_fs_migrations();
+        let result = self
+            .database_store(meta)?
+            .run_fs_migrations_for_database(&meta.database_id);
         if result.is_ok() {
             let _ = self.refresh_logical_size_for_meta(database_id, meta);
         }
@@ -2574,7 +2576,8 @@ impl VfsService {
             return Err("snapshot_hash does not match restored database bytes".to_string());
         }
         self.import_database_bytes(&meta, expected_size, checksum, &chunks)?;
-        self.database_store(&meta)?.run_fs_migrations()?;
+        self.database_store(&meta)?
+            .run_fs_migrations_for_database(&meta.database_id)?;
         self.write_index(|tx| {
             tx.execute(
                 "DELETE FROM database_restore_chunks WHERE database_id = ?1",
@@ -2936,11 +2939,18 @@ impl VfsService {
     pub fn write_node(
         &self,
         caller: &str,
-        request: WriteNodeRequest,
+        mut request: WriteNodeRequest,
         now: i64,
     ) -> Result<WriteNodeResult, String> {
         validate_source_path_for_kind(&request.path, &request.kind)?;
         let database_id = request.database_id.clone();
+        request.metadata_json = apply_okf_metadata(
+            &database_id,
+            &request.path,
+            &request.kind,
+            &request.content,
+            &request.metadata_json,
+        )?;
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
                 store.write_node(request, now)
@@ -2972,12 +2982,19 @@ impl VfsService {
         let database_id = request.database_id.clone();
         let session_nonce = request.session_nonce.clone();
         let path = request.path.clone();
+        let metadata_json = apply_okf_metadata(
+            &database_id,
+            &request.path,
+            &NodeKind::Source,
+            &request.content,
+            &request.metadata_json,
+        )?;
         let write_request = WriteNodeRequest {
             database_id: request.database_id,
             path: request.path,
             kind: NodeKind::Source,
             content: request.content,
-            metadata_json: request.metadata_json,
+            metadata_json,
             expected_etag: request.expected_etag,
         };
         let write =
@@ -3002,13 +3019,22 @@ impl VfsService {
     pub fn write_nodes(
         &self,
         caller: &str,
-        request: WriteNodesRequest,
+        mut request: WriteNodesRequest,
         now: i64,
     ) -> Result<Vec<WriteNodeResult>, String> {
         for node in &request.nodes {
             validate_source_path_for_kind(&node.path, &node.kind)?;
         }
         let database_id = request.database_id.clone();
+        for node in &mut request.nodes {
+            node.metadata_json = apply_okf_metadata(
+                &database_id,
+                &node.path,
+                &node.kind,
+                &node.content,
+                &node.metadata_json,
+            )?;
+        }
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
                 store.write_nodes(request, now)
@@ -3045,12 +3071,27 @@ impl VfsService {
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                let kind = store
-                    .read_node(&request.path)?
-                    .map(|node| node.kind)
+                let existing = store.read_node(&request.path)?;
+                let kind = existing
+                    .as_ref()
+                    .map(|node| node.kind.clone())
                     .or_else(|| request.kind.clone())
                     .unwrap_or(NodeKind::File);
                 validate_source_path_for_kind(&request.path, &kind)?;
+                let mut request = request;
+                if existing.is_none() {
+                    let metadata_json = request
+                        .metadata_json
+                        .clone()
+                        .unwrap_or_else(|| "{}".to_string());
+                    request.metadata_json = Some(apply_okf_metadata(
+                        &database_id,
+                        &request.path,
+                        &kind,
+                        &request.content,
+                        &metadata_json,
+                    )?);
+                }
                 store.append_node(request, now)
             });
         if result.is_ok() {
@@ -3105,7 +3146,8 @@ impl VfsService {
                 if let Some(node) = store.read_node(&request.from_path)? {
                     validate_source_path_for_kind(&request.to_path, &node.kind)?;
                 }
-                store.move_node(request, now)
+                let result = store.move_node(request, now)?;
+                refresh_moved_okf_metadata(store, &database_id, result, now)
             });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -3659,6 +3701,58 @@ impl VfsService {
     fn open_index(&self) -> Result<Connection, String> {
         Connection::open(&self.index_path).map_err(|error| error.to_string())
     }
+}
+
+fn refresh_moved_okf_metadata(
+    store: &FsStore,
+    database_id: &str,
+    mut result: MoveNodeResult,
+    now: i64,
+) -> Result<MoveNodeResult, String> {
+    let mut paths = BTreeSet::new();
+    paths.insert(result.node.path.clone());
+    for entry in store.list_nodes(ListNodesRequest {
+        database_id: database_id.to_string(),
+        prefix: result.node.path.clone(),
+        recursive: true,
+    })? {
+        paths.insert(entry.path);
+    }
+
+    for path in paths {
+        let Some(node) = store.read_node(&path)? else {
+            continue;
+        };
+        if node.kind == NodeKind::Folder {
+            continue;
+        }
+        let metadata_json = apply_okf_metadata(
+            database_id,
+            &node.path,
+            &node.kind,
+            &node.content,
+            &node.metadata_json,
+        )?;
+        if metadata_json == node.metadata_json {
+            continue;
+        }
+        let write = store.write_node(
+            WriteNodeRequest {
+                database_id: database_id.to_string(),
+                path: node.path,
+                kind: node.kind,
+                content: node.content,
+                metadata_json,
+                expected_etag: Some(node.etag),
+            },
+            now,
+        )?;
+        if write.node.path == result.node.path {
+            result.node = write.node;
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -8212,7 +8306,7 @@ mod tests {
         }
         let store = FsStore::new(PathBuf::from(&db_file_name));
         store
-            .run_fs_migrations()
+            .run_fs_migrations_for_database(database_id)
             .expect("fixture FS migrations should run");
         let fs_conn = Connection::open(&db_file_name).expect("fixture DB should open");
         for path in missing_paths {

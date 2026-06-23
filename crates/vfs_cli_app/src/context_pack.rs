@@ -10,7 +10,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use vfs_client::VfsApi;
 use vfs_types::{ListNodesRequest, Node, NodeEntryKind, NodeKind};
-use wiki_domain::{RAW_SOURCES_PREFIX, WIKI_ROOT_PATH};
+use wiki_domain::{
+    OkfType, RAW_SOURCES_PREFIX, WIKI_ROOT_PATH, metadata_expires_at, metadata_okf_type,
+    metadata_resource, metadata_source_ref_paths, metadata_trust_level,
+};
 
 const OKF_VERSION: &str = "0.1";
 const INDEX_FILE: &str = "index.md";
@@ -144,6 +147,17 @@ enum OkfBucket {
 }
 
 impl OkfBucket {
+    fn from_okf_type(okf_type: OkfType) -> Result<Self> {
+        match okf_type {
+            OkfType::Fact => Ok(Self::Fact),
+            OkfType::Decision => Ok(Self::Decision),
+            OkfType::Task => Ok(Self::Task),
+            OkfType::Policy => Ok(Self::Policy),
+            OkfType::Note => Ok(Self::Note),
+            OkfType::Reference => bail!("wiki node okf_type Reference is unsupported"),
+        }
+    }
+
     fn concept_type(self) -> &'static str {
         match self {
             Self::Fact => "Fact",
@@ -227,7 +241,7 @@ async fn export_okf_bundle(
 
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let wiki_nodes = collect_wiki_nodes(client, database_id, &root).await?;
-    let source_paths = collect_source_refs(&wiki_nodes);
+    let source_paths = collect_source_refs(&wiki_nodes)?;
     let source_nodes = collect_sources(client, database_id, &source_paths).await?;
     let metadata = OkfBuildMetadata {
         database_id,
@@ -237,7 +251,7 @@ async fn export_okf_bundle(
         trust_level: &options.trust_level,
         approved_by: &options.approved_by,
     };
-    let concepts = build_okf_concepts(metadata, &wiki_nodes, &source_nodes);
+    let concepts = build_okf_concepts(metadata, &wiki_nodes, &source_nodes)?;
 
     write_okf_bundle(&options.out, &root, &generated_at, &concepts)?;
 
@@ -422,10 +436,8 @@ async fn collect_wiki_nodes(
         if !matches!(node.kind, NodeKind::File | NodeKind::Source) {
             continue;
         }
-        nodes.push(BucketedNode {
-            bucket: bucket_for_path(&node.path),
-            node,
-        });
+        let bucket = bucket_for_node(&node)?;
+        nodes.push(BucketedNode { node, bucket });
     }
     Ok(nodes)
 }
@@ -453,20 +465,29 @@ fn build_okf_concepts(
     metadata: OkfBuildMetadata<'_>,
     wiki_nodes: &[BucketedNode],
     source_nodes: &[Node],
-) -> Vec<OkfConcept> {
+) -> Result<Vec<OkfConcept>> {
     let mut concepts = Vec::new();
     let mut used_paths = BTreeSet::new();
     for item in wiki_nodes {
         let slug = unique_slug(&item.node.path, &mut used_paths);
         let relative_path = PathBuf::from(item.bucket.directory()).join(format!("{slug}.md"));
         let body = rendered_concept_body(&item.node.content);
+        let resource = metadata_resource(&item.node.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", item.node.path))?
+            .unwrap_or_else(|| kinic_resource(metadata.database_id, &item.node.path));
+        let trust_level = metadata_trust_level(&item.node.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", item.node.path))?
+            .unwrap_or_else(|| metadata.trust_level.to_string());
+        let expires_at = metadata_expires_at(&item.node.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", item.node.path))?
+            .unwrap_or_else(|| metadata.expires_at.to_string());
         concepts.push(OkfConcept {
             relative_path,
             frontmatter: OkfFrontmatter {
                 concept_type: item.bucket.concept_type().to_string(),
                 title: Some(title_from_path(&item.node.path)),
                 description: Some(format!("Generated from Kinic Wiki node {}", item.node.path)),
-                resource: Some(kinic_resource(metadata.database_id, &item.node.path)),
+                resource: Some(resource),
                 tags: vec!["kinic".to_string(), item.bucket.directory().to_string()],
                 timestamp: Some(metadata.generated_at.to_string()),
                 kinic: Some(KinicFrontmatter {
@@ -475,9 +496,9 @@ fn build_okf_concepts(
                     source_path: None,
                     etag: Some(item.node.etag.clone()),
                     content_hash: Some(sha256_hex(body.as_bytes())),
-                    trust_level: Some(metadata.trust_level.to_string()),
+                    trust_level: Some(trust_level),
                     approved_by: metadata.approved_by.to_vec(),
-                    expires_at: Some(metadata.expires_at.to_string()),
+                    expires_at: Some(expires_at),
                 }),
             },
             body,
@@ -487,13 +508,22 @@ fn build_okf_concepts(
     for source in source_nodes {
         let slug = unique_slug(&source.path, &mut used_paths);
         let relative_path = PathBuf::from("references").join(format!("{slug}.md"));
+        let resource = metadata_resource(&source.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", source.path))?
+            .unwrap_or_else(|| kinic_resource(metadata.database_id, &source.path));
+        let trust_level = metadata_trust_level(&source.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", source.path))?
+            .unwrap_or_else(|| metadata.trust_level.to_string());
+        let expires_at = metadata_expires_at(&source.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", source.path))?
+            .unwrap_or_else(|| metadata.expires_at.to_string());
         concepts.push(OkfConcept {
             relative_path,
             frontmatter: OkfFrontmatter {
                 concept_type: "Reference".to_string(),
                 title: Some(title_from_path(&source.path)),
                 description: Some(format!("Kinic raw source reference for {}", source.path)),
-                resource: Some(kinic_resource(metadata.database_id, &source.path)),
+                resource: Some(resource),
                 tags: vec!["kinic".to_string(), "reference".to_string()],
                 timestamp: Some(metadata.generated_at.to_string()),
                 kinic: Some(KinicFrontmatter {
@@ -502,9 +532,9 @@ fn build_okf_concepts(
                     source_path: Some(source.path.clone()),
                     etag: Some(source.etag.clone()),
                     content_hash: Some(sha256_hex(source.content.as_bytes())),
-                    trust_level: Some(metadata.trust_level.to_string()),
+                    trust_level: Some(trust_level),
                     approved_by: metadata.approved_by.to_vec(),
-                    expires_at: Some(metadata.expires_at.to_string()),
+                    expires_at: Some(expires_at),
                 }),
             },
             body: reference_body(source),
@@ -512,7 +542,7 @@ fn build_okf_concepts(
     }
 
     concepts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    concepts
+    Ok(concepts)
 }
 
 fn write_okf_bundle(
@@ -602,14 +632,17 @@ fn reference_body(source: &Node) -> String {
     )
 }
 
-fn collect_source_refs(nodes: &[BucketedNode]) -> BTreeSet<String> {
+fn collect_source_refs(nodes: &[BucketedNode]) -> Result<BTreeSet<String>> {
     let mut refs = BTreeSet::new();
     for item in nodes {
-        for source_path in extract_raw_source_paths(&item.node.content) {
+        let source_paths = metadata_source_ref_paths(&item.node.metadata_json)
+            .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", item.node.path))?
+            .unwrap_or_else(|| extract_raw_source_paths(&item.node.content));
+        for source_path in source_paths {
             refs.insert(source_path);
         }
     }
-    refs
+    Ok(refs)
 }
 
 fn extract_raw_source_paths(content: &str) -> Vec<String> {
@@ -633,6 +666,16 @@ fn extract_raw_source_paths(content: &str) -> Vec<String> {
 
 fn source_path_terminator(ch: char) -> bool {
     ch.is_whitespace() || matches!(ch, ')' | ']' | '"' | '\'' | '<' | '>' | '`')
+}
+
+fn bucket_for_node(node: &Node) -> Result<OkfBucket> {
+    if let Some(okf_type) = metadata_okf_type(&node.metadata_json)
+        .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", node.path))?
+    {
+        return OkfBucket::from_okf_type(okf_type)
+            .with_context(|| format!("{}: invalid OKF metadata", node.path));
+    }
+    Ok(bucket_for_path(&node.path))
 }
 
 fn bucket_for_path(path: &str) -> OkfBucket {
@@ -1021,6 +1064,72 @@ mod tests {
                 .errors
                 .iter()
                 .any(|error| error.contains("kinic.content_hash mismatch"))
+        );
+    }
+
+    #[tokio::test]
+    async fn export_prefers_okf_metadata_over_path_inference() {
+        let out = tempdir().expect("tempdir");
+        let mut client = MockClient::default();
+        client.nodes.insert(
+            "/Wiki/projects/acme/facts.md".to_string(),
+            Node {
+                metadata_json: r#"{"okf_type":"Decision","resource":"kinic://alpha/custom","trust_level":"reviewed","expires_at":"2999-02-01T00:00:00Z","source_refs":[{"path":"/Sources/raw/web/source-b.md"}]}"#.to_string(),
+                ..test_node(
+                    "/Wiki/projects/acme/facts.md",
+                    NodeKind::File,
+                    "Fact path but decision metadata from /Sources/raw/web/source-a.md\n",
+                    "wiki-etag",
+                )
+            },
+        );
+        client.nodes.insert(
+            "/Sources/raw/web/source-b.md".to_string(),
+            test_node(
+                "/Sources/raw/web/source-b.md",
+                NodeKind::Source,
+                "raw source b",
+                "source-b-etag",
+            ),
+        );
+
+        let result = export_okf_bundle(
+            &client,
+            "alpha",
+            ContextPackExportOptions {
+                root: "/Wiki/projects/acme".to_string(),
+                out: out.path().to_path_buf(),
+                expires_at: "2999-01-01T00:00:00Z".to_string(),
+                trust_level: "team-approved".to_string(),
+                approved_by: Vec::new(),
+                overwrite: false,
+                json: true,
+            },
+        )
+        .await
+        .expect("export");
+
+        assert_eq!(result.concept_count, 2);
+        assert_eq!(result.reference_count, 1);
+        let decision = fs::read_to_string(out.path().join("decisions/wiki-projects-acme-facts.md"))
+            .expect("decision");
+        assert!(decision.contains("type: Decision"));
+        assert!(decision.contains("resource: kinic://alpha/custom"));
+        assert!(decision.contains("trust_level: reviewed"));
+        assert!(decision.contains("expires_at: 2999-02-01T00:00:00Z"));
+        assert!(
+            !out.path()
+                .join("facts/wiki-projects-acme-facts.md")
+                .exists()
+        );
+        let reference =
+            fs::read_to_string(out.path().join("references/sources-raw-web-source-b.md"))
+                .expect("reference b");
+        assert!(reference.contains("source-b-etag"));
+        assert!(
+            !out.path()
+                .join("references/sources-raw-web-source-a.md")
+                .exists()
         );
     }
 

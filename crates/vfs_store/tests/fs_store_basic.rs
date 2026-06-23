@@ -210,7 +210,8 @@ fn fs_migrations_create_tables() {
             "wiki_store:001_fs_links".to_string(),
             "wiki_store:002_fs_folders".to_string(),
             "wiki_store:003_wikilink_alias_links".to_string(),
-            "wiki_store:004_rebuild_links_after_code_filter".to_string()
+            "wiki_store:004_rebuild_links_after_code_filter".to_string(),
+            "wiki_store:005_okf_metadata".to_string()
         ]
     );
 
@@ -986,7 +987,8 @@ fn fs_migrations_are_idempotent() {
             "wiki_store:001_fs_links".to_string(),
             "wiki_store:002_fs_folders".to_string(),
             "wiki_store:003_wikilink_alias_links".to_string(),
-            "wiki_store:004_rebuild_links_after_code_filter".to_string()
+            "wiki_store:004_rebuild_links_after_code_filter".to_string(),
+            "wiki_store:005_okf_metadata".to_string()
         ]
     );
 
@@ -996,6 +998,116 @@ fn fs_migrations_are_idempotent() {
         })
         .expect("path state count should succeed");
     assert_eq!(tracked_paths, 6);
+}
+
+#[test]
+fn fs_migrations_backfill_okf_metadata_and_sync_updates() {
+    let (_dir, store) = old_fs_schema_store();
+    let legacy_revision = {
+        let conn = Connection::open(store.database_path()).expect("db should open");
+        insert_legacy_node(
+            &conn,
+            "/Wiki/project/facts.md",
+            "file",
+            "Fact from /Sources/raw/web/source.md",
+            "{}",
+        );
+        insert_legacy_node(
+            &conn,
+            "/Wiki/project/plans.md",
+            "file",
+            "Do the next task",
+            "{}",
+        );
+        insert_legacy_node(
+            &conn,
+            "/Wiki/project/preferences.md",
+            "file",
+            "Prefer simple designs",
+            "{}",
+        );
+        insert_legacy_node(
+            &conn,
+            "/Sources/raw/web/source.md",
+            "source",
+            "raw source body",
+            "{}",
+        );
+        let revision = record_legacy_change(&conn, "/Wiki/project/facts.md");
+        record_legacy_change(&conn, "/Wiki/project/plans.md");
+        record_legacy_change(&conn, "/Wiki/project/preferences.md");
+        record_legacy_change(&conn, "/Sources/raw/web/source.md");
+        revision
+    };
+
+    store
+        .run_fs_migrations_for_database("db_alpha")
+        .expect("fs migrations should backfill OKF metadata");
+
+    let facts = store
+        .read_node("/Wiki/project/facts.md")
+        .expect("facts read should succeed")
+        .expect("facts should exist");
+    assert!(facts.metadata_json.contains("\"okf_type\":\"Fact\""));
+    assert!(
+        facts
+            .metadata_json
+            .contains("\"resource\":\"kinic://db_alpha/Wiki/project/facts.md\"")
+    );
+    assert!(
+        facts
+            .metadata_json
+            .contains("\"trust_level\":\"unreviewed\"")
+    );
+    assert!(
+        facts
+            .metadata_json
+            .contains("\"path\":\"/Sources/raw/web/source.md\"")
+    );
+    assert_ne!(facts.etag, "etag-/Wiki/project/facts.md");
+
+    let plans = store
+        .read_node("/Wiki/project/plans.md")
+        .expect("plans read should succeed")
+        .expect("plans should exist");
+    assert!(plans.metadata_json.contains("\"okf_type\":\"Task\""));
+
+    let preferences = store
+        .read_node("/Wiki/project/preferences.md")
+        .expect("preferences read should succeed")
+        .expect("preferences should exist");
+    assert!(
+        preferences
+            .metadata_json
+            .contains("\"okf_type\":\"Policy\"")
+    );
+
+    let reference = store
+        .read_node("/Sources/raw/web/source.md")
+        .expect("source read should succeed")
+        .expect("source should exist");
+    assert!(
+        reference
+            .metadata_json
+            .contains("\"okf_type\":\"Reference\"")
+    );
+
+    let updates = store
+        .fetch_updates(FetchUpdatesRequest {
+            database_id: "default".to_string(),
+            known_snapshot_revision: format!("v5:{legacy_revision}:2f"),
+            prefix: Some("/".to_string()),
+            limit: 100,
+            cursor: None,
+            target_snapshot_revision: None,
+        })
+        .expect("migration backfill should appear in sync updates");
+    let changed_paths = updates
+        .changed_nodes
+        .into_iter()
+        .map(|node| node.path)
+        .collect::<Vec<_>>();
+    assert!(changed_paths.contains(&"/Wiki/project/facts.md".to_string()));
 }
 
 #[test]
@@ -1284,7 +1396,7 @@ fn fs_folder_migration_promotes_empty_file_parent_to_folder() {
 }
 
 #[test]
-fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
+fn fs_okf_migration_updates_existing_file_etags_and_sync_delta() {
     let (_dir, store) = old_fs_schema_store();
     let conn = Connection::open(store.database_path()).expect("db should open");
     insert_legacy_node(&conn, "/Wiki/existing.md", "file", "existing", "{}");
@@ -1295,7 +1407,7 @@ fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
 
     store
         .run_fs_migrations()
-        .expect("folder migration should succeed");
+        .expect("OKF metadata migration should succeed");
 
     let file = store
         .read_node("/Wiki/existing.md")
@@ -1305,8 +1417,8 @@ fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
         .read_node("/Sources/raw/source.md")
         .expect("source should read")
         .expect("source should exist");
-    assert_eq!(file.etag, "etag-/Wiki/existing.md");
-    assert_eq!(source.etag, "etag-/Sources/raw/source.md");
+    assert_ne!(file.etag, "etag-/Wiki/existing.md");
+    assert_ne!(source.etag, "etag-/Sources/raw/source.md");
 
     let updates = store
         .fetch_updates(FetchUpdatesRequest {
@@ -1325,7 +1437,7 @@ fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
             .any(|node| node.path == "/Wiki" && node.kind == NodeKind::Folder)
     );
     assert!(
-        !updates
+        updates
             .changed_nodes
             .iter()
             .any(|node| node.path == "/Wiki/existing.md")
@@ -1363,7 +1475,7 @@ fn fs_folder_migration_reports_promoted_folder_in_sync_delta() {
             .any(|node| node.path == "/Wiki/foo" && node.kind == NodeKind::Folder)
     );
     assert!(
-        !updates
+        updates
             .changed_nodes
             .iter()
             .any(|node| node.path == "/Wiki/foo/bar.md")
@@ -1399,7 +1511,13 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
         .expect("legacy source should read")
         .expect("legacy source should exist");
     assert_eq!(source.kind, NodeKind::Source);
-    assert_eq!(source.metadata_json, r#"{"source_type":"url"}"#);
+    assert!(source.metadata_json.contains("\"source_type\":\"url\""));
+    assert!(source.metadata_json.contains("\"okf_type\":\"Reference\""));
+    assert!(
+        source
+            .metadata_json
+            .contains("\"resource\":\"kinic://db_local/Sources/raw/web/web.md\"")
+    );
 
     let children = store
         .list_children(ListChildrenRequest {

@@ -13,7 +13,7 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 - `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`. The Skill Registry CLI owns package upsert, discovery, run evidence, proposal, and status workflows.
 - `session`: agent conversation audit sources under `/Sources/raw/...`. Current capture stores sanitized raw session sources; resumable summaries are outside v1.
 
-Context Pack is an export artifact generated from store content. It is not a store.
+Context Pack is an export artifact generated from OKF concept metadata and Markdown bodies. It is not a store.
 Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
 
 ## Trust Model
@@ -25,7 +25,7 @@ Kinic store trust follows this lifecycle:
 ```
 
 - `/Sources/raw/...` is canonical raw evidence.
-- `/Wiki/...` is organized knowledge, but not automatically canonical.
+- `/Wiki/...` is organized knowledge stored as OKF concepts in VFS nodes, but not automatically canonical.
 - Working notes can help review, but they are not a separate canonical lifecycle state.
 - Role pages are the memory recall layer when their claims are backed by source evidence or human review.
 - Agents should prefer role-page claims plus `knowledge_evidence` over working-note text or search previews.

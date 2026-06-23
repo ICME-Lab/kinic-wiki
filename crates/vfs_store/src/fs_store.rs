@@ -155,14 +155,18 @@ impl FsStore {
     }
 
     pub fn run_fs_migrations(&self) -> Result<(), String> {
+        self.run_fs_migrations_for_database("db_local")
+    }
+
+    pub fn run_fs_migrations_for_database(&self, database_id: &str) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut conn = self.open()?;
-            schema::run_fs_migrations(&mut conn)
+            schema::run_fs_migrations(&mut conn, database_id)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.write_conn(schema::run_fs_migrations_in_tx)
+            self.write_conn(|tx| schema::run_fs_migrations_in_tx(tx, database_id))
         }
     }
 

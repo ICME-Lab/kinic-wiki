@@ -3,12 +3,14 @@
 Context Pack exports a Kinic Wiki scope as an Open Knowledge Format (OKF) v0.1 bundle.
 The output is plain Markdown with YAML frontmatter.
 There is no Kinic-specific `manifest.json`, `sources.json`, or `provenance.json` in the bundle.
-It is a generated handoff artifact derived from store content, not a fifth Kinic store.
+It is a generated handoff artifact derived from OKF concept metadata and Markdown bodies, not a fifth Kinic store.
 
 ## Product Concept
 
 The Kinic stores remain the source of truth.
-Context Pack is a generated OKF bundle for agent handoff, review, and portable project context.
+Each Kinic Wiki node is an OKF concept managed through the VFS.
+The SQLite row keeps concept fields in `metadata_json`; the Markdown body remains human-readable content.
+Context Pack externalizes those concepts as an OKF bundle for agent handoff, review, and portable project context.
 
 The bundle is meant to be readable by humans, parseable by agents, and shippable as a directory, archive, or git repository.
 Kinic-specific verification data lives in YAML frontmatter under the `kinic` extension key.
@@ -35,17 +37,28 @@ Reserved files:
 
 Concept files:
 
-- `facts/*.md`: settled fact concepts from `facts.md` wiki nodes.
-- `decisions/*.md`: decision concepts from decision wiki nodes.
-- `tasks/*.md`: pending work from `plans.md` or `tasks.md`.
-- `policies/*.md`: style, preference, and do-not-do concepts.
-- `notes/*.md`: general wiki notes that do not map to a narrower type.
-- `references/*.md`: source references without raw source body text.
+- `facts/*.md`: `okf_type: Fact`.
+- `decisions/*.md`: `okf_type: Decision`.
+- `tasks/*.md`: `okf_type: Task`.
+- `policies/*.md`: `okf_type: Policy`.
+- `notes/*.md`: `okf_type: Note`.
+- `references/*.md`: `okf_type: Reference`, without raw source body text.
+
+If node metadata omits `okf_type`, export falls back to the existing path role inference. Normal writes and migrations populate `okf_type`, so path inference is only a safety net for incomplete manual metadata.
 
 ## Frontmatter
 
 Every non-reserved `.md` file has YAML frontmatter.
 The required OKF field is `type`.
+Export generates frontmatter from `metadata_json` plus the Markdown body; frontmatter is not the canonical stored form.
+
+Canonical node metadata uses these JSON keys:
+
+- `okf_type`: `Fact`, `Task`, `Decision`, `Policy`, `Note`, or `Reference`.
+- `resource`: `kinic://<database_id><path>`.
+- `source_refs`: array of `{ "path": "/Sources/raw/..." }` objects.
+- `trust_level`: trust label, defaulting to `unreviewed`.
+- `expires_at`: optional RFC3339 expiry.
 
 Example:
 
