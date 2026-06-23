@@ -5,8 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg,
-    MarketCommand, NodeKindArg, SearchPreviewModeArg,
+    ConnectionArgs, CyclesCommand, DatabaseCommand, DatabaseProfileArg, GlobNodeTypeArg,
+    IdentityModeArg, MarketCommand, NodeKindArg, SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
@@ -44,7 +44,7 @@ pub enum Command {
         #[command(subcommand)]
         command: IdentityCommand,
     },
-    #[command(about = "Manage Skill Registry packages, discovery, status, and run evidence")]
+    #[command(about = "Manage skill store packages, discovery, status, and run evidence")]
     Skill {
         #[command(subcommand)]
         command: SkillCommand,
@@ -69,7 +69,7 @@ pub enum Command {
         #[command(subcommand)]
         command: GitHubCommand,
     },
-    #[command(about = "Export, verify, and inspect generated AI Context Packs")]
+    #[command(about = "Export, verify, and inspect generated AI handoff artifacts")]
     ContextPack {
         #[command(subcommand)]
         command: ContextPackCommand,
@@ -355,7 +355,7 @@ pub enum Command {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum SkillCommand {
-    #[command(about = "Store or update a Skill Registry package from a local directory")]
+    #[command(about = "Store or update a skill store package from a local directory")]
     Upsert {
         #[arg(long)]
         source_dir: PathBuf,
@@ -366,7 +366,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Find Skill Registry packages for a task query")]
+    #[command(about = "Find skill store packages for a task query")]
     Find {
         query: String,
         #[arg(long)]
@@ -376,7 +376,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Inspect one Skill Registry package, files, and recent run evidence")]
+    #[command(about = "Inspect one skill store package, files, and recent run evidence")]
     Inspect {
         id: String,
         #[arg(long)]
@@ -410,7 +410,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Import a Skill Registry package from an external source")]
+    #[command(about = "Import a skill store package from an external source")]
     Import {
         #[command(subcommand)]
         source: SkillImportCommand,
@@ -488,7 +488,7 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Manage queued Skill Registry evolution jobs")]
+    #[command(about = "Manage queued skill store evolution jobs")]
     EvolveJobs {
         #[command(subcommand)]
         command: SkillEvolveJobsCommand,
@@ -1046,8 +1046,8 @@ impl Command {
 mod tests {
     use super::{
         ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand,
-        DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand,
-        SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        DatabaseCommand, DatabaseProfileArg, HermesCommand, IdentityModeArg, MarketCommand,
+        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
@@ -1059,7 +1059,7 @@ mod tests {
 
         assert!(help.contains("Manage database creation"));
         assert!(help.contains("Inspect marketplace access"));
-        assert!(help.contains("Manage Skill Registry packages"));
+        assert!(help.contains("Manage skill store packages"));
         assert!(help.contains("Read one node by path"));
         assert!(help.contains("Search node content"));
     }
@@ -1073,8 +1073,8 @@ mod tests {
             .render_long_help()
             .to_string();
 
-        assert!(help.contains("Find Skill Registry packages"));
-        assert!(help.contains("Inspect one Skill Registry package"));
+        assert!(help.contains("Find skill store packages"));
+        assert!(help.contains("Inspect one skill store package"));
         assert!(help.contains("Record run evidence"));
     }
 
@@ -1155,12 +1155,29 @@ mod tests {
     fn main_cli_parses_database_link_commands() {
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "create", "team-db"]);
         let Command::Database {
-            command: DatabaseCommand::Create { name },
+            command: DatabaseCommand::Create { name, profile },
         } = cli.command
         else {
             panic!("expected database create command");
         };
         assert_eq!(name, "team-db");
+        assert_eq!(profile, DatabaseProfileArg::Workspace);
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "database",
+            "create",
+            "--profile",
+            "memory",
+            "team-memory",
+        ]);
+        let Command::Database {
+            command: DatabaseCommand::Create { name, profile },
+        } = cli.command
+        else {
+            panic!("expected database create command");
+        };
+        assert_eq!(name, "team-memory");
+        assert_eq!(profile, DatabaseProfileArg::Memory);
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
         let cli = Cli::parse_from([

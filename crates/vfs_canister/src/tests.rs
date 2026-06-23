@@ -13,16 +13,16 @@ use vfs_runtime::{
 };
 use vfs_types::{
     AppendNodeRequest, CreateDatabaseRequest, CyclesBillingConfig, CyclesBillingConfigUpdate,
-    CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole,
-    DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
+    CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseProfile, DatabaseRestoreChunkRequest,
+    DatabaseRole, DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
     ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
-    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest,
-    NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceEvidenceRequest, StorageBillingBatchRequest, WriteNodeItem, WriteNodeRequest,
-    WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KnowledgeEvidenceRequest,
+    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketListingStatus,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest,
+    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, StorageBillingBatchRequest, StoreManifestRequest, WriteNodeItem,
+    WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
@@ -38,20 +38,22 @@ use super::{
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
     graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
-    ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
-    list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
-    market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
-    market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
-    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
-    purchase_database_cycles, query_context, query_database_sql_json, query_index_sql_json,
-    read_database_archive_chunk, read_node, read_node_context, rename_database,
-    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
-    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
+    knowledge_evidence, last_ledger_from_for_test, last_ledger_memo_for_test,
+    last_ledger_to_for_test, ledger_transfer_fees_for_test, list_children,
+    list_database_cycle_entries, list_database_cycles_pending_purchases, list_database_members,
+    list_databases, list_nodes, market_create_listing, market_get_listing,
+    market_list_seller_listings, market_pause_listing, market_purchase_access,
+    market_update_listing, memory_recall, mkdir_node, move_node, multi_edit_node, outgoing_links,
+    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_database_sql_json,
+    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
+    rename_database, revoke_database_access, search_node_paths, search_nodes,
+    set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
+    set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
-    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
-    wiki_metrics, wiki_metrics_series, write_database_restore_chunk, write_node, write_nodes,
+    set_update_charge_units_for_test, settle_database_storage_charges_batch, status,
+    store_manifest, transfer_from_error_outcome, update_charge_cycles,
+    update_cycles_billing_config, wiki_metrics, wiki_metrics_series, write_database_restore_chunk,
+    write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -809,6 +811,7 @@ fn purchase_database_cycles_cycles_completed_transfer_from() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Funded".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -847,6 +850,7 @@ fn purchase_database_cycles_rejects_anonymous_before_ledger_call() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Anonymous purchase".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     drop(_caller);
@@ -873,6 +877,7 @@ fn purchase_database_cycles_treats_duplicate_as_completed_transfer() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Duplicate ledger".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(transfer_from_error_outcome(
@@ -906,6 +911,7 @@ fn list_database_cycle_entries_paginates_with_clamped_limits() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Cycle history pages".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     for index in 0..105 {
@@ -940,6 +946,7 @@ fn purchase_database_cycles_rejects_bad_fee_without_credit() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Bad fee".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::BadFee {
@@ -973,6 +980,7 @@ fn purchase_database_cycles_rejects_invalid_target_before_ledger_call() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Purchase validation".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
 
@@ -1056,6 +1064,7 @@ fn begin_database_archive_rejects_pending_cycle_purchase() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Pending lifecycle".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 41);
@@ -1084,6 +1093,7 @@ fn purchase_database_cycles_rejects_balance_overflow_before_ledger_call() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Overflow".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     SERVICE.with(|slot| {
@@ -1121,6 +1131,7 @@ fn purchase_database_cycles_uses_current_config_amount() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Current config".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     SERVICE.with(|slot| {
@@ -1160,6 +1171,7 @@ fn purchase_database_cycles_leaves_balance_on_ledger_reject() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Rejected".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::LedgerErr(
@@ -1189,6 +1201,7 @@ fn purchase_database_cycles_keeps_ambiguous_transfer_from_for_review() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Ambiguous".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Ambiguous(
@@ -1235,6 +1248,7 @@ fn list_database_cycles_pending_purchases_allows_owner_authority_and_payer() {
         let _owner = AuthenticatedCallerGuard::install_principal(owner);
         create_database(CreateDatabaseRequest {
             name: "Pending".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create")
     };
@@ -1282,6 +1296,7 @@ fn purchase_database_cycles_mount_failure_keeps_completed_pending_operation() {
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Mount review".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(42));
@@ -1328,6 +1343,7 @@ fn purchase_database_cycles_apply_failure_keeps_completed_pending_for_review() {
     let _owner = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Apply review".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     set_next_ledger_transfer_from_outcome_for_test(LedgerTransferFromOutcome::Completed(44));
@@ -1382,6 +1398,7 @@ fn purchase_database_cycles_allows_non_owner_payer() {
         let _owner = AuthenticatedCallerGuard::install();
         create_database(CreateDatabaseRequest {
             name: "Public funding".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create")
         .database_id
@@ -1416,6 +1433,7 @@ fn icrc21_purchase_database_cycles_returns_consent_message() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Consent".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     let request = cycles_purchase_request(&database.database_id, 50_000);
@@ -1493,6 +1511,7 @@ fn icrc21_market_purchase_access_returns_consent_message() {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
             name: "Market consent".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 301);
@@ -1543,6 +1562,7 @@ fn icrc21_market_purchase_access_canonicalizes_access_principal() {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
             name: "Market canonical consent".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 301);
@@ -1586,6 +1606,7 @@ fn icrc21_market_purchase_access_rejects_price_mismatch() {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
             name: "Price mismatch".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 302);
@@ -1622,6 +1643,7 @@ fn icrc21_market_purchase_access_rejects_inactive_listing() {
         let _seller = AuthenticatedCallerGuard::install_principal(seller);
         let database = create_database(CreateDatabaseRequest {
             name: "Inactive listing".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create");
         fund_database(&database.database_id, 1_000_000, 303);
@@ -1658,6 +1680,7 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
         let _seller = AuthenticatedCallerGuard::install_principal(seller_a);
         let first = create_database(CreateDatabaseRequest {
             name: "Seller A first".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("first database should create");
         fund_database(&first.database_id, 1_000_000, 304);
@@ -1665,6 +1688,7 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
             .expect("first listing should create");
         let second = create_database(CreateDatabaseRequest {
             name: "Seller A second".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("second database should create");
         fund_database(&second.database_id, 1_000_000, 305);
@@ -1675,6 +1699,7 @@ fn market_list_seller_listings_filters_by_seller_and_pages() {
         let _seller = AuthenticatedCallerGuard::install_principal(seller_b);
         let other = create_database(CreateDatabaseRequest {
             name: "Seller B listing".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("other database should create");
         fund_database(&other.database_id, 1_000_000, 306);
@@ -1701,6 +1726,7 @@ fn purchase_database_cycles_sends_operation_memo_to_ledger() {
     let _caller = AuthenticatedCallerGuard::install();
     let database = create_database(CreateDatabaseRequest {
         name: "Memo".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     clear_last_ledger_memo_for_test();
@@ -1737,6 +1763,7 @@ fn purchase_database_cycles_rejects_unknown_and_deleted_database() {
 
     let database = create_database(CreateDatabaseRequest {
         name: "Deleted".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     fund_database(&database.database_id, 1_000_000, 44);
@@ -1929,6 +1956,7 @@ fn market_listing_description_allows_newlines() {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
             name: "Multiline market".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -1978,6 +2006,7 @@ fn market_listing_description_rejects_non_whitespace_control_characters() {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
             name: "Control market".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2025,6 +2054,7 @@ fn canister_list_databases_includes_market_entitlements_as_reader_access() {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
             name: "Private market".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2134,6 +2164,7 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         let database = create_database(CreateDatabaseRequest {
             name: "Market character counts".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("market database should create");
         database_id = database.database_id;
@@ -2508,6 +2539,7 @@ fn check_database_write_cycles_requires_authenticated_writer() {
         let _caller = AuthenticatedCallerGuard::install_principal(owner);
         create_database(CreateDatabaseRequest {
             name: "Write cycles check".to_string(),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("database should create")
         .database_id
@@ -2620,6 +2652,7 @@ fn create_database_returns_result() {
     let _caller = AuthenticatedCallerGuard::install();
     let result = create_database(CreateDatabaseRequest {
         name: " Team skills ".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect("database should create");
     assert!(result.database_id.starts_with("db_"));
@@ -2653,7 +2686,9 @@ fn create_database_returns_result() {
         path: "/Wiki".to_string(),
     })
     .expect("activated database should list");
-    assert!(children.is_empty());
+    assert!(children.iter().any(|child| {
+        child.path == "/Wiki/skills" && child.kind == NodeEntryKind::Folder && !child.is_virtual
+    }));
 }
 
 #[test]
@@ -2664,12 +2699,14 @@ fn create_database_rejects_pending_database_limit() {
     for offset in 0..3 {
         create_database(CreateDatabaseRequest {
             name: format!("Pending {offset}"),
+            profile: DatabaseProfile::Workspace,
         })
         .expect("pending database should create within limit");
     }
 
     let error = create_database(CreateDatabaseRequest {
         name: "Pending 3".to_string(),
+        profile: DatabaseProfile::Workspace,
     })
     .expect_err("fourth pending database should reject");
     assert!(error.contains("too many pending databases for caller"));
@@ -2849,15 +2886,30 @@ fn status_stays_available_after_fs_migrations() {
 }
 
 #[test]
-fn memory_entrypoints_return_agent_memory_contract() {
+fn store_entrypoints_return_four_store_contract() {
     install_test_service();
 
-    let manifest = memory_manifest();
-    assert_eq!(manifest.api_version, "agent-memory-v1");
-    assert_eq!(manifest.write_policy, "agent_memory_read_only");
-    assert_eq!(manifest.recommended_entrypoint, "query_context");
+    let manifest = store_manifest(StoreManifestRequest {
+        database_id: "default".to_string(),
+    })
+    .expect("store manifest should load default database profile");
+    assert_eq!(manifest.api_version, "kinic-stores-v1");
+    assert_eq!(manifest.write_policy, "store_recall_read_only");
+    assert_eq!(manifest.recommended_entrypoint, "memory_recall");
     assert_eq!(manifest.max_depth, 2);
     assert!(manifest.roots.iter().any(|root| root.path == "/Wiki"));
+    assert!(
+        manifest
+            .roots
+            .iter()
+            .any(|root| root.path == "/Wiki/skills" && root.kind == "skill")
+    );
+    assert!(
+        manifest
+            .roots
+            .iter()
+            .any(|root| root.path == "/Sources/raw" && root.kind == "knowledge_evidence")
+    );
     assert!(
         manifest
             .canonical_roles
@@ -2900,7 +2952,7 @@ fn memory_entrypoints_return_agent_memory_contract() {
         .expect("write should succeed");
     }
 
-    let context = query_context(QueryContextRequest {
+    let context = memory_recall(MemoryRecallRequest {
         database_id: "default".to_string(),
         task: "beam memory".to_string(),
         entities: Vec::new(),
@@ -2909,7 +2961,7 @@ fn memory_entrypoints_return_agent_memory_contract() {
         include_evidence: true,
         depth: 1,
     })
-    .expect("query context should load");
+    .expect("memory recall should load");
     assert!(
         context
             .nodes
@@ -2918,7 +2970,7 @@ fn memory_entrypoints_return_agent_memory_contract() {
     );
     assert!(!context.evidence.is_empty());
 
-    let evidence = source_evidence(SourceEvidenceRequest {
+    let evidence = knowledge_evidence(KnowledgeEvidenceRequest {
         database_id: "default".to_string(),
         node_path: "/Wiki/scope/overview.md".to_string(),
     })
@@ -3040,7 +3092,13 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
         snapshot_session_id: None,
     })
     .expect("snapshot should export");
-    assert_eq!(snapshot.nodes.len(), 4);
+    assert_eq!(snapshot.nodes.len(), 5);
+    assert!(
+        snapshot
+            .nodes
+            .iter()
+            .any(|node| { node.path == "/Wiki/skills" && node.kind == NodeKind::Folder })
+    );
 
     let empty_delta = fetch_updates(FetchUpdatesRequest {
         database_id: "default".to_string(),

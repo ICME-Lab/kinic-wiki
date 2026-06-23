@@ -6,6 +6,13 @@ type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
+  const DatabaseProfile = idl.Variant({
+    Skill: idl.Null,
+    Memory: idl.Null,
+    Workspace: idl.Null,
+    Session: idl.Null,
+    Knowledge: idl.Null
+  });
   const DatabaseStatus = idl.Variant({
     Active: idl.Null,
     Pending: idl.Null,
@@ -20,13 +27,14 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     name: idl.Text,
+    profile: DatabaseProfile,
     archived_at_ms: idl.Opt(idl.Int64),
     deleted_at_ms: idl.Opt(idl.Int64),
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64)
   });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
-  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text, profile: DatabaseProfile });
+  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text, profile: DatabaseProfile });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
@@ -95,42 +103,49 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     score: idl.Float32,
     match_reasons: idl.Vec(idl.Text)
   });
-  const MemoryCapability = idl.Record({ name: idl.Text, description: idl.Text });
-  const MemoryRoot = idl.Record({ path: idl.Text, kind: idl.Text });
+  const StoreCapability = idl.Record({ name: idl.Text, description: idl.Text });
+  const StoreRoot = idl.Record({ path: idl.Text, kind: idl.Text });
   const CanonicalRole = idl.Record({
     name: idl.Text,
     path_pattern: idl.Text,
     purpose: idl.Text
   });
-  const MemoryManifest = idl.Record({
-    api_version: idl.Text,
-    purpose: idl.Text,
-    roots: idl.Vec(MemoryRoot),
-    capabilities: idl.Vec(MemoryCapability),
-    canonical_roles: idl.Vec(CanonicalRole),
-    write_policy: idl.Text,
+  const StoreManifest = idl.Record({
+    entry_roots: idl.Vec(StoreRoot),
     recommended_entrypoint: idl.Text,
+    api_version: idl.Text,
+    capabilities: idl.Vec(StoreCapability),
+    enabled_stores: idl.Vec(idl.Text),
+    write_policy: idl.Text,
+    budget_unit: idl.Text,
+    canonical_roles: idl.Vec(CanonicalRole),
     max_depth: idl.Nat32,
     max_query_limit: idl.Nat32,
-    budget_unit: idl.Text
+    purpose: idl.Text,
+    roots: idl.Vec(StoreRoot),
+    profile: DatabaseProfile
   });
-  const SourceEvidenceRef = idl.Record({
+  const StoreManifestRequest = idl.Record({ database_id: idl.Text });
+  const KnowledgeEvidenceRef = idl.Record({
     source_path: idl.Text,
     via_path: idl.Text,
     raw_href: idl.Text,
-    link_text: idl.Text
+    link_text: idl.Text,
+    source_etag: idl.Opt(idl.Text),
+    source_updated_at: idl.Opt(idl.Int64),
+    source_content_hash: idl.Opt(idl.Text)
   });
-  const SourceEvidence = idl.Record({
+  const KnowledgeEvidence = idl.Record({
     node_path: idl.Text,
-    refs: idl.Vec(SourceEvidenceRef)
+    refs: idl.Vec(KnowledgeEvidenceRef)
   });
-  const QueryContext = idl.Record({
+  const MemoryRecall = idl.Record({
     namespace: idl.Text,
     task: idl.Text,
     search_hits: idl.Vec(SearchNodeHit),
     nodes: idl.Vec(NodeContext),
     graph_links: idl.Vec(LinkEdge),
-    evidence: idl.Vec(SourceEvidence),
+    evidence: idl.Vec(KnowledgeEvidence),
     truncated: idl.Bool
   });
   const ListChildrenRequest = idl.Record({ path: idl.Text, database_id: idl.Text });
@@ -193,7 +208,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     top_k: idl.Nat32,
     preview_mode: idl.Opt(SearchPreviewMode)
   });
-  const QueryContextRequest = idl.Record({
+  const MemoryRecallRequest = idl.Record({
     database_id: idl.Text,
     task: idl.Text,
     entities: idl.Vec(idl.Text),
@@ -202,17 +217,18 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     include_evidence: idl.Bool,
     depth: idl.Nat32
   });
-  const SourceEvidenceRequest = idl.Record({ node_path: idl.Text, database_id: idl.Text });
+  const KnowledgeEvidenceRequest = idl.Record({ node_path: idl.Text, database_id: idl.Text });
   const ResultNode = idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text });
   const ResultChildren = idl.Variant({ Ok: idl.Vec(ChildNode), Err: idl.Text });
   const ResultLinks = idl.Variant({ Ok: idl.Vec(LinkEdge), Err: idl.Text });
   const ResultNodeContext = idl.Variant({ Ok: idl.Opt(NodeContext), Err: idl.Text });
   const ResultSearch = idl.Variant({ Ok: idl.Vec(SearchNodeHit), Err: idl.Text });
-  const ResultQueryContext = idl.Variant({ Ok: QueryContext, Err: idl.Text });
-  const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
+  const ResultMemoryRecall = idl.Variant({ Ok: MemoryRecall, Err: idl.Text });
+  const ResultKnowledgeEvidence = idl.Variant({ Ok: KnowledgeEvidence, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultDatabases = idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text });
   const ResultMembers = idl.Variant({ Ok: idl.Vec(DatabaseMember), Err: idl.Text });
+  const ResultStoreManifest = idl.Variant({ Ok: StoreManifest, Err: idl.Text });
   const WriteNodeResult = idl.Record({ created: idl.Bool, node: NodeMutationAck });
   const ResultWriteNode = idl.Variant({ Ok: WriteNodeResult, Err: idl.Text });
   const DeleteNodeResult = idl.Record({ path: idl.Text });
@@ -239,10 +255,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     incoming_links: idl.Func([IncomingLinksRequest], [ResultLinks], ["query"]),
     list_databases: idl.Func([], [ResultDatabases], ["query"]),
     list_database_members: idl.Func([idl.Text], [ResultMembers], ["query"]),
-    memory_manifest: idl.Func([], [MemoryManifest], ["query"]),
+    store_manifest: idl.Func([StoreManifestRequest], [ResultStoreManifest], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     move_node: idl.Func([MoveNodeRequest], [ResultMoveNode], []),
-    query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
+    memory_recall: idl.Func([MemoryRecallRequest], [ResultMemoryRecall], ["query"]),
     read_node: idl.Func([idl.Text, idl.Text], [ResultNode], ["query"]),
     read_node_context: idl.Func([NodeContextRequest], [ResultNodeContext], ["query"]),
     list_children: idl.Func([ListChildrenRequest], [ResultChildren], ["query"]),
@@ -251,7 +267,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     rename_database: idl.Func([RenameDatabaseRequest], [ResultUnit], []),
     search_node_paths: idl.Func([SearchNodePathsRequest], [ResultSearch], ["query"]),
     search_nodes: idl.Func([SearchNodesRequest], [ResultSearch], ["query"]),
-    source_evidence: idl.Func([SourceEvidenceRequest], [ResultSourceEvidence], ["query"]),
+    knowledge_evidence: idl.Func([KnowledgeEvidenceRequest], [ResultKnowledgeEvidence], ["query"]),
     write_node: idl.Func([WriteNodeRequest], [ResultWriteNode], [])
   });
 };

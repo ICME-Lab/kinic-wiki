@@ -729,9 +729,9 @@ fn change_log_retains_all_recorded_revisions() {
         })
         .expect("max revision should succeed");
 
-    assert_eq!(revision_count, 263);
+    assert_eq!(revision_count, 265);
     assert_eq!(oldest_revision, 1);
-    assert_eq!(newest_revision, 263);
+    assert_eq!(newest_revision, 265);
 }
 
 #[test]
@@ -759,7 +759,7 @@ fn fs_path_state_tracks_latest_change_revision() {
             |row| row.get::<_, i64>(0),
         )
         .expect("path state should exist");
-    assert_eq!(revision, 5);
+    assert_eq!(revision, 7);
 }
 
 #[test]
@@ -995,7 +995,7 @@ fn fs_migrations_are_idempotent() {
             row.get::<_, i64>(0)
         })
         .expect("path state count should succeed");
-    assert_eq!(tracked_paths, 4);
+    assert_eq!(tracked_paths, 6);
 }
 
 #[test]
@@ -2187,9 +2187,9 @@ fn list_children_reports_missing_directory_paths() {
             .iter()
             .map(|child| child.path.as_str())
             .collect::<Vec<_>>(),
-        vec!["/Sources", "/Wiki"]
+        vec!["/Memory", "/Sessions", "/Sources", "/Wiki"]
     );
-    for path in ["/Wiki", "/Sources"] {
+    for path in ["/Memory", "/Sessions", "/Wiki", "/Sources"] {
         let children = store
             .list_children(ListChildrenRequest {
                 database_id: "default".to_string(),

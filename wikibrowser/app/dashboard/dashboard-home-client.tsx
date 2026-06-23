@@ -4,7 +4,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import type { AuthClient } from "@icp-sdk/auth/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAppSession } from "../app-session-provider";
 import { CreateDatabaseDialog } from "../create-database-dialog";
 import { DatabaseBody, StatusPanel } from "../home-ui";
@@ -13,7 +13,8 @@ import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { KinicAfterApproveError, purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
-import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
+import { hrefForPath } from "@/lib/paths";
+import type { CyclesBillingConfig, DatabaseProfile, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
 import type { DatabaseRow } from "../home-ui";
 
@@ -24,6 +25,7 @@ const CREATE_DATABASE_PURCHASE_KINIC = "1";
 
 export function DashboardHomeClient() {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const router = useRouter();
   const searchParams = useSearchParams();
   const refreshSeqRef = useRef(0);
   const {
@@ -49,6 +51,7 @@ export function DashboardHomeClient() {
   const [walletMessage, setWalletMessage] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newDatabaseName, setNewDatabaseName] = useState("");
+  const [newDatabaseProfile, setNewDatabaseProfile] = useState<DatabaseProfile>("workspace");
   const [creating, setCreating] = useState(false);
 
   const refreshDatabases = useCallback(
@@ -122,6 +125,7 @@ export function DashboardHomeClient() {
       setPurchasedDatabaseIds(new Set());
       setCreateDialogOpen(false);
       setNewDatabaseName("");
+      setNewDatabaseProfile("workspace");
       setWalletMessage(null);
     });
     return () => {
@@ -147,10 +151,12 @@ export function DashboardHomeClient() {
     setWalletMessage(null);
     let createdDatabaseId: string | null = null;
     try {
-      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput);
+      const selectedProfile = newDatabaseProfile;
+      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput, selectedProfile);
       createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
+      setNewDatabaseProfile("workspace");
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
@@ -159,6 +165,7 @@ export function DashboardHomeClient() {
       );
       await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
+      router.push(hrefForPath(canisterId, result.database_id, primaryRootForDatabaseProfile(selectedProfile)));
     } catch (cause) {
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
@@ -219,14 +226,17 @@ export function DashboardHomeClient() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
+          profile={newDatabaseProfile}
           requiredBalanceLabel={formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
             setCreateDialogOpen(false);
             setNewDatabaseName("");
+            setNewDatabaseProfile("workspace");
           }}
           onChange={setNewDatabaseName}
+          onProfileChange={setNewDatabaseProfile}
           onSubmit={() => void createDatabase()}
         />
 
@@ -255,6 +265,13 @@ export function DashboardHomeClient() {
         )}
     </AdminContent>
   );
+}
+
+function primaryRootForDatabaseProfile(profile: DatabaseProfile): string {
+  if (profile === "memory") return "/Memory";
+  if (profile === "skill") return "/Wiki/skills";
+  if (profile === "session") return "/Sessions";
+  return "/Wiki";
 }
 
 function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseRow[] {

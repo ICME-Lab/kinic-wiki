@@ -25,7 +25,7 @@ Create and link a database.
 If the database already exists and you have access, start from `database link <database-id>`.
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database create "Team skills")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database create --profile skill "Team skills")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
 ```

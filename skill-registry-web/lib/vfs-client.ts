@@ -8,14 +8,14 @@ import { classifyApiError, invalidCanisterIdError } from "@/lib/api-errors";
 import { sortChildNodes } from "@/lib/child-sort";
 import { normalizeSearchHit, type RawSearchHit } from "@/lib/search-normalizer";
 import { idlFactory } from "@/lib/vfs-idl";
-import type { ChildNode, DatabaseMember, DatabaseRole, DatabaseStatus, DatabaseSummary, NodeEntryKind, NodeKind, NodeMutationAck, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
+import type { ChildNode, DatabaseMember, DatabaseProfile, DatabaseRole, DatabaseStatus, DatabaseSummary, NodeEntryKind, NodeKind, NodeMutationAck, WikiNode, WriteNodeRequest, WriteNodeResult, MkdirNodeRequest, MkdirNodeResult } from "@/lib/types";
 import { ApiError } from "@/lib/wiki-helpers";
 
 type Variant = Record<string, null>;
 type RawNode = { path: string; kind: Variant; content: string; created_at: bigint; updated_at: bigint; etag: string; metadata_json: string };
 type RawNodeMutationAck = { path: string; kind: Variant; updated_at: bigint; etag: string };
 type RawChild = { path: string; name: string; kind: Variant; updated_at: [] | [bigint]; etag: [] | [string]; size_bytes: [] | [bigint]; is_virtual: boolean; has_children: boolean };
-type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; name: string; archived_at_ms: [] | [bigint]; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
+type RawDatabaseSummary = { status: Variant; role: Variant; profile: Variant; logical_size_bytes: bigint; database_id: string; name: string; archived_at_ms: [] | [bigint]; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
 type RawDatabaseMember = { database_id: string; principal: string; role: Variant; created_at_ms: bigint };
 type RawWriteNodeRequest = { database_id: string; path: string; kind: Variant; content: string; metadata_json: string; expected_etag: [] | [string] };
 type RawWriteNodeResult = { created: boolean; node: RawNodeMutationAck };
@@ -177,6 +177,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     databaseId: raw.database_id,
     name: raw.name,
     role: normalizeDatabaseRole(raw.role),
+    profile: normalizeDatabaseProfile(raw.profile),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? null,
@@ -227,6 +228,14 @@ function normalizeEntryKind(kind: Variant): NodeEntryKind {
 
 function normalizeDatabaseRole(role: Variant): DatabaseRole {
   return "Owner" in role ? "owner" : "Writer" in role ? "writer" : "reader";
+}
+
+function normalizeDatabaseProfile(profile: Variant): DatabaseProfile {
+  if ("Memory" in profile) return "memory";
+  if ("Knowledge" in profile) return "knowledge";
+  if ("Skill" in profile) return "skill";
+  if ("Session" in profile) return "session";
+  return "workspace";
 }
 
 function nodeKindVariant(kind: NodeKind): Variant {

@@ -1,6 +1,6 @@
 # Wiki Browser Implementation Plan
 
-> Archived historical plan. This document predates the current static `/w` shell, browser-direct IC queries, and Agent Memory API v1. Treat it as implementation history, not the current WikiBrowser specification.
+> Archived historical plan. This document predates the current static `/w` shell, browser-direct IC queries, and Store API v1. Treat it as implementation history, not the current WikiBrowser specification.
 
 ## Summary
 

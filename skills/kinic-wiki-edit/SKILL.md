@@ -17,7 +17,7 @@ Do not use this skill for:
 - answer-only wiki queries; use `kinic-wiki-query`
 - report-only health checks; use `kinic-wiki-lint`
 - raw source ingestion or new evidence synthesis; use `kinic-wiki-ingest`
-- Skill Registry package lifecycle work; use `kinic-skill-registry`
+- skill store package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 

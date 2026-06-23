@@ -19,7 +19,7 @@ Do not use this skill for:
 - ordinary question answering
 - hidden repair runs
 - OKF bundle structure verification; use `kinic-context-pack` and `context-pack verify`
-- Skill Registry package lifecycle work; use `kinic-skill-registry`
+- skill store package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 
@@ -32,6 +32,6 @@ Core rules:
 - Keep local lint and remote inspection conceptually separate.
 - Check note-role boundary violations as well as missing pages.
 - Treat exact-value drift in `facts.md` as a real canonicality problem, not a style nit.
-- Treat [../../docs/AGENT_MEMORY_API.md](../../docs/AGENT_MEMORY_API.md) as the trust model and note-role contract.
+- Treat [../../docs/STORE_API.md](../../docs/STORE_API.md) as the trust model and note-role contract.
 
 Read [lint.md](lint.md) before doing substantive Kinic Wiki lint work.

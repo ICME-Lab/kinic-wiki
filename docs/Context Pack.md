@@ -3,10 +3,11 @@
 Context Pack exports a Kinic Wiki scope as an Open Knowledge Format (OKF) v0.1 bundle.
 The output is plain Markdown with YAML frontmatter.
 There is no Kinic-specific `manifest.json`, `sources.json`, or `provenance.json` in the bundle.
+It is a generated handoff artifact derived from store content, not a fifth Kinic store.
 
 ## Product Concept
 
-Kinic Wiki remains the source of truth.
+The Kinic stores remain the source of truth.
 Context Pack is a generated OKF bundle for agent handoff, review, and portable project context.
 
 The bundle is meant to be readable by humans, parseable by agents, and shippable as a directory, archive, or git repository.
@@ -154,6 +155,7 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 
 ## Limits
 
-- Context Pack is generated from Kinic Wiki; it is not a separate canonical store.
+- Context Pack is generated from memory and knowledge store content; it is not a separate canonical store.
+- Skill and session stores may be referenced by exported knowledge, but Context Pack does not manage those stores.
 - Context Pack does not define write-back, patch approval, or checkpoint APIs.
 - OKF remains the bundle format; Kinic metadata stays inside `kinic` frontmatter.

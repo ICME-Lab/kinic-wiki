@@ -4,7 +4,7 @@
 This document covers wiki/database operator operations: connection, database management, node reads and writes, search, links, and archive/restore.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
-The canister also exposes read-only Agent Memory API methods such as `memory_manifest`, `query_context`, and `source_evidence`; see [`AGENT_MEMORY_API.md`](AGENT_MEMORY_API.md).
+The canister also exposes read-only Store API methods such as `store_manifest`, `memory_recall`, and `knowledge_evidence`; see [`STORE_API.md`](STORE_API.md).
 Those are direct canister/client methods, not CLI commands in this document.
 Use the CLI commands below for shell workflows against the remote VFS.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
@@ -81,7 +81,7 @@ Create a database before reading or writing:
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> cycles config
 # Approve the VFS canister on the listed KINIC ICRC-2 ledger before CLI cycle purchase. The allowance must cover the KINIC amount plus ledger transfer fee.
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create --profile workspace "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database list
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database purchase-cycles "$DB_ID" 1.25
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database cycles "$DB_ID"
@@ -95,7 +95,24 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- query-sql "SELECT json_object(
 ```
 
 `cycles config` prints the KINIC ledger canister, billing authority principal, `cycles_per_kinic`, `min_update_cycles`, and fixed ledger transfer fee `100_000 e8s`.
-`database create <database-name>` creates a generated pending database ID with zero DB cycles balance and prints it on success. It does not allocate a DB mount until the first successful cycle purchase.
+`database create [--profile <profile>] <database-name>` creates a generated pending database ID with zero DB cycles balance and prints it on success. It does not allocate a DB mount until the first successful cycle purchase. Omitted profile defaults to `workspace`.
+
+Profiles select initial roots, seed pages, Store API manifest, Browser empty state, and agent entrypoint. All profiles use the same VFS schema.
+
+| Profile | Use | Initial entry |
+| --- | --- | --- |
+| `workspace` | Full four-store workspace | `/Wiki` |
+| `knowledge` | Human long-term wiki or digital garden | `/Wiki/index.md` |
+| `memory` | Agent memory and recall | `/Memory` |
+| `skill` | Skill Registry database | `/Wiki/skills` |
+| `session` | Agent session audit and replay sources | `/Sessions` |
+
+Common examples:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create --profile memory "My agent memory"
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create --profile skill "Team skills"
+```
 `database purchase-cycles <database-id> <kinic>` pulls the KINIC payment from the caller through the ledger allowance already approved outside the CLI and adds raw cycles to the DB cycles balance. Any authenticated payer can purchase cycles for an existing DB. The allowance must include the fixed ledger transfer fee.
 `database cycles <database-id>` prints and opens `https://wiki.kinic.xyz/cycles?...` for wallet-based OISY or Plug funding. The database ID must match `[a-zA-Z0-9_-]+`, matching the browser `/cycles` route. This command does not use the CLI identity or contact the canister, so it can still print the payment URL when the local replica is stopped. Pass `--browser-origin` or set `KINIC_WIKI_BROWSER_ORIGIN` for local or staging browser hosts. The purchase amount is entered in the browser flow. The browser flow is limited to the configured canonical wiki canister, approves `payment_amount_e8s + ledger_fee_e8s` with a 30 minute expiry, and purchases cycles using the current canister config. The wallet also pays the approve transaction fee from its balance. The first successful purchase activates a pending DB.
 `database cycles-history <database-id> [--json]` lists DB cycles ledger entries. Reader and writer principals see payer/caller principals as `redacted`; DB owner and billing authority see full details.

@@ -1,6 +1,6 @@
 # Wiki Browser
 
-Dashboard for Kinic Wiki canister databases. The app is a lightweight knowledge IDE and debug UI, not the primary Agent Memory API surface.
+Dashboard for Kinic Wiki canister databases. The app is a lightweight knowledge IDE and debug UI, not the primary Store API surface.
 Official mainnet uses canister `xis3j-paaaa-aaaai-axumq-cai`; use placeholders only for forks or local deployments.
 
 ## Local
@@ -20,11 +20,12 @@ http://localhost:3010/<database-id>/Wiki
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create --profile workspace "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success. `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
+`database create [--profile <profile>] <database-name>` creates a generated database ID and prints it on success. The Browser create dialog exposes the same profiles: `workspace`, `knowledge`, `memory`, `skill`, and `session`.
+`NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash
 # local icp network
@@ -60,7 +61,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Inspect path, etag, update time, size, role, outgoing links, and inferred raw sources
 - Expose Open Graph and X link preview images
 - Share public databases on X through the Web Intent URL
-- Read canister health and Agent Memory API metadata through the hand-written Candid subset
+- Read canister health and Store API metadata through the hand-written Candid subset
 - Show route-level 404 and VFS not-found states
 
 No full lint workflow is included.
@@ -170,11 +171,11 @@ Covered methods:
 - `graph_links`
 - `graph_neighborhood`
 - `read_node_context`
-- `memory_manifest`
-- `query_context`
+- `store_manifest`
+- `memory_recall`
 - `query_database_sql_json`
 - `query_index_sql_json`
-- `source_evidence`
+- `knowledge_evidence`
 - `search_node_paths`
 - `search_nodes`
 
@@ -193,7 +194,7 @@ The `/<database-id>/...` and `/dashboard/<database-id>` URLs are App Router dyna
 
 - Local canister not found: `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` does not exist on `NEXT_PUBLIC_WIKI_IC_HOST`. For `http://127.0.0.1:8000`, start the local replica / icp local network and deploy the wiki canister into that state.
 - Mainnet canister not found: confirm that `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` exists on `https://icp0.io`.
-- Method missing / wrong canister: use a Kinic Wiki canister that exposes the VFS, health, and Agent Memory methods covered by `lib/vfs-idl.ts`.
+- Method missing / wrong canister: use a Kinic Wiki canister that exposes the VFS, health, and Memory Recall methods covered by `lib/vfs-idl.ts`.
 - Host unreachable: confirm `NEXT_PUBLIC_WIKI_IC_HOST` and network access to the local replica or IC gateway.
 
 ## Cloudflare Workers Deploy

@@ -104,7 +104,7 @@ export SPECA_TARGET_WORKSPACE="$repo_root"
 export SPECA_OUTPUT_DIR="$output_dir"
 export SPECA_ARCHIVE_ROOT="$archive_root"
 export CODEX_MODEL="$codex_model"
-export SPEC_URLS="${SPEC_URLS:-file://${repo_root}/README.md,file://${repo_root}/docs/CLI.md,file://${repo_root}/docs/AGENT_MEMORY_API.md,file://${repo_root}/docs/AGENT_TOOL_CALLING.md,file://${repo_root}/docs/DB_LIFECYCLE.md,file://${repo_root}/docs/SKILL_REGISTRY.md,file://${repo_root}/docs/validation/VFS_VALIDATION_PLAN.md}"
+export SPEC_URLS="${SPEC_URLS:-file://${repo_root}/README.md,file://${repo_root}/docs/CLI.md,file://${repo_root}/docs/STORE_API.md,file://${repo_root}/docs/AGENT_TOOL_CALLING.md,file://${repo_root}/docs/DB_LIFECYCLE.md,file://${repo_root}/docs/SKILL_REGISTRY.md,file://${repo_root}/docs/validation/VFS_VALIDATION_PLAN.md}"
 export KEYWORDS="${KEYWORDS:-kinic,wiki,canister,vfs,sqlite,etag,skill registry,agent memory,authorization,stable memory}"
 
 cd "$speca_src"

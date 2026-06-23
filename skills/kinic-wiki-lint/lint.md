@@ -26,13 +26,13 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 ## Working Rules
 
-- Current repo-local note roles live in [docs/AGENT_MEMORY_API.md](../../docs/AGENT_MEMORY_API.md). Use it for concrete note names, role mapping, and trust model.
+- Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, role mapping, and trust model.
 - When `/Wiki/index.md` is stale, recommend a focused root catalog edit first. Recommend `rebuild-index` only for broad repair.
 - Treat `/Wiki/index.md` as the only required catalog. Do not flag missing `<scope>/index.md`, `overview.md`, `schema.md`, `log.md`, or `topics/*.md` unless the user explicitly requested that scoped structure.
 - Flag folders, scoped indexes, and scaffold pages that were created without a clear user request or retrieval need.
 - Recommend `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Do not require rebuilds for routine small edits.
 - Keep local lint separate from remote content review.
-- Treat note role violations from `AGENT_MEMORY_API.md` as first-class findings.
+- Treat note role violations from `STORE_API.md` as first-class findings.
 - Flag exact-value evidence leaking into `summary.md` or unresolved conflict leaking into settled notes as canonicality findings, not style notes.
 - For target-note guidance, treat `facts.md` as the canonical note for exact stable fact, current value, selected option, and stable relationship-duration.
 - Treat `events.md` as the canonical note for chronology-only completed events, `plans.md` for future / pending / next action, and `summary.md` for recap only.

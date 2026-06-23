@@ -17,7 +17,7 @@ Repo docs:
 
 - CLI operations: ../../docs/CLI.md
 - Skill Registry: ../../docs/SKILL_REGISTRY.md
-- Agent Memory API: ../../docs/AGENT_MEMORY_API.md
+- Store API: ../../docs/STORE_API.md
 - Validation: ../../docs/validation/VFS_VALIDATION_PLAN.md
 
 Supported platforms:

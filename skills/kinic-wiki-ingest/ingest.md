@@ -73,14 +73,14 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 
 ## Working Rules
 
-- Current repo-local note roles live in [docs/AGENT_MEMORY_API.md](../../docs/AGENT_MEMORY_API.md). Use it for concrete note names, trust model, and current role mapping.
-- Runtime `facts.md` extraction policy follows [docs/AGENT_MEMORY_API.md](../../docs/AGENT_MEMORY_API.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
+- Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, trust model, and current role mapping.
+- Runtime `facts.md` extraction policy follows [docs/STORE_API.md](../../docs/STORE_API.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
 - Treat local `Wiki/` content as the human review surface.
 - Keep OKF Context Pack export separate from source ingestion; use `kinic-context-pack` after `/Wiki/...` is ready.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.
 - Reuse existing pages when possible instead of minting near-duplicates.
-- Preserve note-role boundaries from `AGENT_MEMORY_API.md` before adding new lines to any structured note.
+- Preserve note-role boundaries from `STORE_API.md` before adding new lines to any structured note.
 - Put settled stable attributes, exact resolved values, current values, selected options, and stable relationship-duration in `facts.md`.
 - Use `events.md` for chronology-only completed event entries, `plans.md` for future / pending / next action, and `summary.md` for recap only.
 - Treat `facts.md` as an exact stable fact note, not a conversation residue note.
@@ -100,7 +100,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Keep existing `log.md` pages in sync with every page mutation.
 - Keep `log.md` append-only so recent context can be read with `tail -n 5`.
 - Do not hide push behind kinic-wiki-ingest.
-- Preserve structured note roles from `AGENT_MEMORY_API.md` while ingesting.
+- Preserve structured note roles from `STORE_API.md` while ingesting.
 - When source material is noisy, prefer omission over polluting structured notes with low-confidence pseudo-facts.
 - When a contradiction appears, preserve it in the canonical open-question area rather than silently normalizing it into a fact note.
 

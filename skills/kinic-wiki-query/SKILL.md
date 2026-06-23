@@ -19,7 +19,7 @@ Do not use this skill for:
 - routine page creation or repair
 - editing, deleting, redacting, or mutating wiki nodes; use `kinic-wiki-edit`
 - portable AI handoff or OKF Context Pack export; use `kinic-context-pack`
-- Skill Registry package lifecycle work; use `kinic-skill-registry`
+- skill store package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 

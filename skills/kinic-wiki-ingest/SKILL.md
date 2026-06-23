@@ -22,7 +22,7 @@ Do not use this skill for:
 - health-only review of an existing wiki
 - hidden publish or push workflows
 - OKF Context Pack export after wiki structure exists; use `kinic-context-pack`
-- Skill Registry package lifecycle work; use `kinic-skill-registry`
+- skill store package lifecycle work; use `kinic-skill-registry`
 - leakage cleanup or broad existing-node repair without new source ingestion; use `kinic-wiki-edit`
 
 Core rules:
@@ -41,6 +41,6 @@ Core rules:
 - When a relevant `log.md` already exists or the user asks for logging, update it append-only.
 - Do not create `log.md` by default.
 - PDF handling stays inside kinic-wiki-ingest as source normalization.
-- Treat [../../docs/AGENT_MEMORY_API.md](../../docs/AGENT_MEMORY_API.md) as the trust model and note-role contract.
+- Treat [../../docs/STORE_API.md](../../docs/STORE_API.md) as the trust model and note-role contract.
 
 Read [ingest.md](ingest.md) before doing substantive Kinic Wiki ingest work.

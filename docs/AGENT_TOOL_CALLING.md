@@ -2,7 +2,7 @@
 
 Use the shared Rust library when embedding Kinic Wiki VFS tool calling into an OpenAI-compatible client.
 This is not shelling out to `kinic-vfs-cli`; it uses the same canister-backed VFS through the shared client and tool dispatcher.
-For direct read-only canister queries without tool schemas, use the Agent Memory API described in [`AGENT_MEMORY_API.md`](AGENT_MEMORY_API.md).
+For direct read-only canister queries without tool schemas, use the Store API described in [`STORE_API.md`](STORE_API.md).
 
 ## Library Tool Calling
 

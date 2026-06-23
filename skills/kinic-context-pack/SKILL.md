@@ -18,7 +18,7 @@ Do not use this skill for:
 - ingesting new source material; use `kinic-wiki-ingest`
 - repairing live wiki pages; use `kinic-wiki-edit`
 - general wiki health review; use `kinic-wiki-lint`
-- Skill Registry package lifecycle work; use `kinic-skill-registry`
+- skill store package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 

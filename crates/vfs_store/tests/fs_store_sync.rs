@@ -200,7 +200,7 @@ fn fetch_updates_rejects_revision_before_available_change_log() {
         write_node(&store, &path, &content, None, now);
     }
     let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [6_i64])
+    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [7_i64])
         .expect("manual compaction should succeed");
 
     let error = store

@@ -1,24 +1,34 @@
-# Agent Memory API
+# Store API
 
-The Canister Agent Memory API is a read-only query surface for agents that talk directly to a Kinic Wiki canister.
-It returns wiki context, local graph context, and source evidence without requiring `kinic-vfs-cli` or the shared tool dispatcher.
+The Canister Store API is a read-only query surface for agents that talk directly to a Kinic Wiki canister.
+It exposes the four Kinic stores without requiring `kinic-vfs-cli` or the shared tool dispatcher.
 
-Use this API when the caller already has an IC canister client and wants long-term wiki memory as structured context.
+Use this API when the caller already has an IC canister client and wants memory recall, knowledge evidence, skill metadata, or session audit context as structured data.
 Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenAI-compatible or Anthropic-compatible tool schemas.
+
+## Four Stores
+
+- `memory`: short facts, preferences, and active context. `memory_recall` assembles task-scoped context from canonical role pages, search hits, links, and optional evidence.
+- `knowledge`: long-term notes under `/Wiki/...`. Wiki links form the knowledge mesh; `knowledge_evidence` resolves source references for a known node.
+- `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`. The Skill Registry CLI owns package upsert, discovery, run evidence, proposal, and status workflows.
+- `session`: agent conversation audit sources under `/Sources/raw/...`. Current capture stores sanitized raw session sources; resumable summaries are outside v1.
+
+Context Pack is an export artifact generated from store content. It is not a store.
+Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
 
 ## Trust Model
 
-Kinic Wiki memory follows this lifecycle:
+Kinic store trust follows this lifecycle:
 
 ```text
-/Sources/raw/... -> human review -> role page -> agent memory query
+/Sources/raw/... -> human review -> role page -> memory_recall
 ```
 
 - `/Sources/raw/...` is canonical raw evidence.
 - `/Wiki/...` is organized knowledge, but not automatically canonical.
 - Working notes can help review, but they are not a separate canonical lifecycle state.
-- Role pages are the agent memory layer when their claims are backed by source evidence or human review.
-- Agents should prefer role-page claims plus `source_evidence` over working-note text or search previews.
+- Role pages are the memory recall layer when their claims are backed by source evidence or human review.
+- Agents should prefer role-page claims plus `knowledge_evidence` over working-note text or search previews.
 
 Role-page responsibilities:
 
@@ -42,39 +52,42 @@ Do not answer from working notes as if they were canonical memory.
 
 ## Methods
 
-- `memory_manifest()`: discover the API version, roots, capability summary, canonical roles, limits, and recommended entrypoint.
-- `query_context(QueryContextRequest)`: read task-scoped wiki context. This is the primary entrypoint for normal agent questions.
+- `store_manifest(StoreManifestRequest)`: discover the API version, database profile, enabled stores, roots, capability summary, canonical roles, limits, and recommended entrypoint.
+- `memory_recall(MemoryRecallRequest)`: read task-scoped wiki context. This is the primary entrypoint for normal agent questions.
 - `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON object text rows.
-- `source_evidence(SourceEvidenceRequest)`: read `/Sources` references for one known wiki node path.
+- `knowledge_evidence(KnowledgeEvidenceRequest)`: read `/Sources` references for one known wiki node path.
 
 These methods are canister query methods. They do not mutate wiki content.
 
 ## Manifest Contract
 
-`memory_manifest()` currently returns:
+`store_manifest({ database_id })` currently returns:
 
-- `api_version`: `agent-memory-v1`
-- `roots`: `/Wiki` for wiki nodes and `/Sources` for raw source nodes
-- `write_policy`: `agent_memory_read_only`
-- `recommended_entrypoint`: `query_context`
+- `api_version`: `kinic-stores-v1`
+- `profile`: `Workspace`, `Memory`, `Knowledge`, `Skill`, or `Session`
+- `enabled_stores`: store names enabled for the database profile
+- `roots`: memory role pages, knowledge notes, skill packages, and session audit sources
+- `entry_roots`: primary roots for the enabled stores
+- `write_policy`: `store_recall_read_only`
+- `recommended_entrypoint`: `memory_recall`
 - `max_depth`: `2`
 - `max_query_limit`: `100`
 - `budget_unit`: `approx_chars_from_tokens`
 
 Treat `capabilities` and `canonical_roles` as discovery data.
-Do not use `memory_manifest()` as content evidence for an answer.
+Do not use `store_manifest({ database_id })` as content evidence for an answer.
 The `canonical_roles` list mirrors the current wiki schema. Agents should use it to find role pages before relying on broad search results.
 
-## Query Context
+## Memory Recall
 
-`query_context` accepts:
+`memory_recall` accepts:
 
 - `database_id`: target database id.
 - `task`: user task or question.
 - `entities`: optional names, topics, or paths that should bias recall.
-- `namespace`: optional scope root. If omitted, the canister uses `/Wiki`.
+- `namespace`: optional scope root. If omitted, `memory` profile databases use `/Memory`; other profiles use `/Wiki`.
 - `budget_tokens`: approximate context budget. `0` uses the canister default.
-- `include_evidence`: include source evidence for returned wiki nodes when true.
+- `include_evidence`: include knowledge evidence for returned wiki nodes when true.
 - `depth`: local graph depth. Valid values are `0`, `1`, and `2`.
 
 Minimal request shape:
@@ -84,7 +97,7 @@ Minimal request shape:
   "database_id": "<database-id>",
   "task": "summarize current project decisions",
   "entities": [],
-  "namespace": "/Wiki",
+  "namespace": "/Memory",
   "budget_tokens": 1000,
   "include_evidence": true,
   "depth": 1
@@ -104,18 +117,18 @@ Treat `search_hits` as recall and routing data.
 Treat `nodes` from canonical role pages as the primary memory payload.
 Treat working-note nodes as unreviewed unless the same claim is present in a role page.
 If `truncated` is true, narrow the `namespace`, reduce `entities`, or issue a follow-up query for a more specific task.
-`query_context` reserves budget for node context and evidence before adding search hit previews, so small budgets still return answerable node content when at least one candidate fits the namespace.
+`memory_recall` reserves budget for node context and evidence before adding search hit previews, so small budgets still return answerable node content when at least one candidate fits the namespace.
 
-## Source Evidence
+## Knowledge Evidence
 
-Use `source_evidence` when the caller already knows the exact wiki node path and needs source refs for trust checking or citations.
+Use `knowledge_evidence` when the caller already knows the exact wiki node path and needs source refs for trust checking or citations.
 The request takes `database_id` and `node_path`.
 The response returns the wiki `node_path` and refs with source path, linking path, raw href, and link text.
 Refs also include source freshness metadata when the source node can be read: `source_etag`, `source_updated_at`, and `source_content_hash`.
 Use freshness metadata to detect whether a citation was checked against the same source revision.
 Freshness metadata does not make a working note canonical.
 
-`source_evidence` returns an error when the wiki node does not exist.
+`knowledge_evidence` returns an error when the wiki node does not exist.
 
 ## Database SQL JSON Query
 
@@ -165,6 +178,7 @@ Controller-only operational SQL remains separate in `query_index_sql_json`.
 
 ## v1 Limits
 
-- The Agent Memory API v1 is read-only.
+- The Store API v1 is read-only.
 - Writes must use CLI commands, VFS mutation APIs, or the shared tool dispatcher.
-- `memory_summary` is not part of v1. Use `query_context` with a summary-style task when a maintained overview is needed.
+- `memory_summary` is not part of v1. Use `memory_recall` with a summary-style task when a maintained overview is needed.
+- Skill curator, knowledge curator, ambient surfacing, synonyms, and session resume summaries are outside v1.

@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
-    NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
-    kinic_base_units_per_token,
+    DatabaseCyclesPurchaseRequest, DatabaseProfile, DatabaseRestoreChunkRequest, DatabaseStatus,
+    MkdirNodeRequest, NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode,
+    WriteNodeRequest, kinic_base_units_per_token,
 };
 
 const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
@@ -67,7 +67,6 @@ async fn main() -> Result<()> {
     let identity = vfs_cli_app::identity::load_default_identity(&canister_id, true).await?;
     let client =
         CanisterVfsClient::new_with_boxed_identity(&replica_host, &canister_id, identity).await?;
-    assert_memory_manifest(&client).await?;
     if let Some(path) = args.verify_state {
         let state = read_state(&path)?;
         verify_smoke_state(&client, &state).await?;
@@ -117,10 +116,10 @@ fn parse_args() -> Result<SmokeArgs> {
     })
 }
 
-async fn assert_memory_manifest(client: &CanisterVfsClient) -> Result<()> {
-    let manifest = client.memory_manifest().await?;
-    if manifest.recommended_entrypoint != "query_context" {
-        return Err(anyhow!("unexpected memory manifest entrypoint"));
+async fn assert_store_manifest(client: &CanisterVfsClient, database_id: &str) -> Result<()> {
+    let manifest = client.store_manifest(database_id).await?;
+    if manifest.recommended_entrypoint != "memory_recall" {
+        return Err(anyhow!("unexpected store manifest entrypoint"));
     }
     Ok(())
 }
@@ -131,9 +130,13 @@ async fn run_create_restore_smoke(
     chunk_size: u32,
     cycle_purchase_e8s: u64,
 ) -> Result<SmokeState> {
-    let database_id = client.create_database("Archive smoke").await?.database_id;
+    let database_id = client
+        .create_database("Archive smoke", DatabaseProfile::Workspace)
+        .await?
+        .database_id;
+    assert_store_manifest(client, &database_id).await?;
     let isolation_database_id = client
-        .create_database("Archive smoke isolation")
+        .create_database("Archive smoke isolation", DatabaseProfile::Workspace)
         .await?
         .database_id;
     activate_smoke_database(client, &database_id, cycle_purchase_e8s).await?;

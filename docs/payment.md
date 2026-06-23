@@ -39,7 +39,7 @@ mainnet deploy script は `KINIC_LEDGER_CANISTER_ID` と `BILLING_AUTHORITY_ID` 
 
 ## DB 作成と残高初期状態
 
-`create_database(display_name)` は generated `database_id`、owner membership、cycles account を作成する。DB は `pending` になり、stable-memory mount はまだ割り当てない。初期 `balance_cycles` は `0`、`suspended_at_ms` は作成時刻、`storage_charged_at_ms` は `NULL` である。
+`create_database(CreateDatabaseRequest { name, profile })` は generated `database_id`、owner membership、profile、cycles account を作成する。DB は `pending` になり、stable-memory mount はまだ割り当てない。初期 `balance_cycles` は `0`、`suspended_at_ms` は作成時刻、`storage_charged_at_ms` は `NULL` である。
 
 pending DB は、最初の cycles 購入が ledger 成功後にローカル反映まで完了した時点で active 化する。active 化では mount ID を割り当て、DB migration を実行し、`storage_charged_at_ms` を active 化時刻で初期化する。
 

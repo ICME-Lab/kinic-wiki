@@ -7,8 +7,8 @@ use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseStatus,
-    kinic_base_units_per_token,
+    CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseProfile,
+    DatabaseStatus, kinic_base_units_per_token,
 };
 
 #[derive(Debug)]
@@ -63,12 +63,12 @@ async fn main() -> Result<()> {
     }
 
     let database_id = client
-        .create_database("Post-upgrade smoke")
+        .create_database("Post-upgrade smoke", DatabaseProfile::Workspace)
         .await?
         .database_id;
     assert_pending_database(&client, &database_id).await?;
     let active_database_id = client
-        .create_database("Post-upgrade active smoke")
+        .create_database("Post-upgrade active smoke", DatabaseProfile::Workspace)
         .await?
         .database_id;
     let active_balance_cycles =

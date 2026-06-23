@@ -80,7 +80,10 @@ const payoutPrincipal = options.payoutPrincipal ?? readCurrentPrincipal();
 approveCyclesAllowance(ledgerCanister);
 
 for (const fixture of FIXTURES) {
-  const created = callOk("create_database", candidRecord({ name: candidText(fixture.name) }));
+  const created = callOk(
+    "create_database",
+    candidRecord({ name: candidText(fixture.name), profile: "variant { Workspace }" })
+  );
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);
   callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Wiki") }));

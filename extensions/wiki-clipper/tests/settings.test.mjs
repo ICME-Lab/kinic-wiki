@@ -105,14 +105,14 @@ test("database creation delegates create_database and normalizes result", async 
     {
       async create_database(request) {
         calls.push(request);
-        return { Ok: { database_id: "db_created", name: request.name } };
+        return { Ok: { database_id: "db_created", name: request.name, profile: request.profile } };
       }
     },
     "My Team Wiki"
   );
 
-  assert.deepEqual(calls, [{ name: "My Team Wiki" }]);
-  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki" });
+  assert.deepEqual(calls, [{ name: "My Team Wiki", profile: { Workspace: null } }]);
+  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki", profile: "Workspace" });
 });
 
 test("database creation surfaces canister errors", async () => {

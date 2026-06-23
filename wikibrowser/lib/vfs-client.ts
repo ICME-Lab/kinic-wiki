@@ -16,6 +16,7 @@ import type {
   DeleteNodeRequest,
   DeleteNodeResult,
   DatabaseMember,
+  DatabaseProfile,
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
@@ -38,13 +39,13 @@ import type {
   NodeContext,
   NodeEntryKind,
   NodeKind,
-  QueryContext,
+  MemoryRecall,
   QueryAnswerSessionCheckRequest,
   QueryAnswerSessionCheckResult,
   QueryAnswerSessionRequest,
   RecentNode,
   SearchNodeHit,
-  SourceEvidence,
+  KnowledgeEvidence,
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
@@ -98,6 +99,7 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
+  profile: Variant;
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
@@ -299,6 +301,7 @@ type RawDeleteDatabaseRequest = {
 type RawCreateDatabaseResult = {
   database_id: string;
   name: string;
+  profile: Variant;
 };
 
 type RawDatabaseMember = {
@@ -436,7 +439,7 @@ type RawNodeContext = {
   outgoing_links: RawLinkEdge[];
 };
 
-type RawSourceEvidenceRef = {
+type RawKnowledgeEvidenceRef = {
   source_path: string;
   via_path: string;
   raw_href: string;
@@ -446,18 +449,18 @@ type RawSourceEvidenceRef = {
   source_content_hash: [] | [string];
 };
 
-type RawSourceEvidence = {
+type RawKnowledgeEvidence = {
   node_path: string;
-  refs: RawSourceEvidenceRef[];
+  refs: RawKnowledgeEvidenceRef[];
 };
 
-type RawQueryContext = {
+type RawMemoryRecall = {
   namespace: string;
   task: string;
   search_hits: RawSearchHit[];
   nodes: RawNodeContext[];
   graph_links: RawLinkEdge[];
-  evidence: RawSourceEvidence[];
+  evidence: RawKnowledgeEvidence[];
   truncated: boolean;
 };
 
@@ -470,7 +473,7 @@ type VfsActor = {
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
-  create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  create_database: (request: { name: string; profile: Variant }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
@@ -504,7 +507,7 @@ type VfsActor = {
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
-  query_context: (request: {
+  memory_recall: (request: {
     database_id: string;
     task: string;
     entities: string[];
@@ -512,7 +515,7 @@ type VfsActor = {
     budget_tokens: number;
     include_evidence: boolean;
     depth: number;
-  }) => Promise<{ Ok: RawQueryContext } | { Err: string }>;
+  }) => Promise<{ Ok: RawMemoryRecall } | { Err: string }>;
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   query_index_sql_json: (sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   wiki_metrics: () => Promise<{ Ok: RawWikiMetrics } | { Err: string }>;
@@ -918,10 +921,10 @@ export async function marketCountActiveEntitlements(canisterId: string, identity
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string, profile: DatabaseProfile = "workspace"): Promise<RawCreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database({ name });
+    const result = await actor.create_database({ name, profile: databaseProfileVariant(profile) });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1234,21 +1237,21 @@ export async function graphNeighborhood(canisterId: string, databaseId: string, 
   });
 }
 
-export async function queryContext(
+export async function memoryRecall(
   canisterId: string,
   databaseId: string,
   task: string,
   budgetTokens: number,
   identity?: Identity,
-  namespace = "/Wiki"
-): Promise<QueryContext> {
+  namespace?: string
+): Promise<MemoryRecall> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
-    const result = await actor.query_context({
+    const result = await actor.memory_recall({
       database_id: databaseId,
       task,
       entities: [],
-      namespace: [namespace],
+      namespace: namespace ? [namespace] : [],
       budget_tokens: budgetTokens,
       include_evidence: false,
       depth: 1
@@ -1256,7 +1259,7 @@ export async function queryContext(
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return normalizeQueryContext(result.Ok);
+    return normalizeMemoryRecall(result.Ok);
   });
 }
 
@@ -1354,6 +1357,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     databaseId: raw.database_id,
     name: raw.name,
     role: normalizeDatabaseRole(raw.role),
+    profile: normalizeDatabaseProfile(raw.profile),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
@@ -1624,19 +1628,19 @@ function normalizeNodeContext(raw: RawNodeContext): NodeContext {
   };
 }
 
-function normalizeQueryContext(raw: RawQueryContext): QueryContext {
+function normalizeMemoryRecall(raw: RawMemoryRecall): MemoryRecall {
   return {
     namespace: raw.namespace,
     task: raw.task,
     searchHits: raw.search_hits.map(normalizeSearchHit),
     nodes: raw.nodes.map(normalizeNodeContext),
     graphLinks: raw.graph_links.map(normalizeLinkEdge),
-    evidence: raw.evidence.map(normalizeSourceEvidence),
+    evidence: raw.evidence.map(normalizeKnowledgeEvidence),
     truncated: raw.truncated
   };
 }
 
-function normalizeSourceEvidence(raw: RawSourceEvidence): SourceEvidence {
+function normalizeKnowledgeEvidence(raw: RawKnowledgeEvidence): KnowledgeEvidence {
   return {
     nodePath: raw.node_path,
     refs: raw.refs.map((ref) => ({
@@ -1674,6 +1678,22 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
     return "writer";
   }
   return "reader";
+}
+
+function normalizeDatabaseProfile(profile: Variant): DatabaseProfile {
+  if ("Memory" in profile) return "memory";
+  if ("Knowledge" in profile) return "knowledge";
+  if ("Skill" in profile) return "skill";
+  if ("Session" in profile) return "session";
+  return "workspace";
+}
+
+function databaseProfileVariant(profile: DatabaseProfile): Variant {
+  if (profile === "memory") return { Memory: null };
+  if (profile === "knowledge") return { Knowledge: null };
+  if (profile === "skill") return { Skill: null };
+  if (profile === "session") return { Session: null };
+  return { Workspace: null };
 }
 
 function databaseRoleVariant(role: DatabaseRole): Variant {

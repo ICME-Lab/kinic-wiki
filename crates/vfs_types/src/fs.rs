@@ -40,10 +40,27 @@ pub enum DatabaseStatus {
     Deleted,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseProfile {
+    #[serde(alias = "Workspace")]
+    #[default]
+    Workspace,
+    #[serde(alias = "Knowledge")]
+    Knowledge,
+    #[serde(alias = "Memory")]
+    Memory,
+    #[serde(alias = "Skill")]
+    Skill,
+    #[serde(alias = "Session")]
+    Session,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseInfo {
     pub database_id: String,
     pub name: String,
+    pub profile: DatabaseProfile,
     pub status: DatabaseStatus,
     pub mount_id: Option<u16>,
     pub schema_version: String,
@@ -56,6 +73,7 @@ pub struct DatabaseInfo {
 pub struct DatabaseSummary {
     pub database_id: String,
     pub name: String,
+    pub profile: DatabaseProfile,
     pub status: DatabaseStatus,
     pub role: DatabaseRole,
     pub logical_size_bytes: u64,
@@ -344,12 +362,14 @@ pub struct WikiMetricsPoint {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseRequest {
     pub name: String,
+    pub profile: DatabaseProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CreateDatabaseResult {
     pub database_id: String,
     pub name: String,
+    pub profile: DatabaseProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -806,15 +826,20 @@ pub struct FetchUpdatesResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MemoryRoot {
+pub struct StoreRoot {
     pub path: String,
     pub kind: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MemoryCapability {
+pub struct StoreCapability {
     pub name: String,
     pub description: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct StoreManifestRequest {
+    pub database_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
@@ -825,11 +850,14 @@ pub struct CanonicalRole {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MemoryManifest {
+pub struct StoreManifest {
     pub api_version: String,
+    pub profile: DatabaseProfile,
     pub purpose: String,
-    pub roots: Vec<MemoryRoot>,
-    pub capabilities: Vec<MemoryCapability>,
+    pub enabled_stores: Vec<String>,
+    pub roots: Vec<StoreRoot>,
+    pub entry_roots: Vec<StoreRoot>,
+    pub capabilities: Vec<StoreCapability>,
     pub canonical_roles: Vec<CanonicalRole>,
     pub write_policy: String,
     pub recommended_entrypoint: String,
@@ -839,7 +867,7 @@ pub struct MemoryManifest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct QueryContextRequest {
+pub struct MemoryRecallRequest {
     pub database_id: String,
     pub task: String,
     pub entities: Vec<String>,
@@ -850,24 +878,24 @@ pub struct QueryContextRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, CandidType)]
-pub struct QueryContext {
+pub struct MemoryRecall {
     pub namespace: String,
     pub task: String,
     pub search_hits: Vec<SearchNodeHit>,
     pub nodes: Vec<NodeContext>,
     pub graph_links: Vec<LinkEdge>,
-    pub evidence: Vec<SourceEvidence>,
+    pub evidence: Vec<KnowledgeEvidence>,
     pub truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SourceEvidenceRequest {
+pub struct KnowledgeEvidenceRequest {
     pub database_id: String,
     pub node_path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SourceEvidenceRef {
+pub struct KnowledgeEvidenceRef {
     pub source_path: String,
     pub via_path: String,
     pub raw_href: String,
@@ -878,7 +906,7 @@ pub struct SourceEvidenceRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct SourceEvidence {
+pub struct KnowledgeEvidence {
     pub node_path: String,
-    pub refs: Vec<SourceEvidenceRef>,
+    pub refs: Vec<KnowledgeEvidenceRef>,
 }

@@ -2,8 +2,9 @@
 
 This document is the canonical Skill Registry reference.
 
-Skill Registry stores Agent Skills-compatible `SKILL.md` packages as ordinary wiki nodes.
-It is a DB-backed skill knowledge base, not a GitHub or Vercel marketplace replacement.
+Skill Registry is the Kinic skill store interface.
+It stores Agent Skills-compatible `SKILL.md` packages as ordinary wiki nodes.
+It is a DB-backed skill store, not a GitHub or Vercel marketplace replacement.
 GitHub is provenance/source context; the DB copy is the runtime source of truth.
 
 Use it when a team wants skills to be searchable by task situation, review status, provenance, eval notes, and run evidence.
@@ -12,6 +13,10 @@ The product loop is:
 ```text
 draft skill -> upsert -> find from task context -> inspect -> record run -> promote or deprecate
 ```
+
+Curator is not a separate store.
+Future curator workflows should read skill manifests and run evidence to propose stale, archive, restore, and promote decisions.
+Those workflows belong on top of the skill and knowledge stores, not inside Context Pack.
 
 Hermes and Codex integration use the same DB copy as the canonical source. Shared Python runtime
 lives in `plugins/runtime/kinic_agent_runtime`; Hermes, Codex, and Claude Code keep separate adapters on top of it.
@@ -150,7 +155,7 @@ They are thin wrappers over normal VFS nodes and do not add canister schema or p
 For the manual first-run flow, see [`QUICKSTART_SKILL_KB.md`](QUICKSTART_SKILL_KB.md).
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create "Team skills")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database create --profile skill "Team skills")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill upsert --source-dir ./skills/legal-review --id legal-review
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill find "review contract redlines"
