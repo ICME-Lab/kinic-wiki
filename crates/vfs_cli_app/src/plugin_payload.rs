@@ -60,6 +60,11 @@ pub const CLAUDE_PLUGIN_FILES: &[PayloadFile] = &[
         executable: true,
     },
     PayloadFile {
+        path: "scripts/session-end.sh",
+        content: include_str!("../../../plugins/claude-code/scripts/session-end.sh"),
+        executable: true,
+    },
+    PayloadFile {
         path: "skills/kinic-evolve-skill-job/SKILL.md",
         content: include_str!(
             "../../../plugins/claude-code/skills/kinic-evolve-skill-job/SKILL.md"
@@ -132,6 +137,11 @@ pub const RUNTIME_FILES: &[PayloadFile] = &[
     PayloadFile {
         path: "kinic_agent_runtime/evolve.py",
         content: include_str!("../../../plugins/runtime/kinic_agent_runtime/evolve.py"),
+        executable: false,
+    },
+    PayloadFile {
+        path: "kinic_agent_runtime/session.py",
+        content: include_str!("../../../plugins/runtime/kinic_agent_runtime/session.py"),
         executable: false,
     },
 ];

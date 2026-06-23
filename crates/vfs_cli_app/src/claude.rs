@@ -220,7 +220,10 @@ mod tests {
         );
         assert!(plugin.join(".claude-plugin/plugin.json").is_file());
         assert!(plugin.join("scripts/record-run.sh").is_file());
+        assert!(plugin.join("scripts/session-end.sh").is_file());
         assert!(plugin.join("kinic_agent_runtime/evidence.py").is_file());
+        assert!(plugin.join("kinic_agent_runtime/evolve.py").is_file());
+        assert!(plugin.join("kinic_agent_runtime/session.py").is_file());
     }
 
     #[test]
