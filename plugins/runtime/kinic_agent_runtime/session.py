@@ -37,6 +37,11 @@ REDACTED = "[REDACTED]"
 SECRET_KEY_PATTERN = re.compile(r"token|secret|password|cookie|authorization|credential|apikey|bearer")
 SECRET_PATTERNS = [
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bxoxb-[A-Za-z0-9-]{20,}\b"),
+    re.compile(r"-----BEGIN (?:OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:OPENSSH )?PRIVATE KEY-----"),
     re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{16,}"),
     re.compile(
         r'(?i)(?P<prefix>"[^"\\]*(?:api[_.-]?key|token|secret|password|cookie|authorization|credential|bearer)[^"\\]*"\s*:\s*")'
@@ -832,10 +837,13 @@ def complete_trailing_redaction_marker(value: str, max_chars: int) -> str:
 
 
 def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = None) -> Path:
-    pending_dir.mkdir(parents=True, exist_ok=True)
+    pending_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        pending_dir.chmod(0o700)
+    except OSError:
+        pass
     millis = now_ms if now_ms is not None else int(time.time() * 1000)
     stem = safe_source_stem(Path(source.path).stem)
-    path = pending_dir / f"{millis}-{stem}.json"
     payload = {
         "schema_version": 1,
         "kind": "claude_code_session_source",
@@ -844,8 +852,18 @@ def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = 
         "metadata_json": json.dumps(source.metadata, ensure_ascii=False, sort_keys=True),
         "saved_locally_at": millis,
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    return path
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    for attempt in range(100):
+        suffix = "" if attempt == 0 else f"-{attempt}"
+        path = pending_dir / f"{millis}-{stem}{suffix}.json"
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        return path
+    raise FileExistsError(f"pending session path already exists for {millis}-{stem}")
 
 
 def flush_pending(cli: str, pending_dir: Path) -> list[Path]:
@@ -936,6 +954,7 @@ def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: i
     resolved_cli = resolve_cli(cli)
     recorded = False
     error = ""
+    cleanup_error = ""
     flushed = 0
     failed = 0
     invalid = 0
@@ -949,12 +968,19 @@ def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: i
                     "metadata_json": json.dumps(source.metadata, ensure_ascii=False, sort_keys=True),
                 },
             )
-            pending_path.unlink(missing_ok=True)
             recorded = True
         except (OSError, subprocess.CalledProcessError) as cause:
             error = str(cause)[:800]
         if recorded:
-            flush_result = flush_pending_report(resolved_cli, pending_dir)
+            skip_paths: set[Path] = set()
+            try:
+                pending_path.unlink(missing_ok=True)
+            except OSError as cause:
+                cleanup_error = str(cause)[:800]
+                quarantined = quarantine_pending(pending_path, "recorded")
+                if quarantined == pending_path:
+                    skip_paths.add(pending_path)
+            flush_result = flush_pending_report(resolved_cli, pending_dir, skip_paths=skip_paths)
             flushed = len(flush_result.flushed)
             failed = len(flush_result.failed)
             invalid = len(flush_result.invalid)
@@ -968,6 +994,7 @@ def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: i
         "failed_pending": failed,
         "invalid_pending": invalid,
         "error": error,
+        "cleanup_error": cleanup_error,
     }
 
 
