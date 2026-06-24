@@ -92,12 +92,17 @@ test("settings popup clears database on logout and fails closed on auth reset er
   const popupJs = readFileSync(new URL("../popup/popup.js", import.meta.url), "utf8");
   const logoutHandler = eventHandlerFunction(popupJs, "logoutButton");
   const notifyAuthSessionChanged = namedFunction(popupJs, "notifyAuthSessionChanged");
+  const refreshLatestStatus = namedFunction(popupJs, "refreshLatestStatus");
   assert.match(logoutHandler, /await logoutInternetIdentity\(\)/);
   assert.match(logoutHandler, /await saveDatabaseSelection\(""\)/);
   assert.match(logoutHandler, /await notifyAuthSessionChanged\(\)/);
   assert.match(logoutHandler, /await refreshAuthAndDatabases\(\)/);
   assert.doesNotMatch(notifyAuthSessionChanged, /catch/);
   assert.match(notifyAuthSessionChanged, /await send\(\{ type: "auth-session-changed" \}\)/);
+  assert.match(refreshLatestStatus, /type: "latest-source-capture-status"/);
+  assert.doesNotMatch(refreshLatestStatus, /latest-url-ingest-status/);
+  assert.match(popupJs, /function latestStatusLabel\(value\)/);
+  assert.match(popupJs, /value\.sourcePath/);
 });
 
 test("manifest exposes settings as options page without popup", () => {

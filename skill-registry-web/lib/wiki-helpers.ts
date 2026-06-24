@@ -71,6 +71,13 @@ export function loadingState<T>(path: string): PathLoadState<T> {
   return { path, data: null, error: null, loading: true };
 }
 
+const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "ingest-requests"]);
+
+export function isKnowledgeSourcePath(path: string): boolean {
+  const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
+  return !!match && !RESERVED_SOURCE_PROVIDERS.has(match[1]) && !match[2].includes("..");
+}
+
 export function inferNoteRole(path: string): string {
   const name = path.split("/").at(-1) ?? "";
   if (name === "facts.md") return "facts";
@@ -78,7 +85,7 @@ export function inferNoteRole(path: string): string {
   if (name === "plans.md") return "plans";
   if (name === "summary.md") return "summary";
   if (name === "open_questions.md") return "open_questions";
-  if (path === "/Sources/raw" || path.startsWith("/Sources/raw/")) return "raw_source";
+  if (isKnowledgeSourcePath(path)) return "raw_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";
 }

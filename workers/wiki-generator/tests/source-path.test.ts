@@ -6,13 +6,16 @@ import test from "node:test";
 import { sourceIdFromPath, validateCanonicalSourcePath } from "../src/source-path.js";
 
 test("canonical raw source path is accepted", () => {
-  assert.doesNotThrow(() => validateCanonicalSourcePath("/Sources/raw/chatgpt/alpha.md", "/Sources/raw"));
-  assert.equal(sourceIdFromPath("/Sources/raw/chatgpt/alpha.md", "/Sources/raw"), "chatgpt-alpha");
+  assert.doesNotThrow(() => validateCanonicalSourcePath("/Sources/chatgpt/alpha.md", "/Sources"));
+  assert.doesNotThrow(() => validateCanonicalSourcePath("/Sources/123/alpha.md", "/Sources"));
+  assert.equal(sourceIdFromPath("/Sources/chatgpt/alpha.md", "/Sources"), "chatgpt-alpha");
 });
 
 test("non-canonical raw source paths are rejected", () => {
-  assert.throws(() => validateCanonicalSourcePath("/Sources/raw/alpha/beta.txt", "/Sources/raw"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/raw/web-abc/web-abc.md", "/Sources/raw"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/raw/chatgpt/a..b.md", "/Sources/raw"), /<provider>\/<id>\.md/);
-  assert.throws(() => validateCanonicalSourcePath("/Sources/rawfoo/alpha/alpha.md", "/Sources/raw"), /under/);
+  assert.throws(() => validateCanonicalSourcePath("/Sources/alpha/beta.txt", "/Sources"), /<provider>\/<id>\.md/);
+  assert.throws(() => validateCanonicalSourcePath("/Sources/web-abc/web-abc.md", "/Sources"), /<provider>\/<id>\.md/);
+  assert.throws(() => validateCanonicalSourcePath("/Sources/chatgpt/a..b.md", "/Sources"), /<provider>\/<id>\.md/);
+  assert.throws(() => validateCanonicalSourcePath("/Sources/raw/alpha.md", "/Sources"), /<provider>\/<id>\.md/);
+  assert.throws(() => validateCanonicalSourcePath("/Sources/sessions/alpha.md", "/Sources"), /<provider>\/<id>\.md/);
+  assert.throws(() => validateCanonicalSourcePath("/Sourcesfoo/alpha/alpha.md", "/Sources"), /under/);
 });

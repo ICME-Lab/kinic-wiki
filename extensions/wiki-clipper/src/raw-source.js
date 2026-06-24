@@ -1,7 +1,8 @@
 // Where: extensions/wiki-clipper/src/raw-source.js
 // What: Convert captured conversations into canonical raw source nodes.
-// Why: Raw source evidence is grouped by provider under /Sources/raw/<provider>/<id>.md.
+// Why: Raw source evidence is grouped by provider under /Sources/<provider>/<id>.md.
 const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
+const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "ingest-requests"]);
 
 export function buildRawSource(capture, now = new Date()) {
   if (!capture.messages || capture.messages.length === 0) {
@@ -9,7 +10,7 @@ export function buildRawSource(capture, now = new Date()) {
   }
   const provider = safeProvider(capture.provider || "conversation");
   const sourceId = sourceIdForCapture(capture, now, provider);
-  const path = `/Sources/raw/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
+  const path = `/Sources/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
   const metadata = {
     provider: capture.provider,
     source_url: capture.url,
@@ -122,7 +123,9 @@ function slug(value) {
 
 function safeProvider(value) {
   const normalized = String(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
-  return /^[a-z][a-z0-9]{0,31}$/.test(normalized) ? normalized : "conversation";
+  return /^[a-z0-9]{1,32}$/.test(normalized) && !RESERVED_SOURCE_PROVIDERS.has(normalized)
+    ? normalized
+    : "conversation";
 }
 
 function safeSourceStem(value) {

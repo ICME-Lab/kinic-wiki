@@ -9,6 +9,7 @@ const { sortChildNodes } = await importTs("../lib/child-sort.ts");
 const { folderIndexPath, isFolderIndexNode, isReservedFolderIndexName, visibleChildren } = await importTs("../lib/folder-index.ts");
 const { cycleTone, formatCycles, formatRawCycles } = await importTs("../lib/cycles.ts");
 const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-sections.ts");
+const { safeMarkdownImageSrc } = await importTs("../lib/markdown-images.ts");
 const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
 const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
@@ -28,6 +29,7 @@ const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId
 const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image.tsx", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
 const markdownEditorSource = readFileSync(new URL("../components/markdown-editor.tsx", import.meta.url), "utf8");
+const markdownPreviewSource = readFileSync(new URL("../components/markdown-preview.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
 const searchPanelSource = readFileSync(new URL("../components/search-panel.tsx", import.meta.url), "utf8");
 const wikiBrowserSource = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
@@ -177,7 +179,9 @@ assert.match(documentPaneSource, /navigator\.clipboard\.writeText/);
 assert.match(documentPaneSource, /node\.data\?\.kind === "folder"/);
 assert.match(documentPaneSource, /FolderIndexSection/);
 assert.match(documentPaneSource, /emptyFolderIndexNode/);
-assert.match(documentPaneSource, /node\.kind === "file" && node\.path\.endsWith\("\.md"\) && !node\.path\.startsWith\("\/Sources\/raw\/"\)/);
+assert.match(documentPaneSource, /isKnowledgeSourcePath\(node\.path\)/);
+assert.match(markdownPreviewSource, /valueFor\(fields, "source_path"\) \?\? valueFor\(fields, "kinic\.source_path"\) \?\? valueFor\(fields, "kinic\.store_path"\)/);
+assert.match(markdownPreviewSource, />\s*store\{" "\}/);
 assert.doesNotMatch(documentPaneSource, /readMode/);
 assert.doesNotMatch(documentPaneSource, /Authenticated mode required/);
 assert.doesNotMatch(documentPaneSource, /Use authenticated mode/);
@@ -197,10 +201,16 @@ assert.match(vfsClientSource, /wiki_metrics_series/);
 assert.match(vfsClientSource, /normalizeWikiMetricsPoint/);
 assert.match(markdownEditorSource, /@uiw\/react-codemirror/);
 assert.match(markdownEditorSource, /Cmd\/Ctrl\+S|Save/);
+assert.match(markdownPreviewSource, /img\(\{ src, alt,/);
+assert.match(markdownPreviewSource, /safeMarkdownImageSrc\(src\)/);
+assert.match(markdownPreviewSource, /return alt \? <span className="text-xs text-muted">\{alt\}<\/span> : null/);
 assert.match(globalsCss, /button:not\(:disabled\):active/);
 assert.match(globalsCss, /transform: translateY\(-1px\)/);
 assert.match(globalsCss, /button\[aria-busy="true"\]/);
 assert.match(globalsCss, /prefers-reduced-motion/);
+assert.match(globalsCss, /\.markdown-body img \{/);
+assert.match(globalsCss, /max-width: 100%;/);
+assert.match(globalsCss, /height: auto;/);
 assert.match(tailwindConfig, /accent: "#ff2686"/);
 assert.match(tailwindConfig, /action: "#000000"/);
 assert.match(tailwindConfig, /paper: "#f8f8f8"/);
@@ -222,12 +232,16 @@ assert.equal(codeHints[0].title, "Code note lacks decision context");
 assert.equal(codeHints[0].preview, "- Implementation: `crates/vfs_store/src/fs_store.rs`");
 
 assert.deepEqual(
-  rawSourceLinksFor("/Wiki/demo/provenance.md", "- Raw: /Sources/raw/demo/source.md\n- Raw: /Sources/raw/demo/source.md"),
-  ["/Sources/raw/demo/source.md"]
+  rawSourceLinksFor("/Wiki/demo/provenance.md", "- Raw: /Sources/demo/source.md\n- Raw: /Sources/demo/source.md"),
+  ["/Sources/demo/source.md"]
 );
 assert.deepEqual(
-  rawSourceLinksFor("/Sources/raw/demo/source.md", "# Raw"),
-  ["/Sources/raw/demo/source.md"]
+  rawSourceLinksFor("/Sources/demo/source.md", "# Raw"),
+  ["/Sources/demo/source.md"]
+);
+assert.deepEqual(
+  rawSourceLinksFor("/Wiki/demo/provenance.md", "- Raw: /Sources/123/source.md\n- Bad: /Sources/web/a..b.md"),
+  ["/Sources/123/source.md"]
 );
 
 assert.deepEqual(parseSearchOptions(new URLSearchParams("")), {
@@ -392,6 +406,14 @@ assert.deepEqual(
   ["# One", "## Two"]
 );
 assert.equal(splitMarkdownPreviewSections("No headings\nOnly prose").length, 1);
+assert.equal(safeMarkdownImageSrc("https://example.com/a.png"), "https://example.com/a.png");
+assert.equal(safeMarkdownImageSrc(" HTTPS://example.com/a.png "), "https://example.com/a.png");
+assert.equal(safeMarkdownImageSrc("http://example.com/a.png"), null);
+assert.equal(safeMarkdownImageSrc("//example.com/a.png"), null);
+assert.equal(safeMarkdownImageSrc("javascript:alert(1)"), null);
+assert.equal(safeMarkdownImageSrc("/Wiki/a.png"), null);
+assert.equal(safeMarkdownImageSrc("./a.png"), null);
+assert.equal(safeMarkdownImageSrc("data:image/png;base64,aaaa"), null);
 assert.notEqual(nodeRequestKey("aaaaa-aa", "alpha", "/Wiki/index.md"), nodeRequestKey("bbbbb-bb", "alpha", "/Wiki/index.md"));
 assert.notEqual(
   graphRequestKey("aaaaa-aa", "alpha", "/Wiki/index.md", 1),
@@ -421,8 +443,8 @@ assert.equal(
   "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Fdb%2Falpha%2520db%2FWiki"
 );
 assert.equal(
-  renderWikilinksAsMarkdown("[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]"),
-  "[opencode.ai/DESIGN.md](</Sources/raw/a/a.md>)"
+  renderWikilinksAsMarkdown("[[/Sources/a/a.md|opencode.ai/DESIGN.md]]"),
+  "[opencode.ai/DESIGN.md](</Sources/a/a.md>)"
 );
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md]]"), "[notes/alpha.md](<notes/alpha.md>)");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|]]"), "[notes/alpha.md](<notes/alpha.md>)");
@@ -467,8 +489,12 @@ assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wikipedia/foo.md"), null);
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/SourcesBackup/foo.md"), null);
-assert.equal(inferNoteRole("/Sources/raw/web/abc.md"), "raw_source");
-assert.equal(inferNoteRole("/Sources/rawfoo/abc.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sources/web/abc.md"), "raw_source");
+assert.equal(inferNoteRole("/Sources/123/abc.md"), "raw_source");
+assert.equal(inferNoteRole("/Sources/sessions/abc/abc.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sources/skill-runs/name/run.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sources/raw/abc.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sourcesfoo/abc.md"), "markdown_note");
 
 const cachedNodeContext = {
   node: {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Where: plugins/codex/scripts/record-session.sh
-# What: Record Codex Stop hook input as a Kinic raw source.
+# What: Record Codex Stop hook input as Kinic session evidence.
 # Why: Codex turns should be retained without blocking the next interaction for long.
 set -euo pipefail
 

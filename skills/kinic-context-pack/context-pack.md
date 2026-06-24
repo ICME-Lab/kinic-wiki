@@ -2,7 +2,7 @@
 
 ## Goal
 
-Export task-scoped `/Wiki/...` context into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied raw source bodies.
+Export task-scoped `/Wiki/...` context into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied referenced store bodies.
 
 ## Workflow
 
@@ -74,12 +74,12 @@ Directory meaning:
 - `tasks/*.md`: task or plan concepts
 - `policies/*.md`: style, preference, and do-not-do concepts
 - `notes/*.md`: unclassified wiki nodes that are still normal OKF concepts
-- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/raw/...`, with `kinic.etag` and `kinic.content_hash`
+- `references/*.md`: store reference concepts only; `kinic.store` and `kinic.store_path` must identify a supported Kinic store path, with `kinic.etag` and `kinic.content_hash`
 
 ## Rules
 
-- Do not export from `/Sources/raw/...` as the namespace.
-- Do not copy raw source body text into `references/*.md`.
+- Do not export from `/Sources/...` as the namespace.
+- Do not copy referenced store body text into `references/*.md`.
 - Do not hand off a bundle with `truncated: true` unless the recipient explicitly accepts incomplete context.
 - Do not use `references/*.md` for ordinary wiki notes.
 - Do not treat a passed `inspect` summary as verification; run `verify`.

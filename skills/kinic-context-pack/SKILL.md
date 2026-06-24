@@ -29,7 +29,7 @@ Core rules:
 - Treat `okf.yaml` as the machine-readable provenance manifest.
 - Require YAML frontmatter with a non-empty `type` for every non-reserved `.md` file.
 - Treat `notes/*.md` as unclassified wiki notes.
-- Treat `references/*.md` as `/Sources/raw/...` reference metadata only.
+- Treat `references/*.md` as `/Sources/...` reference metadata only.
 - Require reference `etag` and `content_hash` metadata before handoff.
 - Do not copy raw source body text into the OKF bundle.
 - Verify a bundle before handing it to an AI.

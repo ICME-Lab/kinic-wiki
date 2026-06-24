@@ -43,7 +43,7 @@ Concept files:
 - `tasks/*.md`: pending work from `plans.md` or `tasks.md`.
 - `policies/*.md`: style, preference, and do-not-do concepts.
 - `notes/*.md`: general wiki notes that do not map to a narrower type.
-- `references/*.md`: source references without raw source body text.
+- `references/*.md`: store references without target body text.
 
 ## Frontmatter
 
@@ -78,20 +78,21 @@ kinic:
 ...
 ```
 
-Reference concepts add `kinic.source_path`:
+Reference concepts add `kinic.store` and `kinic.store_path`:
 
 ```md
 ---
 type: Reference
 title: source
-resource: kinic://db_alpha/Sources/raw/web/source.md
+resource: kinic://db_alpha/Sources/web/source.md
 tags:
 - kinic
 - reference
 kinic:
   database_id: db_alpha
   root: /Wiki/projects/acme
-  source_path: /Sources/raw/web/source.md
+  store: knowledge_evidence
+  store_path: /Sources/web/source.md
   etag: v4h:...
   content_hash: sha256:...
   expires_at: 2026-09-22T00:00:00Z
@@ -99,23 +100,24 @@ kinic:
 
 # Reference
 
-- source_path: `/Sources/raw/web/source.md`
+- store: `knowledge_evidence`
+- store_path: `/Sources/web/source.md`
 - via_path: `/Wiki/projects/acme/facts.md`
-- raw_href: `/Sources/raw/web/source.md`
+- target_href: `/Sources/web/source.md`
 - link_text: `Raw`
 - etag: `v4h:...`
 - updated_at: `1780000000000`
 - content_hash: `sha256:...`
 
-Raw source content is not copied into this OKF bundle.
+Referenced store content is not copied into this OKF bundle.
 ```
 
 ## Canonicality Rules
 
 - `/Wiki/...` is the organized knowledge layer.
-- `/Sources/raw/...` is the canonical raw evidence layer.
+- `/Sources/...` is the canonical raw evidence layer.
 - Prefer reviewed role-page concepts over unreviewed working-note concepts for trusted agent handoff.
-- Raw source body text is not copied into `references/*.md`.
+- Referenced store body text is not copied into `references/*.md`.
 - `index.md` and `log.md` are OKF reserved files and must not carry frontmatter.
 - `okf.yaml` is the verification source of truth for task scope and selected node metadata.
 - Unknown frontmatter keys are allowed.
@@ -157,7 +159,8 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 - non-reference concepts with `kinic.content_hash` match the exported Markdown body
 - `index.md` and `log.md` do not use frontmatter
 - `kinic.expires_at` is in the future when present
-- `references/*.md` uses `kinic.source_path` under `/Sources/raw/...`
+- `references/*.md` uses `kinic.store` and `kinic.store_path`
+- reference `kinic.store_path` stays under a Kinic store root such as `/Sources/<provider>`, `/Sources/sessions`, `/Sources/skill-runs`, or `/Sessions`
 - reference concepts include `kinic.etag` and `kinic.content_hash`
 - reference bodies use the fixed metadata-only shape
 - `--fail-on-truncated` fails when `okf.yaml.truncated` is true
@@ -179,6 +182,6 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 ## Limits
 
 - Context Pack is generated from memory and knowledge store content; it is not a separate canonical store.
-- Skill and session stores may be referenced by exported knowledge, but Context Pack does not manage those stores.
+- Skill, session, and evidence store paths may be referenced by exported knowledge, but Context Pack does not manage those stores.
 - Context Pack does not define write-back, patch approval, or checkpoint APIs.
 - OKF remains the bundle format; Kinic metadata stays inside `kinic` frontmatter.

@@ -7,7 +7,7 @@ It stores durable wiki nodes in an Internet Computer canister and exposes them t
 
 Vector databases are useful for retrieving nearby text fragments from large corpora. Agent memory has a different shape. Agents need stable places for current decisions, source evidence, open questions, operating procedures, and relationships between notes.
 
-Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/raw/...`. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
+Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/<provider>/...`. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
 
 For many medium-sized agent workflows, structured file-system search is often more useful than embedding-only retrieval. A result is not just a similar chunk; it is a named, linked, updateable knowledge node.
 
@@ -23,9 +23,9 @@ For many medium-sized agent workflows, structured file-system search is often mo
 ## Four Stores
 
 - `memory`: short facts, preferences, and active context recalled through `memory_recall`.
-- `knowledge`: long-term notes under `/Wiki/...`, connected by wiki links and source evidence.
+- `knowledge`: long-term notes under `/Wiki/...`, connected by wiki links and raw evidence under `/Sources/<provider>/...`.
 - `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`, with manifests, status, proposals, and run evidence.
-- `session`: agent session state and audit material under `/Sessions/...`; resumable summaries are a later workflow.
+- `session`: agent session state under `/Sessions/...` and session transcript evidence under `/Sources/sessions/...`; resumable summaries are a later workflow.
 
 Context Pack is not a fifth store. It is an OKF handoff artifact generated from store content.
 Curator is not a store. It is a future maintenance workflow for skill and knowledge stale/archive/promote decisions.
@@ -107,7 +107,7 @@ Agents should discover relevant skills, inspect the package, use the instruction
 - Store API: direct read-only canister queries such as `store_manifest`, `memory_recall`, and `knowledge_evidence`
 - Agent Tool Calling: embedded OpenAI-compatible and Anthropic-compatible tool schemas
 
-The Chrome extension connects browser work to Kinic Wiki. It saves recent ChatGPT conversations and active web page snapshots as raw knowledge evidence under `/Sources/raw/...`. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
+The Chrome extension connects browser work to Kinic Wiki. It saves recent ChatGPT conversations and active web page snapshots as raw knowledge evidence under `/Sources/<provider>/...`. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
 
 Developer and operator guides:
 

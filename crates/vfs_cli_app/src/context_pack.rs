@@ -9,8 +9,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use vfs_client::VfsApi;
-use vfs_types::{KnowledgeEvidenceRef, MemoryRecall, MemoryRecallRequest, Node, NodeKind};
-use wiki_domain::{RAW_SOURCES_PREFIX, WIKI_ROOT_PATH};
+use vfs_types::{
+    KnowledgeEvidenceRef, LinkEdge, MemoryRecall, MemoryRecallRequest, Node, NodeKind,
+};
+use wiki_domain::{
+    SESSION_SOURCES_PREFIX, SKILL_REGISTRY_ROOT, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH,
+    validate_canonical_source_path, validate_knowledge_source_path,
+};
 
 const OKF_VERSION: &str = "0.1";
 const INDEX_FILE: &str = "index.md";
@@ -25,6 +30,8 @@ const OKF_OWNED_DIRS: &[&str] = &[
     "references",
 ];
 const LEGACY_TOP_LEVEL_JSON: &[&str] = &["manifest.json", "sources.json", "provenance.json"];
+const MEMORY_ROOT_PATH: &str = "/Memory";
+const SESSION_ROOT_PATH: &str = "/Sessions";
 
 #[derive(Debug, Clone)]
 pub struct ContextPackExportOptions {
@@ -119,7 +126,9 @@ struct KinicFrontmatter {
     #[serde(skip_serializing_if = "Option::is_none")]
     root: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source_path: Option<String>,
+    store: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     etag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -190,13 +199,14 @@ struct OkfBundleContext<'a> {
 
 #[derive(Debug, Clone)]
 struct OkfReference {
-    source_path: String,
+    store: String,
+    store_path: String,
     via_path: String,
-    raw_href: String,
+    target_href: String,
     link_text: String,
-    source_etag: Option<String>,
-    source_updated_at: Option<i64>,
-    source_content_hash: Option<String>,
+    etag: Option<String>,
+    updated_at: Option<i64>,
+    content_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -308,7 +318,7 @@ async fn export_okf_bundle(
         })
         .await?;
     let wiki_nodes = collect_context_nodes(&context);
-    let references = collect_context_references(&context);
+    let references = collect_context_references(client, database_id, &context).await?;
     let metadata = OkfBuildMetadata {
         database_id,
         namespace: &namespace,
@@ -454,16 +464,9 @@ pub fn verify_okf_bundle_dir(path: &Path, fail_on_truncated: bool) -> Result<Okf
                 }
             }
             if is_reference_type {
-                match &kinic.source_path {
-                    Some(source_path) if path_under_prefix(source_path, RAW_SOURCES_PREFIX) => {}
-                    Some(source_path) => errors.push(format!(
-                        "{}: kinic.source_path is outside {RAW_SOURCES_PREFIX}: {source_path}",
-                        relative.display()
-                    )),
-                    None => errors.push(format!(
-                        "{}: references concept requires kinic.source_path",
-                        relative.display()
-                    )),
+                match validate_reference_store_metadata(kinic) {
+                    Ok(()) => {}
+                    Err(error) => errors.push(format!("{}: {error}", relative.display())),
                 }
                 if kinic.etag.as_deref().unwrap_or("").is_empty() {
                     errors.push(format!(
@@ -499,7 +502,7 @@ pub fn verify_okf_bundle_dir(path: &Path, fail_on_truncated: bool) -> Result<Okf
             }
             if is_reference_type {
                 errors.push(format!(
-                    "{}: reference concept requires kinic.source_path",
+                    "{}: reference concept requires kinic.store and kinic.store_path",
                     relative.display()
                 ));
             }
@@ -597,11 +600,15 @@ fn collect_context_nodes(context: &MemoryRecall) -> Vec<BucketedNode> {
         .collect()
 }
 
-fn collect_context_references(context: &MemoryRecall) -> Vec<OkfReference> {
+async fn collect_context_references(
+    client: &impl VfsApi,
+    database_id: &str,
+    context: &MemoryRecall,
+) -> Result<Vec<OkfReference>> {
     let mut references = BTreeMap::<String, OkfReference>::new();
     for evidence in &context.evidence {
         for item in &evidence.refs {
-            if !path_under_prefix(&item.source_path, RAW_SOURCES_PREFIX) {
+            if !exportable_reference_path(&item.source_path) {
                 continue;
             }
             references
@@ -609,19 +616,59 @@ fn collect_context_references(context: &MemoryRecall) -> Vec<OkfReference> {
                 .or_insert_with(|| okf_reference_from_evidence(item));
         }
     }
-    references.into_values().collect()
+    for node in &context.nodes {
+        for edge in &node.outgoing_links {
+            if !exportable_reference_path(&edge.target_path) {
+                continue;
+            }
+            if references.contains_key(&edge.target_path) {
+                continue;
+            }
+            let reference = okf_reference_from_link(client, database_id, edge).await?;
+            references.insert(edge.target_path.clone(), reference);
+        }
+    }
+    Ok(references.into_values().collect())
 }
 
 fn okf_reference_from_evidence(item: &KnowledgeEvidenceRef) -> OkfReference {
+    let store = reference_store_for_path(&item.source_path)
+        .expect("caller checked supported reference store")
+        .to_string();
     OkfReference {
-        source_path: item.source_path.clone(),
+        store,
+        store_path: item.source_path.clone(),
         via_path: item.via_path.clone(),
-        raw_href: item.raw_href.clone(),
+        target_href: item.raw_href.clone(),
         link_text: item.link_text.clone(),
-        source_etag: item.source_etag.clone(),
-        source_updated_at: item.source_updated_at,
-        source_content_hash: item.source_content_hash.clone(),
+        etag: item.source_etag.clone(),
+        updated_at: item.source_updated_at,
+        content_hash: item.source_content_hash.clone(),
     }
+}
+
+async fn okf_reference_from_link(
+    client: &impl VfsApi,
+    database_id: &str,
+    edge: &LinkEdge,
+) -> Result<OkfReference> {
+    let store = reference_store_for_path(&edge.target_path)
+        .ok_or_else(|| anyhow!("unsupported reference target: {}", edge.target_path))?
+        .to_string();
+    let target = client
+        .read_node(database_id, &edge.target_path)
+        .await?
+        .ok_or_else(|| anyhow!("reference target not found: {}", edge.target_path))?;
+    Ok(OkfReference {
+        store,
+        store_path: edge.target_path.clone(),
+        via_path: edge.source_path.clone(),
+        target_href: edge.raw_href.clone(),
+        link_text: edge.link_text.clone(),
+        etag: Some(target.etag),
+        updated_at: Some(target.updated_at),
+        content_hash: Some(sha256_hex(target.content.as_bytes())),
+    })
 }
 
 fn build_okf_concepts(
@@ -647,7 +694,8 @@ fn build_okf_concepts(
                 kinic: Some(KinicFrontmatter {
                     database_id: Some(metadata.database_id.to_string()),
                     root: Some(metadata.namespace.to_string()),
-                    source_path: None,
+                    store: None,
+                    store_path: None,
                     etag: Some(item.node.etag.clone()),
                     content_hash: Some(sha256_hex(body.as_bytes())),
                     trust_level: Some(metadata.trust_level.to_string()),
@@ -660,43 +708,36 @@ fn build_okf_concepts(
     }
 
     for reference in references {
-        if reference.source_etag.as_deref().unwrap_or("").is_empty() {
+        if reference.etag.as_deref().unwrap_or("").is_empty() {
+            bail!("store reference is missing etag: {}", reference.store_path);
+        }
+        if reference.content_hash.as_deref().unwrap_or("").is_empty() {
             bail!(
-                "source reference is missing etag: {}",
-                reference.source_path
+                "store reference is missing content_hash: {}",
+                reference.store_path
             );
         }
-        if reference
-            .source_content_hash
-            .as_deref()
-            .unwrap_or("")
-            .is_empty()
-        {
-            bail!(
-                "source reference is missing content_hash: {}",
-                reference.source_path
-            );
-        }
-        let slug = unique_slug(&reference.source_path, &mut used_paths);
+        let slug = unique_slug(&reference.store_path, &mut used_paths);
         let relative_path = PathBuf::from("references").join(format!("{slug}.md"));
         concepts.push(OkfConcept {
             relative_path,
             frontmatter: OkfFrontmatter {
                 concept_type: "Reference".to_string(),
-                title: Some(title_from_path(&reference.source_path)),
+                title: Some(title_from_path(&reference.store_path)),
                 description: Some(format!(
-                    "Kinic raw source reference for {}",
-                    reference.source_path
+                    "Kinic {} reference for {}",
+                    reference.store, reference.store_path
                 )),
-                resource: Some(kinic_resource(metadata.database_id, &reference.source_path)),
+                resource: Some(kinic_resource(metadata.database_id, &reference.store_path)),
                 tags: vec!["kinic".to_string(), "reference".to_string()],
                 timestamp: Some(metadata.generated_at.to_string()),
                 kinic: Some(KinicFrontmatter {
                     database_id: Some(metadata.database_id.to_string()),
                     root: Some(metadata.namespace.to_string()),
-                    source_path: Some(reference.source_path.clone()),
-                    etag: reference.source_etag.clone(),
-                    content_hash: reference.source_content_hash.clone(),
+                    store: Some(reference.store.clone()),
+                    store_path: Some(reference.store_path.clone()),
+                    etag: reference.etag.clone(),
+                    content_hash: reference.content_hash.clone(),
                     trust_level: Some(metadata.trust_level.to_string()),
                     approved_by: metadata.approved_by.to_vec(),
                     expires_at: Some(metadata.expires_at.to_string()),
@@ -872,17 +913,18 @@ fn render_log(
 
 fn reference_body(reference: &OkfReference) -> String {
     format!(
-        "# Reference\n\n- source_path: `{}`\n- via_path: `{}`\n- raw_href: `{}`\n- link_text: `{}`\n- etag: `{}`\n- updated_at: `{}`\n- content_hash: `{}`\n\nRaw source content is not copied into this OKF bundle.\n",
-        escape_inline_code(&reference.source_path),
+        "# Reference\n\n- store: `{}`\n- store_path: `{}`\n- via_path: `{}`\n- target_href: `{}`\n- link_text: `{}`\n- etag: `{}`\n- updated_at: `{}`\n- content_hash: `{}`\n\nReferenced store content is not copied into this OKF bundle.\n",
+        escape_inline_code(&reference.store),
+        escape_inline_code(&reference.store_path),
         escape_inline_code(&reference.via_path),
-        escape_inline_code(&reference.raw_href),
+        escape_inline_code(&reference.target_href),
         escape_inline_code(&reference.link_text),
-        escape_inline_code(reference.source_etag.as_deref().unwrap_or("")),
+        escape_inline_code(reference.etag.as_deref().unwrap_or("")),
         reference
-            .source_updated_at
+            .updated_at
             .map(|value| value.to_string())
             .unwrap_or_default(),
-        escape_inline_code(reference.source_content_hash.as_deref().unwrap_or(""))
+        escape_inline_code(reference.content_hash.as_deref().unwrap_or(""))
     )
 }
 
@@ -987,12 +1029,12 @@ fn selected_node_from_frontmatter(
 
 fn context_path_from_frontmatter(frontmatter: &OkfFrontmatter) -> Result<String> {
     if frontmatter.concept_type == "Reference" {
-        let source_path = frontmatter
+        let store_path = frontmatter
             .kinic
             .as_ref()
-            .and_then(|kinic| kinic.source_path.clone())
-            .ok_or_else(|| anyhow!("reference source_path is required"))?;
-        return Ok(source_path);
+            .and_then(|kinic| kinic.store_path.clone())
+            .ok_or_else(|| anyhow!("reference store_path is required"))?;
+        return Ok(store_path);
     }
     let resource = frontmatter
         .resource
@@ -1048,23 +1090,27 @@ fn verify_selected_nodes(
 fn verify_reference_body(path: &Path, kinic: &KinicFrontmatter) -> Result<()> {
     let body = okf_body_text(path)?;
     let lines = body.lines().collect::<Vec<_>>();
-    if lines.len() != 11
+    if lines.len() != 12
         || lines[0] != "# Reference"
         || !lines[1].is_empty()
-        || !lines[9].is_empty()
-        || lines[10] != "Raw source content is not copied into this OKF bundle."
+        || !lines[10].is_empty()
+        || lines[11] != "Referenced store content is not copied into this OKF bundle."
     {
         bail!("reference body must use the fixed metadata-only shape");
     }
-    let source_path = inline_code_value(lines[2], "- source_path: `")?;
-    let _via_path = inline_code_value(lines[3], "- via_path: `")?;
-    let _raw_href = inline_code_value(lines[4], "- raw_href: `")?;
-    let _link_text = inline_code_value(lines[5], "- link_text: `")?;
-    let etag = inline_code_value(lines[6], "- etag: `")?;
-    let _updated_at = inline_code_value(lines[7], "- updated_at: `")?;
-    let content_hash = inline_code_value(lines[8], "- content_hash: `")?;
-    if Some(source_path.as_str()) != kinic.source_path.as_deref() {
-        bail!("reference body source_path does not match frontmatter");
+    let store = inline_code_value(lines[2], "- store: `")?;
+    let store_path = inline_code_value(lines[3], "- store_path: `")?;
+    let _via_path = inline_code_value(lines[4], "- via_path: `")?;
+    let _target_href = inline_code_value(lines[5], "- target_href: `")?;
+    let _link_text = inline_code_value(lines[6], "- link_text: `")?;
+    let etag = inline_code_value(lines[7], "- etag: `")?;
+    let _updated_at = inline_code_value(lines[8], "- updated_at: `")?;
+    let content_hash = inline_code_value(lines[9], "- content_hash: `")?;
+    if Some(store.as_str()) != kinic.store.as_deref() {
+        bail!("reference body store does not match frontmatter");
+    }
+    if Some(store_path.as_str()) != kinic.store_path.as_deref() {
+        bail!("reference body store_path does not match frontmatter");
     }
     if Some(etag.as_str()) != kinic.etag.as_deref() {
         bail!("reference body etag does not match frontmatter");
@@ -1201,6 +1247,57 @@ fn path_under_prefix(path: &str, prefix: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+fn validate_reference_store_metadata(kinic: &KinicFrontmatter) -> Result<()> {
+    let store = kinic
+        .store
+        .as_deref()
+        .ok_or_else(|| anyhow!("reference concept requires kinic.store"))?;
+    let store_path = kinic
+        .store_path
+        .as_deref()
+        .ok_or_else(|| anyhow!("reference concept requires kinic.store_path"))?;
+    let expected_store = reference_store_for_path(store_path).ok_or_else(|| {
+        anyhow!("kinic.store_path is outside supported store roots: {store_path}")
+    })?;
+    if store != expected_store {
+        bail!(
+            "kinic.store does not match kinic.store_path: expected {expected_store}, got {store}"
+        );
+    }
+    Ok(())
+}
+
+fn reference_store_for_path(path: &str) -> Option<&'static str> {
+    if path_under_prefix(path, SKILL_RUNS_PREFIX) && validate_canonical_source_path(path).is_ok() {
+        Some("skill_run_evidence")
+    } else if path_under_prefix(path, SESSION_SOURCES_PREFIX)
+        && validate_canonical_source_path(path).is_ok()
+    {
+        Some("session_evidence")
+    } else if validate_knowledge_source_path(path).is_ok() {
+        Some("knowledge_evidence")
+    } else if path_under_prefix(path, SESSION_ROOT_PATH) {
+        Some("session")
+    } else if path_under_prefix(path, SKILL_REGISTRY_ROOT) {
+        Some("skill")
+    } else if path_under_prefix(path, WIKI_ROOT_PATH) {
+        Some("knowledge")
+    } else if path_under_prefix(path, MEMORY_ROOT_PATH) {
+        Some("memory")
+    } else {
+        None
+    }
+}
+
+fn exportable_reference_path(path: &str) -> bool {
+    validate_knowledge_source_path(path).is_ok()
+        || (path_under_prefix(path, SESSION_SOURCES_PREFIX)
+            && validate_canonical_source_path(path).is_ok())
+        || (path_under_prefix(path, SKILL_RUNS_PREFIX)
+            && validate_canonical_source_path(path).is_ok())
+        || path_under_prefix(path, SESSION_ROOT_PATH)
+}
+
 fn parse_timestamp(value: &str) -> Result<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
 }
@@ -1275,6 +1372,7 @@ mod tests {
 
     struct MockClient {
         context: MemoryRecall,
+        readable_nodes: BTreeMap<String, Node>,
         read_node_calls: AtomicUsize,
         list_nodes_calls: AtomicUsize,
     }
@@ -1291,6 +1389,7 @@ mod tests {
                     evidence: Vec::new(),
                     truncated: false,
                 },
+                readable_nodes: BTreeMap::new(),
                 read_node_calls: AtomicUsize::new(0),
                 list_nodes_calls: AtomicUsize::new(0),
             }
@@ -1305,7 +1404,10 @@ mod tests {
 
         async fn read_node(&self, _database_id: &str, path: &str) -> Result<Option<Node>> {
             self.read_node_calls.fetch_add(1, Ordering::SeqCst);
-            bail!("read_node must not be called during context-pack export: {path}")
+            if let Some(node) = self.readable_nodes.get(path) {
+                return Ok(Some(node.clone()));
+            }
+            bail!("unexpected read_node during context-pack export: {path}")
         }
 
         async fn list_nodes(
@@ -1441,12 +1543,12 @@ mod tests {
         let mut client = MockClient::default();
         client.context.nodes = vec![test_node_context(
             "/Wiki/projects/acme/facts.md",
-            "Fact from /Sources/raw/web/source.md\n",
+            "Fact from /Sources/web/source.md\n",
             "wiki-etag",
         )];
         client.context.evidence = vec![test_source_evidence(
             "/Wiki/projects/acme/facts.md",
-            "/Sources/raw/web/source.md",
+            "/Sources/web/source.md",
             "sha256:sourcehash",
         )];
         client.context.truncated = truncated;
@@ -1515,12 +1617,12 @@ mod tests {
         let mut client = MockClient::default();
         client.context.nodes = vec![test_node_context(
             "/Wiki/projects/acme/facts.md",
-            "Fact from /Sources/raw/web/source.md\n",
+            "Fact from /Sources/web/source.md\n",
             "wiki-etag",
         )];
         client.context.evidence = vec![test_source_evidence(
             "/Wiki/projects/acme/facts.md",
-            "/Sources/raw/web/source.md",
+            "/Sources/web/source.md",
             "sha256:sourcehash",
         )];
         client.context.truncated = true;
@@ -1554,10 +1656,12 @@ mod tests {
             fs::read_to_string(out.path().join("facts/wiki-projects-acme-facts.md")).expect("fact");
         assert!(fact.starts_with("---\n"));
         assert!(fact.contains("type: Fact"));
-        assert!(fact.contains("Fact from /Sources/raw/web/source.md"));
-        let reference = fs::read_to_string(out.path().join("references/sources-raw-web-source.md"))
+        assert!(fact.contains("Fact from /Sources/web/source.md"));
+        let reference = fs::read_to_string(out.path().join("references/sources-web-source.md"))
             .expect("reference");
         assert!(reference.contains("type: Reference"));
+        assert!(reference.contains("store: knowledge_evidence"));
+        assert!(reference.contains("store_path: /Sources/web/source.md"));
         assert!(reference.contains("source-etag"));
         assert!(reference.contains("sha256:sourcehash"));
         assert!(!reference.contains("raw secret transcript"));
@@ -1588,11 +1692,11 @@ mod tests {
                 && node.output_path == "facts/wiki-projects-acme-facts.md"
         }));
         assert!(manifest.selected_nodes.iter().any(|node| {
-            node.path == "/Sources/raw/web/source.md"
+            node.path == "/Sources/web/source.md"
                 && node.concept_type == "Reference"
                 && node.etag == "source-etag"
                 && node.content_hash == "sha256:sourcehash"
-                && node.output_path == "references/sources-raw-web-source.md"
+                && node.output_path == "references/sources-web-source.md"
         }));
         let truncated_verify = verify_okf_bundle_dir(out.path(), true).expect("truncated verify");
         assert!(!truncated_verify.valid);
@@ -1659,6 +1763,70 @@ mod tests {
         assert_eq!(verify.reference_count, 0);
     }
 
+    #[tokio::test]
+    async fn export_writes_session_links_as_metadata_only_references() {
+        let out = tempdir().expect("tempdir");
+        let mut client = MockClient::default();
+        let session_path = "/Sessions/codex/session.md";
+        client.context.nodes = vec![NodeContext {
+            node: test_node(
+                "/Wiki/projects/acme/provenance.md",
+                NodeKind::File,
+                "Session [audit](/Sessions/codex/session.md)",
+                "wiki-etag",
+            ),
+            incoming_links: Vec::new(),
+            outgoing_links: vec![LinkEdge {
+                source_path: "/Wiki/projects/acme/provenance.md".to_string(),
+                target_path: session_path.to_string(),
+                raw_href: session_path.to_string(),
+                link_text: "audit".to_string(),
+                link_kind: "markdown".to_string(),
+                updated_at: 4,
+            }],
+        }];
+        client.readable_nodes.insert(
+            session_path.to_string(),
+            test_node(
+                session_path,
+                NodeKind::File,
+                "raw session transcript",
+                "session-etag",
+            ),
+        );
+
+        let result = export_okf_bundle(
+            &client,
+            "alpha",
+            ContextPackExportOptions {
+                task: "session audit".to_string(),
+                namespace: "/Wiki/projects/acme".to_string(),
+                budget_tokens: 8_000,
+                depth: 1,
+                entities: Vec::new(),
+                out: out.path().to_path_buf(),
+                expires_at: "2999-01-01T00:00:00Z".to_string(),
+                trust_level: "team-approved".to_string(),
+                approved_by: Vec::new(),
+                overwrite: false,
+                json: true,
+            },
+        )
+        .await
+        .expect("export");
+
+        assert_eq!(result.reference_count, 1);
+        assert_eq!(client.read_node_calls.load(Ordering::SeqCst), 1);
+        let reference = fs::read_to_string(out.path().join("references/sessions-codex-session.md"))
+            .expect("reference");
+        assert!(reference.contains("store: session"));
+        assert!(reference.contains("store_path: /Sessions/codex/session.md"));
+        assert!(reference.contains("session-etag"));
+        assert!(!reference.contains("raw session transcript"));
+        let verify = verify_okf_bundle_dir(out.path(), false).expect("verify");
+        assert!(verify.valid, "{:?}", verify.errors);
+    }
+
     #[test]
     fn verify_rejects_missing_okf_manifest() {
         let dir = tempdir().expect("tempdir");
@@ -1718,7 +1886,7 @@ mod tests {
     async fn verify_rejects_reference_missing_etag_or_content_hash() {
         let out = tempdir().expect("tempdir");
         export_reference_bundle(out.path(), false).await;
-        let reference_path = out.path().join("references/sources-raw-web-source.md");
+        let reference_path = out.path().join("references/sources-web-source.md");
         let without_etag = fs::read_to_string(&reference_path)
             .expect("reference read")
             .replace("  etag: source-etag\n", "");
@@ -1734,7 +1902,7 @@ mod tests {
 
         let out = tempdir().expect("tempdir");
         export_reference_bundle(out.path(), false).await;
-        let reference_path = out.path().join("references/sources-raw-web-source.md");
+        let reference_path = out.path().join("references/sources-web-source.md");
         let without_hash = fs::read_to_string(&reference_path)
             .expect("reference read")
             .replace("  content_hash: sha256:sourcehash\n", "");
@@ -1753,7 +1921,7 @@ mod tests {
     async fn verify_rejects_reference_body_extra_text() {
         let out = tempdir().expect("tempdir");
         export_reference_bundle(out.path(), false).await;
-        let reference_path = out.path().join("references/sources-raw-web-source.md");
+        let reference_path = out.path().join("references/sources-web-source.md");
         let mut reference = fs::read_to_string(&reference_path).expect("reference read");
         reference.push_str("\nraw source transcript should not appear\n");
         fs::write(&reference_path, reference).expect("reference write");
@@ -1892,7 +2060,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_rejects_reference_without_kinic_source_path() {
+    fn verify_rejects_reference_without_kinic_store_metadata() {
         let dir = tempdir().expect("tempdir");
         write_reserved_files(dir.path());
         fs::create_dir_all(dir.path().join("references")).expect("refs");
@@ -1914,15 +2082,14 @@ mod tests {
             result
                 .errors
                 .iter()
-                .any(|error| error.contains("missing-kinic.md")
-                    && error.contains("kinic.source_path"))
+                .any(|error| error.contains("missing-kinic.md") && error.contains("kinic.store"))
         );
         assert!(
             result
                 .errors
                 .iter()
                 .any(|error| error.contains("reference-no-source-path.md")
-                    && error.contains("kinic.source_path"))
+                    && error.contains("kinic.store"))
         );
     }
 
@@ -1933,7 +2100,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  source_path: /Sources/raw/web/source.md\n---\n\n# Source\n",
+            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
         )
         .expect("write");
 
@@ -1950,7 +2117,7 @@ mod tests {
         write_reserved_files(dir.path());
         fs::write(
             dir.path().join("source.md"),
-            "---\ntype: Reference\nkinic:\n  source_path: /Sources/raw/web/source.md\n---\n\n# Source\n",
+            "---\ntype: Reference\nkinic:\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
         )
         .expect("write");
 
@@ -1959,6 +2126,56 @@ mod tests {
         assert!(result.errors.iter().any(|error| {
             error.contains("source.md") && error.contains("must be under references/")
         }));
+    }
+
+    #[test]
+    fn verify_rejects_reference_store_path_outside_store_roots() {
+        let dir = tempdir().expect("tempdir");
+        write_reserved_files(dir.path());
+        fs::create_dir_all(dir.path().join("references")).expect("refs");
+        fs::write(
+            dir.path().join("references/bad.md"),
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  store: knowledge\n  store_path: /Bad/root.md\n  etag: bad-etag\n  content_hash: sha256:bad\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge`\n- store_path: `/Bad/root.md`\n- via_path: `/Wiki/projects/acme/facts.md`\n- target_href: `/Bad/root.md`\n- link_text: `Bad`\n- etag: `bad-etag`\n- updated_at: `3`\n- content_hash: `sha256:bad`\n\nReferenced store content is not copied into this OKF bundle.\n",
+        )
+        .expect("write");
+
+        let result = verify_okf_bundle_dir(dir.path(), false).expect("verify result");
+        assert!(!result.valid);
+        assert!(result.errors.iter().any(|error| {
+            error.contains("references/bad.md") && error.contains("outside supported store roots")
+        }));
+    }
+
+    #[test]
+    fn reference_store_mapping_covers_four_store_roots_and_evidence_roots() {
+        assert_eq!(reference_store_for_path("/Memory/facts.md"), Some("memory"));
+        assert_eq!(reference_store_for_path("/Wiki/page.md"), Some("knowledge"));
+        assert_eq!(
+            reference_store_for_path("/Wiki/skills/review/SKILL.md"),
+            Some("skill")
+        );
+        assert_eq!(
+            reference_store_for_path("/Sessions/codex/session.md"),
+            Some("session")
+        );
+        assert_eq!(
+            reference_store_for_path("/Sources/web/source.md"),
+            Some("knowledge_evidence")
+        );
+        assert_eq!(
+            reference_store_for_path("/Sources/sessions/session-1/session-1.md"),
+            Some("session_evidence")
+        );
+        assert_eq!(
+            reference_store_for_path("/Sources/sessions/session-1/bad.md"),
+            None
+        );
+        assert_eq!(
+            reference_store_for_path("/Sources/skill-runs/review/run-1.md"),
+            Some("skill_run_evidence")
+        );
+        assert_eq!(reference_store_for_path("/Sources/skill-runs/review"), None);
+        assert_eq!(reference_store_for_path("/Bad/root.md"), None);
     }
 
     #[tokio::test]
@@ -2035,7 +2252,7 @@ mod tests {
                 concept_count: 1,
                 reference_count: 1,
                 selected_nodes: vec![OkfSelectedNode {
-                    path: "/Sources/raw/web/source.md".to_string(),
+                    path: "/Sources/web/source.md".to_string(),
                     concept_type: "Reference".to_string(),
                     etag: "source-etag".to_string(),
                     content_hash: "sha256:sourcehash".to_string(),
@@ -2048,7 +2265,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  source_path: /Sources/raw/web/source.md\n  etag: source-etag\n  content_hash: sha256:sourcehash\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- source_path: `/Sources/raw/web/source.md`\n- via_path: `/Wiki/projects/acme/facts.md`\n- raw_href: `/Sources/raw/web/source.md`\n- link_text: `Raw`\n- etag: `source-etag`\n- updated_at: `3`\n- content_hash: `sha256:sourcehash`\n\nRaw source content is not copied into this OKF bundle.\n",
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n  etag: source-etag\n  content_hash: sha256:sourcehash\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge_evidence`\n- store_path: `/Sources/web/source.md`\n- via_path: `/Wiki/projects/acme/facts.md`\n- target_href: `/Sources/web/source.md`\n- link_text: `Raw`\n- etag: `source-etag`\n- updated_at: `3`\n- content_hash: `sha256:sourcehash`\n\nReferenced store content is not copied into this OKF bundle.\n",
         )
         .expect("write");
 

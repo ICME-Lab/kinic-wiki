@@ -13,7 +13,7 @@ use vfs_types::{
     kinic_base_units_per_token,
 };
 
-const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
+const PRIMARY_SOURCE_PATH: &str = "/Sources/smoke/smoke.md";
 const PRIMARY_WIKI_PATH: &str = "/Wiki/smoke.md";
 const PRIMARY_CONTENT_MARKER: &str = "alpha canister smoke";
 const PRIMARY_QUERY: &str = "alpha canister";

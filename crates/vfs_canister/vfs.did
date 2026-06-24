@@ -24,10 +24,7 @@ type ChildNode = record {
   is_virtual : bool;
 };
 type CreateDatabaseRequest = record { name : text };
-type CreateDatabaseResult = record {
-  name : text;
-  database_id : text;
-};
+type CreateDatabaseResult = record { name : text; database_id : text };
 type CyclesBillingConfig = record {
   billing_authority_id : text;
   kinic_ledger_canister_id : text;
@@ -73,6 +70,7 @@ type CyclesTopUpLauncherError = variant {
   LauncherBalanceTooLow;
 };
 type CyclesTopUpLauncherResult = variant { Ok; Err : CyclesTopUpLauncherError };
+type RenameDatabaseRequest = record { name : text; database_id : text };
 type DatabaseArchiveChunk = record { bytes : blob };
 type DatabaseArchiveInfo = record { size_bytes : nat64; database_id : text };
 type DatabaseCycleEntry = record {
@@ -490,7 +488,6 @@ type OpsAnswerSessionRequest = record {
   session_nonce : text;
   database_id : text;
 };
-type RenameDatabaseRequest = record { name : text; database_id : text };
 type Result = variant { Ok : WriteNodeResult; Err : text };
 type Result_1 = variant { Ok; Err : text };
 type Result_10 = variant { Ok : CyclesBillingConfig; Err : text };

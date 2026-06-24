@@ -366,7 +366,8 @@ fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String
             store_root("/Wiki", "knowledge"),
             store_root("/Wiki/skills", "skill"),
             store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "knowledge_evidence"),
+            store_root("/Sources", "knowledge_evidence"),
+            store_root("/Sources/sessions", "session_evidence"),
             store_root("/Sources/skill-runs", "skill_run_evidence"),
         ],
         entry_roots: vec![

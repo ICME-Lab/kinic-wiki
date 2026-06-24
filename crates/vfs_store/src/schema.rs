@@ -95,7 +95,7 @@ fn run_post_migration_hook(
         backfill_node_links(conn)?;
     }
     if version == "wiki_store:005_seed_raw_sources_root" {
-        seed_raw_sources_root_folder(conn)?;
+        seed_sources_root_folders(conn)?;
     }
     Ok(())
 }
@@ -234,7 +234,8 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
     folders.insert("/Sessions".to_string(), (0, 0));
     folders.insert("/Wiki".to_string(), (0, 0));
     folders.insert("/Sources".to_string(), (0, 0));
-    folders.insert("/Sources/raw".to_string(), (0, 0));
+    folders.insert("/Sources/sessions".to_string(), (0, 0));
+    folders.insert("/Sources/skill-runs".to_string(), (0, 0));
     for (path, created_at, updated_at) in &nodes {
         let mut current = String::new();
         let mut segments = path
@@ -328,9 +329,9 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
     .map_err(|error| error.to_string())
 }
 
-fn seed_raw_sources_root_folder(conn: &crate::sqlite::Transaction<'_>) -> Result<(), String> {
+fn seed_sources_root_folders(conn: &crate::sqlite::Transaction<'_>) -> Result<(), String> {
     let mut changed_folder_paths = Vec::new();
-    for folder_path in ["/Sources", "/Sources/raw"] {
+    for folder_path in ["/Sources", "/Sources/sessions", "/Sources/skill-runs"] {
         if ensure_folder_backfill_node(conn, folder_path, 0, 0)? != FolderBackfillChange::Existing {
             changed_folder_paths.push(folder_path.to_string());
         }

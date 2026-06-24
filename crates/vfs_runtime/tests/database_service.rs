@@ -646,7 +646,7 @@ fn assert_all_store_roots_exist(service: &VfsService, database_id: &str) {
         "/Wiki/skills",
         "/Sessions",
         "/Sources",
-        "/Sources/raw",
+        "/Sources/sessions",
         "/Sources/skill-runs",
     ] {
         assert!(
@@ -1487,7 +1487,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     service
         .grant_database_access("alpha", "owner", "reader", DatabaseRole::Reader, 3)
         .expect("reader grant should succeed");
-    let path = "/Sources/raw/web/abc.md";
+    let path = "/Sources/web/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 4);
 
     let reader = service
@@ -1514,7 +1514,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         .check_source_run_session(
             source_run_session_check_request(
                 "alpha",
-                "/Sources/raw/other/other.md",
+                "/Sources/other/other.md",
                 &written.write.node.etag,
                 "session-1",
             ),
@@ -1547,7 +1547,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
     let revoke_session = service
         .write_source_for_generation(
             "writer",
-            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            write_source_for_generation_request("alpha", "/Sources/web/def.md", "session-2"),
             103,
         )
         .expect("writer should authorize second session");
@@ -1558,7 +1558,7 @@ fn source_for_generation_writes_source_and_authorizes_bound_session() {
         .check_source_run_session(
             source_run_session_check_request(
                 "alpha",
-                "/Sources/raw/web/def.md",
+                "/Sources/web/def.md",
                 &revoke_session.write.node.etag,
                 "session-2",
             ),
@@ -1574,7 +1574,7 @@ fn source_run_session_requires_funded_database() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    let path = "/Sources/raw/web/abc.md";
+    let path = "/Sources/web/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 2);
     let written = service
         .write_source_for_generation(
@@ -1599,7 +1599,7 @@ fn source_for_generation_requires_default_llm_writer() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    let path = "/Sources/raw/web/abc.md";
+    let path = "/Sources/web/abc.md";
     ensure_parent_folders(&service, "owner", "alpha", path, 2);
     let written = service
         .write_source_for_generation(
@@ -1623,7 +1623,7 @@ fn source_for_generation_requires_default_llm_writer() {
     let write = service
         .write_source_for_generation(
             "owner",
-            write_source_for_generation_request("alpha", "/Sources/raw/web/def.md", "session-2"),
+            write_source_for_generation_request("alpha", "/Sources/web/def.md", "session-2"),
             102,
         )
         .expect_err("revoked LLM writer should fail source write authorization");
@@ -4366,7 +4366,7 @@ fn append_node_validates_effective_kind_paths() {
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/bad.md".to_string(),
+                path: "/Sources/bad.md".to_string(),
                 content: "bad".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -4383,7 +4383,7 @@ fn append_node_validates_effective_kind_paths() {
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/bad/bad.md".to_string(),
+                path: "/Sources/bad/bad.md".to_string(),
                 content: "bad".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -4432,13 +4432,13 @@ fn append_node_validates_effective_kind_paths() {
         )
         .expect("skill run source path should accept source kind");
 
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/good/good.md", 3);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/good/good.md", 3);
     let source = service
         .write_node(
             "owner",
             WriteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/good/good.md".to_string(),
+                path: "/Sources/good/good.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source".to_string(),
                 metadata_json: "{}".to_string(),
@@ -4452,7 +4452,7 @@ fn append_node_validates_effective_kind_paths() {
             "owner",
             AppendNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/good/good.md".to_string(),
+                path: "/Sources/good/good.md".to_string(),
                 content: " body".to_string(),
                 expected_etag: Some(source.node.etag),
                 separator: None,
@@ -4488,15 +4488,15 @@ fn move_node_validates_source_target_path() {
     service
         .create_database("alpha", "owner", 1)
         .expect("database should create");
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/abc.md", 2);
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/web/wrong.md", 2);
-    ensure_parent_folders(&service, "owner", "alpha", "/Sources/raw/chatgpt/def.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/web/abc.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/web/wrong.md", 2);
+    ensure_parent_folders(&service, "owner", "alpha", "/Sources/chatgpt/def.md", 2);
     let source = service
         .write_node(
             "owner",
             WriteNodeRequest {
                 database_id: "alpha".to_string(),
-                path: "/Sources/raw/web/abc.md".to_string(),
+                path: "/Sources/web/abc.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source".to_string(),
                 metadata_json: "{}".to_string(),
@@ -4511,8 +4511,8 @@ fn move_node_validates_source_target_path() {
             "owner",
             MoveNodeRequest {
                 database_id: "alpha".to_string(),
-                from_path: "/Sources/raw/web/abc.md".to_string(),
-                to_path: "/Sources/raw/web/wrong.txt".to_string(),
+                from_path: "/Sources/web/abc.md".to_string(),
+                to_path: "/Sources/web/wrong.txt".to_string(),
                 expected_etag: Some(source.node.etag.clone()),
                 overwrite: false,
             },
@@ -4526,8 +4526,8 @@ fn move_node_validates_source_target_path() {
             "owner",
             MoveNodeRequest {
                 database_id: "alpha".to_string(),
-                from_path: "/Sources/raw/web/abc.md".to_string(),
-                to_path: "/Sources/raw/chatgpt/def.md".to_string(),
+                from_path: "/Sources/web/abc.md".to_string(),
+                to_path: "/Sources/chatgpt/def.md".to_string(),
                 expected_etag: Some(source.node.etag),
                 overwrite: false,
             },
@@ -6173,7 +6173,7 @@ fn market_listing_detail_returns_verified_preview() {
         &service,
         "seller",
         "preview-market",
-        "/Sources/raw/web/source.md",
+        "/Sources/web/source.md",
         2,
     );
     service
@@ -6209,7 +6209,7 @@ fn market_listing_detail_returns_verified_preview() {
             "seller",
             WriteNodeRequest {
                 database_id: "preview-market".to_string(),
-                path: "/Sources/raw/web/source.md".to_string(),
+                path: "/Sources/web/source.md".to_string(),
                 kind: NodeKind::Source,
                 content: "raw source body".to_string(),
                 metadata_json: "{}".to_string(),

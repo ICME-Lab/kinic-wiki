@@ -73,7 +73,7 @@ MVP は `Seed -> Draft -> Review -> Canonical -> Archive` を扱う。`Canonical
 - `/meta/editorial-policy.md`: claim、hypothesis、opinion の扱い。
 - `/meta/log.md`: append-only の変更・昇格・archive log。
 
-既存の repo-local note role では `/Sources/raw/...` と `/Wiki/...` が正本だが、この Product Spec では product-facing path として `/raw` と `/wiki` を使う。実装時は canister 内の実 path を `/Sources/raw/...` と `/Wiki/...` に正規化してもよい。
+既存の repo-local note role では `/Sources/...` と `/Wiki/...` が正本だが、この Product Spec では product-facing path として `/raw` と `/wiki` を使う。実装時は canister 内の実 path を `/Sources/...` と `/Wiki/...` に正規化してもよい。
 
 ## Evidence Policy
 

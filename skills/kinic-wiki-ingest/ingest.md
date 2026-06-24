@@ -8,7 +8,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 
 1. Inspect the source material and the user focus.
 2. If the source is noisy web or PDF-derived text, normalize it first.
-3. Decide whether the source should also be persisted under `/Sources/raw/...`.
+3. Decide whether the source should also be persisted under `/Sources/<provider>/...`.
 4. Read existing wiki context with `read-node-context` by starting from `/Wiki/index.md` and the canonical role-matched notes before broad search.
    - If `/Wiki/index.md` is missing and the workflow will create or reorganize wiki pages, create or repair it before stopping.
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
@@ -30,7 +30,7 @@ Turn raw source material into review-ready wiki updates under the canister-backe
 Use this workflow only when the user explicitly asks for scoped structure, repairing a thin benchmark import, or converting raw notes into a compounding LLM Wiki.
 
 1. Identify the scope root, for example `/Wiki/<scope>`, and list existing pages under it before writing.
-2. Confirm raw sources live under `/Sources/raw/...`; do not move or rewrite raw source nodes during scope setup.
+2. Confirm raw sources live under `/Sources/<provider>/...`; do not move or rewrite raw source nodes during scope setup.
 3. Create or update only the scope-level pages the scoped structure needs:
    - `index.md`: optional scoped catalog and navigation entry point.
    - `overview.md`: optional corpus-level synthesis and reading guide.
@@ -48,12 +48,12 @@ Use this workflow only when the user explicitly asks for scoped structure, repai
 
 Use this workflow when turning one raw conversation source into wiki material.
 
-1. Confirm the raw source lives at `/Sources/raw/<provider>/<id>.md`; do not move or rewrite it during synthesis.
+1. Confirm the raw source lives at `/Sources/<provider>/<id>.md`; do not move or rewrite it during synthesis.
 2. Read the full raw source and any existing wiki page that already cites the same source.
 3. Let the LLM choose a concrete, content-specific title from the conversation. Do not use the opaque `source_id` as the public page title unless it is the only meaningful identifier.
 4. Default to one flat page at `/Wiki/<llm-generated-title>.md`.
 5. In that page, include only the sections that the source actually supports: `Summary`, `Key Facts`, `Decisions`, `Open Questions`, `Follow-ups`, and `Provenance`.
-6. Put a source path reference in `Provenance`, for example `/Sources/raw/<provider>/<id>.md`.
+6. Put a source path reference in `Provenance`, for example `/Sources/<provider>/<id>.md`.
 7. If this creates a new page, ensure `/Wiki/index.md` links to it before stopping. Do not create `/Wiki/conversations`, `/Wiki/conversations/index.md`, or any other folder unless the user explicitly asks for that hierarchy.
 8. Do not create fixed empty scaffolds such as `facts.md`, `events.md`, `plans.md`, `preferences.md`, `open_questions.md`, `provenance.md`, and `log.md` by default.
 9. Split into multiple flat pages only when the conversation is large, will receive continuing updates, or clearly needs role-specific retrieval paths. If splitting, state the page map before writing. Do not add folders unless the user explicitly asks for hierarchy.
@@ -62,7 +62,7 @@ Use this workflow when turning one raw conversation source into wiki material.
 
 Use this workflow when ingesting many local files, for example 10 or more raw sources.
 
-1. Normalize every raw source path before writing. Each source file must use `/Sources/raw/<provider>/<id>.md`; create the parent folder first.
+1. Normalize every raw source path before writing. Each source file must use `/Sources/<provider>/<id>.md`; create the parent folder first.
 2. Build the full write set before mutating remote state: raw sources, wiki pages, and one append-only `log.md` entry only when a log page already exists or the user asks for logging.
 3. Prefer `write-nodes --input <nodes.json>` for the write set instead of looping `write-node` for every file.
 4. Set `expected_etag` for overwrites by reading current nodes first. Use `None` only for new nodes.
@@ -120,8 +120,8 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 
 ## Repo Contract
 
-- Raw source write path: `/Sources/raw/<provider>/<id>.md`
-- Raw source append path: `/Sources/raw/<provider>/<id>.md`
+- Raw source write path: `/Sources/<provider>/<id>.md`
+- Raw source append path: `/Sources/<provider>/<id>.md`
 - Default conversation wiki path: `/Wiki/<llm-generated-title>.md`
 - Wiki target root: `/Wiki/...`
 - Preferred primitives:

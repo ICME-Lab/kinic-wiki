@@ -9,7 +9,7 @@ import { FileCode, FileText, Folder, Loader2, Route } from "lucide-react";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { splitMarkdownPreviewSections } from "@/lib/markdown-sections";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
-import type { LoadState, ModeTab, PathLoadState, ViewMode } from "@/lib/wiki-helpers";
+import { isKnowledgeSourcePath, type LoadState, type ModeTab, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
 import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
 import { ErrorBox } from "@/components/panel";
 import type { EditorSaveState } from "@/components/markdown-editor";
@@ -407,9 +407,9 @@ function EditDocument({
   onNodeSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
-  const editable = node.kind === "file" && node.path.endsWith(".md") && !node.path.startsWith("/Sources/raw/");
+  const editable = node.kind === "file" && node.path.endsWith(".md") && !isKnowledgeSourcePath(node.path);
   if (!editable) {
-    return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside /Sources/raw can be edited in the browser." />;
+    return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside source evidence can be edited in the browser." />;
   }
   if (!writeIdentity) {
     return (

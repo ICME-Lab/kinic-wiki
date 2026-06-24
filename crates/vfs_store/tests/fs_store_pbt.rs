@@ -589,7 +589,7 @@ proptest! {
             concat!(
                 "[[{}|Wiki Alias]]\n",
                 "[Relative](rel{rel_target}.md?view=raw#section \"Title\")\n",
-                "[Source](/Sources/raw/{source_target}.md#frag)\n",
+                "[Source](/Sources/{source_target}.md#frag)\n",
                 "[External](https://example.com/nope.md)\n",
                 "[Hash](#local)\n",
                 "[Root](/outside.md)\n",
@@ -623,7 +623,7 @@ proptest! {
                 "markdown".to_string(),
             ),
             (
-                format!("/Sources/raw/{source_target}.md"),
+                format!("/Sources/{source_target}.md"),
                 "Source".to_string(),
                 "markdown".to_string(),
             ),

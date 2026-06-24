@@ -200,7 +200,7 @@ fn fetch_updates_rejects_revision_before_available_change_log() {
         write_node(&store, &path, &content, None, now);
     }
     let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [7_i64])
+    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [12_i64])
         .expect("manual compaction should succeed");
 
     let error = store
@@ -458,7 +458,7 @@ fn folder_move_updates_sync_export_search_and_links() {
     write_node(
         &store,
         "/Wiki/project/index.md",
-        "uniquealpha [Raw](/Sources/raw/a/a.md)",
+        "uniquealpha [Raw](/Sources/a/a.md)",
         None,
         10,
     );
@@ -597,7 +597,7 @@ fn folder_move_updates_sync_export_search_and_links() {
             limit: 10,
         })
         .expect("outgoing links should load");
-    assert_eq!(outgoing[0].target_path, "/Sources/raw/a/a.md");
+    assert_eq!(outgoing[0].target_path, "/Sources/a/a.md");
 }
 
 #[test]
@@ -917,13 +917,7 @@ fn export_snapshot_allows_prefix_external_change_between_pages() {
             snapshot_session_id: None,
         })
         .expect("first page should succeed");
-    write_node(
-        &store,
-        "/Sources/raw/source/outside.md",
-        "outside",
-        None,
-        500,
-    );
+    write_node(&store, "/Sources/source/outside.md", "outside", None, 500);
 
     let second = store
         .export_snapshot(ExportSnapshotRequest {

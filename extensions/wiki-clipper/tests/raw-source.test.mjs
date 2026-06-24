@@ -20,7 +20,7 @@ test("buildRawSource emits canonical source path and metadata", () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.equal(raw.path, "/Sources/raw/chatgpt/abc.md");
+  assert.equal(raw.path, "/Sources/chatgpt/abc.md");
   assert.match(raw.content, /# Raw Conversation Source/);
   assert.match(raw.content, /- message_count: 2/);
   assert.match(raw.content, /- truncated: false/);
@@ -64,8 +64,20 @@ test("buildRawSource keeps a stable path for Claude conversations", () => {
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/raw/claude/claude-abc.md");
+  assert.equal(raw.path, "/Sources/claude/claude-abc.md");
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
+});
+
+test("buildRawSource falls back from reserved providers", () => {
+  const raw = buildRawSource({
+    provider: "raw",
+    conversationTitle: "Reserved Provider",
+    url: "https://example.com/c/reserved",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.match(raw.path, /^\/Sources\/conversation\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
 });
 
 test("buildRawSource truncates long conversation ids to a canonical source filename", () => {
@@ -79,7 +91,7 @@ test("buildRawSource truncates long conversation ids to a canonical source filen
   });
   const fileName = raw.path.split("/").at(-1);
 
-  assert.match(raw.path, /^\/Sources\/raw\/chatgpt\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
+  assert.match(raw.path, /^\/Sources\/chatgpt\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
   assert.equal(fileName.length <= 131, true);
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, longId);
 });
@@ -93,7 +105,7 @@ test("buildRawSource removes dotdot from conversation source filenames", () => {
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/raw/chatgpt/a-b.md");
+  assert.equal(raw.path, "/Sources/chatgpt/a-b.md");
 });
 
 test("buildRawSource rejects empty captures", () => {

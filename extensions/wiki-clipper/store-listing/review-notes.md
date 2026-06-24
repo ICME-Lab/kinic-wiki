@@ -10,7 +10,7 @@ The extension requires Internet Identity and writer access to a Kinic Wiki datab
 2. Login with Internet Identity.
 3. Select a writable Kinic Wiki database.
 4. Open any `http` or `https` page and click the extension action.
-5. Confirm that a web snapshot is saved under `/Sources/raw/web/...` in the selected database.
+5. Confirm that a web snapshot is saved under `/Sources/web/...` in the selected database.
 6. Open `https://chatgpt.com`, click the Kinic Wiki Clipper page control, and start export.
 7. Open `https://claude.ai`, click the Kinic Wiki Clipper page control, and start export.
 

@@ -47,7 +47,7 @@ await withEnv(
     assert.equal(storePreflight.headers.get("access-control-allow-origin"), "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi");
 
     const invalidPath = await triggerRouteModule.POST(
-      triggerRequest("https://kinic.xyz", { requestPath: "/Sources/raw/1.md" })
+      triggerRequest("https://kinic.xyz", { requestPath: "/Sources/1.md" })
     );
     assert.equal(invalidPath.status, 400);
 
@@ -108,17 +108,27 @@ await withEnv(
     triggerRouteModule.setUrlIngestTriggerDepsForTest();
 
     const invalidSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/web-abc/web-abc.md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/web-abc/web-abc.md" })
     );
     assert.equal(invalidSourcePath.status, 400);
 
+    const oldRawSourcePath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/abc.md" })
+    );
+    assert.equal(oldRawSourcePath.status, 400);
+
+    const reservedSessionSourcePath = await sourceRunRouteModule.POST(
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/sessions/abc.md" })
+    );
+    assert.equal(reservedSessionSourcePath.status, 400);
+
     const traversalSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/../...md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/../...md" })
     );
     assert.equal(traversalSourcePath.status, 400);
 
     const dotdotSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/web/a..b.md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/web/a..b.md" })
     );
     assert.equal(dotdotSourcePath.status, 400);
 
@@ -153,7 +163,7 @@ await withEnv(
         assert.equal(canisterId, "aaaaa-aa");
         assert.deepEqual(input, {
           databaseId: "db_1",
-          sourcePath: "/Sources/raw/web/abc.md",
+          sourcePath: "/Sources/web/abc.md",
           sourceEtag: "etag-source",
           sessionNonce: "session-1"
         });
@@ -165,7 +175,7 @@ await withEnv(
       assert.equal(init?.method, "POST");
       assert.deepEqual(JSON.parse(init?.body), {
         databaseId: "db_1",
-        sourcePath: "/Sources/raw/web/abc.md",
+        sourcePath: "/Sources/web/abc.md",
         sourceEtag: "etag-source",
         sessionNonce: "session-1",
         dryRun: false
@@ -177,6 +187,22 @@ await withEnv(
       assert.equal(response.headers.get("access-control-allow-origin"), "https://wiki.kinic.xyz");
     });
 
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async (canisterId, input) => {
+        assert.equal(canisterId, "aaaaa-aa");
+        assert.equal(input.sourcePath, "/Sources/123/abc.md");
+      }
+    });
+    await withMockFetch(async () => Response.json({ queued: true }, { status: 202 }), async () => {
+      const response = await sourceRunRouteModule.POST(
+        sourceRunRequest("https://wiki.kinic.xyz", { sourcePath: "/Sources/123/abc.md" })
+      );
+      assert.equal(response.status, 202);
+    });
+
+    sourceRunRouteModule.setSourceRunDepsForTest({
+      checkSession: async () => {}
+    });
     await withMockFetch(async () => Response.json({ error: "source etag mismatch" }, { status: 409 }), async () => {
       const response = await sourceRunRouteModule.POST(sourceRunRequest("https://wiki.kinic.xyz"));
       assert.equal(response.status, 409);
@@ -365,7 +391,7 @@ function sourceRunRequest(origin, overrides = {}) {
     body: JSON.stringify({
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
-      sourcePath: "/Sources/raw/web/abc.md",
+      sourcePath: "/Sources/web/abc.md",
       sourceEtag: "etag-source",
       sessionNonce: "session-1",
       ...overrides

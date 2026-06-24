@@ -53,7 +53,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Browse `/Wiki` and `/Sources`
 - Create databases and manage database access
 - Edit Markdown nodes under `/Wiki`
-- Create web source captures under `/Sources/raw/web/...` from the current database browser route
+- Create web source captures under `/Sources/web/...` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
 - Show incoming backlinks and a lightweight graph view
@@ -83,13 +83,13 @@ Select the `clipper` left-pane tab to check the current database, writer readine
 Submitting a web page snapshot writes raw evidence to the same database:
 
 ```text
-/Sources/raw/web/<source-id>.md
+/Sources/web/<source-id>.md
 ```
 
-Raw web evidence under `/Sources/raw/<provider>/<id>.md` is stored as `source`.
+Raw web evidence under `/Sources/<provider>/<id>.md` is stored as `source`.
 
 When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, `/api/source/run` checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `sourcePath`, `sourceEtag`, and `sessionNonce` to the generator Worker with bearer auth. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
-The worker reads `/Sources/raw/<provider>/<id>.md`, then generates review-ready pages under `/Wiki/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
+The worker reads `/Sources/<provider>/<id>.md`, then generates review-ready pages under `/Wiki/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
 
 ## Public Access
 

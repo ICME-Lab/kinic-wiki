@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::VfsApi;
 use vfs_types::{DeleteNodeRequest, ListNodesRequest, Node, NodeKind};
-use wiki_domain::validate_canonical_source_path;
+use wiki_domain::validate_knowledge_source_path;
 
 const REQUEST_PREFIX: &str = "/Sources/ingest-requests";
 const GENERATED_TARGET_PREFIX: &str = "/Wiki/conversations";
@@ -419,7 +419,7 @@ fn normalize_request_path(path: &str) -> Result<String> {
 
 fn normalize_source_path(path: &str) -> Result<String> {
     let path = normalize_absolute_path(path, "source_path")?;
-    validate_canonical_source_path(&path).map_err(anyhow::Error::msg)?;
+    validate_knowledge_source_path(&path).map_err(anyhow::Error::msg)?;
     Ok(path)
 }
 
@@ -607,7 +607,7 @@ mod tests {
             plan.paths
                 .contains(&"/Sources/ingest-requests/r1.md".to_string())
         );
-        assert!(plan.paths.contains(&"/Sources/raw/web/1.md".to_string()));
+        assert!(plan.paths.contains(&"/Sources/web/1.md".to_string()));
         assert!(
             plan.paths
                 .contains(&"/Wiki/conversations/web-1".to_string())
@@ -652,7 +652,7 @@ mod tests {
         MatchedRequest {
             path: "/Sources/ingest-requests/r1.md".to_string(),
             url: "https://example.com/page".to_string(),
-            source_path: Some("/Sources/raw/web/1.md".to_string()),
+            source_path: Some("/Sources/web/1.md".to_string()),
             target_path: target_path.map(ToString::to_string),
             status: Some("completed".to_string()),
         }

@@ -41,7 +41,7 @@ use vfs_types::{
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
-use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
+use wiki_domain::{validate_knowledge_source_path, validate_source_path_for_kind};
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
 const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
@@ -6985,7 +6985,7 @@ fn validate_source_for_generation_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_raw_source_run_path(&request.path)?;
+    validate_knowledge_source_run_path(&request.path)?;
     validate_session_nonce(&request.session_nonce)
 }
 
@@ -6995,19 +6995,15 @@ fn validate_source_run_session_check_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_raw_source_run_path(&request.source_path)?;
+    validate_knowledge_source_run_path(&request.source_path)?;
     if request.source_etag.trim().is_empty() {
         return Err("source_etag is required".to_string());
     }
     validate_session_nonce(&request.session_nonce)
 }
 
-fn validate_raw_source_run_path(path: &str) -> Result<(), String> {
-    if !(path == RAW_SOURCES_PREFIX || path.starts_with(&format!("{RAW_SOURCES_PREFIX}/"))) {
-        return Err(format!(
-            "source_path must stay under {RAW_SOURCES_PREFIX}: {path}"
-        ));
-    }
+fn validate_knowledge_source_run_path(path: &str) -> Result<(), String> {
+    validate_knowledge_source_path(path)?;
     validate_source_path_for_kind(path, &NodeKind::Source)
 }
 
@@ -7948,7 +7944,7 @@ fn database_store_seed_nodes() -> Vec<StoreSeedNode> {
         folder_seed("/Wiki/skills"),
         folder_seed("/Sessions"),
         folder_seed("/Sources"),
-        folder_seed("/Sources/raw"),
+        folder_seed("/Sources/sessions"),
         folder_seed("/Sources/skill-runs"),
     ]
 }
@@ -9226,7 +9222,7 @@ mod tests {
                         "INSERT INTO databases
                          (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, 'workspace', ?1, COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
+                         VALUES (?1, ?1, 'workspace', COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9325,7 +9321,7 @@ mod tests {
                         "INSERT INTO databases
                          (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, 'workspace', ?1, ?3, ?3, ?2, ?4, 0, 0, 0)",
+                         VALUES (?1, ?1, 'workspace', ?3, ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9812,7 +9808,7 @@ mod tests {
                     "INSERT INTO databases
                      (database_id, name, db_file_name, mount_id, active_mount_id, status,
                       schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                     VALUES (?1, ?1, 'workspace', ?1, ?2, ?2, 'active', ?3, ?4, 0, 0)",
+                     VALUES (?1, ?1, 'workspace', ?2, ?2, 'active', ?3, ?4, 0, 0)",
                     params![
                         database_id,
                         i64::from(mount_id),

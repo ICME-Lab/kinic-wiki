@@ -251,7 +251,7 @@ test("queued URL ingest fails when write_node returns a non-source ack", async (
 test("completed URL ingest request records finished_at", async () => {
   const vfs = new TestVfsClient();
   vfs.existingSource = {
-    path: "/Sources/raw/existing/existing.md",
+    path: "/Sources/existing/existing.md",
     kind: "source",
     content: "raw",
     etag: "etag-existing-source",
@@ -264,7 +264,7 @@ test("completed URL ingest request records finished_at", async () => {
     vfs,
     workerConfig(),
     "db_1",
-    queuedRequest({ status: "source_written", sourcePath: "/Sources/raw/existing/existing.md" }),
+    queuedRequest({ status: "source_written", sourcePath: "/Sources/existing/existing.md" }),
     "session-1"
   );
 
@@ -276,7 +276,7 @@ test("completed URL ingest request records finished_at", async () => {
 test("completed URL ingest request preserves existing finished_at", async () => {
   const vfs = new TestVfsClient();
   vfs.existingSource = {
-    path: "/Sources/raw/existing/existing.md",
+    path: "/Sources/existing/existing.md",
     kind: "source",
     content: "raw",
     etag: "etag-existing-source",
@@ -291,7 +291,7 @@ test("completed URL ingest request preserves existing finished_at", async () => 
     "db_1",
       queuedRequest({
         status: "source_written",
-        sourcePath: "/Sources/raw/existing/existing.md",
+        sourcePath: "/Sources/existing/existing.md",
         finishedAt: "2026-05-13T00:00:00.000Z"
       }),
       "session-1"
@@ -304,7 +304,7 @@ test("completed URL ingest request preserves existing finished_at", async () => 
 test("source_written URL ingest still reads source to recover etag", async () => {
   const vfs = new TestVfsClient();
   vfs.existingSource = {
-    path: "/Sources/raw/retry/retry.md",
+    path: "/Sources/retry/retry.md",
     kind: "source",
     content: "raw",
     etag: "etag-existing-source",
@@ -317,7 +317,7 @@ test("source_written URL ingest still reads source to recover etag", async () =>
     vfs,
     workerConfig(),
     "db_1",
-    queuedRequest({ status: "source_written", sourcePath: "/Sources/raw/retry/retry.md" }),
+    queuedRequest({ status: "source_written", sourcePath: "/Sources/retry/retry.md" }),
     "session-1"
   );
 
@@ -325,7 +325,7 @@ test("source_written URL ingest still reads source to recover etag", async () =>
   assert.equal(vfs.sourceWrites, 0);
   const message = sourceMessage(queue.messages[0]);
   assert.equal(message.sourceEtag, "etag-existing-source");
-  assert.equal(message.sourcePath, "/Sources/raw/retry/retry.md");
+  assert.equal(message.sourcePath, "/Sources/retry/retry.md");
 });
 
 test("source_written URL ingest rejects source_path outside source prefix", async () => {

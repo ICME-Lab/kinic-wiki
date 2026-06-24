@@ -49,9 +49,9 @@ test("save-source delegates raw source writes to offscreen", async () => {
     assert.equal(calls[0].type, "save-raw-source");
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].config.databaseId, "team-db");
-    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[0].rawSource.path, "/Sources/chatgpt/abc.md");
     assert.equal(calls[1].type, "trigger-source-generation");
-    assert.equal(calls[1].sourcePath, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].sourcePath, "/Sources/chatgpt/abc.md");
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
     assert.equal(calls.length, 2);
@@ -95,7 +95,7 @@ test("save-source keeps raw source result when generation queue fails", async ()
     );
 
     assert.equal(response.ok, true);
-    assert.equal(response.result.path, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(response.result.path, "/Sources/chatgpt/abc.md");
     assert.equal(response.result.etag, "etag-1");
     assert.equal(response.result.created, true);
     assert.equal(response.result.generationQueued, false);
@@ -408,13 +408,13 @@ test("action click saves browser source then queues generation", async () => {
   assert.equal(messages[0].type, "web-source-exists");
   assert.equal(messages[0].config.databaseId, "team-db");
   assert.equal(messages[1].type, "save-raw-source");
-  assert.equal(messages[1].rawSource.path, "/Sources/raw/web/abc.md");
+  assert.equal(messages[1].rawSource.path, "/Sources/web/abc.md");
   assert.equal(messages[1].config.databaseId, "team-db");
   assert.equal(messages[2].type, "trigger-source-generation");
-  assert.equal(messages[2].sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(messages[2].sourcePath, "/Sources/web/abc.md");
   assert.equal(messages[2].sourceEtag, "etag-source");
   assert.equal(messages[2].sessionNonce, "session-source");
-  assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
   assert.equal(response.result.generationQueued, true);
   assert.deepEqual(badges, [
     { text: "...", tabId: 3 },
@@ -451,7 +451,7 @@ test("action click refreshes existing browser source for only the current tab", 
   assert.equal(response.result.sourceEtag, "etag-refreshed");
   assert.equal(response.result.generationQueued, true);
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
-  assert.match(String(lookupPath), /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
@@ -481,7 +481,7 @@ test("action click keeps source result when generation trigger fails", async () 
     })
   );
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
   assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
@@ -595,7 +595,7 @@ test("action click rejects duplicate in-flight source capture", async () => {
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/raw/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
 
@@ -716,13 +716,13 @@ test("action click allows a different URL while another URL is in flight", async
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
     assert.equal(restore.messages.length, 5);
-    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
-    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
     assert.notEqual(restore.messages[1].rawSource.path, restore.messages[3].rawSource.path);
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/raw/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
   } finally {
@@ -795,7 +795,7 @@ test("tab badge refresh clears missing sources and unsupported pages", async () 
     actionDeps({
       findWebSource: async () => {
         calls.push(["unexpected lookup"]);
-        return { exists: true, path: "/Sources/raw/web/nope.md", etag: "etag" };
+        return { exists: true, path: "/Sources/web/nope.md", etag: "etag" };
       },
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
     })
@@ -1116,7 +1116,7 @@ function actionDeps(overrides = {}) {
 
 function rawWebSource() {
   return {
-    path: "/Sources/raw/web/abc.md",
+    path: "/Sources/web/abc.md",
     sourceId: "web-abc",
     content: "# Example",
     metadataJson: "{}"

@@ -49,7 +49,7 @@ const companionSurfaces = [
   {
     title: "Capture tools",
     body: "Save ChatGPT/Claude conversations and active web page snapshots as raw evidence. The extension requires Internet Identity writer access; use the CLI to turn raw captures into organized /Wiki pages.",
-    details: ["Web pages -> /Sources/raw/web/...", "AI chats -> /Sources/raw/..."],
+    details: ["Web pages -> /Sources/web/...", "AI chats -> /Sources/..."],
     href: "https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi",
     label: "Chrome Extension",
     icon: Wrench
@@ -206,7 +206,7 @@ export default function HomePage() {
                 <h3 className="text-xl font-semibold text-ink">Memory shape</h3>
               </div>
               <p className="mt-3 text-sm leading-6 text-muted">
-                Structured notes live under <code>/Wiki/...</code>. Raw evidence lives under <code>/Sources/raw/...</code>. Agents can search, follow paths and links, and update named knowledge nodes.
+                Structured notes live under <code>/Wiki/...</code>. Raw evidence lives under <code>/Sources/...</code>. Agents can search, follow paths and links, and update named knowledge nodes.
               </p>
             </article>
             <article className="rounded-2xl bg-paper p-6">

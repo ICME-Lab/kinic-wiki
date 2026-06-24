@@ -23,7 +23,7 @@ export function workerConfig(): WorkerConfig {
     icHost: "https://icp0.io",
     model: "deepseek-v4-flash",
     targetRoot: "/Wiki/conversations",
-    sourcePrefix: "/Sources/raw",
+    sourcePrefix: "/Sources",
     contextPrefix: "/Wiki",
     maxRawChars: 120_000,
     maxFetchedBytes: 5_000_000,
@@ -41,7 +41,7 @@ export function testEnv(queue: TestQueue): RuntimeEnv {
     KINIC_WIKI_IC_HOST: "https://icp0.io",
     KINIC_WIKI_WORKER_MODEL: "deepseek-v4-flash",
     KINIC_WIKI_WORKER_TARGET_ROOT: "/Wiki/conversations",
-    KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources/raw",
+    KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources",
     KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/Wiki",
     DEEPSEEK_API_KEY: "deepseek-key",
     KINIC_WIKI_WORKER_TOKEN: "worker-token",
@@ -92,13 +92,14 @@ export class TestVfsClient implements VfsClient {
   }
 
   async readNode(_databaseId: string, path: string): Promise<WikiNode | null> {
-    if (path.startsWith("/Sources/raw/")) {
-      if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
-      else this.sourceReadsBeforeWrite += 1;
-      return this.existingSource;
+    if (path.startsWith("/Sources/ingest-requests/")) {
+      this.requestReads += 1;
+      return this.requestNode;
     }
-    this.requestReads += 1;
-    return this.requestNode;
+    if (!path.startsWith("/Sources/")) return null;
+    if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
+    else this.sourceReadsBeforeWrite += 1;
+    return this.existingSource;
   }
 
   async writeNode(request: WriteNodeRequest): Promise<WriteNodeAck> {
@@ -183,7 +184,7 @@ class TestD1Statement implements D1PreparedStatement {
 
 function completedJobFromQueue(values: D1Value[]): unknown {
   const sourcePath = values[1];
-  if (sourcePath !== "/Sources/raw/existing/existing.md") return null;
+  if (sourcePath !== "/Sources/existing/existing.md") return null;
   return {
     database_id: values[0],
     source_path: sourcePath,

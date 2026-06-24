@@ -15,7 +15,7 @@ test("buildWebRawSource emits canonical browser DOM source", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(raw.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
   assert.equal(raw.path.split("/").at(-2), "web");
   assert.equal(raw.sourceId, `web-${raw.path.split("/").at(-1)?.replace(".md", "")}`);
   assert.match(raw.content, /kind: kinic\.raw_web_source/);
@@ -62,7 +62,7 @@ test("buildWebRawSource path does not depend on title", async () => {
   );
 
   assert.equal(first.path, second.path);
-  assert.match(first.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(first.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
 });
 
 test("webSourcePathForUrl ignores hash fragments", async () => {

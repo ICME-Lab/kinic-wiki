@@ -9,11 +9,12 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 ## Four Stores
 
 - `memory`: short facts, preferences, and active context. `memory_recall` assembles task-scoped context from canonical role pages, search hits, links, and optional evidence.
-- `knowledge`: long-term notes under `/Wiki/...` plus raw evidence under `/Sources/raw/...`. Wiki links form the knowledge mesh; `knowledge_evidence` resolves source references for a known node.
+- `knowledge`: long-term notes under `/Wiki/...` plus raw evidence under `/Sources/<provider>/...`. Wiki links form the knowledge mesh; `knowledge_evidence` resolves store references for a known node.
 - `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`. The Skill Registry CLI owns package upsert, discovery, run evidence, proposal, and status workflows.
-- `session`: agent session state and audit material under `/Sessions/...`. Resumable summaries are outside v1.
+- `session`: agent session state under `/Sessions/...` plus session transcript evidence under `/Sources/sessions/...`. Resumable summaries are outside v1.
 
 Context Pack is an export artifact generated from store content. It is not a store.
+Its `Reference` concepts identify Kinic targets with `kinic.store` and `kinic.store_path`, so `/Sources/<provider>/...`, `/Sources/sessions/...`, `/Sources/skill-runs/...`, and `/Sessions/...` can be represented without copying referenced bodies into the bundle.
 Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
 
 ## Trust Model
@@ -21,10 +22,10 @@ Curator is a future maintenance workflow for skill and knowledge; it is not part
 Kinic store trust follows this lifecycle:
 
 ```text
-/Sources/raw/... -> human review -> role page -> memory_recall
+/Sources/<provider>/... -> human review -> role page -> memory_recall
 ```
 
-- `/Sources/raw/...` is canonical raw evidence.
+- `/Sources/<provider>/...` is canonical raw evidence.
 - `/Wiki/...` is organized knowledge, but not automatically canonical.
 - Working notes can help review, but they are not a separate canonical lifecycle state.
 - Role pages are the memory recall layer when their claims are backed by source evidence or human review.
@@ -55,7 +56,7 @@ Do not answer from working notes as if they were canonical memory.
 - `store_manifest(StoreManifestRequest)`: discover the API version, enabled stores, roots, capability summary, canonical roles, limits, and recommended entrypoint.
 - `memory_recall(MemoryRecallRequest)`: read task-scoped wiki context. This is the primary entrypoint for normal agent questions.
 - `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON object text rows.
-- `knowledge_evidence(KnowledgeEvidenceRequest)`: read `/Sources` references for one known wiki node path.
+- `knowledge_evidence(KnowledgeEvidenceRequest)`: read `/Sources` evidence references for one known wiki node path.
 
 These methods are canister query methods. They do not mutate wiki content.
 
@@ -65,7 +66,7 @@ These methods are canister query methods. They do not mutate wiki content.
 
 - `api_version`: `kinic-stores-v1`
 - `enabled_stores`: `memory`, `knowledge`, `skill`, and `session`
-- `roots`: memory role pages, knowledge notes and evidence, skill packages, and session state
+- `roots`: memory role pages, knowledge notes and evidence, skill packages and run evidence, session state and session evidence
 - `entry_roots`: primary roots for the enabled stores
 - `write_policy`: `store_recall_read_only`
 - `recommended_entrypoint`: `memory_recall`

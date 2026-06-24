@@ -52,7 +52,7 @@ MCP client
   -> existing Rust client or Store API
   -> Kinic Wiki canister
   -> canister-backed VFS
-  -> /Wiki nodes and /Sources/raw evidence
+  -> /Wiki nodes and /Sources evidence
 ```
 
 `kinic.memory_recall` should map to the same semantics as `memory_recall`.

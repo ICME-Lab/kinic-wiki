@@ -91,9 +91,14 @@ export function inferNoteRole(path: string): string {
   if (name === "schema.md") return "schema";
   if (name === "provenance.md") return "provenance";
   if (path.includes("/topics/") && path.endsWith(".md")) return "topics";
-  if (path === "/Sources/raw" || path.startsWith("/Sources/raw/")) return "raw_source";
+  if (isKnowledgeSourcePath(path)) return "raw_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";
+}
+
+export function isKnowledgeSourcePath(path: string): boolean {
+  const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
+  return !!match && !["raw", "sessions", "skill-runs", "ingest-requests"].includes(match[1]) && !match[2].includes("..");
 }
 
 export function extractMarkdownLinks(content: string): string[] {

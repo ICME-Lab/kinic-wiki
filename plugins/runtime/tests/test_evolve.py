@@ -4,6 +4,12 @@ Why: Job metadata parsing gates proposal application and source evidence reads.
 """
 
 import unittest
+import sys
+from pathlib import Path
+
+
+RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RUNTIME_ROOT))
 
 from kinic_agent_runtime import evolve
 
