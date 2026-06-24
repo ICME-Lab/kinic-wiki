@@ -1366,7 +1366,7 @@ mod tests {
         }
 
         async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
-            assert_eq!(request.include_evidence, true);
+            assert!(request.include_evidence);
             Ok(QueryContext {
                 namespace: request
                     .namespace
