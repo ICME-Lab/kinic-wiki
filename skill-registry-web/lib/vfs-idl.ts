@@ -128,6 +128,9 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const StoreManifestRequest = idl.Record({ database_id: idl.Text });
   const KnowledgeEvidenceRef = idl.Record({
     source_path: idl.Text,
+    source_content_hash: idl.Opt(idl.Text),
+    source_etag: idl.Opt(idl.Text),
+    source_updated_at: idl.Opt(idl.Int64),
     via_path: idl.Text,
     raw_href: idl.Text,
     link_text: idl.Text,

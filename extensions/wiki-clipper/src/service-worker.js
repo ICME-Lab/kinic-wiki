@@ -722,14 +722,20 @@ async function openSettingsOnce(open = openSettings) {
 
 async function reserveUrlIngest(key) {
   if (activeUrlIngests.has(key)) return false;
-  const current = await readInFlightRecord();
-  const now = Date.now();
-  if (current?.key === key && current.expiresAt > now) {
-    return false;
-  }
-  await writeInFlightRecord({ key, expiresAt: now + URL_INGEST_IN_FLIGHT_TTL_MS });
   activeUrlIngests.add(key);
-  return true;
+  try {
+    const current = await readInFlightRecord();
+    const now = Date.now();
+    if (current?.key === key && current.expiresAt > now) {
+      activeUrlIngests.delete(key);
+      return false;
+    }
+    await writeInFlightRecord({ key, expiresAt: now + URL_INGEST_IN_FLIGHT_TTL_MS });
+    return true;
+  } catch (error) {
+    activeUrlIngests.delete(key);
+    throw error;
+  }
 }
 
 async function releaseUrlIngest(key) {

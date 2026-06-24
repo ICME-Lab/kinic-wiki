@@ -37,6 +37,7 @@ loginButton.addEventListener("click", async () => {
 logoutButton.addEventListener("click", async () => {
   try {
     await logoutInternetIdentity();
+    await saveDatabaseSelection("");
     await notifyAuthSessionChanged();
     await refreshAuthAndDatabases();
     statusText.textContent = "Logged out";
@@ -101,11 +102,7 @@ async function send(message) {
 }
 
 async function notifyAuthSessionChanged() {
-  try {
-    await send({ type: "auth-session-changed" });
-  } catch (error) {
-    console.warn("failed to notify auth session change", error);
-  }
+  await send({ type: "auth-session-changed" });
 }
 
 async function saveDatabaseSelection(databaseId) {

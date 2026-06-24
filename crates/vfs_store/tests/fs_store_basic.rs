@@ -1,4 +1,5 @@
 use rusqlite::{Connection, params};
+use std::path::Path;
 use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
@@ -147,6 +148,40 @@ fn ensure_parent_folders(store: &FsStore, path: &str, now: i64) {
             )
             .expect("parent folder should exist or be created");
     }
+}
+
+fn seed_sql_budget_rows(database_path: &Path, count: i64) {
+    let mut conn = Connection::open(database_path).expect("db should open");
+    let tx = conn.transaction().expect("seed transaction should start");
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO fs_nodes
+                 (path, kind, content, created_at, updated_at, etag, metadata_json, name)
+                 VALUES (?1, 'file', ?2, ?3, ?3, ?4, '{}', ?5)",
+            )
+            .expect("seed insert should prepare");
+        for index in 0_i64..count {
+            let name = format!("node-{index:05}.md");
+            insert
+                .execute(params![
+                    format!("/Wiki/budget/{name}"),
+                    format!("budget content row {index}"),
+                    index,
+                    format!("etag-{index}"),
+                    name,
+                ])
+                .expect("seed row should insert");
+        }
+    }
+    tx.commit().expect("seed transaction should commit");
+}
+
+fn heavy_missing_sql() -> String {
+    let predicates = vec!["length(content) >= 0"; 50].join(" AND ");
+    format!(
+        "SELECT json_object('path', path) FROM fs_nodes WHERE {predicates} AND content LIKE '%missing-budget-token%' LIMIT 1"
+    )
 }
 
 #[test]
@@ -3179,6 +3214,43 @@ fn query_limits_are_capped_at_one_hundred() {
         })
         .expect("path search should succeed");
     assert_eq!(path_search.len(), 100);
+}
+
+#[test]
+fn database_sql_json_interrupts_heavy_scan_and_clears_progress_handler() {
+    let (_dir, store) = new_store();
+    seed_sql_budget_rows(store.database_path(), 10_000);
+
+    let normal = store
+        .query_sql_json(
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path >= '/Wiki/budget/node-00000.md' ORDER BY path ASC LIMIT 10",
+            10,
+        )
+        .expect("indexed database SQL should succeed");
+
+    assert_eq!(normal.row_count, 10);
+    assert_eq!(normal.rows[0], r#"{"path":"/Wiki/budget/node-00000.md"}"#);
+
+    let error = store
+        .query_sql_json(&heavy_missing_sql(), 1)
+        .expect_err("heavy database SQL should exceed budget");
+
+    assert!(
+        error.contains("database SQL execution budget exceeded"),
+        "unexpected error: {error}"
+    );
+
+    let after_interrupt = store
+        .query_sql_json(
+            "SELECT json_object('path', path) FROM fs_nodes WHERE path = '/Wiki/budget/node-00001.md' LIMIT 1",
+            1,
+        )
+        .expect("progress handler should be cleared after interrupt");
+
+    assert_eq!(
+        after_interrupt.rows,
+        vec![r#"{"path":"/Wiki/budget/node-00001.md"}"#]
+    );
 }
 
 #[test]

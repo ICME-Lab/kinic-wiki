@@ -228,6 +228,20 @@ test("auth-session-changed does not create a missing offscreen document", async 
   }
 });
 
+test("auth-session-changed fails when existing offscreen auth reset fails", async () => {
+  const calls = [];
+  const restore = installChromeForOffscreenReset(calls, true, { ok: false, error: "auth reset failed" });
+  try {
+    await assert.rejects(() => handleMessage({ type: "auth-session-changed" }, null), /auth reset failed/);
+    assert.deepEqual(calls, [
+      ["contexts", "chrome-extension://id/offscreen/offscreen.html"],
+      ["message", { target: "offscreen", type: "reset-auth-client" }]
+    ]);
+  } finally {
+    restore();
+  }
+});
+
 test("open-settings message opens settings once", async () => {
   const settingsTabs = [];
   resetSettingsOpenThrottleForTest();
@@ -594,6 +608,90 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
   }
 });
 
+test("action click reserves URL before delayed session storage read", async () => {
+  resetUrlIngestInFlightForTest();
+  const sessionStorage = memoryStorage();
+  const storageRead = createDeferred();
+  let getCalls = 0;
+  const sessionArea = {
+    async get(defaults) {
+      getCalls += 1;
+      await storageRead.promise;
+      if (typeof defaults === "string") {
+        return { [defaults]: sessionStorage.getItem(defaults) };
+      }
+      return { ...defaults, ...Object.fromEntries(sessionStorage.entries()) };
+    },
+    async set(values) {
+      for (const [key, value] of Object.entries(values)) {
+        sessionStorage.setItem(key, value);
+      }
+    },
+    async remove(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  };
+  const restore = installChromeForAction({ sessionArea });
+  try {
+    const first = handleActionClick({ id: 1, url: "https://example.com/#section", title: "Example" });
+    await waitUntil(() => getCalls === 1);
+
+    const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(duplicate.ok, false);
+    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+
+    storageRead.resolve();
+    assert.equal((await first).ok, true);
+    assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
+  } finally {
+    resetUrlIngestInFlightForTest();
+    restore();
+  }
+});
+
+test("action click rolls back URL reservation when session storage write fails", async () => {
+  resetUrlIngestInFlightForTest();
+  const sessionStorage = memoryStorage();
+  let failSet = true;
+  const sessionArea = {
+    async get(defaults) {
+      if (typeof defaults === "string") {
+        return { [defaults]: sessionStorage.getItem(defaults) };
+      }
+      return { ...defaults, ...Object.fromEntries(sessionStorage.entries()) };
+    },
+    async set(values) {
+      if (failSet) {
+        failSet = false;
+        throw new Error("session write failed");
+      }
+      for (const [key, value] of Object.entries(values)) {
+        sessionStorage.setItem(key, value);
+      }
+    },
+    async remove(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  };
+  const restore = installChromeForAction({ sessionArea });
+  try {
+    const failed = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(failed.ok, false);
+    assert.equal(failed.error, "session write failed");
+
+    const retry = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
+    assert.equal(retry.ok, true);
+    assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
+  } finally {
+    resetUrlIngestInFlightForTest();
+    restore();
+  }
+});
+
 test("action click allows a different URL while another URL is in flight", async () => {
   resetUrlIngestInFlightForTest();
   const deferred = createDeferred();
@@ -869,7 +967,7 @@ function installChromeForContextMenu(createdMenus, onOpenOptions) {
   };
 }
 
-function installChromeForOffscreenReset(calls, hasOffscreen) {
+function installChromeForOffscreenReset(calls, hasOffscreen, resetResponse = { ok: true, result: { reset: true } }) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
@@ -884,7 +982,7 @@ function installChromeForOffscreenReset(calls, hasOffscreen) {
         },
         async sendMessage(message) {
           calls.push(["message", message]);
-          return { ok: true, result: { reset: true } };
+          return resetResponse;
         }
       }
     }
@@ -895,7 +993,7 @@ function installChromeForOffscreenReset(calls, hasOffscreen) {
   };
 }
 
-function installChromeForAction({ databaseId = "team-db", sessionStorage = memoryStorage(), sendOffscreen } = {}) {
+function installChromeForAction({ databaseId = "team-db", sessionStorage = memoryStorage(), sessionArea = null, sendOffscreen } = {}) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
   const syncStorage = memoryStorage();
   syncStorage.setItem("databaseId", databaseId);
@@ -943,7 +1041,7 @@ function installChromeForAction({ databaseId = "team-db", sessionStorage = memor
       },
       storage: {
         sync: storageArea(syncStorage),
-        session: storageArea(sessionStorage)
+        session: sessionArea || storageArea(sessionStorage)
       }
     }
   });

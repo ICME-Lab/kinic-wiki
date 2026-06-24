@@ -35,6 +35,12 @@ export function mergePreferredDatabase(databases, preferredDatabase) {
   ];
 }
 
+export function isSelectedWritableDatabase({ databaseStatus, databaseId, databases }) {
+  const selectedId = String(databaseId || "").trim();
+  const values = Array.isArray(databases) ? databases : [];
+  return databaseStatus === "ready" && selectedId.length > 0 && values.some((database) => database.databaseId === selectedId);
+}
+
 export function shouldShowCreateDatabaseForm({ isAuthenticated, writableDatabaseCount }) {
   return Boolean(isAuthenticated) && writableDatabaseCount === 0;
 }
