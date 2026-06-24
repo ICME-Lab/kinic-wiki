@@ -184,17 +184,19 @@ It is read-only against the selected database.
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
   context-pack export \
-  --root /Wiki/projects/acme \
+  --task "review auth token refresh design" \
+  --namespace /Wiki/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \
   --approved-by principal:aaaaa-aa
 
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack verify ./okf
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack verify ./okf --fail-on-truncated
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack inspect ./okf --json
 ```
 
 `verify` and `inspect` read only the local OKF bundle and do not require `--database-id` or a canister connection.
+`export` is task-scoped and writes `okf.yaml` provenance metadata for machine verification.
 Pass `--overwrite` to `export` when replacing existing markdown files.
 
 ## Database SQL

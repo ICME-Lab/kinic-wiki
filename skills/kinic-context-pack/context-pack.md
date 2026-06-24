@@ -2,12 +2,12 @@
 
 ## Goal
 
-Export a selected `/Wiki/...` scope into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied raw source bodies.
+Export task-scoped `/Wiki/...` context into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied raw source bodies.
 
 ## Workflow
 
-1. Identify the `database_id` and the `/Wiki/...` root to export.
-2. Export the scope with `context-pack export`.
+1. Identify the `database_id`, task, and `/Wiki/...` namespace to query.
+2. Export the task-scoped context with `context-pack export`.
 3. Verify the output directory with `context-pack verify`.
 4. Inspect the bundle with `context-pack inspect` when a summary or JSON handoff record is useful.
 5. Hand off the bundle only after verification passes.
@@ -18,7 +18,8 @@ Export:
 
 ```bash
 kinic-vfs-cli --database-id <db> context-pack export \
-  --root /Wiki/projects/acme \
+  --task "review auth token refresh design" \
+  --namespace /Wiki/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \
@@ -28,7 +29,7 @@ kinic-vfs-cli --database-id <db> context-pack export \
 Verify:
 
 ```bash
-kinic-vfs-cli context-pack verify ./okf
+kinic-vfs-cli context-pack verify ./okf --fail-on-truncated
 ```
 
 Inspect:
@@ -44,6 +45,7 @@ Expected bundle shape:
 ```text
 index.md
 log.md
+okf.yaml
 facts/*.md
 decisions/*.md
 tasks/*.md
@@ -56,12 +58,14 @@ Reserved files:
 
 - `index.md`: progressive-disclosure entrypoint; no frontmatter
 - `log.md`: export history; no frontmatter
+- `okf.yaml`: machine-readable provenance manifest with task, namespace, budget, truncation, counts, and selected node hashes
 
 Concept files:
 
 - every non-reserved `.md` file has YAML frontmatter
 - `type` is required and non-empty
 - Kinic-specific data lives under the `kinic:` frontmatter extension
+- `okf.yaml` is the source of truth for task scope and selected node metadata
 
 Directory meaning:
 
@@ -70,12 +74,13 @@ Directory meaning:
 - `tasks/*.md`: task or plan concepts
 - `policies/*.md`: style, preference, and do-not-do concepts
 - `notes/*.md`: unclassified wiki nodes that are still normal OKF concepts
-- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/raw/...`
+- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/raw/...`, with `kinic.etag` and `kinic.content_hash`
 
 ## Rules
 
-- Do not export from `/Sources/raw/...` as the root.
+- Do not export from `/Sources/raw/...` as the namespace.
 - Do not copy raw source body text into `references/*.md`.
+- Do not hand off a bundle with `truncated: true` unless the recipient explicitly accepts incomplete context.
 - Do not use `references/*.md` for ordinary wiki notes.
 - Do not treat a passed `inspect` summary as verification; run `verify`.
 - Do not use this skill to mutate the wiki.
@@ -86,7 +91,7 @@ Directory meaning:
 For handoff, include:
 
 - bundle path
-- exported wiki root
+- exported task and wiki namespace
 - verification result
 - inspect summary when requested
 - any verification failure that blocks AI handoff

@@ -1,6 +1,6 @@
 # Context Pack
 
-Context Pack exports a Kinic Wiki scope as an Open Knowledge Format (OKF) v0.1 bundle.
+Context Pack exports task-scoped Kinic Wiki context as an Open Knowledge Format (OKF) v0.1 bundle.
 The output is plain Markdown with YAML frontmatter.
 There is no Kinic-specific `manifest.json`, `sources.json`, or `provenance.json` in the bundle.
 
@@ -11,6 +11,7 @@ Context Pack is a generated OKF bundle for agent handoff, review, and portable p
 
 The bundle is meant to be readable by humans, parseable by agents, and shippable as a directory, archive, or git repository.
 Kinic-specific verification data lives in YAML frontmatter under the `kinic` extension key.
+Bundle-level provenance lives in `okf.yaml`.
 
 ## OKF Bundle Shape
 
@@ -19,6 +20,7 @@ An export writes this directory shape:
 ```text
 index.md
 log.md
+okf.yaml
 facts/*.md
 decisions/*.md
 tasks/*.md
@@ -31,6 +33,7 @@ Reserved files:
 
 - `index.md`: progressive disclosure entrypoint. It has no frontmatter.
 - `log.md`: export history. It has no frontmatter.
+- `okf.yaml`: machine-readable provenance manifest with task, namespace, budget, truncation, counts, and selected node hashes.
 
 Concept files:
 
@@ -95,6 +98,14 @@ kinic:
 
 # Reference
 
+- source_path: `/Sources/raw/web/source.md`
+- via_path: `/Wiki/projects/acme/facts.md`
+- raw_href: `/Sources/raw/web/source.md`
+- link_text: `Raw`
+- etag: `v4h:...`
+- updated_at: `1780000000000`
+- content_hash: `sha256:...`
+
 Raw source content is not copied into this OKF bundle.
 ```
 
@@ -105,6 +116,7 @@ Raw source content is not copied into this OKF bundle.
 - Prefer reviewed role-page concepts over unreviewed working-note concepts for trusted agent handoff.
 - Raw source body text is not copied into `references/*.md`.
 - `index.md` and `log.md` are OKF reserved files and must not carry frontmatter.
+- `okf.yaml` is the verification source of truth for task scope and selected node metadata.
 - Unknown frontmatter keys are allowed.
 - Expired `kinic.expires_at` makes a concept invalid for trusted agent use.
 
@@ -114,7 +126,8 @@ Export:
 
 ```bash
 kinic-vfs-cli --database-id <database-id> context-pack export \
-  --root /Wiki/projects/acme \
+  --task "review auth token refresh design" \
+  --namespace /Wiki/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \
@@ -124,11 +137,12 @@ kinic-vfs-cli --database-id <database-id> context-pack export \
 Verify and inspect:
 
 ```bash
-kinic-vfs-cli context-pack verify ./okf
+kinic-vfs-cli context-pack verify ./okf --fail-on-truncated
 kinic-vfs-cli context-pack inspect ./okf --json
 ```
 
 `export` reads the remote database and writes a local OKF bundle.
+`export` uses `query_context`; it does not recursively dump the full namespace.
 `verify` and `inspect` read only the local bundle and do not require a canister connection.
 Pass `--overwrite` to replace existing markdown files in the output directory.
 
@@ -138,14 +152,23 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 
 - every non-reserved `.md` file has parseable YAML frontmatter
 - every concept has non-empty `type`
+- `okf.yaml` exists and its counts, namespace, and selected node metadata match the exported files
 - non-reference concepts with `kinic.content_hash` match the exported Markdown body
 - `index.md` and `log.md` do not use frontmatter
 - `kinic.expires_at` is in the future when present
 - `references/*.md` uses `kinic.source_path` under `/Sources/raw/...`
+- reference concepts include `kinic.etag` and `kinic.content_hash`
+- reference bodies use the fixed metadata-only shape
+- `--fail-on-truncated` fails when `okf.yaml.truncated` is true
 
 `context-pack inspect --json` reports:
 
 - `okf_version`
+- `task`
+- `namespace`
+- `budget_tokens`
+- `depth`
+- `truncated`
 - `concept_count`
 - `types`
 - Kinic database ids and roots

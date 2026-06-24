@@ -508,15 +508,23 @@ pub enum ContextPackCommand {
     #[command(about = "Export an OKF markdown bundle from a wiki namespace")]
     Export(ContextPackExportArgs),
     #[command(about = "Verify a local OKF bundle directory")]
-    Verify(ContextPackLocalArgs),
+    Verify(ContextPackVerifyArgs),
     #[command(about = "Inspect a local OKF bundle summary")]
     Inspect(ContextPackLocalArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct ContextPackExportArgs {
+    #[arg(long)]
+    pub task: String,
     #[arg(long, default_value = WIKI_ROOT_PATH)]
-    pub root: String,
+    pub namespace: String,
+    #[arg(long, default_value_t = 8_000)]
+    pub budget_tokens: u32,
+    #[arg(long, default_value_t = 1)]
+    pub depth: u32,
+    #[arg(long = "entity")]
+    pub entities: Vec<String>,
     #[arg(long)]
     pub out: PathBuf,
     #[arg(long)]
@@ -534,6 +542,15 @@ pub struct ContextPackExportArgs {
 #[derive(Args, Debug, Clone)]
 pub struct ContextPackLocalArgs {
     pub path: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContextPackVerifyArgs {
+    pub path: PathBuf,
+    #[arg(long)]
+    pub fail_on_truncated: bool,
     #[arg(long)]
     pub json: bool,
 }
@@ -1357,8 +1374,16 @@ mod tests {
             "kinic-vfs-cli",
             "context-pack",
             "export",
-            "--root",
+            "--task",
+            "review auth",
+            "--namespace",
             "/Wiki/projects/acme",
+            "--budget-tokens",
+            "12000",
+            "--depth",
+            "2",
+            "--entity",
+            "auth",
             "--out",
             "pack",
             "--expires-at",
@@ -1376,7 +1401,11 @@ mod tests {
         else {
             panic!("expected context-pack export command");
         };
-        assert_eq!(args.root, "/Wiki/projects/acme");
+        assert_eq!(args.task, "review auth");
+        assert_eq!(args.namespace, "/Wiki/projects/acme");
+        assert_eq!(args.budget_tokens, 12000);
+        assert_eq!(args.depth, 2);
+        assert_eq!(args.entities, vec!["auth"]);
         assert_eq!(args.out.to_string_lossy(), "pack");
         assert_eq!(args.expires_at, "2999-01-01T00:00:00Z");
         assert_eq!(args.trust_level, "team-approved");
@@ -1384,7 +1413,14 @@ mod tests {
         assert!(args.overwrite);
         assert!(args.json);
 
-        let verify = Cli::parse_from(["kinic-vfs-cli", "context-pack", "verify", "pack", "--json"]);
+        let verify = Cli::parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "verify",
+            "pack",
+            "--fail-on-truncated",
+            "--json",
+        ]);
         let Command::ContextPack {
             command: ContextPackCommand::Verify(args),
         } = verify.command
@@ -1392,6 +1428,7 @@ mod tests {
             panic!("expected context-pack verify command");
         };
         assert_eq!(args.path.to_string_lossy(), "pack");
+        assert!(args.fail_on_truncated);
         assert!(args.json);
 
         let inspect = Cli::parse_from(["kinic-vfs-cli", "context-pack", "inspect", "pack"]);
@@ -1403,6 +1440,21 @@ mod tests {
         };
         assert_eq!(args.path.to_string_lossy(), "pack");
         assert!(!args.json);
+
+        let root_arg = Cli::try_parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "export",
+            "--root",
+            "/Wiki/projects/acme",
+            "--task",
+            "review auth",
+            "--out",
+            "pack",
+            "--expires-at",
+            "2999-01-01T00:00:00Z",
+        ]);
+        assert!(root_arg.is_err());
     }
 
     #[test]
@@ -1427,6 +1479,8 @@ mod tests {
             "kinic-vfs-cli",
             "context-pack",
             "export",
+            "--task",
+            "summary",
             "--out",
             "pack",
             "--expires-at",
