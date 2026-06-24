@@ -121,6 +121,14 @@ pub struct CyclesPurchaseResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+pub struct InitialFreeDatabaseGrantStatus {
+    pub available: bool,
+    pub grant_cycles: u64,
+    pub database_id: Option<String>,
+    pub created_at_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseCycleEntry {
     pub entry_id: u64,
     pub database_id: String,

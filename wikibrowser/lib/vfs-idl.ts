@@ -235,6 +235,12 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
   const CreateDatabaseRequest = idl.Record({ name: idl.Text, profile: DatabaseProfile });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text, profile: DatabaseProfile });
+  const InitialFreeDatabaseGrantStatus = idl.Record({
+    available: idl.Bool,
+    grant_cycles: idl.Nat64,
+    database_id: idl.Opt(idl.Text),
+    created_at_ms: idl.Opt(idl.Int64)
+  });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
   const DeleteDatabaseRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
@@ -452,6 +458,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
+  const ResultInitialFreeDatabaseGrantStatus = idl.Variant({ Ok: InitialFreeDatabaseGrantStatus, Err: idl.Text });
   const ResultCyclesPurchase = idl.Variant({ Ok: CyclesPurchaseResult, Err: idl.Text });
   const ResultCyclesEntries = idl.Variant({ Ok: DatabaseCycleEntryPage, Err: idl.Text });
   const ResultCyclesPendingPurchases = idl.Variant({ Ok: idl.Vec(DatabaseCyclesPendingPurchase), Err: idl.Text });
@@ -493,6 +500,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
+    get_initial_free_database_grant_status: idl.Func([], [ResultInitialFreeDatabaseGrantStatus], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
     graph_links: idl.Func([GraphLinksRequest], [ResultLinks], ["query"]),
     graph_neighborhood: idl.Func([GraphNeighborhoodRequest], [ResultLinks], ["query"]),

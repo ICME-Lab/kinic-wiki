@@ -49,8 +49,8 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, KnowledgeEvidence,
-    KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    IndexSqlJsonQueryResult, InitialFreeDatabaseGrantStatus, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S,
+    KnowledgeEvidence, KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
     MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
     MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
     MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest, MkdirNodeRequest,
@@ -474,7 +474,7 @@ fn list_children(request: ListChildrenRequest) -> Result<Vec<ChildNode>, String>
 fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResult, String> {
     require_authenticated_caller()?;
     with_unmetered_update("create_database", None, |service, caller, now| {
-        let meta = service.reserve_pending_generated_database_with_profile(
+        let meta = service.create_generated_database_with_initial_free_grant_or_pending(
             &request.name,
             request.profile,
             caller,
@@ -486,6 +486,12 @@ fn create_database(request: CreateDatabaseRequest) -> Result<CreateDatabaseResul
             profile: meta.profile,
         })
     })
+}
+
+#[query]
+fn get_initial_free_database_grant_status() -> Result<InitialFreeDatabaseGrantStatus, String> {
+    require_authenticated_caller()?;
+    with_service(|service| service.initial_free_database_grant_status(&caller_text()))
 }
 
 #[update]
@@ -1690,6 +1696,18 @@ fn fail_next_mount_database_file_for_test() {
 #[cfg(test)]
 fn fail_next_apply_database_cycles_purchase_apply_for_test() {
     TEST_DATABASE_CYCLES_PURCHASE_APPLY_FAIL_ONCE.with(|flag| flag.replace(true));
+}
+
+#[cfg(test)]
+fn mark_initial_free_database_grant_used_for_test() {
+    with_service(|service| {
+        service.mark_initial_free_database_grant_used_for_test(
+            &caller_text(),
+            "test_free_grant_consumed",
+            now_millis(),
+        )
+    })
+    .expect("test free grant marker should insert");
 }
 
 #[cfg(test)]

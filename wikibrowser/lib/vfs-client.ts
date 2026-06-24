@@ -46,6 +46,7 @@ import type {
   RecentNode,
   SearchNodeHit,
   KnowledgeEvidence,
+  InitialFreeDatabaseGrantStatus,
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
@@ -85,6 +86,13 @@ type RawCyclesBillingConfig = {
     launcher_principal: string;
     threshold_cycles: bigint;
   };
+};
+
+type RawInitialFreeDatabaseGrantStatus = {
+  available: boolean;
+  grant_cycles: bigint;
+  database_id: [] | [string];
+  created_at_ms: [] | [bigint];
 };
 
 export type DatabaseCyclesPurchaseRequest = {
@@ -477,6 +485,7 @@ type VfsActor = {
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
+  get_initial_free_database_grant_status: () => Promise<{ Ok: RawInitialFreeDatabaseGrantStatus } | { Err: string }>;
   grant_database_access: (databaseId: string, principal: string, role: Variant) => Promise<{ Ok: null } | { Err: string }>;
   list_database_cycle_entries: (databaseId: string, cursor: [] | [bigint], limit: number) => Promise<{ Ok: RawDatabaseCycleEntryPage } | { Err: string }>;
   list_database_cycles_pending_purchases: (databaseId: string) => Promise<{ Ok: RawDatabaseCyclesPendingPurchase[] } | { Err: string }>;
@@ -652,6 +661,17 @@ export async function getCyclesBillingConfig(canisterId: string): Promise<Cycles
       throwCanisterError(result.Err);
     }
     return normalizeCyclesBillingConfig(result.Ok);
+  });
+}
+
+export async function getInitialFreeDatabaseGrantStatus(canisterId: string, identity: Identity): Promise<InitialFreeDatabaseGrantStatus> {
+  return callVfs(async () => {
+    const actor = await createAuthenticatedActor(canisterId, identity);
+    const result = await actor.get_initial_free_database_grant_status();
+    if ("Err" in result) {
+      throwCanisterError(result.Err);
+    }
+    return normalizeInitialFreeDatabaseGrantStatus(result.Ok);
   });
 }
 
@@ -1349,6 +1369,15 @@ function normalizeCyclesBillingConfig(raw: RawCyclesBillingConfig): CyclesBillin
       launcherPrincipal: raw.top_up.launcher_principal,
       thresholdCycles: raw.top_up.threshold_cycles.toString()
     }
+  };
+}
+
+function normalizeInitialFreeDatabaseGrantStatus(raw: RawInitialFreeDatabaseGrantStatus): InitialFreeDatabaseGrantStatus {
+  return {
+    available: raw.available,
+    grantCycles: raw.grant_cycles.toString(),
+    databaseId: raw.database_id[0] ?? null,
+    createdAtMs: raw.created_at_ms[0]?.toString() ?? null
   };
 }
 

@@ -56,7 +56,7 @@ KINIC cycles uses one internal DB-scoped balance:
 
 - DB cycles balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(CreateDatabaseRequest { name, profile })`. It creates a generated `database_id`, owner membership, profile, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
+DB creation uses `create_database(CreateDatabaseRequest { name, profile })`. The first database created by each caller principal receives a fixed `10_000_000_000` cycle free grant, allocates a stable-memory mount immediately, records `kind = "free_grant"` in `database_cycle_ledger`, and starts as `active`. The free grant is tracked per principal outside the DB ledger, so deleting the granted DB does not restore the grant. Later databases from the same principal keep the paid flow: generated `database_id`, owner membership, profile, and a zero DB cycles balance without allocating a stable-memory mount ID. Those DBs remain `pending` and cycles-suspended until the first successful cycle purchase activates the mounted SQLite DB.
 
 External ledger calls are used for DB cycles purchase and App KINIC balance movement:
 
@@ -103,9 +103,10 @@ Normal operator flow:
 
 1. Owner creates a pending DB with `create_database(CreateDatabaseRequest { name, profile })`.
 2. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
-3. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
-4. Successful DB updates consume DB cycles balance.
-5. DB delete discards any remaining cycles.
+3. The caller's first DB starts active with the free grant. Later DBs require a payer to call `purchase_database_cycles` with the payment amount.
+4. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
+5. Successful DB updates consume DB cycles balance.
+6. DB delete discards any remaining cycles. It does not reset the caller's initial free grant usage.
 
 URL ingest and query-answer sessions can expire after issuance if the DB becomes suspended or drops below the minimum update balance. Browser write UI also treats suspended, low-balance, or cycles-config-unavailable DBs as not writable. Browser and worker paths re-check cycles before forwarding to external Worker or DeepSeek calls. URL ingest source generation carries the original `sessionNonce` through the queue and re-checks the session immediately before DeepSeek.
 

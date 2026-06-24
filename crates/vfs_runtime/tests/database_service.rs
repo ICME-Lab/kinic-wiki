@@ -9,8 +9,9 @@ use tempfile::tempdir;
 use vfs_runtime::{
     CyclesPendingLedgerDetailsInput, DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL,
     DEFAULT_CYCLES_TOP_UP_THRESHOLD, DEFAULT_LLM_WRITER_PRINCIPAL,
-    DatabaseCyclesPurchaseWithLedgerDetails, MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES,
-    MAX_RESTORE_CHUNK_BYTES, VfsService, cycles_for_payment_amount_e8s,
+    DatabaseCyclesPurchaseWithLedgerDetails, INITIAL_FREE_DATABASE_GRANT_CYCLES,
+    MAX_ARCHIVE_CHUNK_BYTES, MAX_DATABASE_SIZE_BYTES, MAX_RESTORE_CHUNK_BYTES, VfsService,
+    cycles_for_payment_amount_e8s,
 };
 use vfs_store::FsStore;
 use vfs_types::{
@@ -123,6 +124,121 @@ fn delete_request(database_id: &str) -> DeleteDatabaseRequest {
     DeleteDatabaseRequest {
         database_id: database_id.to_string(),
     }
+}
+
+#[test]
+fn initial_free_database_grant_creates_active_database_once_per_principal() {
+    let service = service();
+    let first = service
+        .create_generated_database_with_initial_free_grant_or_pending(
+            "Free",
+            DatabaseProfile::Workspace,
+            "owner",
+            10,
+        )
+        .expect("first database should use free grant");
+    let summaries = service
+        .list_database_summaries_for_caller("owner")
+        .expect("summaries should load");
+    let first_summary = summaries
+        .iter()
+        .find(|summary| summary.database_id == first.database_id)
+        .expect("first summary should exist");
+    assert_eq!(first_summary.status, DatabaseStatus::Active);
+    assert_eq!(
+        first_summary.cycles_balance,
+        Some(INITIAL_FREE_DATABASE_GRANT_CYCLES)
+    );
+    let entries = service
+        .list_database_cycle_entries(&first.database_id, "owner", None, 10)
+        .expect("cycles ledger should load")
+        .entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].kind, "free_grant");
+    assert_eq!(
+        entries[0].amount_cycles,
+        INITIAL_FREE_DATABASE_GRANT_CYCLES as i64
+    );
+
+    let status = service
+        .initial_free_database_grant_status("owner")
+        .expect("free grant status should load");
+    assert!(!status.available);
+    assert_eq!(
+        status.database_id.as_deref(),
+        Some(first.database_id.as_str())
+    );
+
+    let second = service
+        .create_generated_database_with_initial_free_grant_or_pending(
+            "Paid later",
+            DatabaseProfile::Workspace,
+            "owner",
+            11,
+        )
+        .expect("second database should reserve pending");
+    let second_summary = service
+        .list_database_summaries_for_caller("owner")
+        .expect("summaries should load")
+        .into_iter()
+        .find(|summary| summary.database_id == second.database_id)
+        .expect("second summary should exist");
+    assert_eq!(second_summary.status, DatabaseStatus::Pending);
+    assert_eq!(second_summary.cycles_balance, Some(0));
+}
+
+#[test]
+fn initial_free_database_grant_is_per_principal_and_survives_delete() {
+    let service = service();
+    let owner = service
+        .create_generated_database_with_initial_free_grant_or_pending(
+            "Owner free",
+            DatabaseProfile::Workspace,
+            "owner",
+            10,
+        )
+        .expect("owner free database should create");
+    let other = service
+        .create_generated_database_with_initial_free_grant_or_pending(
+            "Other free",
+            DatabaseProfile::Workspace,
+            "other",
+            11,
+        )
+        .expect("other free database should create");
+    assert_ne!(owner.database_id, other.database_id);
+    assert_eq!(
+        service
+            .list_database_summaries_for_caller("other")
+            .expect("other summaries should load")[0]
+            .cycles_balance,
+        Some(INITIAL_FREE_DATABASE_GRANT_CYCLES)
+    );
+
+    service
+        .delete_database(delete_request(&owner.database_id), "owner", 12)
+        .expect("owner database should delete");
+    assert!(
+        !service
+            .initial_free_database_grant_status("owner")
+            .expect("free grant status should load")
+            .available
+    );
+    let next = service
+        .create_generated_database_with_initial_free_grant_or_pending(
+            "Owner paid later",
+            DatabaseProfile::Workspace,
+            "owner",
+            13,
+        )
+        .expect("post-delete database should reserve pending");
+    let summary = service
+        .list_database_summaries_for_caller("owner")
+        .expect("owner summaries should load")
+        .into_iter()
+        .find(|summary| summary.database_id == next.database_id)
+        .expect("next summary should exist");
+    assert_eq!(summary.status, DatabaseStatus::Pending);
 }
 
 fn market_listing_request(database_id: &str, price_e8s: u64) -> MarketCreateListingRequest {
@@ -283,6 +399,10 @@ fn mainnet_011_index_upgrades_to_latest() {
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:034_database_profile_roots"),
+        1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:035_initial_free_database_grants"),
         1
     );
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);

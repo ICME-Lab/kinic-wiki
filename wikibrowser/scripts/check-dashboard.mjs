@@ -15,6 +15,10 @@ assert.match(dashboardUi, /canViewCyclesHistory/);
 assert.match(dashboardClient, /setActiveTab\("access"\)/);
 
 assert.match(dashboardHome, /Create with wallet/);
+assert.match(dashboardHome, /getInitialFreeDatabaseGrantStatus/);
+assert.match(dashboardHome, /No wallet approval is needed/);
+assert.match(dashboardHome, /free cycles/);
+assert.match(dashboardHome, /Wallet approval pays directly from ledger balance/);
 assert.match(dashboardHome, /purchaseCyclesWithWallet/);
 assert.match(dashboardHome, /KinicAfterApproveError/);
 assert.match(dashboardHome, /purchase_database_cycles failed/);
@@ -22,7 +26,6 @@ assert.match(dashboardHome, /Retry cycles purchase for the same database from Cy
 assert.doesNotMatch(dashboardHome, /setLoadState\("idle"\)/);
 assertNoAppBalanceSurface(dashboardHome);
 assert.doesNotMatch(dashboardHome, /refreshKinicBalance|createPaymentSource|createDialogPaymentSources|paymentSources|onPaymentSourceChange|walletBalanceDetail/);
-assert.match(createDialog, /Wallet approval pays directly from ledger balance/);
 assertNoAppBalanceSurface(createDialog);
 assert.doesNotMatch(createDialog, /app-balance|Payment source|CreateDatabasePaymentSource|PaymentSourceOption|paymentSource|paymentSources|onPaymentSourceChange/);
 

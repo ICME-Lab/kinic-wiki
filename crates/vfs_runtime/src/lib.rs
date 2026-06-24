@@ -26,20 +26,21 @@ use vfs_types::{
     DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
     EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
     FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence,
-    KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCategoryGraph,
-    MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
-    MarketListingDetail, MarketListingPage, MarketListingPreview, MarketListingStatus,
-    MarketListingVerifiedStats, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult,
+    InitialFreeDatabaseGrantStatus, KnowledgeEvidence, KnowledgeEvidenceRequest, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
+    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind, OpsAnswerSessionCheckRequest,
+    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceRunSessionCheckRequest, Status,
+    StorageBillingBatchRequest, StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WikiMetrics, WikiMetricsPoint, WriteNodeItem, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
 
@@ -88,6 +89,8 @@ const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycl
 const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:033_database_profile";
 const INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS: &str =
     "database_index:034_database_profile_roots";
+const INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS: &str =
+    "database_index:035_initial_free_database_grants";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -120,6 +123,7 @@ pub const DEFAULT_CYCLES_PER_KINIC: u64 = 234_500_000_000;
 pub const DEFAULT_MIN_UPDATE_CYCLES: u64 = 1_000_000;
 pub const DEFAULT_CYCLES_TOP_UP_LAUNCHER_PRINCIPAL: &str = "xfug4-5qaaa-aaaak-afowa-cai";
 pub const DEFAULT_CYCLES_TOP_UP_THRESHOLD: u128 = 2_000_000_000_000;
+pub const INITIAL_FREE_DATABASE_GRANT_CYCLES: u64 = 10_000_000_000;
 pub const STORAGE_BILLING_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 pub const STORAGE_CYCLES_PER_GIB_SECOND: u128 = 127_000;
 const DEFAULT_STORAGE_BILLING_BATCH_LIMIT: u32 = 100;
@@ -234,7 +238,7 @@ pub struct VfsService {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndexPostMigrationAction {
     None,
-    SeedDatabaseProfileRoots,
+    SeedDatabaseProfileRootsThenInitialFreeGrants,
 }
 
 impl VfsService {
@@ -307,8 +311,12 @@ impl VfsService {
     ) -> Result<(), String> {
         match action {
             IndexPostMigrationAction::None => Ok(()),
-            IndexPostMigrationAction::SeedDatabaseProfileRoots => {
-                self.seed_active_database_profile_roots()
+            IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants => {
+                self.seed_active_database_profile_roots()?;
+                self.write_index(|tx| {
+                    apply_initial_free_database_grants_migration(tx)?;
+                    validate_index_schema(tx)
+                })
             }
         }
     }
@@ -510,6 +518,34 @@ impl VfsService {
         self.read_index(load_cycles_billing_config)
     }
 
+    pub fn initial_free_database_grant_status(
+        &self,
+        caller: &str,
+    ) -> Result<InitialFreeDatabaseGrantStatus, String> {
+        self.read_index(|conn| load_initial_free_database_grant_status(conn, caller))
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub fn mark_initial_free_database_grant_used_for_test(
+        &self,
+        caller: &str,
+        database_id: &str,
+        now: i64,
+    ) -> Result<(), String> {
+        self.write_index(|tx| {
+            if load_initial_free_database_grant(tx, caller)?.is_none() {
+                insert_initial_free_database_grant(
+                    tx,
+                    caller,
+                    database_id,
+                    cycles_to_i64(INITIAL_FREE_DATABASE_GRANT_CYCLES)?,
+                    now,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn update_cycles_billing_config(
         &self,
         update: CyclesBillingConfigUpdate,
@@ -578,6 +614,89 @@ impl VfsService {
             .and_then(|_| self.seed_database_profile(&meta, now))
         {
             let cleanup_error = self.discard_database_reservation(&meta.database_id).err();
+            return Err(match cleanup_error {
+                Some(cleanup_error) => format!("{error}; cleanup failed: {cleanup_error}"),
+                None => error,
+            });
+        }
+        Ok(meta)
+    }
+
+    pub fn create_generated_database_with_initial_free_grant_or_pending(
+        &self,
+        name: &str,
+        profile: DatabaseProfile,
+        caller: &str,
+        now: i64,
+    ) -> Result<DatabaseMeta, String> {
+        if self.initial_free_database_grant_status(caller)?.available {
+            return self
+                .create_generated_database_with_initial_free_grant(name, profile, caller, now);
+        }
+        self.reserve_pending_generated_database_with_profile(name, profile, caller, now)
+    }
+
+    fn create_generated_database_with_initial_free_grant(
+        &self,
+        name: &str,
+        profile: DatabaseProfile,
+        caller: &str,
+        now: i64,
+    ) -> Result<DatabaseMeta, String> {
+        let cycles_i64 = cycles_to_i64(INITIAL_FREE_DATABASE_GRANT_CYCLES)?;
+        let name = normalize_database_name(name)?;
+        let meta = self.write_index(|tx| {
+            if load_initial_free_database_grant(tx, caller)?.is_some() {
+                return Err("initial free database grant already used".to_string());
+            }
+            let mount_id = allocate_mount_id(tx)?;
+            let mut selected_database_id = None;
+            for attempt in 0_u32..100 {
+                let database_id = generated_database_id(caller, now, mount_id, attempt);
+                if !database_exists(tx, &database_id)? {
+                    selected_database_id = Some(database_id);
+                    break;
+                }
+            }
+            let database_id = selected_database_id
+                .ok_or_else(|| "failed to generate unique database id".to_string())?;
+            let meta = self.insert_database_reservation(
+                tx,
+                &database_id,
+                &name,
+                profile,
+                caller,
+                now,
+                mount_id,
+                cycles_i64,
+            )?;
+            insert_initial_free_database_grant(tx, caller, &database_id, cycles_i64, now)?;
+            insert_database_ledger(
+                tx,
+                DatabaseLedgerInsert {
+                    database_id: &database_id,
+                    kind: "free_grant",
+                    amount_cycles: cycles_i64,
+                    balance_after_cycles: cycles_i64,
+                    payment_amount_e8s: None,
+                    caller,
+                    method: Some("create_database"),
+                    cycles_delta: None,
+                    config: None,
+                    ledger_block_index: None,
+                    now,
+                },
+            )?;
+            Ok(meta)
+        })?;
+        if let Err(error) = self
+            .run_database_migrations(&meta.database_id)
+            .and_then(|_| self.seed_database_profile(&meta, now))
+        {
+            let cleanup_error = self
+                .discard_database_reservation(&meta.database_id)
+                .and_then(|_| self.delete_initial_free_database_grant(caller))
+                .err();
             return Err(match cleanup_error {
                 Some(cleanup_error) => format!("{error}; cleanup failed: {cleanup_error}"),
                 None => error,
@@ -871,6 +990,17 @@ impl VfsService {
             return Err(error.to_string());
         }
         Ok(())
+    }
+
+    fn delete_initial_free_database_grant(&self, caller: &str) -> Result<(), String> {
+        self.write_index(|tx| {
+            tx.execute(
+                "DELETE FROM database_free_cycle_grants WHERE principal = ?1",
+                params![caller],
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(())
+        })
     }
 
     pub fn prepare_pending_database_activation(
@@ -3794,6 +3924,7 @@ enum IndexSchemaState {
     Mainnet031,
     Mainnet032,
     Mainnet033,
+    Mainnet034,
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -3811,28 +3942,28 @@ fn ensure_existing_index_schema_is_latest(
             validate_cycles_billing_config(config)?;
             validate_pre_billing_index_schema(conn)?;
             apply_mainnet_011_to_latest_index_migration(conn, config)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
         }
         IndexSchemaState::Mainnet026 => {
             apply_mainnet_026_to_latest_index_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
             apply_database_profile_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
         }
         IndexSchemaState::Mainnet032 => {
             apply_database_profile_migration(conn)?;
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
         }
         IndexSchemaState::Mainnet033 => {
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
+        }
+        IndexSchemaState::Mainnet034 => {
+            apply_initial_free_database_grants_migration(conn)?;
             validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::None)
         }
     }
 }
@@ -3862,8 +3993,16 @@ fn classify_existing_index_schema_state(
             "unsupported partial index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)? {
+        if !migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS)? {
+            return Err(format!(
+                "unsupported partial index schema: migration {INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS} is already applied without {INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS}"
+            ));
+        }
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS)? {
+        return Ok(IndexSchemaState::Mainnet034);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)? {
         return Ok(IndexSchemaState::Mainnet033);
@@ -3960,6 +4099,21 @@ fn apply_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String
     )
     .map_err(|error| error.to_string())?;
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
+    Ok(())
+}
+
+fn apply_initial_free_database_grants_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE database_free_cycle_grants (
+           principal TEXT PRIMARY KEY,
+           database_id TEXT NOT NULL,
+           grant_cycles INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL
+         )",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)?;
     Ok(())
 }
 
@@ -4157,6 +4311,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
     INDEX_SCHEMA_VERSION_DATABASE_PROFILE,
     INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS,
+    INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4177,6 +4332,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "market_orders",
     "market_purchase_pending_operations",
     "market_entitlements",
+    "database_free_cycle_grants",
 ];
 
 const POST_011_INDEX_SCHEMA_VERSIONS: &[&str] = &[
@@ -4380,6 +4536,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_orders",
         "market_purchase_pending_operations",
         "market_entitlements",
+        "database_free_cycle_grants",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
@@ -4525,6 +4682,10 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
                 "purchased_at_ms",
                 "status",
             ][..],
+        ),
+        (
+            "database_free_cycle_grants",
+            &["principal", "database_id", "grant_cycles", "created_at_ms"][..],
         ),
     ] {
         for column in columns {
@@ -5274,6 +5435,65 @@ fn pending_database_count_for_caller(conn: &Connection, caller: &str) -> Result<
         |row| crate::sqlite::row_get(row, 0),
     )
     .map_err(|error| error.to_string())
+}
+
+fn load_initial_free_database_grant_status(
+    conn: &Connection,
+    caller: &str,
+) -> Result<InitialFreeDatabaseGrantStatus, String> {
+    match load_initial_free_database_grant(conn, caller)? {
+        Some((database_id, grant_cycles, created_at_ms)) => Ok(InitialFreeDatabaseGrantStatus {
+            available: false,
+            grant_cycles,
+            database_id: Some(database_id),
+            created_at_ms: Some(created_at_ms),
+        }),
+        None => Ok(InitialFreeDatabaseGrantStatus {
+            available: true,
+            grant_cycles: INITIAL_FREE_DATABASE_GRANT_CYCLES,
+            database_id: None,
+            created_at_ms: None,
+        }),
+    }
+}
+
+fn load_initial_free_database_grant(
+    conn: &Connection,
+    caller: &str,
+) -> Result<Option<(String, u64, i64)>, String> {
+    conn.query_row(
+        "SELECT database_id, grant_cycles, created_at_ms
+         FROM database_free_cycle_grants
+         WHERE principal = ?1",
+        params![caller],
+        |row| {
+            let grant_cycles: i64 = crate::sqlite::row_get(row, 1)?;
+            Ok((
+                crate::sqlite::row_get(row, 0)?,
+                grant_cycles.max(0) as u64,
+                crate::sqlite::row_get(row, 2)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|error| error.to_string())
+}
+
+fn insert_initial_free_database_grant(
+    conn: &Connection,
+    caller: &str,
+    database_id: &str,
+    grant_cycles: i64,
+    now: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO database_free_cycle_grants
+         (principal, database_id, grant_cycles, created_at_ms)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![caller, database_id, grant_cycles, now],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn complete_pending_database_activation(
