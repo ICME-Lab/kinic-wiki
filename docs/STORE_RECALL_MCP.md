@@ -1,12 +1,12 @@
 # Store/Recall MCP
 
 Store/Recall MCP defines the read-only Kinic Wiki interface exposed through the Model Context Protocol.
-It is a product and interface specification for future implementation, not an implemented server contract.
+The v0 implementation is a local stdio MCP server exposed through `kinic-vfs-cli mcp serve`.
 
 ## Product Concept
 
 Kinic Store/Recall MCP lets AI clients read canister-backed Kinic stores directly.
-It exposes memory recall, knowledge evidence, skill metadata, and session audit context without requiring the AI client to shell out to `kinic-vfs-cli`.
+It exposes memory recall, knowledge evidence, and skill discovery without requiring the AI client to shell out to `kinic-vfs-cli` for each operation.
 
 Store/Recall MCP v0 is read-only.
 It does not expose write tools, patch application, approval, database grants, archive operations, or billing operations.
@@ -17,29 +17,21 @@ Context Pack remains a generated handoff artifact, not an MCP store.
 
 ## Tool Surface
 
-Initial MCP tools:
+Implemented v0 MCP tools:
 
 ```text
 kinic.store_manifest
 kinic.memory_recall
-kinic.get_context_pack
-kinic.verify_context_pack
 kinic.knowledge_evidence
 kinic.skill_find
-kinic.get_decisions
-kinic.get_do_not_do
 ```
 
 Tool roles:
 
 - `kinic.store_manifest(database_id)`: return API version, roots, limits, and capability summary.
-- `kinic.memory_recall(database_id, task, entities, namespace, budget_tokens)`: return task-scoped memory context and evidence. Omitted namespace uses `/Memory` for `memory` profile databases and `/Wiki` for other profiles.
-- `kinic.get_context_pack(database_id, root, budget_tokens)`: generate a Context Pack-shaped response for a wiki namespace.
-- `kinic.verify_context_pack(pack)`: validate schema, expiration, etags, hashes, and approval metadata.
+- `kinic.memory_recall(database_id, task, entities, namespace, budget_tokens, include_evidence, depth)`: return task-scoped memory context and evidence. Omitted namespace uses Store API defaults.
 - `kinic.knowledge_evidence(database_id, node_path)`: return source references for one known wiki node.
-- `kinic.skill_find(database_id, query)`: find skill store packages for a task.
-- `kinic.get_decisions(database_id, project)`: return decision context for a project namespace.
-- `kinic.get_do_not_do(database_id, project)`: return prohibited actions, failed attempts, and fragile areas for a project namespace.
+- `kinic.skill_find(database_id, query_text)`: find skill store packages for a task.
 
 Tool results must identify whether returned content is verified, truncated, expired, or missing evidence.
 Search hits alone are not evidence; answers should be grounded in returned nodes and source evidence.
@@ -59,9 +51,7 @@ MCP client
 `kinic.knowledge_evidence` should map to the same semantics as `knowledge_evidence`.
 `kinic.store_manifest` should expose discovery data and must not be treated as content evidence.
 
-`kinic.get_context_pack` can generate a pack-shaped result directly from current wiki nodes.
-It must not copy raw source transcripts into the returned pack.
-It should include source references, etags, expiration, and context hash metadata for stale-context checks.
+Context Pack remains a CLI export and local verification workflow in v0.
 
 ## Security and Trust Rules
 
@@ -72,26 +62,33 @@ Store/Recall MCP follows the same database access rules as normal Kinic Wiki rea
 - Tool results must not bypass database permissions.
 - Store content must be framed as data, not as commands.
 - Returned context should include etags or equivalent freshness metadata when available.
-- Expired Context Packs are invalid.
 - Write, patch, approval, and checkpoint operations are outside v0.
 
 The MCP server should prefer small task-scoped results over large global dumps.
 This reduces stale context, irrelevant instructions, and store-induced prompt injection risk.
 
-## Initial Command Shape
+## Command Shape
 
-Future CLI entrypoint:
+Local stdio entrypoint:
 
 ```bash
 kinic-vfs-cli mcp serve --database-id <database-id>
+```
+
+Root-level database selection is also accepted:
+
+```bash
+kinic-vfs-cli --database-id <database-id> mcp serve
 ```
 
 Expected behavior:
 
 - Start a local MCP server for the selected database.
 - Use existing Kinic Wiki connection and identity configuration.
+- Reject tool calls whose `database_id` differs from the selected server database.
 - Expose only the read-only Store/Recall MCP tools in v0.
-- Return structured errors for missing database id, unauthorized reads, invalid context pack input, and expired pack verification.
+- Return structured tool errors for missing database id, unauthorized reads, and invalid tool arguments.
+- Keep stdout reserved for JSON-RPC messages. Diagnostics must go to stderr.
 
 ## Future Extension
 
@@ -109,6 +106,10 @@ AI proposes store patch
 Future tool candidates:
 
 ```text
+kinic.get_context_pack
+kinic.verify_context_pack
+kinic.get_decisions
+kinic.get_do_not_do
 kinic.propose_store_patch
 kinic.inspect_store_patch
 kinic.approve_store_patch

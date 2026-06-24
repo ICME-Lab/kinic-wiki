@@ -193,6 +193,41 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --iden
 `--identity-mode anonymous` is valid only for read-only public operations.
 Writes, database grants, archive operations, private Skill Registry writes, and owner commands require `--identity-mode identity` or `auto`.
 
+## Store/Recall MCP
+
+`mcp serve` starts a local stdio MCP server for read-only Store/Recall tools.
+It uses the same connection and identity resolution as other read-only DB commands.
+
+```bash
+kinic-vfs-cli mcp serve --database-id <database-id>
+
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- mcp serve --database-id <database-id>
+```
+
+Root-level database selection also works:
+
+```bash
+kinic-vfs-cli --database-id <database-id> mcp serve
+```
+
+MCP client configuration shape:
+
+```json
+{
+  "mcpServers": {
+    "kinic": {
+      "command": "kinic-vfs-cli",
+      "args": ["mcp", "serve", "--database-id", "<database-id>"]
+    }
+  }
+}
+```
+
+The v0 server exposes only `kinic.store_manifest`, `kinic.memory_recall`, `kinic.knowledge_evidence`, and `kinic.skill_find`.
+Each tool call must pass the same `database_id` used to start the server.
+It does not expose writes, Context Pack tools, billing, marketplace, grants, archive, or restore operations.
+The MCP process writes JSON-RPC messages to stdout; diagnostics must be read from stderr.
+
 ## Context Pack
 
 `context-pack` exports a local OKF v0.1 markdown bundle from `/Wiki/...` without copying raw source transcripts from `/Sources/raw/...`.
