@@ -551,6 +551,7 @@ test("listWritableDatabases returns active writable database summaries", async (
         databaseId: "team-db",
         name: "Team Wiki",
         role: "Writer",
+        profile: "",
         status: "Active",
         logicalSizeBytes: "0",
         cyclesBalance: "20000",
