@@ -14,14 +14,13 @@ use vfs_runtime::{
 };
 use vfs_store::FsStore;
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseProfile, DatabaseRole,
-    DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
-    KINIC_LEDGER_FEE_E8S, MarketCreateListingRequest, MarketListing, MarketListingStatus,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest,
-    MoveNodeRequest, NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest,
-    SearchNodesRequest, SearchPreviewMode, SourceRunSessionCheckRequest,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WriteNodeRequest,
-    WriteSourceForGenerationRequest,
+    AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
+    DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
+    MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
+    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
 const MARKET_BUYER_PRINCIPAL: &str = "r7inp-6aaaa-aaaaa-aaabq-cai";
@@ -41,13 +40,10 @@ fn service_with_root() -> (VfsService, PathBuf) {
     (service, root)
 }
 
-fn activate_pending_database_with_profile(
-    service: &VfsService,
-    profile: DatabaseProfile,
-) -> String {
+fn activate_pending_database(service: &VfsService) -> String {
     let pending = service
-        .reserve_pending_generated_database_with_profile("Profile DB", profile, "owner", 1)
-        .expect("pending profile database should create");
+        .reserve_pending_generated_database("Workspace DB", "owner", 1)
+        .expect("pending database should create");
     let operation_id = service
         .begin_database_cycles_purchase(&pending.database_id, "payer", 1_000_000, 2)
         .expect("cycle purchase should begin");
@@ -184,13 +180,13 @@ fn mainnet_011_index_upgrades_to_latest() {
             |row| row.get(0),
         )
         .expect("database status should load");
-    let profile: String = conn
+    let profile_columns: i64 = conn
         .query_row(
-            "SELECT profile FROM databases WHERE database_id = 'db_existing'",
+            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
             params![],
             |row| row.get(0),
         )
-        .expect("database profile should load");
+        .expect("legacy column count should load");
     let balance: i64 = conn
         .query_row(
             "SELECT balance_cycles FROM database_cycle_accounts WHERE database_id = 'db_existing'",
@@ -256,7 +252,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         .expect("usage table count should load");
 
     assert_eq!(status, "active");
-    assert_eq!(profile, "workspace");
+    assert_eq!(profile_columns, 0);
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(storage_columns, 1);
@@ -278,11 +274,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         1
     );
     assert_eq!(
-        schema_migration_count(&root, "database_index:033_database_profile"),
-        1
-    );
-    assert_eq!(
-        schema_migration_count(&root, "database_index:034_database_profile_roots"),
+        schema_migration_count(&root, "database_index:033_store_roots"),
         1
     );
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
@@ -645,6 +637,26 @@ fn pending_database_activation_row(
         },
     )
     .expect("database activation row should exist")
+}
+
+fn assert_all_store_roots_exist(service: &VfsService, database_id: &str) {
+    for path in [
+        "/Memory",
+        "/Wiki",
+        "/Wiki/skills",
+        "/Sessions",
+        "/Sources",
+        "/Sources/raw",
+        "/Sources/skill-runs",
+    ] {
+        assert!(
+            service
+                .read_node(database_id, "owner", path)
+                .expect("store root read should succeed")
+                .is_some(),
+            "{path} should exist"
+        );
+    }
 }
 
 fn database_index_row_exists(root: &std::path::Path, database_id: &str) -> bool {
@@ -1834,6 +1846,7 @@ fn database_create_returns_generated_id_and_name() {
     assert_eq!(row.1, Some(11));
     assert!(row.2 > 0);
     assert_eq!(row.3, None);
+    assert_all_store_roots_exist(&service, &result.database_id);
 }
 
 #[test]
@@ -1925,100 +1938,48 @@ fn pending_database_creation_defers_mount_slot_until_cycles_purchase_activation(
 }
 
 #[test]
-fn pending_database_creation_stores_profile() {
-    let (service, _root) = service_with_root();
-
+fn pending_database_creation_has_no_profile() {
+    let (service, root) = service_with_root();
     let pending = service
-        .reserve_pending_generated_database_with_profile(
-            " Agent Memory ",
-            DatabaseProfile::Memory,
-            "owner",
-            1,
-        )
-        .expect("pending memory database should create");
-
-    assert_eq!(pending.profile, DatabaseProfile::Memory);
-    assert_eq!(
-        service
-            .database_profile(&pending.database_id, "owner")
-            .expect("owner should read profile"),
-        DatabaseProfile::Memory
-    );
+        .reserve_pending_generated_database(" Agent Memory ", "owner", 1)
+        .expect("pending database should create");
     let summaries = service
         .list_database_summaries_for_caller("owner")
         .expect("owner summaries should load");
-    assert_eq!(summaries[0].profile, DatabaseProfile::Memory);
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    let profile_columns: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('databases') WHERE name = 'profile'",
+            params![],
+            |row| row.get(0),
+        )
+        .expect("legacy column count should load");
+
+    assert_eq!(pending.name, "Agent Memory");
+    assert_eq!(summaries[0].database_id, pending.database_id);
+    assert_eq!(
+        pending_database_activation_row(&root, &pending.database_id),
+        ("pending".to_string(), 0, None, false)
+    );
+    assert_eq!(profile_columns, 0);
 }
 
 #[test]
-fn pending_database_activation_seeds_profile_nodes() {
+fn pending_database_activation_seeds_all_store_roots() {
     let (service, _root) = service_with_root();
-    let workspace_id = activate_pending_database_with_profile(&service, DatabaseProfile::Workspace);
-    assert!(
-        service
-            .read_node(&workspace_id, "owner", "/Wiki/skills")
-            .expect("workspace skill root read should succeed")
-            .is_some()
-    );
-
-    let knowledge_id = activate_pending_database_with_profile(&service, DatabaseProfile::Knowledge);
-    assert!(
-        service
-            .read_node(&knowledge_id, "owner", "/Wiki/index.md")
-            .expect("knowledge index read should succeed")
-            .expect("knowledge index seed should exist")
-            .content
-            .contains("# Knowledge Index")
-    );
-
-    let database_id = activate_pending_database_with_profile(&service, DatabaseProfile::Memory);
-
-    let facts = service
-        .read_node(&database_id, "owner", "/Memory/facts.md")
-        .expect("facts read should succeed")
-        .expect("facts seed should exist");
-    assert!(facts.content.contains("# Facts"));
-    assert!(
-        service
-            .read_node(&database_id, "owner", "/Memory/inbox.md")
-            .expect("inbox read should succeed")
-            .is_some()
-    );
-    assert!(
-        service
-            .read_node(&database_id, "owner", "/Wiki/skills/manifest-template.md")
-            .expect("skill seed read should succeed")
-            .is_none()
-    );
-
-    let skill_id = activate_pending_database_with_profile(&service, DatabaseProfile::Skill);
-    assert!(
-        service
-            .read_node(&skill_id, "owner", "/Wiki/skills/manifest-template.md")
-            .expect("skill manifest template read should succeed")
-            .is_some()
-    );
-
-    let session_id = activate_pending_database_with_profile(&service, DatabaseProfile::Session);
-    assert!(
-        service
-            .read_node(&session_id, "owner", "/Sources/raw/codex")
-            .expect("session raw codex root read should succeed")
-            .is_some()
-    );
+    let database_id = activate_pending_database(&service);
+    assert_all_store_roots_exist(&service, &database_id);
 }
 
 #[test]
-fn memory_recall_defaults_namespace_from_database_profile() {
+fn memory_recall_defaults_namespace_to_memory() {
     let (service, _root) = service_with_root();
-    let memory_id = activate_pending_database_with_profile(&service, DatabaseProfile::Memory);
-    let workspace_id = activate_pending_database_with_profile(&service, DatabaseProfile::Workspace);
-
+    let database_id = activate_pending_database(&service);
     let memory = service
         .memory_recall(
             "owner",
             MemoryRecallRequest {
-                database_id: memory_id,
+                database_id,
                 task: "remember facts".to_string(),
                 entities: vec![],
                 namespace: None,
@@ -2028,23 +1989,7 @@ fn memory_recall_defaults_namespace_from_database_profile() {
             },
         )
         .expect("memory recall should succeed");
-    let workspace = service
-        .memory_recall(
-            "owner",
-            MemoryRecallRequest {
-                database_id: workspace_id,
-                task: "remember facts".to_string(),
-                entities: vec![],
-                namespace: None,
-                budget_tokens: 100,
-                include_evidence: false,
-                depth: 0,
-            },
-        )
-        .expect("workspace recall should succeed");
-
     assert_eq!(memory.namespace, "/Memory");
-    assert_eq!(workspace.namespace, "/Wiki");
 }
 
 #[test]

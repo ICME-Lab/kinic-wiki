@@ -102,7 +102,7 @@ const queryEndpoints = [
   { name: "read_node_context(request)", detail: "Read a node with nearby link context." },
   { name: "memory_recall(request)", detail: "Recall task-scoped memory from role pages, search, and linked nodes." },
   { name: "knowledge_evidence(request)", detail: "Resolve source evidence for a knowledge node." },
-  { name: "store_manifest(request)", detail: "Inspect the profile-scoped four-store layout and recall limits." }
+  { name: "store_manifest(request)", detail: "Inspect the workspace four-store layout and recall limits." }
 ];
 
 const writeEndpoints = [

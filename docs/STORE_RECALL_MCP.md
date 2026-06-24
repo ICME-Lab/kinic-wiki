@@ -33,7 +33,7 @@ kinic.get_do_not_do
 Tool roles:
 
 - `kinic.store_manifest(database_id)`: return API version, roots, limits, and capability summary.
-- `kinic.memory_recall(database_id, task, entities, namespace, budget_tokens)`: return task-scoped memory context and evidence. Omitted namespace uses `/Memory` for `memory` profile databases and `/Wiki` for other profiles.
+- `kinic.memory_recall(database_id, task, entities, namespace, budget_tokens)`: return task-scoped memory context and evidence. Omitted namespace uses `/Memory`.
 - `kinic.get_context_pack(database_id, root, budget_tokens)`: generate a Context Pack-shaped response for a wiki namespace.
 - `kinic.verify_context_pack(pack)`: validate schema, expiration, etags, hashes, and approval metadata.
 - `kinic.knowledge_evidence(database_id, node_path)`: return source references for one known wiki node.
@@ -52,7 +52,7 @@ MCP client
   -> existing Rust client or Store API
   -> Kinic Wiki canister
   -> canister-backed VFS
-  -> /Wiki and /Sources/raw nodes
+  -> /Wiki nodes and /Sources/raw evidence
 ```
 
 `kinic.memory_recall` should map to the same semantics as `memory_recall`.

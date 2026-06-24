@@ -22,7 +22,7 @@ CANISTER_ID=<local-wiki-canister-id>
 REPLICA_HOST=http://127.0.0.1:8011
 KINIC_LEDGER_CANISTER_ID="$(cat .icp/cache/local-kinic-ledger/local-wiki.id)"
 DB_NAME="${DB_NAME:-Public Smoke}"
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" database create --profile workspace "$DB_NAME")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --replica-host "$REPLICA_HOST" --canister-id "$CANISTER_ID" database create "$DB_NAME")"
 icp canister call "${KINIC_LEDGER_CANISTER_ID}" icrc2_approve \
   "(record { spender = record { owner = principal \"${CANISTER_ID}\"; subaccount = null }; amount = 200000000 : nat; expected_allowance = null; expires_at = null; fee = null; memo = null; from_subaccount = null; created_at_time = null })" \
   -e local-wiki -o candid

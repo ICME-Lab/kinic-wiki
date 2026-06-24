@@ -20,11 +20,11 @@ http://localhost:3010/<database-id>/Wiki
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create --profile workspace "<database-name>")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-`database create [--profile <profile>] <database-name>` creates a generated database ID and prints it on success. The Browser create dialog exposes the same profiles: `workspace`, `knowledge`, `memory`, `skill`, and `session`.
+`database create <database-name>` creates a generated database ID and prints it on success. The Browser create dialog collects the database name and uses the shared four-store layout.
 `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash
@@ -53,7 +53,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Browse `/Wiki` and `/Sources`
 - Create databases and manage database access
 - Edit Markdown nodes under `/Wiki`
-- Create URL ingest requests under `/Sources/ingest-requests` from the current database browser route
+- Create web source captures under `/Sources/raw/web/...` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
 - Show incoming backlinks and a lightweight graph view
@@ -80,17 +80,16 @@ Select the `clipper` left-pane tab to check the current database, writer readine
 /<database-id>/Wiki?tab=clipper
 ```
 
-Submitting a URL writes one request node to the same database:
+Submitting a web page snapshot writes raw evidence to the same database:
 
 ```text
-/Sources/ingest-requests/<request-id>.md
+/Sources/raw/web/<source-id>.md
 ```
 
-Ingest request nodes are regular `file` nodes. Only fetched raw web evidence under `/Sources/raw/<provider>/<id>.md` is stored as `source`.
+Raw web evidence under `/Sources/raw/<provider>/<id>.md` is stored as `source`.
 
-When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, the browser asks the VFS canister to authorize a 30 minute session trigger ticket for the II caller, writes the request, then calls `/api/url-ingest/trigger`. That server route checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `requestPath`, and `sessionNonce` to the generator Worker with bearer auth. The ticket is replayable within its TTL; duplicate jobs are handled by Worker/job idempotency and rate limits. Writer access and DB cycles state are re-checked after issuance, so role revocation, suspension, or low balance can invalidate an existing ticket before its TTL. `Origin` is only a CORS allowlist, not the authorization boundary.
-The worker fetches supported `http` / `https` HTML or text URLs, writes the normalized source to `/Sources/raw/<provider>/<id>.md`, then generates one review-ready page under `/Wiki/conversations`. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
-The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so URL ingest and page generation can run immediately. Owners can revoke that member, but URL ingest sessions will fail while the service principal lacks writer access.
+When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, `/api/source/run` checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `sourcePath`, `sourceEtag`, and `sessionNonce` to the generator Worker with bearer auth. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
+The worker reads `/Sources/raw/<provider>/<id>.md`, then generates review-ready pages under `/Wiki/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
 
 ## Public Access
 

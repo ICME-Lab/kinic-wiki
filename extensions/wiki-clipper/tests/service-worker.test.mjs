@@ -10,7 +10,7 @@ import {
   handleMessage,
   refreshTabBadgeForTest,
   resetSettingsOpenThrottleForTest,
-  resetUrlIngestInFlightForTest,
+  resetSourceCaptureInFlightForTest,
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
@@ -490,7 +490,7 @@ test("action click keeps source result when generation trigger fails", async () 
   ]);
 });
 
-test("context menu opens settings without starting URL ingest", async () => {
+test("context menu opens settings without starting source capture", async () => {
   const createdMenus = [];
   let optionsOpened = 0;
   const restore = installChromeForContextMenu(createdMenus, () => {
@@ -547,7 +547,7 @@ test("action click can save browser source without queueing generation", async (
 });
 
 test("context menu raw save skips generation trigger", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const restore = installChromeForAction();
   try {
     const response = await handleContextMenuClickForTest(
@@ -561,13 +561,13 @@ test("context menu raw save skips generation trigger", async () => {
     assert.equal(restore.messages[1].type, "save-raw-source");
     assert.ok(restore.badges.some((badge) => badge.text === "RAW"));
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
-test("action click rejects duplicate in-flight URL ingest", async () => {
-  resetUrlIngestInFlightForTest();
+test("action click rejects duplicate in-flight source capture", async () => {
+  resetSourceCaptureInFlightForTest();
   const deferred = createDeferred();
   let saveCalls = 0;
   const restore = installChromeForAction({
@@ -589,7 +589,7 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
     assert.equal(restore.messages.length, 3);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
@@ -603,13 +603,13 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
     assert.equal(retry.ok, true);
     assert.equal(restore.messages.length, 7);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click reserves URL before delayed session storage read", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   const storageRead = createDeferred();
   let getCalls = 0;
@@ -640,19 +640,19 @@ test("action click reserves URL before delayed session storage read", async () =
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
 
     storageRead.resolve();
     assert.equal((await first).ok, true);
     assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click rolls back URL reservation when session storage write fails", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   let failSet = true;
   const sessionArea = {
@@ -687,13 +687,13 @@ test("action click rolls back URL reservation when session storage write fails",
     assert.equal(retry.ok, true);
     assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click allows a different URL while another URL is in flight", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const deferred = createDeferred();
   let saveCalls = 0;
   const restore = installChromeForAction({
@@ -726,34 +726,34 @@ test("action click allows a different URL while another URL is in flight", async
     });
     assert.equal((await first).ok, true);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click honors session in-flight TTL", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   sessionStorage.setItem(
-    "kinic-url-ingest-in-flight-v1",
+    "kinic-source-capture-in-flight-v1",
     JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() + 120_000 })
   );
   const restore = installChromeForAction({ sessionStorage });
   try {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
-    assert.equal(busy.error, "URL ingest is already running for this page.");
+    assert.equal(busy.error, "Source capture is already running for this page.");
     assert.equal(restore.messages.length, 1);
 
     sessionStorage.setItem(
-      "kinic-url-ingest-in-flight-v1",
+      "kinic-source-capture-in-flight-v1",
       JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() - 1 })
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
     assert.equal(restore.messages.length, 4);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
@@ -1107,8 +1107,8 @@ function actionDeps(overrides = {}) {
     writeStatus: async () => {},
     setBadge: async () => {},
     openSettings: async () => {},
-    reserveUrlIngest: async () => true,
-    releaseUrlIngest: async () => {},
+    reserveSourceCapture: async () => true,
+    releaseSourceCapture: async () => {},
     captureTabSource: async () => rawWebSource(),
     ...overrides
   };

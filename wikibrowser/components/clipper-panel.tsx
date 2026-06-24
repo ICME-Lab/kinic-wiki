@@ -49,7 +49,7 @@ export function ClipperPanel({
       <section className="rounded-xl border border-line bg-white p-4">
         <h3 className="text-sm font-semibold">Capture flows</h3>
         <div className="mt-3 grid gap-2">
-          <FlowRow icon={<Link2 size={15} />} title="Active tab URL" path="/Sources/ingest-requests/..." />
+          <FlowRow icon={<Link2 size={15} />} title="Active tab snapshot" path="/Sources/raw/web/..." />
           <FlowRow icon={<MessageSquareText size={15} />} title="ChatGPT export" path="/Sources/raw/chatgpt/..." />
           <FlowRow icon={<FileText size={15} />} title="Claude export" path="/Sources/raw/claude/..." />
         </div>
@@ -70,7 +70,7 @@ export function ClipperPanel({
         href={ingestHref}
       >
         <ExternalLink size={15} />
-        Queue URL manually
+        Open web capture
       </Link>
     </div>
   );

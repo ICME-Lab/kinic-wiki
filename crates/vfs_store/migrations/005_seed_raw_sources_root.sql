@@ -1,0 +1,2 @@
+-- Seed /Sources/raw through the schema.rs post-migration hook so existing
+-- stores expose every Store Manifest root as a readable folder node.

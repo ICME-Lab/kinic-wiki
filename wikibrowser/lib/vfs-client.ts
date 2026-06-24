@@ -16,7 +16,6 @@ import type {
   DeleteNodeRequest,
   DeleteNodeResult,
   DatabaseMember,
-  DatabaseProfile,
   DatabaseRole,
   DatabaseStatus,
   DatabaseSummary,
@@ -99,7 +98,6 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
-  profile: Variant;
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
@@ -301,7 +299,6 @@ type RawDeleteDatabaseRequest = {
 type RawCreateDatabaseResult = {
   database_id: string;
   name: string;
-  profile: Variant;
 };
 
 type RawDatabaseMember = {
@@ -473,7 +470,7 @@ type VfsActor = {
   check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
-  create_database: (request: { name: string; profile: Variant }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
+  create_database: (request: { name: string }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
   delete_database: (request: RawDeleteDatabaseRequest) => Promise<{ Ok: null } | { Err: string }>;
   delete_node: (request: RawDeleteNodeRequest) => Promise<{ Ok: RawDeleteNodeResult } | { Err: string }>;
   get_cycles_billing_config: () => Promise<{ Ok: RawCyclesBillingConfig } | { Err: string }>;
@@ -921,10 +918,10 @@ export async function marketCountActiveEntitlements(canisterId: string, identity
   });
 }
 
-export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string, profile: DatabaseProfile = "workspace"): Promise<RawCreateDatabaseResult> {
+export async function createDatabaseAuthenticated(canisterId: string, identity: Identity, name: string): Promise<RawCreateDatabaseResult> {
   return callVfs(async () => {
     const actor = await createAuthenticatedActor(canisterId, identity);
-    const result = await actor.create_database({ name, profile: databaseProfileVariant(profile) });
+    const result = await actor.create_database({ name });
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1357,7 +1354,6 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     databaseId: raw.database_id,
     name: raw.name,
     role: normalizeDatabaseRole(raw.role),
-    profile: normalizeDatabaseProfile(raw.profile),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
     cyclesBalance: raw.cycles_balance[0]?.toString() ?? "0",
@@ -1680,21 +1676,7 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
   return "reader";
 }
 
-function normalizeDatabaseProfile(profile: Variant): DatabaseProfile {
-  if ("Memory" in profile) return "memory";
-  if ("Knowledge" in profile) return "knowledge";
-  if ("Skill" in profile) return "skill";
-  if ("Session" in profile) return "session";
-  return "workspace";
-}
 
-function databaseProfileVariant(profile: DatabaseProfile): Variant {
-  if (profile === "memory") return { Memory: null };
-  if (profile === "knowledge") return { Knowledge: null };
-  if (profile === "skill") return { Skill: null };
-  if (profile === "session") return { Session: null };
-  return { Workspace: null };
-}
 
 function databaseRoleVariant(role: DatabaseRole): Variant {
   if (role === "owner") {

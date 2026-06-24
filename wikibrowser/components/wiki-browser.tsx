@@ -1518,7 +1518,6 @@ function withCurrentDatabase(databases: DatabaseSummary[], databaseId: string): 
     {
       databaseId,
       name: databaseId,
-      profile: "workspace",
       role: "reader",
       status: "active",
       logicalSizeBytes: "0",

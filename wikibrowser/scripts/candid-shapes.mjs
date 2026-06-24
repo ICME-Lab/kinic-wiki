@@ -10,7 +10,6 @@ export const expectedTypes = {
       logical_size_bytes: "nat64",
       database_id: "text",
       name: "text",
-      profile: "DatabaseProfile",
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64",
@@ -291,9 +290,8 @@ export const expectedTypes = {
     kind: "record",
     fields: { url: "text", name: "text" }
   },
-  DatabaseProfile: { kind: "variant", cases: { Skill: "null", Memory: "null", Workspace: "null", Session: "null", Knowledge: "null" } },
-  CreateDatabaseRequest: { kind: "record", fields: { name: "text", profile: "DatabaseProfile" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text", profile: "DatabaseProfile" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
   DeleteDatabaseRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
@@ -461,7 +459,6 @@ export const expectedTypes = {
       entry_roots: "vec StoreRoot",
       max_depth: "nat32",
       max_query_limit: "nat32",
-      profile: "DatabaseProfile",
       recommended_entrypoint: "text",
       write_policy: "text",
       canonical_roles: "vec CanonicalRole",

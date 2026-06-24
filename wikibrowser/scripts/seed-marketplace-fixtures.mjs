@@ -82,7 +82,7 @@ approveCyclesAllowance(ledgerCanister);
 for (const fixture of FIXTURES) {
   const created = callOk(
     "create_database",
-    candidRecord({ name: candidText(fixture.name), profile: "variant { Workspace }" })
+    candidRecord({ name: candidText(fixture.name) })
   );
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);

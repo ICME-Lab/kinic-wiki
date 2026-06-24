@@ -68,7 +68,7 @@ flowchart LR
 
 ### 5.2 `wiki_domain`
 
-- `/Sources/raw/...`, `/Sources/sessions/...` の source path 制約を集中管理
+- `/Sources/raw/...` と `/Sessions/...` の path 制約を集中管理
 - source node の canonical path 制約を強制
 - wiki だけが知る path 規則を保持
 

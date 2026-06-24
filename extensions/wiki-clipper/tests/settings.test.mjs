@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/tests/settings.test.mjs
 // What: Settings UI and database-list filtering tests.
-// Why: URL ingest setup should expose only writable DB choices and no fixed runtime URLs.
+// Why: source capture setup should expose only writable DB choices and no fixed runtime URLs.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -132,14 +132,14 @@ test("database creation delegates create_database and normalizes result", async 
     {
       async create_database(request) {
         calls.push(request);
-        return { Ok: { database_id: "db_created", name: request.name, profile: request.profile } };
+        return { Ok: { database_id: "db_created", name: request.name } };
       }
     },
     "My Team Wiki"
   );
 
-  assert.deepEqual(calls, [{ name: "My Team Wiki", profile: { Workspace: null } }]);
-  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki", profile: "Workspace" });
+  assert.deepEqual(calls, [{ name: "My Team Wiki" }]);
+  assert.deepEqual(result, { databaseId: "db_created", name: "My Team Wiki" });
 });
 
 test("database creation surfaces canister errors", async () => {

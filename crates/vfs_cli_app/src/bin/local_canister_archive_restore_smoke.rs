@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    DatabaseCyclesPurchaseRequest, DatabaseProfile, DatabaseRestoreChunkRequest, DatabaseStatus,
-    MkdirNodeRequest, NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode,
-    WriteNodeRequest, kinic_base_units_per_token,
+    DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
+    NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    kinic_base_units_per_token,
 };
 
 const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
@@ -130,13 +130,10 @@ async fn run_create_restore_smoke(
     chunk_size: u32,
     cycle_purchase_e8s: u64,
 ) -> Result<SmokeState> {
-    let database_id = client
-        .create_database("Archive smoke", DatabaseProfile::Workspace)
-        .await?
-        .database_id;
+    let database_id = client.create_database("Archive smoke").await?.database_id;
     assert_store_manifest(client, &database_id).await?;
     let isolation_database_id = client
-        .create_database("Archive smoke isolation", DatabaseProfile::Workspace)
+        .create_database("Archive smoke isolation")
         .await?
         .database_id;
     activate_smoke_database(client, &database_id, cycle_purchase_e8s).await?;

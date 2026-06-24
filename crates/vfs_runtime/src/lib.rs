@@ -22,10 +22,10 @@ use vfs_store::{FsStore, validate_sql_json_select};
 use vfs_types::{
     AppendNodeRequest, ChildNode, CyclesBillingConfig, CyclesBillingConfigUpdate,
     CyclesTopUpConfig, DatabaseArchiveInfo, DatabaseCycleEntry, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember, DatabaseProfile, DatabaseRole,
-    DatabaseStatus, DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult,
-    EditNodeRequest, EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse,
-    FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
+    DatabaseCyclesPendingPurchase, DatabaseInfo, DatabaseMember, DatabaseRole, DatabaseStatus,
+    DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
+    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
+    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
     GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence,
     KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCategoryGraph,
     MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
@@ -38,7 +38,7 @@ use vfs_types::{
     OutgoingLinksRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
     SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
@@ -85,9 +85,7 @@ const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
     "database_index:030_direct_market_purchase";
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
-const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:033_database_profile";
-const INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS: &str =
-    "database_index:034_database_profile_roots";
+const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -161,7 +159,6 @@ const MAX_MARKET_JSON_CHARS: usize = 20_000;
 pub struct DatabaseMeta {
     pub database_id: String,
     pub name: String,
-    pub profile: DatabaseProfile,
     pub db_file_name: String,
     pub mount_id: u16,
     pub schema_version: String,
@@ -234,7 +231,7 @@ pub struct VfsService {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndexPostMigrationAction {
     None,
-    SeedDatabaseProfileRoots,
+    SeedStoreRoots,
 }
 
 impl VfsService {
@@ -307,29 +304,16 @@ impl VfsService {
     ) -> Result<(), String> {
         match action {
             IndexPostMigrationAction::None => Ok(()),
-            IndexPostMigrationAction::SeedDatabaseProfileRoots => {
-                self.seed_active_database_profile_roots()
-            }
+            IndexPostMigrationAction::SeedStoreRoots => self.seed_active_database_store_roots(),
         }
     }
 
-    fn seed_active_database_profile_roots(&self) -> Result<(), String> {
-        let metas = self.read_index(load_active_databases_for_profile_root_seed)?;
+    fn seed_active_database_store_roots(&self) -> Result<(), String> {
+        let metas = self.read_index(load_active_databases_for_store_root_seed)?;
         for meta in metas {
-            self.seed_database_profile(&meta, 0)?;
+            self.seed_database_store_roots(&meta, 0)?;
         }
-        self.write_index(|tx| {
-            insert_schema_migration_now(tx, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS)
-        })
-    }
-
-    pub fn database_profile(
-        &self,
-        database_id: &str,
-        caller: &str,
-    ) -> Result<DatabaseProfile, String> {
-        self.require_market_read_access(database_id, caller)?;
-        self.read_index(|conn| load_database_profile(conn, database_id))
+        self.write_index(|tx| insert_schema_migration_now(tx, INDEX_SCHEMA_VERSION_STORE_ROOTS))
     }
 
     pub fn query_index_sql_json(
@@ -545,7 +529,7 @@ impl VfsService {
         let meta = self.reserve_database(database_id, database_id, caller, now)?;
         if let Err(error) = self
             .run_database_migrations(database_id)
-            .and_then(|_| self.seed_database_profile(&meta, now))
+            .and_then(|_| self.seed_database_store_roots(&meta, now))
         {
             let cleanup_error = self.discard_database_reservation(&meta.database_id).err();
             return Err(match cleanup_error {
@@ -562,20 +546,10 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        self.create_generated_database_with_profile(name, DatabaseProfile::Workspace, caller, now)
-    }
-
-    pub fn create_generated_database_with_profile(
-        &self,
-        name: &str,
-        profile: DatabaseProfile,
-        caller: &str,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        let meta = self.reserve_generated_database(name, profile, caller, now)?;
+        let meta = self.reserve_generated_database(name, caller, now)?;
         if let Err(error) = self
             .run_database_migrations(&meta.database_id)
-            .and_then(|_| self.seed_database_profile(&meta, now))
+            .and_then(|_| self.seed_database_store_roots(&meta, now))
         {
             let cleanup_error = self.discard_database_reservation(&meta.database_id).err();
             return Err(match cleanup_error {
@@ -592,27 +566,12 @@ impl VfsService {
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
-        self.reserve_generated_database(name, DatabaseProfile::Workspace, caller, now)
+        self.reserve_generated_database(name, caller, now)
     }
 
     pub fn reserve_pending_generated_database(
         &self,
         name: &str,
-        caller: &str,
-        now: i64,
-    ) -> Result<DatabaseMeta, String> {
-        self.reserve_pending_generated_database_with_profile(
-            name,
-            DatabaseProfile::Workspace,
-            caller,
-            now,
-        )
-    }
-
-    pub fn reserve_pending_generated_database_with_profile(
-        &self,
-        name: &str,
-        profile: DatabaseProfile,
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
@@ -634,14 +593,13 @@ impl VfsService {
             }
             let database_id = selected_database_id
                 .ok_or_else(|| "failed to generate unique database id".to_string())?;
-            self.insert_pending_database_reservation(tx, &database_id, &name, profile, caller, now)
+            self.insert_pending_database_reservation(tx, &database_id, &name, caller, now)
         })
     }
 
     fn reserve_generated_database(
         &self,
         name: &str,
-        profile: DatabaseProfile,
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
@@ -658,16 +616,7 @@ impl VfsService {
             }
             let database_id = selected_database_id
                 .ok_or_else(|| "failed to generate unique database id".to_string())?;
-            self.insert_database_reservation(
-                tx,
-                &database_id,
-                &name,
-                profile,
-                caller,
-                now,
-                mount_id,
-                0,
-            )
+            self.insert_database_reservation(tx, &database_id, &name, caller, now, mount_id, 0)
         })
     }
 
@@ -685,16 +634,7 @@ impl VfsService {
                 return Err(format!("database already exists: {database_id}"));
             }
             let mount_id = allocate_mount_id(tx)?;
-            self.insert_database_reservation(
-                tx,
-                database_id,
-                &name,
-                DatabaseProfile::Workspace,
-                caller,
-                now,
-                mount_id,
-                0,
-            )
+            self.insert_database_reservation(tx, database_id, &name, caller, now, mount_id, 0)
         })
     }
 
@@ -704,7 +644,6 @@ impl VfsService {
         tx: &Transaction<'_>,
         database_id: &str,
         name: &str,
-        profile: DatabaseProfile,
         caller: &str,
         now: i64,
         mount_id: u16,
@@ -713,13 +652,12 @@ impl VfsService {
         let db_file_name = self.database_file_name(database_id, mount_id)?;
         tx.execute(
             "INSERT INTO databases
-             (database_id, name, profile, db_file_name, mount_id, active_mount_id, status, schema_version,
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
               logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5, 'active', ?6, 0, ?7, ?7)",
+             VALUES (?1, ?2, ?3, ?4, ?4, 'active', ?5, 0, ?6, ?6)",
             params![
                 database_id,
                 name,
-                profile_to_db(profile),
                 db_file_name,
                 i64::from(mount_id),
                 DATABASE_SCHEMA_VERSION,
@@ -750,7 +688,6 @@ impl VfsService {
         Ok(DatabaseMeta {
             database_id: database_id.to_string(),
             name: name.to_string(),
-            profile,
             db_file_name,
             mount_id,
             schema_version: DATABASE_SCHEMA_VERSION.to_string(),
@@ -763,19 +700,17 @@ impl VfsService {
         tx: &Transaction<'_>,
         database_id: &str,
         name: &str,
-        profile: DatabaseProfile,
         caller: &str,
         now: i64,
     ) -> Result<DatabaseMeta, String> {
         tx.execute(
             "INSERT INTO databases
-             (database_id, name, profile, db_file_name, mount_id, active_mount_id, status, schema_version,
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
               logical_size_bytes, created_at_ms, updated_at_ms)
-             VALUES (?1, ?2, ?3, '', ?4, NULL, 'pending', ?5, 0, ?6, ?6)",
+             VALUES (?1, ?2, '', ?3, NULL, 'pending', ?4, 0, ?5, ?5)",
             params![
                 database_id,
                 name,
-                profile_to_db(profile),
                 i64::from(PENDING_DATABASE_MOUNT_ID),
                 DATABASE_SCHEMA_VERSION,
                 now
@@ -794,7 +729,6 @@ impl VfsService {
         Ok(DatabaseMeta {
             database_id: database_id.to_string(),
             name: name.to_string(),
-            profile,
             db_file_name: String::new(),
             mount_id: PENDING_DATABASE_MOUNT_ID,
             schema_version: DATABASE_SCHEMA_VERSION.to_string(),
@@ -882,7 +816,7 @@ impl VfsService {
             .write_index(|tx| self.activate_pending_database_mount_for_tx(tx, database_id, now))?;
         if let Some(meta) = &activation {
             self.run_database_migrations_for_meta(database_id, meta)?;
-            self.seed_database_profile(meta, now)?;
+            self.seed_database_store_roots(meta, now)?;
         }
         Ok(activation)
     }
@@ -2217,46 +2151,25 @@ impl VfsService {
         result
     }
 
-    fn seed_database_profile(&self, meta: &DatabaseMeta, now: i64) -> Result<(), String> {
+    fn seed_database_store_roots(&self, meta: &DatabaseMeta, now: i64) -> Result<(), String> {
         let store = self.database_store(meta)?;
-        let mut nodes = Vec::new();
-        for seed in database_profile_seed_nodes(meta.profile) {
+        for seed in database_store_seed_nodes() {
             if let Some(existing) = store.read_node(seed.path)? {
                 if existing.kind != seed.kind {
                     return Err(format!(
-                        "profile seed path has kind {:?} but expected {:?}: {}",
+                        "store seed path has kind {:?} but expected {:?}: {}",
                         existing.kind, seed.kind, seed.path
                     ));
                 }
                 continue;
             }
-            if seed.kind == NodeKind::Folder {
-                store.mkdir_node(
-                    MkdirNodeRequest {
-                        database_id: meta.database_id.clone(),
-                        path: seed.path.to_string(),
-                    },
-                    now,
-                )?;
-            } else {
-                nodes.push(WriteNodeItem {
-                    path: seed.path.to_string(),
-                    kind: seed.kind,
-                    content: seed.content.to_string(),
-                    metadata_json: "{}".to_string(),
-                    expected_etag: None,
-                });
-            }
-        }
-        if !nodes.is_empty() {
-            store.write_nodes(
-                WriteNodesRequest {
+            store.mkdir_node(
+                MkdirNodeRequest {
                     database_id: meta.database_id.clone(),
-                    nodes,
+                    path: seed.path.to_string(),
                 },
                 now,
             )?;
-            let _ = self.refresh_logical_size_for_meta(&meta.database_id, meta);
         }
         Ok(())
     }
@@ -3218,7 +3131,7 @@ impl VfsService {
         let database_id = request.database_id.clone();
         self.require_role(&database_id, caller, RequiredRole::Reader)?;
         let meta = self.database_meta(&database_id)?;
-        if request.namespace.is_none() && meta.profile == DatabaseProfile::Memory {
+        if request.namespace.is_none() {
             request.namespace = Some("/Memory".to_string());
         }
         let store = self.database_store(&meta)?;
@@ -3793,7 +3706,6 @@ enum IndexSchemaState {
     Mainnet026,
     Mainnet031,
     Mainnet032,
-    Mainnet033,
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -3812,27 +3724,21 @@ fn ensure_existing_index_schema_is_latest(
             validate_pre_billing_index_schema(conn)?;
             apply_mainnet_011_to_latest_index_migration(conn, config)?;
             validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet026 => {
             apply_mainnet_026_to_latest_index_migration(conn)?;
             validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
-            apply_database_profile_migration(conn)?;
             validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet032 => {
-            apply_database_profile_migration(conn)?;
             validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
-        }
-        IndexSchemaState::Mainnet033 => {
-            validate_index_schema(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRoots)
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
     }
 }
@@ -3862,11 +3768,8 @@ fn classify_existing_index_schema_state(
             "unsupported partial index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)? {
         return Ok(IndexSchemaState::Latest);
-    }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)? {
-        return Ok(IndexSchemaState::Mainnet033);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
         return Ok(IndexSchemaState::Mainnet032);
@@ -3923,7 +3826,6 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
-    apply_database_profile_migration(conn)?;
     Ok(())
 }
 
@@ -3937,7 +3839,6 @@ fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result
         insert_schema_migration_now(conn, version)?;
     }
     apply_cycles_top_up_config_migration(conn, None)?;
-    apply_database_profile_migration(conn)?;
     Ok(())
 }
 
@@ -3950,16 +3851,6 @@ fn apply_cycles_top_up_config_migration(
         None => insert_default_cycles_top_up_config(conn)?,
     }
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)?;
-    Ok(())
-}
-
-fn apply_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute(
-        "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'workspace'",
-        params![],
-    )
-    .map_err(|error| error.to_string())?;
-    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
     Ok(())
 }
 
@@ -4155,8 +4046,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
-    INDEX_SCHEMA_VERSION_DATABASE_PROFILE,
-    INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS,
+    INDEX_SCHEMA_VERSION_STORE_ROOTS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4392,7 +4282,6 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             &[
                 "database_id",
                 "name",
-                "profile",
                 "db_file_name",
                 "mount_id",
                 "active_mount_id",
@@ -7688,24 +7577,13 @@ fn load_database_status(conn: &Connection, database_id: &str) -> Result<Database
     .ok_or_else(|| format!("database not found: {database_id}"))
 }
 
-fn load_database_profile(conn: &Connection, database_id: &str) -> Result<DatabaseProfile, String> {
-    conn.query_row(
-        "SELECT profile FROM databases WHERE database_id = ?1",
-        params![database_id],
-        |row| profile_from_db(&crate::sqlite::row_get::<String>(row, 0)?),
-    )
-    .optional()
-    .map_err(|error| error.to_string())?
-    .ok_or_else(|| format!("database not found: {database_id}"))
-}
-
 fn load_database_with_statuses(
     conn: &Connection,
     database_id: &str,
     statuses: &[DatabaseStatus],
 ) -> Result<Option<DatabaseMeta>, String> {
     conn.query_row(
-        "SELECT database_id, name, profile, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE database_id = ?1",
         params![database_id],
@@ -7720,7 +7598,7 @@ fn load_pending_database_activation_meta(
     database_id: &str,
 ) -> Result<Option<DatabaseMeta>, String> {
     conn.query_row(
-        "SELECT database_id, name, profile, db_file_name, mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, db_file_name, mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE database_id = ?1",
         params![database_id],
@@ -7732,7 +7610,7 @@ fn load_pending_database_activation_meta(
 
 fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
-        "SELECT database_id, name, profile, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status IN ('pending', 'active', 'archiving', 'archived', 'restoring') AND active_mount_id IS NOT NULL
          ORDER BY mount_id ASC",
@@ -7742,11 +7620,11 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn load_active_databases_for_profile_root_seed(
+fn load_active_databases_for_store_root_seed(
     conn: &Connection,
 ) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
-        "SELECT database_id, name, profile, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status = 'active'
            AND active_mount_id IS NOT NULL
@@ -7764,7 +7642,7 @@ fn load_active_databases_for_storage_billing_batch(
 ) -> Result<StorageBillingDatabaseBatch, String> {
     let fetch_limit = i64::from(limit.saturating_add(1));
     let mut stmt = conn.prepare(
-        "SELECT database_id, name, profile, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status = 'active'
            AND active_mount_id IS NOT NULL
@@ -7796,7 +7674,7 @@ fn load_active_databases_for_storage_billing(
     conn: &Connection,
 ) -> Result<Vec<DatabaseMeta>, String> {
     let mut stmt = conn.prepare(
-        "SELECT database_id, name, profile, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
          FROM databases
          WHERE status = 'active'
            AND active_mount_id IS NOT NULL
@@ -7879,25 +7757,24 @@ fn clear_storage_billing_timer_state(tx: &Transaction<'_>) -> Result<(), String>
 fn load_database_infos(conn: &Connection) -> Result<Vec<DatabaseInfo>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT database_id, name, profile, status, active_mount_id, schema_version, logical_size_bytes,
+            "SELECT database_id, name, status, active_mount_id, schema_version, logical_size_bytes,
                 snapshot_hash, archived_at_ms
          FROM databases
          ORDER BY database_id ASC",
         )
         .map_err(|error| error.to_string())?;
     crate::sqlite::query_map(&mut stmt, params![], |row| {
-        let mount_id: Option<i64> = crate::sqlite::row_get(row, 4)?;
-        let logical_size_bytes: i64 = crate::sqlite::row_get(row, 6)?;
+        let mount_id: Option<i64> = crate::sqlite::row_get(row, 3)?;
+        let logical_size_bytes: i64 = crate::sqlite::row_get(row, 5)?;
         Ok(DatabaseInfo {
             database_id: crate::sqlite::row_get(row, 0)?,
             name: crate::sqlite::row_get(row, 1)?,
-            profile: profile_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
-            status: status_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
+            status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
             mount_id: mount_id.map(mount_id_from_db).transpose()?,
-            schema_version: crate::sqlite::row_get(row, 5)?,
+            schema_version: crate::sqlite::row_get(row, 4)?,
             logical_size_bytes: logical_size_bytes.max(0) as u64,
-            snapshot_hash: crate::sqlite::row_get(row, 7)?,
-            archived_at_ms: crate::sqlite::row_get(row, 8)?,
+            snapshot_hash: crate::sqlite::row_get(row, 6)?,
+            archived_at_ms: crate::sqlite::row_get(row, 7)?,
         })
     })
     .map_err(|error| error.to_string())
@@ -7909,7 +7786,7 @@ fn load_database_summaries_for_caller(
 ) -> Result<Vec<DatabaseSummary>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT d.database_id, d.name, d.profile, d.status, m.role, d.logical_size_bytes,
+            "SELECT d.database_id, d.name, d.status, m.role, d.logical_size_bytes,
                     COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
                     d.archived_at_ms, d.deleted_at_ms,
                     0 AS access_source_rank,
@@ -7923,7 +7800,7 @@ fn load_database_summaries_for_caller(
              LEFT JOIN database_cycle_accounts b ON b.database_id = d.database_id
              WHERE m.principal = ?1
              UNION ALL
-             SELECT d.database_id, d.name, d.profile, d.status, 'reader' AS role, d.logical_size_bytes,
+             SELECT d.database_id, d.name, d.status, 'reader' AS role, d.logical_size_bytes,
                     COALESCE(b.balance_cycles, 0), b.suspended_at_ms,
                     d.archived_at_ms, d.deleted_at_ms,
                     1 AS access_source_rank,
@@ -7934,7 +7811,7 @@ fn load_database_summaries_for_caller(
              WHERE e.buyer_principal = ?2
                AND e.status = ?3
                AND d.status = ?4
-             ORDER BY 1 ASC, 11 ASC, 12 ASC",
+             ORDER BY 1 ASC, 10 ASC, 11 ASC",
         )
         .map_err(|error| error.to_string())?;
     let rows = crate::sqlite::query_map(
@@ -7946,19 +7823,18 @@ fn load_database_summaries_for_caller(
             status_to_db(DatabaseStatus::Active)
         ],
         |row| {
-            let logical_size_bytes: i64 = crate::sqlite::row_get(row, 5)?;
-            let cycles_balance: i64 = crate::sqlite::row_get(row, 6)?;
+            let logical_size_bytes: i64 = crate::sqlite::row_get(row, 4)?;
+            let cycles_balance: i64 = crate::sqlite::row_get(row, 5)?;
             Ok(DatabaseSummary {
                 database_id: crate::sqlite::row_get(row, 0)?,
                 name: crate::sqlite::row_get(row, 1)?,
-                profile: profile_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
-                status: status_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
-                role: role_from_db(&crate::sqlite::row_get::<String>(row, 4)?)?,
+                status: status_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
+                role: role_from_db(&crate::sqlite::row_get::<String>(row, 3)?)?,
                 logical_size_bytes: logical_size_bytes.max(0) as u64,
                 cycles_balance: Some(cycles_balance.max(0) as u64),
-                cycles_suspended_at_ms: crate::sqlite::row_get(row, 7)?,
-                archived_at_ms: crate::sqlite::row_get(row, 8)?,
-                deleted_at_ms: crate::sqlite::row_get(row, 9)?,
+                cycles_suspended_at_ms: crate::sqlite::row_get(row, 6)?,
+                archived_at_ms: crate::sqlite::row_get(row, 7)?,
+                deleted_at_ms: crate::sqlite::row_get(row, 8)?,
             })
         },
     )
@@ -7979,7 +7855,7 @@ fn map_database_meta_with_statuses(
     row: &crate::sqlite::Row<'_>,
     statuses: &[DatabaseStatus],
 ) -> crate::sqlite::Result<DatabaseMeta> {
-    let status: String = crate::sqlite::row_get(row, 7).unwrap_or_else(|_| "active".to_string());
+    let status: String = crate::sqlite::row_get(row, 6).unwrap_or_else(|_| "active".to_string());
     let status = status_from_db(&status)?;
     if !statuses.contains(&status) {
         return Err(crate::sqlite::query_returned_no_rows());
@@ -7988,16 +7864,15 @@ fn map_database_meta_with_statuses(
 }
 
 fn map_database_meta(row: &crate::sqlite::Row<'_>) -> crate::sqlite::Result<DatabaseMeta> {
-    let mount_id: Option<i64> = crate::sqlite::row_get(row, 4)?;
+    let mount_id: Option<i64> = crate::sqlite::row_get(row, 3)?;
     let mount_id = mount_id.ok_or_else(crate::sqlite::query_returned_no_rows)?;
-    let logical_size_bytes: i64 = crate::sqlite::row_get(row, 6)?;
+    let logical_size_bytes: i64 = crate::sqlite::row_get(row, 5)?;
     Ok(DatabaseMeta {
         database_id: crate::sqlite::row_get(row, 0)?,
         name: crate::sqlite::row_get(row, 1)?,
-        profile: profile_from_db(&crate::sqlite::row_get::<String>(row, 2)?)?,
-        db_file_name: crate::sqlite::row_get(row, 3)?,
+        db_file_name: crate::sqlite::row_get(row, 2)?,
         mount_id: mount_id_from_db(mount_id)?,
-        schema_version: crate::sqlite::row_get(row, 5)?,
+        schema_version: crate::sqlite::row_get(row, 4)?,
         logical_size_bytes: logical_size_bytes.max(0) as u64,
     })
 }
@@ -8061,74 +7936,27 @@ fn role_to_db(role: DatabaseRole) -> &'static str {
     }
 }
 
-struct ProfileSeedNode {
+struct StoreSeedNode {
     path: &'static str,
     kind: NodeKind,
-    content: &'static str,
 }
 
-fn database_profile_seed_nodes(profile: DatabaseProfile) -> Vec<ProfileSeedNode> {
-    match profile {
-        DatabaseProfile::Workspace => vec![
-            folder_seed("/Memory"),
-            folder_seed("/Wiki"),
-            folder_seed("/Wiki/skills"),
-            folder_seed("/Sessions"),
-            folder_seed("/Sources"),
-        ],
-        DatabaseProfile::Knowledge => vec![
-            folder_seed("/Wiki"),
-            folder_seed("/Wiki/topics"),
-            file_seed(
-                "/Wiki/index.md",
-                "# Knowledge Index\n\n- Add topic pages under /Wiki/topics.\n",
-            ),
-        ],
-        DatabaseProfile::Memory => vec![
-            folder_seed("/Memory"),
-            file_seed("/Memory/inbox.md", "# Memory Inbox\n\n"),
-            file_seed("/Memory/facts.md", "# Facts\n\n"),
-            file_seed("/Memory/preferences.md", "# Preferences\n\n"),
-            file_seed("/Memory/plans.md", "# Plans\n\n"),
-            file_seed("/Memory/open_questions.md", "# Open Questions\n\n"),
-            file_seed(
-                "/Memory/evidence.md",
-                "# Evidence\n\nLink claims to /Wiki role pages and /Sources/raw evidence.\n",
-            ),
-        ],
-        DatabaseProfile::Skill => vec![
-            folder_seed("/Wiki"),
-            folder_seed("/Wiki/skills"),
-            folder_seed("/Sources"),
-            file_seed(
-                "/Wiki/skills/manifest-template.md",
-                "# Skill Manifest Template\n\n```text\nid:\nname:\ndescription:\n```\n",
-            ),
-            folder_seed("/Sources/skill-runs"),
-        ],
-        DatabaseProfile::Session => vec![
-            folder_seed("/Sessions"),
-            folder_seed("/Sources"),
-            folder_seed("/Sources/raw"),
-            folder_seed("/Sources/raw/codex"),
-            folder_seed("/Sources/raw/claudecode"),
-        ],
-    }
+fn database_store_seed_nodes() -> Vec<StoreSeedNode> {
+    vec![
+        folder_seed("/Memory"),
+        folder_seed("/Wiki"),
+        folder_seed("/Wiki/skills"),
+        folder_seed("/Sessions"),
+        folder_seed("/Sources"),
+        folder_seed("/Sources/raw"),
+        folder_seed("/Sources/skill-runs"),
+    ]
 }
 
-fn folder_seed(path: &'static str) -> ProfileSeedNode {
-    ProfileSeedNode {
+fn folder_seed(path: &'static str) -> StoreSeedNode {
+    StoreSeedNode {
         path,
         kind: NodeKind::Folder,
-        content: "",
-    }
-}
-
-fn file_seed(path: &'static str, content: &'static str) -> ProfileSeedNode {
-    ProfileSeedNode {
-        path,
-        kind: NodeKind::File,
-        content,
     }
 }
 
@@ -8152,27 +7980,6 @@ fn status_to_db(status: DatabaseStatus) -> &'static str {
         DatabaseStatus::Archived => "archived",
         DatabaseStatus::Restoring => "restoring",
         DatabaseStatus::Deleted => "deleted",
-    }
-}
-
-fn profile_from_db(profile: &str) -> crate::sqlite::Result<DatabaseProfile> {
-    match profile {
-        "workspace" => Ok(DatabaseProfile::Workspace),
-        "knowledge" => Ok(DatabaseProfile::Knowledge),
-        "memory" => Ok(DatabaseProfile::Memory),
-        "skill" => Ok(DatabaseProfile::Skill),
-        "session" => Ok(DatabaseProfile::Session),
-        _ => Err(crate::sqlite::invalid_query()),
-    }
-}
-
-fn profile_to_db(profile: DatabaseProfile) -> &'static str {
-    match profile {
-        DatabaseProfile::Workspace => "workspace",
-        DatabaseProfile::Knowledge => "knowledge",
-        DatabaseProfile::Memory => "memory",
-        DatabaseProfile::Skill => "skill",
-        DatabaseProfile::Session => "session",
     }
 }
 
@@ -8537,13 +8344,6 @@ mod tests {
         db_file_name
     }
 
-    fn insert_database_profile_marker(index_path: &Path) {
-        let mut conn = Connection::open(index_path).expect("index DB should reopen");
-        let tx = conn.transaction().expect("transaction should start");
-        apply_database_profile_migration(&tx).expect("profile migration should apply");
-        tx.commit().expect("profile migration should commit");
-    }
-
     fn schema_marker_count(index_path: &Path, version: &str) -> i64 {
         let conn = Connection::open(index_path).expect("index DB should reopen");
         conn.query_row(
@@ -8647,7 +8447,7 @@ mod tests {
         let marker: String = conn
             .query_row(
                 "SELECT version FROM schema_migrations
-                 WHERE version = 'database_index:034_database_profile_roots'",
+                 WHERE version = 'database_index:033_store_roots'",
                 params![],
                 |row| row.get(0),
             )
@@ -8661,12 +8461,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("market table count should load");
-        assert_eq!(marker, "database_index:034_database_profile_roots");
+        assert_eq!(marker, "database_index:033_store_roots");
         assert_eq!(market_tables, 4);
     }
 
     #[test]
-    fn database_profile_roots_seed_mainnet_032_active_databases() {
+    fn database_store_roots_seed_mainnet_032_active_databases() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
@@ -8682,7 +8482,7 @@ mod tests {
 
         service
             .run_index_migrations_for_upgrade(None)
-            .expect("mainnet 032 index should seed profile roots");
+            .expect("mainnet 032 index should seed store roots");
 
         for path in ["/Memory", "/Sessions", "/Wiki/skills"] {
             assert!(
@@ -8694,55 +8494,53 @@ mod tests {
             );
         }
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
     }
 
     #[test]
-    fn database_profile_roots_seed_retries_after_profile_column_migration() {
+    fn database_store_roots_seed_retries_after_missing_marker() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
         let databases_dir = root.join("databases");
         write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        insert_database_profile_marker(&index_path);
         create_active_database_fixture(
             &index_path,
             &databases_dir,
-            "profile_without_roots",
+            "store_without_roots",
             &["/Memory", "/Sessions", "/Wiki/skills"],
         );
         let service = VfsService::new(index_path.clone(), databases_dir);
 
         service
             .run_index_migrations_for_upgrade(None)
-            .expect("missing profile root marker should seed roots");
+            .expect("missing store root marker should seed roots");
 
         assert!(
             service
-                .read_node("profile_without_roots", "owner", "/Memory")
+                .read_node("store_without_roots", "owner", "/Memory")
                 .expect("memory root should read")
                 .is_some()
         );
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
     }
 
     #[test]
-    fn database_profile_roots_seed_keeps_existing_folder_roots() {
+    fn database_store_roots_seed_keeps_existing_folder_roots() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
         let databases_dir = root.join("databases");
         write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        insert_database_profile_marker(&index_path);
         create_active_database_fixture(
             &index_path,
             &databases_dir,
@@ -8765,19 +8563,18 @@ mod tests {
             );
         }
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             1
         );
     }
 
     #[test]
-    fn database_profile_roots_seed_rejects_non_folder_collision() {
+    fn database_store_roots_seed_rejects_non_folder_collision() {
         let dir = tempdir().expect("tempdir should create");
         let root = dir.path();
         let index_path = root.join("index.sqlite3");
         let databases_dir = root.join("databases");
         write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
-        insert_database_profile_marker(&index_path);
         let db_file_name = create_active_database_fixture(
             &index_path,
             &databases_dir,
@@ -8805,7 +8602,7 @@ mod tests {
 
         assert!(error.contains("/Memory"));
         assert_eq!(
-            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS),
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
             0
         );
     }
@@ -9427,7 +9224,7 @@ mod tests {
                 .write_index(|tx| {
                     tx.execute(
                         "INSERT INTO databases
-                         (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
+                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
                          VALUES (?1, ?1, 'workspace', ?1, COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
@@ -9526,7 +9323,7 @@ mod tests {
                 .write_index(|tx| {
                     tx.execute(
                         "INSERT INTO databases
-                         (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
+                         (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
                          VALUES (?1, ?1, 'workspace', ?1, ?3, ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
@@ -10013,7 +9810,7 @@ mod tests {
             .write_index(|tx| {
                 tx.execute(
                     "INSERT INTO databases
-                     (database_id, name, profile, db_file_name, mount_id, active_mount_id, status,
+                     (database_id, name, db_file_name, mount_id, active_mount_id, status,
                       schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
                      VALUES (?1, ?1, 'workspace', ?1, ?2, ?2, 'active', ?3, ?4, 0, 0)",
                     params![

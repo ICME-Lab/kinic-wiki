@@ -7,7 +7,7 @@ use crate::fs_links::backfill_node_links;
 
 // Keep the persisted version token stable so existing local databases do not
 // require a forced migration just because the crate naming moved from wiki_* to vfs_*.
-const CURRENT_SCHEMA_VERSION: &str = "wiki_store:004_rebuild_links_after_code_filter";
+const CURRENT_SCHEMA_VERSION: &str = "wiki_store:005_seed_raw_sources_root";
 const INITIAL_FS_SCHEMA_SQL: &str = include_str!("../migrations/000_fs_schema.sql");
 const MIGRATIONS: &[(&str, &str)] = &[
     ("wiki_store:000_fs_schema", INITIAL_FS_SCHEMA_SQL),
@@ -24,8 +24,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../migrations/003_wikilink_alias_links.sql"),
     ),
     (
-        CURRENT_SCHEMA_VERSION,
+        "wiki_store:004_rebuild_links_after_code_filter",
         include_str!("../migrations/004_rebuild_links_after_code_filter.sql"),
+    ),
+    (
+        CURRENT_SCHEMA_VERSION,
+        include_str!("../migrations/005_seed_raw_sources_root.sql"),
     ),
 ];
 const SCHEMA_MIGRATIONS_BOOTSTRAP_SQL: &str =
@@ -89,6 +93,9 @@ fn run_post_migration_hook(
     }
     if version == "wiki_store:004_rebuild_links_after_code_filter" {
         backfill_node_links(conn)?;
+    }
+    if version == "wiki_store:005_seed_raw_sources_root" {
+        seed_raw_sources_root_folder(conn)?;
     }
     Ok(())
 }
@@ -227,6 +234,7 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
     folders.insert("/Sessions".to_string(), (0, 0));
     folders.insert("/Wiki".to_string(), (0, 0));
     folders.insert("/Sources".to_string(), (0, 0));
+    folders.insert("/Sources/raw".to_string(), (0, 0));
     for (path, created_at, updated_at) in &nodes {
         let mut current = String::new();
         let mut segments = path
@@ -318,6 +326,71 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
          CREATE INDEX fs_nodes_parent_idx ON fs_nodes(parent_id);",
     )
     .map_err(|error| error.to_string())
+}
+
+fn seed_raw_sources_root_folder(conn: &crate::sqlite::Transaction<'_>) -> Result<(), String> {
+    let mut changed_folder_paths = Vec::new();
+    for folder_path in ["/Sources", "/Sources/raw"] {
+        if ensure_folder_backfill_node(conn, folder_path, 0, 0)? != FolderBackfillChange::Existing {
+            changed_folder_paths.push(folder_path.to_string());
+        }
+    }
+
+    let mut stmt = conn
+        .prepare("SELECT id, path FROM fs_nodes ORDER BY length(path), path")
+        .map_err(|error| error.to_string())?;
+    let rows = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get::<i64>(row, 0)?,
+            crate::sqlite::row_get::<String>(row, 1)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    let id_by_path = rows
+        .iter()
+        .map(|(id, path)| (path.clone(), *id))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    for (id, path) in rows {
+        let (parent_path, name) = split_parent_and_name(&path)?;
+        let parent_id = parent_path
+            .as_deref()
+            .map(|parent| {
+                id_by_path
+                    .get(parent)
+                    .copied()
+                    .ok_or_else(|| format!("parent folder does not exist: {parent}"))
+            })
+            .transpose()?;
+        let values = vec![
+            crate::sqlite::nullable_integer_value(parent_id),
+            crate::sqlite::text_value(name),
+            crate::sqlite::integer_value(id),
+        ];
+        crate::sqlite::execute_values(
+            conn,
+            "UPDATE fs_nodes SET parent_id = ?1, name = ?2 WHERE id = ?3",
+            &values,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+
+    for folder_path in changed_folder_paths {
+        conn.execute(
+            "INSERT INTO fs_change_log (path, change_kind) VALUES (?1, 'upsert')",
+            params![folder_path],
+        )
+        .map_err(|error| error.to_string())?;
+        let revision = crate::sqlite::last_insert_rowid(conn).map_err(|error| error.to_string())?;
+        conn.execute(
+            "INSERT INTO fs_path_state (path, last_change_revision)
+             VALUES (?1, ?2)
+             ON CONFLICT(path) DO UPDATE SET last_change_revision = excluded.last_change_revision",
+            params![folder_path, revision],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

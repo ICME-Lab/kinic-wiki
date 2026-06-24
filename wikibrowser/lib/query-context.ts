@@ -26,7 +26,14 @@ export async function collectQueryAnswerContext(input: {
   if (input.currentNode && isAnswerContextNode(input.currentNode)) {
     nodes.set(input.currentNode.path, input.currentNode);
   }
-  const context = await memoryRecall(input.canisterId, input.databaseId, input.question, CONTEXT_BUDGET_TOKENS, input.readIdentity ?? undefined);
+  const context = await memoryRecall(
+    input.canisterId,
+    input.databaseId,
+    input.question,
+    CONTEXT_BUDGET_TOKENS,
+    input.readIdentity ?? undefined,
+    "/Wiki"
+  );
   for (const nodeContext of context.nodes) {
     if (nodes.size >= MAX_CONTEXT_ITEMS) break;
     const node = nodeContext.node;

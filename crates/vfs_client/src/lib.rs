@@ -14,7 +14,7 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, ChildNode, CreateDatabaseRequest, CreateDatabaseResult,
     CyclesBillingConfig, CyclesPurchaseResult, DatabaseArchiveChunk, DatabaseArchiveInfo,
     DatabaseCycleEntryPage, DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest,
-    DatabaseMember, DatabaseProfile, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary,
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
@@ -42,11 +42,7 @@ pub trait VfsApi: Sync {
     async fn store_manifest(&self, _database_id: &str) -> Result<StoreManifest> {
         Err(anyhow!("store_manifest is not implemented by this client"))
     }
-    async fn create_database(
-        &self,
-        _name: &str,
-        _profile: DatabaseProfile,
-    ) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
     }
     async fn rename_database(&self, _database_id: &str, _name: &str) -> Result<()> {
@@ -546,17 +542,12 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn create_database(
-        &self,
-        name: &str,
-        profile: DatabaseProfile,
-    ) -> Result<CreateDatabaseResult> {
+    async fn create_database(&self, name: &str) -> Result<CreateDatabaseResult> {
         let result: Result<CreateDatabaseResult, String> = self
             .update(
                 "create_database",
                 &CreateDatabaseRequest {
                     name: name.to_string(),
-                    profile,
                 },
             )
             .await?;

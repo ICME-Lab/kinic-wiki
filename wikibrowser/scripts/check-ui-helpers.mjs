@@ -139,6 +139,10 @@ assert.match(searchPanelSource, /searchOptions\.preview/);
 assert.match(vfsClientSource, /preview_mode: searchPreviewModeArg\(previewMode\)/);
 assert.match(memoryRecallSource, /isAnswerContextNode\(input\.currentNode\)/);
 assert.match(memoryRecallSource, /queryAnswerSearchTerms\(input\.question\)/);
+assert.match(
+  memoryRecallSource,
+  /memoryRecall\(\s*input\.canisterId,\s*input\.databaseId,\s*input\.question,\s*CONTEXT_BUDGET_TOKENS,\s*input\.readIdentity \?\? undefined,\s*"\/Wiki"\s*\)/
+);
 assert.match(memoryRecallSource, /readNodeContext\(input\.canisterId, input\.databaseId, hit\.path, 5/);
 assert.match(memoryRecallSource, /node\.kind === "file" \|\| node\.kind === "source"/);
 assert.match(wikiBrowserSource, /ExplorerHeaderActions/);

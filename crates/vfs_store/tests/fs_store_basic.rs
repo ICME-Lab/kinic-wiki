@@ -1368,6 +1368,45 @@ fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
 }
 
 #[test]
+fn fs_folder_migration_seeds_raw_sources_root_from_current_schema() {
+    let (_dir, store) = old_fs_schema_store();
+    let conn = Connection::open(store.database_path()).expect("db should open");
+    conn.execute_batch(
+        "ALTER TABLE fs_nodes ADD COLUMN parent_id INTEGER;
+         ALTER TABLE fs_nodes ADD COLUMN name TEXT;
+         CREATE UNIQUE INDEX fs_nodes_parent_name_idx
+           ON fs_nodes (COALESCE(parent_id, 0), name);
+         CREATE INDEX fs_nodes_parent_idx ON fs_nodes(parent_id);",
+    )
+    .expect("folder schema should exist");
+    for version in [
+        "wiki_store:001_fs_links",
+        "wiki_store:002_fs_folders",
+        "wiki_store:003_wikilink_alias_links",
+        "wiki_store:004_rebuild_links_after_code_filter",
+    ] {
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 0)",
+            [version],
+        )
+        .expect("version should insert");
+    }
+    drop(conn);
+
+    store
+        .run_fs_migrations()
+        .expect("raw sources root migration should succeed");
+
+    let raw_root = store
+        .read_node("/Sources/raw")
+        .expect("raw sources root should read")
+        .expect("raw sources root should exist");
+    assert_eq!(raw_root.kind, NodeKind::Folder);
+    assert_eq!(raw_root.content, "");
+    assert_eq!(raw_root.metadata_json, "{}");
+}
+
+#[test]
 fn fs_folder_migration_reports_promoted_folder_in_sync_delta() {
     let (_dir, store) = old_fs_schema_store();
     let conn = Connection::open(store.database_path()).expect("db should open");

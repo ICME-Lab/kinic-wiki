@@ -48,8 +48,8 @@ const companionSurfaces = [
   },
   {
     title: "Capture tools",
-    body: "Save ChatGPT/Claude conversations as raw sources and queue active web pages as URL ingest requests. The extension requires Internet Identity writer access; use the CLI to turn raw chats into organized /Wiki pages.",
-    details: ["Web pages -> /Sources/ingest-requests/...", "AI chats -> /Sources/raw/..."],
+    body: "Save ChatGPT/Claude conversations and active web page snapshots as raw evidence. The extension requires Internet Identity writer access; use the CLI to turn raw captures into organized /Wiki pages.",
+    details: ["Web pages -> /Sources/raw/web/...", "AI chats -> /Sources/raw/..."],
     href: "https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi",
     label: "Chrome Extension",
     icon: Wrench

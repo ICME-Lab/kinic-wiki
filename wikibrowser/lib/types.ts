@@ -111,14 +111,12 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseProfile = "workspace" | "memory" | "knowledge" | "skill" | "session";
 export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
 
 export type DatabaseSummary = {
   databaseId: string;
   name: string;
   role: DatabaseRole;
-  profile: DatabaseProfile;
   status: DatabaseStatus;
   logicalSizeBytes: string;
   cyclesBalance: string;

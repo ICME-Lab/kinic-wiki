@@ -11,7 +11,6 @@ const idlPath = join(here, "..", "lib", "vfs-idl.ts");
 const typeOrder = [
   "CanisterHealth",
   "DatabaseRole",
-  "DatabaseProfile",
   "DatabaseStatus",
   "DatabaseSummary",
   "CyclesTopUpConfig",

@@ -8,13 +8,6 @@ type ActorInterfaceFactory = Parameters<typeof Actor.createActor>[0];
 export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CanisterHealth = idl.Record({ cycles_balance: idl.Nat });
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
-  const DatabaseProfile = idl.Variant({
-    Skill: idl.Null,
-    Memory: idl.Null,
-    Workspace: idl.Null,
-    Session: idl.Null,
-    Knowledge: idl.Null
-  });
   const DatabaseStatus = idl.Variant({
     Active: idl.Null,
     Pending: idl.Null,
@@ -29,7 +22,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     logical_size_bytes: idl.Nat64,
     database_id: idl.Text,
     name: idl.Text,
-    profile: DatabaseProfile,
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64),
@@ -233,8 +225,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   });
   const Icrc21ConsentMessageResponse = idl.Variant({ Ok: Icrc21ConsentInfo, Err: Icrc21Error });
   const Icrc10SupportedStandard = idl.Record({ url: idl.Text, name: idl.Text });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text, profile: DatabaseProfile });
-  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text, profile: DatabaseProfile });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
+  const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
   const DeleteDatabaseRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
@@ -308,7 +300,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     entry_roots: idl.Vec(StoreRoot),
     max_depth: idl.Nat32,
     max_query_limit: idl.Nat32,
-    profile: DatabaseProfile,
     recommended_entrypoint: idl.Text,
     write_policy: idl.Text,
     canonical_roles: idl.Vec(CanonicalRole),

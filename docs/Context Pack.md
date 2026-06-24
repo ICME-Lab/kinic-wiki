@@ -143,7 +143,7 @@ kinic-vfs-cli context-pack inspect ./okf --json
 ```
 
 `export` reads the remote database and writes a local OKF bundle.
-`export` uses `query_context`; it does not recursively dump the full namespace.
+`export` uses `memory_recall`; it does not recursively dump the full namespace.
 `verify` and `inspect` read only the local bundle and do not require a canister connection.
 Pass `--overwrite` to replace existing markdown files in the output directory.
 

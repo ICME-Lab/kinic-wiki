@@ -23,11 +23,10 @@ type ChildNode = record {
   has_children : bool;
   is_virtual : bool;
 };
-type CreateDatabaseRequest = record { name : text; profile : DatabaseProfile };
+type CreateDatabaseRequest = record { name : text };
 type CreateDatabaseResult = record {
   name : text;
   database_id : text;
-  profile : DatabaseProfile;
 };
 type CyclesBillingConfig = record {
   billing_authority_id : text;
@@ -115,7 +114,6 @@ type DatabaseMember = record {
   created_at_ms : int64;
   database_id : text;
 };
-type DatabaseProfile = variant { Skill; Memory; Workspace; Session; Knowledge };
 type DatabaseRestoreChunkRequest = record {
   offset : nat64;
   database_id : text;
@@ -140,7 +138,6 @@ type DatabaseSummary = record {
   database_id : text;
   archived_at_ms : opt int64;
   deleted_at_ms : opt int64;
-  profile : DatabaseProfile;
 };
 type DeleteDatabaseRequest = record { database_id : text };
 type DeleteNodeRequest = record {
@@ -600,7 +597,6 @@ type StoreManifest = record {
   max_query_limit : nat32;
   purpose : text;
   roots : vec StoreRoot;
-  profile : DatabaseProfile;
 };
 type StoreManifestRequest = record { database_id : text };
 type StoreRoot = record { kind : text; path : text };

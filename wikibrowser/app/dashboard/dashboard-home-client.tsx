@@ -14,7 +14,7 @@ import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { KinicAfterApproveError, purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
 import { hrefForPath } from "@/lib/paths";
-import type { CyclesBillingConfig, DatabaseProfile, DatabaseSummary } from "@/lib/types";
+import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
 import type { DatabaseRow } from "../home-ui";
 
@@ -51,7 +51,6 @@ export function DashboardHomeClient() {
   const [walletMessage, setWalletMessage] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newDatabaseName, setNewDatabaseName] = useState("");
-  const [newDatabaseProfile, setNewDatabaseProfile] = useState<DatabaseProfile>("workspace");
   const [creating, setCreating] = useState(false);
 
   const refreshDatabases = useCallback(
@@ -125,7 +124,6 @@ export function DashboardHomeClient() {
       setPurchasedDatabaseIds(new Set());
       setCreateDialogOpen(false);
       setNewDatabaseName("");
-      setNewDatabaseProfile("workspace");
       setWalletMessage(null);
     });
     return () => {
@@ -151,12 +149,10 @@ export function DashboardHomeClient() {
     setWalletMessage(null);
     let createdDatabaseId: string | null = null;
     try {
-      const selectedProfile = newDatabaseProfile;
-      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput, selectedProfile);
+      const result = await createDatabaseAuthenticated(canisterId, authClient.getIdentity(), databaseNameInput);
       createdDatabaseId = result.database_id;
       setCreateDialogOpen(false);
       setNewDatabaseName("");
-      setNewDatabaseProfile("workspace");
       const paymentAmountE8s = createDatabasePurchaseAmountE8s();
       setWalletMessage(`Database created pending. Requesting ${fundingProviderLabel(wallet.provider)} approval for ${formatTokenAmountFromE8s(paymentAmountE8s)}.`);
       const purchaseResult = await purchaseCyclesWithWallet({ canisterId, databaseId: result.database_id, paymentAmountE8s }, wallet);
@@ -165,7 +161,7 @@ export function DashboardHomeClient() {
       );
       await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
-      router.push(hrefForPath(canisterId, result.database_id, primaryRootForDatabaseProfile(selectedProfile)));
+      router.push(hrefForPath(canisterId, result.database_id, "/Wiki"));
     } catch (cause) {
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
@@ -226,17 +222,14 @@ export function DashboardHomeClient() {
           creating={creating}
           databaseName={newDatabaseName}
           open={createDialogOpen}
-          profile={newDatabaseProfile}
           requiredBalanceLabel={formatTokenAmountFromE8s(createDatabasePurchaseAmountE8s())}
           validationError={databaseNameValidationError}
           onCancel={() => {
             if (creating) return;
             setCreateDialogOpen(false);
             setNewDatabaseName("");
-            setNewDatabaseProfile("workspace");
           }}
           onChange={setNewDatabaseName}
-          onProfileChange={setNewDatabaseProfile}
           onSubmit={() => void createDatabase()}
         />
 
@@ -267,12 +260,6 @@ export function DashboardHomeClient() {
   );
 }
 
-function primaryRootForDatabaseProfile(profile: DatabaseProfile): string {
-  if (profile === "memory") return "/Memory";
-  if (profile === "skill") return "/Wiki/skills";
-  if (profile === "session") return "/Sessions";
-  return "/Wiki";
-}
 
 function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseRow[] {
   const publicIds = new Set(publicDatabases.map((database) => database.databaseId));

@@ -25,7 +25,7 @@ For many medium-sized agent workflows, structured file-system search is often mo
 - `memory`: short facts, preferences, and active context recalled through `memory_recall`.
 - `knowledge`: long-term notes under `/Wiki/...`, connected by wiki links and source evidence.
 - `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`, with manifests, status, proposals, and run evidence.
-- `session`: agent conversation audit sources under `/Sources/raw/...`; resumable summaries are a later workflow.
+- `session`: agent session state and audit material under `/Sessions/...`; resumable summaries are a later workflow.
 
 Context Pack is not a fifth store. It is an OKF handoff artifact generated from store content.
 Curator is not a store. It is a future maintenance workflow for skill and knowledge stale/archive/promote decisions.
@@ -63,21 +63,13 @@ Current npm binaries support macOS arm64 and Linux x64.
 Most commands need a database id. Pass it per command, link it once for a workspace, or set `VFS_DATABASE_ID`.
 
 ```bash
-kinic-vfs-cli database create --profile memory "My agent memory"
+kinic-vfs-cli database create "My agent memory"
 kinic-vfs-cli --database-id <database-id> status --json
 kinic-vfs-cli database link <database-id>
 VFS_DATABASE_ID=<database-id> kinic-vfs-cli search-remote "query text" --prefix /Wiki --json
 ```
 
-Database profiles choose seed roots, Browser empty state, Store API manifest, and agent entrypoint. They do not change the physical VFS schema.
-
-| Profile | Use |
-| --- | --- |
-| `workspace` | Default four-store workspace |
-| `knowledge` | Human long-term wiki or digital garden |
-| `memory` | Agent memory and recall |
-| `skill` | Skill Registry database |
-| `session` | Agent session audit sources |
+Every database uses the same four-store roots and the same physical VFS schema.
 
 Read exact nodes when a path is known:
 
@@ -111,11 +103,11 @@ Agents should discover relevant skills, inspect the package, use the instruction
 
 - Browser: browse, search, edit, and manage database access
 - CLI: scripted database operations and skill store workflows
-- Chrome extension: ChatGPT export and active-tab URL ingest
+- Chrome extension: ChatGPT export and active-tab source capture
 - Store API: direct read-only canister queries such as `store_manifest`, `memory_recall`, and `knowledge_evidence`
 - Agent Tool Calling: embedded OpenAI-compatible and Anthropic-compatible tool schemas
 
-The Chrome extension connects browser work to Kinic Wiki. It can save recent ChatGPT conversations as session audit sources and queue active web pages for URL ingest. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
+The Chrome extension connects browser work to Kinic Wiki. It saves recent ChatGPT conversations and active web page snapshots as raw knowledge evidence under `/Sources/raw/...`. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
 
 Developer and operator guides:
 
