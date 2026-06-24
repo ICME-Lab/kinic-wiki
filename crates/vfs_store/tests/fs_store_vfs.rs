@@ -723,6 +723,14 @@ fn memory_queries_return_context_and_scope_evidence() {
             .iter()
             .any(|item| item.source_path == "/Sources/raw/a/a.md")
     );
+    let raw_ref = evidence
+        .refs
+        .iter()
+        .find(|item| item.source_path == "/Sources/raw/a/a.md")
+        .expect("raw source ref should exist");
+    assert!(raw_ref.source_etag.is_some());
+    assert!(raw_ref.source_updated_at.is_some());
+    assert!(raw_ref.source_content_hash.is_some());
 
     let topic_evidence = store
         .source_evidence(SourceEvidenceRequest {
@@ -845,7 +853,8 @@ fn query_context_trims_search_hits_and_preserves_candidate_order() {
         })
         .expect("small context should load");
     assert!(small.search_hits.is_empty());
-    assert!(small.nodes.is_empty());
+    assert_eq!(small.nodes.len(), 1);
+    assert_eq!(small.nodes[0].node.path, "/Wiki/budget/long.md");
     assert!(small.truncated);
 }
 

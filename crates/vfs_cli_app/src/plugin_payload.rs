@@ -32,6 +32,16 @@ pub const CODEX_PLUGIN_FILES: &[PayloadFile] = &[
         executable: true,
     },
     PayloadFile {
+        path: "scripts/record-session.sh",
+        content: include_str!("../../../plugins/codex/scripts/record-session.sh"),
+        executable: true,
+    },
+    PayloadFile {
+        path: "hooks/hooks.json",
+        content: include_str!("../../../plugins/codex/hooks/hooks.json"),
+        executable: false,
+    },
+    PayloadFile {
         path: "skills/kinic-evolve-skill-job/SKILL.md",
         content: include_str!("../../../plugins/codex/skills/kinic-evolve-skill-job/SKILL.md"),
         executable: false,
@@ -270,7 +280,23 @@ fn set_executable(_path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CLAUDE_PLUGIN_FILES, RUNTIME_FILES};
+    use super::{CLAUDE_PLUGIN_FILES, CODEX_PLUGIN_FILES, RUNTIME_FILES};
+
+    #[test]
+    fn codex_payload_includes_session_hook_files() {
+        let codex_paths = CODEX_PLUGIN_FILES
+            .iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+        let runtime_paths = RUNTIME_FILES
+            .iter()
+            .map(|file| file.path)
+            .collect::<Vec<_>>();
+
+        assert!(codex_paths.contains(&"hooks/hooks.json"));
+        assert!(codex_paths.contains(&"scripts/record-session.sh"));
+        assert!(runtime_paths.contains(&"kinic_agent_runtime/session.py"));
+    }
 
     #[test]
     fn claude_payload_includes_session_hook_files() {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kinic Wiki Query"
+  short_description: "Search and read Kinic Wiki VFS databases."
+  default_prompt: "Use $kinic-wiki-query to search or read a Kinic Wiki database from a wiki.kinic.xyz URL or database ID."

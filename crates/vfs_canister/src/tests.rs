@@ -2891,6 +2891,18 @@ fn memory_entrypoints_return_agent_memory_contract() {
     assert_eq!(manifest.recommended_entrypoint, "query_context");
     assert_eq!(manifest.max_depth, 2);
     assert!(manifest.roots.iter().any(|root| root.path == "/Wiki"));
+    assert!(
+        manifest
+            .canonical_roles
+            .iter()
+            .any(|role| role.name == "facts")
+    );
+    assert!(
+        manifest
+            .canonical_roles
+            .iter()
+            .any(|role| role.name == "open_questions")
+    );
 
     for (path, content) in [
         ("/Wiki/scope/index.md", "# Index\n\n[Overview](overview.md)"),
@@ -2950,6 +2962,13 @@ fn memory_entrypoints_return_agent_memory_contract() {
             .iter()
             .any(|item| item.source_path == "/Sources/raw/a/a.md")
     );
+    let source_ref = evidence
+        .refs
+        .iter()
+        .find(|item| item.source_path == "/Sources/raw/a/a.md")
+        .expect("source evidence ref should exist");
+    assert!(source_ref.source_etag.is_some());
+    assert!(source_ref.source_updated_at.is_some());
 }
 
 #[test]

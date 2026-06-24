@@ -8,9 +8,13 @@ use vfs_cli::connection::{
     ResolvedConnection, resolve_connection, resolve_connection_optional_canister,
 };
 use vfs_cli_app::claude::run_claude_command;
-use vfs_cli_app::cli::{Cli, Command, DatabaseCommand, IdentityModeArg};
+use vfs_cli_app::cli::{Cli, Command, ContextPackCommand, DatabaseCommand, IdentityModeArg};
 use vfs_cli_app::codex::run_codex_command;
 use vfs_cli_app::commands::run_command;
+use vfs_cli_app::context_pack::{
+    ContextPackInspectOptions, ContextPackVerifyOptions, run_context_pack_inspect,
+    run_context_pack_verify,
+};
 use vfs_cli_app::identity::load_default_identity;
 use vfs_cli_app::identity_mode::{
     ClientIdentityMode, anonymous_can_read_database, identity_is_database_member,
@@ -54,6 +58,26 @@ async fn main() -> Result<()> {
     if let Command::Claude { command } = cli.command.clone() {
         run_claude_command(command)?;
         return Ok(());
+    }
+    if let Command::ContextPack { command } = cli.command.clone() {
+        match command {
+            ContextPackCommand::Verify(args) => {
+                run_context_pack_verify(ContextPackVerifyOptions {
+                    path: args.path,
+                    fail_on_truncated: args.fail_on_truncated,
+                    json: args.json,
+                })?;
+                return Ok(());
+            }
+            ContextPackCommand::Inspect(args) => {
+                run_context_pack_inspect(ContextPackInspectOptions {
+                    path: args.path,
+                    json: args.json,
+                })?;
+                return Ok(());
+            }
+            ContextPackCommand::Export(_) => {}
+        }
     }
     if let Command::Hermes {
         command: vfs_cli_app::cli::HermesCommand::Status { json },

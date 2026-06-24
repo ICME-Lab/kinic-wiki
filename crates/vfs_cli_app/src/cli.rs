@@ -1,7 +1,7 @@
 // Where: crates/vfs_cli_app/src/cli.rs
 // What: clap definitions for the single published kinic-vfs-cli surface.
 // Why: Wiki/operator commands and Skill Registry commands share one canister connection.
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
@@ -68,6 +68,11 @@ pub enum Command {
     Github {
         #[command(subcommand)]
         command: GitHubCommand,
+    },
+    #[command(about = "Export, verify, and inspect generated AI Context Packs")]
+    ContextPack {
+        #[command(subcommand)]
+        command: ContextPackCommand,
     },
     #[command(about = "Rebuild the full wiki search index")]
     RebuildIndex,
@@ -499,6 +504,58 @@ pub enum SkillCommand {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+pub enum ContextPackCommand {
+    #[command(about = "Export an OKF markdown bundle from a wiki namespace")]
+    Export(ContextPackExportArgs),
+    #[command(about = "Verify a local OKF bundle directory")]
+    Verify(ContextPackVerifyArgs),
+    #[command(about = "Inspect a local OKF bundle summary")]
+    Inspect(ContextPackLocalArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContextPackExportArgs {
+    #[arg(long)]
+    pub task: String,
+    #[arg(long, default_value = WIKI_ROOT_PATH)]
+    pub namespace: String,
+    #[arg(long, default_value_t = 8_000)]
+    pub budget_tokens: u32,
+    #[arg(long, default_value_t = 1)]
+    pub depth: u32,
+    #[arg(long = "entity")]
+    pub entities: Vec<String>,
+    #[arg(long)]
+    pub out: PathBuf,
+    #[arg(long)]
+    pub expires_at: String,
+    #[arg(long, default_value = "draft")]
+    pub trust_level: String,
+    #[arg(long)]
+    pub approved_by: Vec<String>,
+    #[arg(long)]
+    pub overwrite: bool,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContextPackLocalArgs {
+    pub path: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContextPackVerifyArgs {
+    pub path: PathBuf,
+    #[arg(long)]
+    pub fail_on_truncated: bool,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
 pub enum IdentityCommand {
     #[command(about = "Show the selected icp-cli identity principal")]
     Show {
@@ -715,7 +772,13 @@ impl Command {
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
             | Self::QuerySql { .. }
-            | Self::Status { .. } => false,
+            | Self::Status { .. }
+            | Self::ContextPack {
+                command:
+                    ContextPackCommand::Export(_)
+                    | ContextPackCommand::Verify(_)
+                    | ContextPackCommand::Inspect(_),
+            } => false,
         }
     }
 
@@ -726,6 +789,9 @@ impl Command {
                 SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
             ),
             Self::ReadNode { .. }
+            | Self::ContextPack {
+                command: ContextPackCommand::Export(_),
+            }
             | Self::ListNodes { .. }
             | Self::ListChildren { .. }
             | Self::GlobNodes { .. }
@@ -746,6 +812,9 @@ impl Command {
             | Self::Codex { .. }
             | Self::Claude { .. }
             | Self::Github { .. }
+            | Self::ContextPack {
+                command: ContextPackCommand::Verify(_) | ContextPackCommand::Inspect(_),
+            }
             | Self::RebuildIndex
             | Self::RebuildScopeIndex { .. }
             | Self::GenerateConversationWiki { .. }
@@ -993,9 +1062,9 @@ impl Command {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClaudeCommand, Cli, CodexCommand, Command, CyclesCommand, DatabaseCommand, HermesCommand,
-        IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand, SkillImportCommand,
-        SkillRunOutcomeArg, SkillStatusArg,
+        ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand,
+        DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand,
+        SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
@@ -1300,6 +1369,95 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_parses_context_pack_commands() {
+        let export = Cli::parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "export",
+            "--task",
+            "review auth",
+            "--namespace",
+            "/Wiki/projects/acme",
+            "--budget-tokens",
+            "12000",
+            "--depth",
+            "2",
+            "--entity",
+            "auth",
+            "--out",
+            "pack",
+            "--expires-at",
+            "2999-01-01T00:00:00Z",
+            "--trust-level",
+            "team-approved",
+            "--approved-by",
+            "principal:aaaaa-aa",
+            "--overwrite",
+            "--json",
+        ]);
+        let Command::ContextPack {
+            command: ContextPackCommand::Export(args),
+        } = export.command
+        else {
+            panic!("expected context-pack export command");
+        };
+        assert_eq!(args.task, "review auth");
+        assert_eq!(args.namespace, "/Wiki/projects/acme");
+        assert_eq!(args.budget_tokens, 12000);
+        assert_eq!(args.depth, 2);
+        assert_eq!(args.entities, vec!["auth"]);
+        assert_eq!(args.out.to_string_lossy(), "pack");
+        assert_eq!(args.expires_at, "2999-01-01T00:00:00Z");
+        assert_eq!(args.trust_level, "team-approved");
+        assert_eq!(args.approved_by, vec!["principal:aaaaa-aa"]);
+        assert!(args.overwrite);
+        assert!(args.json);
+
+        let verify = Cli::parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "verify",
+            "pack",
+            "--fail-on-truncated",
+            "--json",
+        ]);
+        let Command::ContextPack {
+            command: ContextPackCommand::Verify(args),
+        } = verify.command
+        else {
+            panic!("expected context-pack verify command");
+        };
+        assert_eq!(args.path.to_string_lossy(), "pack");
+        assert!(args.fail_on_truncated);
+        assert!(args.json);
+
+        let inspect = Cli::parse_from(["kinic-vfs-cli", "context-pack", "inspect", "pack"]);
+        let Command::ContextPack {
+            command: ContextPackCommand::Inspect(args),
+        } = inspect.command
+        else {
+            panic!("expected context-pack inspect command");
+        };
+        assert_eq!(args.path.to_string_lossy(), "pack");
+        assert!(!args.json);
+
+        let root_arg = Cli::try_parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "export",
+            "--root",
+            "/Wiki/projects/acme",
+            "--task",
+            "review auth",
+            "--out",
+            "pack",
+            "--expires-at",
+            "2999-01-01T00:00:00Z",
+        ]);
+        assert!(root_arg.is_err());
+    }
+
+    #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
         let read = Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
         assert!(!read.command.requires_identity());
@@ -1316,6 +1474,25 @@ mod tests {
         let status = Cli::parse_from(["kinic-vfs-cli", "status"]);
         assert!(!status.command.requires_identity());
         assert!(status.command.probes_anonymous_database_read());
+
+        let context_pack_export = Cli::parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "export",
+            "--task",
+            "summary",
+            "--out",
+            "pack",
+            "--expires-at",
+            "2999-01-01T00:00:00Z",
+        ]);
+        assert!(!context_pack_export.command.requires_identity());
+        assert!(context_pack_export.command.probes_anonymous_database_read());
+
+        let context_pack_verify =
+            Cli::parse_from(["kinic-vfs-cli", "context-pack", "verify", "pack"]);
+        assert!(!context_pack_verify.command.requires_identity());
+        assert!(!context_pack_verify.command.probes_anonymous_database_read());
 
         let private_install = Cli::parse_from([
             "kinic-vfs-cli",

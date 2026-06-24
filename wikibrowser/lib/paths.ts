@@ -1,4 +1,5 @@
 import { databaseRouteBase } from "./share-links";
+import type { SearchLimit, SearchPreviewMode, SearchScope } from "./search-options";
 
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
@@ -40,7 +41,14 @@ export function hrefForPath(
   return `${databaseRouteBase(databaseId)}/${suffix}${queryString}`;
 }
 
-export function hrefForSearch(canisterId: string, databaseId: string, searchQuery: string, searchKind: string): string {
+export type SearchHrefOptions = {
+  scope?: SearchScope;
+  prefix?: string;
+  limit?: SearchLimit;
+  preview?: SearchPreviewMode;
+};
+
+export function hrefForSearch(canisterId: string, databaseId: string, searchQuery: string, searchKind: string, options: SearchHrefOptions = {}): string {
   void canisterId;
   const params = new URLSearchParams();
   if (searchQuery) {
@@ -48,6 +56,18 @@ export function hrefForSearch(canisterId: string, databaseId: string, searchQuer
   }
   if (searchKind) {
     params.set("kind", searchKind);
+  }
+  if (options.scope) {
+    params.set("scope", options.scope);
+  }
+  if (options.scope === "custom" && options.prefix) {
+    params.set("prefix", options.prefix);
+  }
+  if (options.limit) {
+    params.set("limit", String(options.limit));
+  }
+  if (options.preview) {
+    params.set("preview", options.preview);
   }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   return `${databaseRouteBase(databaseId)}/search${queryString}`;
@@ -82,6 +102,7 @@ export function hrefForDatabaseSwitch(
     isGraphPage: boolean;
     query: string;
     searchKind: string;
+    searchOptions?: SearchHrefOptions;
     graphDepth: number;
   }
 ): string {
@@ -89,7 +110,7 @@ export function hrefForDatabaseSwitch(
     return hrefForHelp(canisterId, databaseId);
   }
   if (state.isSearchPage) {
-    return hrefForSearch(canisterId, databaseId, state.query, state.searchKind);
+    return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, state.searchOptions);
   }
   if (state.isGraphPage) {
     return hrefForGraph(canisterId, databaseId, "/Wiki", state.graphDepth);

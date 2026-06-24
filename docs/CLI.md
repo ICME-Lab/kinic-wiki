@@ -8,6 +8,7 @@ The canister also exposes read-only Agent Memory API methods such as `memory_man
 Those are direct canister/client methods, not CLI commands in this document.
 Use the CLI commands below for shell workflows against the remote VFS.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
+For portable generated AI context artifacts, use Context Pack commands described in [`Context Pack.md`](Context%20Pack.md).
 
 ## Build
 
@@ -174,6 +175,29 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --allow-non-ii-identity --iden
 
 `--identity-mode anonymous` is valid only for read-only public operations.
 Writes, database grants, archive operations, private Skill Registry writes, and owner commands require `--identity-mode identity` or `auto`.
+
+## Context Pack
+
+`context-pack` exports a local OKF v0.1 markdown bundle from `/Wiki/...` without copying raw source transcripts from `/Sources/raw/...`.
+It is read-only against the selected database.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+  context-pack export \
+  --task "review auth token refresh design" \
+  --namespace /Wiki/projects/acme \
+  --out ./okf \
+  --expires-at 2026-09-22T00:00:00Z \
+  --trust-level team-approved \
+  --approved-by principal:aaaaa-aa
+
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack verify ./okf --fail-on-truncated
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack inspect ./okf --json
+```
+
+`verify` and `inspect` read only the local OKF bundle and do not require `--database-id` or a canister connection.
+`export` is task-scoped and writes `okf.yaml` provenance metadata for machine verification.
+Pass `--overwrite` to `export` when replacing existing markdown files.
 
 ## Database SQL
 

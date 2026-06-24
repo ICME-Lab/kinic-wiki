@@ -1,5 +1,5 @@
 """Where: plugins/runtime/kinic_agent_runtime/session.py
-What: Persist Claude Code session transcripts as Kinic raw source nodes.
+What: Persist agent session transcripts as Kinic raw source nodes.
 Why: Agent conversations should be retained as source evidence without blocking session exit.
 """
 
@@ -23,6 +23,8 @@ from .cli import resolve_cli, run_cli
 
 PROVIDER = "claude-code"
 SOURCE_PROVIDER = "claudecode"
+CODEX_PROVIDER = "codex"
+CODEX_SOURCE_PROVIDER = "codex"
 MAX_SOURCE_CHARS = 300_000
 MAX_TEXT_PART_CHARS = 32_000
 MAX_TOOL_INPUT_CHARS = 8_000
@@ -135,6 +137,15 @@ def parse_hook_input(raw: str) -> HookInput:
     return HookInput(session_id=session_id, transcript_path=transcript_path, cwd=cwd, reason=reason)
 
 
+def parse_codex_hook_input(raw: str) -> HookInput:
+    data = json.loads(raw)
+    session_id = required_text(data, "session_id")
+    transcript_path = Path(required_text(data, "transcript_path"))
+    cwd = text_value(data.get("cwd"))
+    reason = text_value(data.get("hook_event_name")) or text_value(data.get("reason")) or "Stop"
+    return HookInput(session_id=session_id, transcript_path=transcript_path, cwd=cwd, reason=reason)
+
+
 def required_text(data: Any, key: str) -> str:
     if not isinstance(data, dict):
         raise ValueError("hook input must be a JSON object")
@@ -148,9 +159,17 @@ def text_value(value: Any) -> str:
     return value if isinstance(value, str) else ""
 
 
-def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MAX_SOURCE_CHARS) -> SourcePayload:
+def build_source(
+    hook: HookInput,
+    now_ms: int | None = None,
+    max_chars: int = MAX_SOURCE_CHARS,
+    provider: str = PROVIDER,
+    source_provider: str = SOURCE_PROVIDER,
+    transcript_parser: Any | None = None,
+) -> SourcePayload:
     captured_at = rfc3339_now(now_ms)
     context = CaptureContext()
+    parser = parse_transcript if transcript_parser is None else transcript_parser
     (
         entries,
         structured_redacted,
@@ -159,7 +178,7 @@ def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MA
         tool_result_original_chars,
         tool_result_saved_chars,
         tool_result_refs,
-    ) = parse_transcript(hook.transcript_path, context)
+    ) = parser(hook.transcript_path, context)
     transcript = transcript_markdown(entries)
     redacted_transcript, text_redacted = redact(transcript)
     session_id, session_id_redacted = redact(hook.session_id)
@@ -179,7 +198,7 @@ def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MA
     source_id = source_id_for_session(hook.session_id, hook.transcript_path, captured_at)
     budget = context.budget_metadata()
     metadata = {
-        "provider": PROVIDER,
+        "provider": provider,
         "session_id": session_id,
         "cwd": cwd,
         "ended_reason": reason,
@@ -199,9 +218,22 @@ def build_source(hook: HookInput, now_ms: int | None = None, max_chars: int = MA
     }
     content = source_content_with_cap(metadata, redacted_transcript, max_chars)
     return SourcePayload(
-        path=f"/Sources/raw/{SOURCE_PROVIDER}/{source_id}.md",
+        path=f"/Sources/raw/{source_provider}/{source_id}.md",
         content=content,
         metadata=metadata,
+    )
+
+
+def build_codex_source(
+    hook: HookInput, now_ms: int | None = None, max_chars: int = MAX_SOURCE_CHARS
+) -> SourcePayload:
+    return build_source(
+        hook,
+        now_ms=now_ms,
+        max_chars=max_chars,
+        provider=CODEX_PROVIDER,
+        source_provider=CODEX_SOURCE_PROVIDER,
+        transcript_parser=parse_codex_transcript,
     )
 
 
@@ -281,12 +313,13 @@ def stabilize_saved_source_content(metadata: dict[str, Any], transcript: str) ->
 
 
 def render_source_content(metadata: dict[str, Any], transcript: str) -> str:
+    title = "Raw Codex Session" if metadata["provider"] == CODEX_PROVIDER else "Raw Claude Code Session"
     lines = [
-        "# Raw Claude Code Session",
+        f"# {title}",
         "",
         "## Metadata",
         "",
-        f"- provider: {json.dumps(PROVIDER)}",
+        f"- provider: {json.dumps(metadata['provider'])}",
         f"- session_id: {json.dumps(metadata['session_id'])}",
         f"- cwd: {json.dumps(metadata['cwd'])}",
         f"- ended_reason: {json.dumps(metadata['ended_reason'])}",
@@ -346,6 +379,92 @@ def parse_transcript(
         tool_result_saved_chars,
         tool_result_refs,
     )
+
+
+def parse_codex_transcript(
+    path: Path, context: CaptureContext
+) -> tuple[list[tuple[str, str]], bool, int, int, int, int, list[dict[str, Any]]]:
+    entries: list[tuple[str, str]] = []
+    redacted = False
+    truncated_parts = 0
+    omitted_chars = 0
+    tool_result_original_chars = 0
+    tool_result_saved_chars = 0
+    tool_result_refs: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            role, content = codex_role_and_content(data, context)
+            if role and content.text:
+                entries.append((role, content.text))
+                redacted = redacted or content.redacted
+                truncated_parts += content.truncated_parts
+                omitted_chars += content.omitted_chars
+                tool_result_original_chars += content.tool_result_original_chars
+                tool_result_saved_chars += content.tool_result_saved_chars
+                tool_result_refs.extend(content.tool_result_refs)
+    return (
+        entries,
+        redacted,
+        truncated_parts,
+        omitted_chars,
+        tool_result_original_chars,
+        tool_result_saved_chars,
+        tool_result_refs,
+    )
+
+
+def codex_role_and_content(data: Any, context: CaptureContext) -> tuple[str, RenderedText]:
+    if not isinstance(data, dict):
+        return "", RenderedText("")
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
+        return "", RenderedText("")
+    record_type = data.get("type")
+    payload_type = payload.get("type")
+    if record_type == "event_msg":
+        if payload_type == "user_message":
+            return "user", content_text(payload.get("message") or payload.get("text_elements"), context)
+        if payload_type == "agent_message":
+            return "assistant", content_text(payload.get("message"), context)
+    if record_type != "response_item":
+        return "", RenderedText("")
+    if payload_type == "message":
+        role = payload.get("role")
+        if role not in {"user", "assistant", "system"}:
+            role = "assistant"
+        return role, content_text(payload.get("content"), context)
+    if payload_type == "function_call":
+        call_id = text_value(payload.get("call_id")) or text_value(payload.get("id"))
+        part = {
+            "type": "tool_use",
+            "id": call_id,
+            "name": text_value(payload.get("name")) or "tool",
+            "input": codex_function_arguments(payload.get("arguments")),
+        }
+        return "tool_use", content_part_text(part, context)
+    if payload_type == "function_call_output":
+        part = {
+            "type": "tool_result",
+            "tool_use_id": text_value(payload.get("call_id")) or text_value(payload.get("id")),
+            "content": payload.get("output"),
+        }
+        return "tool_result", content_part_text(part, context)
+    return "", RenderedText("")
+
+
+def codex_function_arguments(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return {"arguments": value}
+    return value if value is not None else {}
 
 
 def role_from_entry(data: Any) -> str:
@@ -846,7 +965,7 @@ def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = 
     stem = safe_source_stem(Path(source.path).stem)
     payload = {
         "schema_version": 1,
-        "kind": "claude_code_session_source",
+        "kind": pending_kind_for_source(source),
         "path": source.path,
         "content": source.content,
         "metadata_json": json.dumps(source.metadata, ensure_ascii=False, sort_keys=True),
@@ -864,6 +983,12 @@ def save_pending(pending_dir: Path, source: SourcePayload, now_ms: int | None = 
             handle.write(body)
         return path
     raise FileExistsError(f"pending session path already exists for {millis}-{stem}")
+
+
+def pending_kind_for_source(source: SourcePayload) -> str:
+    if source.metadata.get("provider") == CODEX_PROVIDER:
+        return "codex_session_source"
+    return "claude_code_session_source"
 
 
 def flush_pending(cli: str, pending_dir: Path) -> list[Path]:
@@ -950,6 +1075,16 @@ def write_payload(cli: str, payload: dict[str, Any]) -> None:
 def record_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: int | None = None) -> dict[str, Any]:
     hook = parse_hook_input(raw_input)
     source = build_source(hook, now_ms=now_ms)
+    return record_source(source, cli, pending_dir, now_ms=now_ms)
+
+
+def record_codex_session(raw_input: str, cli: str | None, pending_dir: Path, now_ms: int | None = None) -> dict[str, Any]:
+    hook = parse_codex_hook_input(raw_input)
+    source = build_codex_source(hook, now_ms=now_ms)
+    return record_source(source, cli, pending_dir, now_ms=now_ms)
+
+
+def record_source(source: SourcePayload, cli: str | None, pending_dir: Path, now_ms: int | None = None) -> dict[str, Any]:
     pending_path = save_pending(pending_dir, source, now_ms=now_ms)
     resolved_cli = resolve_cli(cli)
     recorded = False
@@ -1005,6 +1140,13 @@ def default_pending_dir() -> Path:
     return Path.home() / ".claude" / "kinic-skill-recorder" / "pending-sessions"
 
 
+def default_codex_pending_dir() -> Path:
+    explicit = os.environ.get("CODEX_PLUGIN_DATA") or os.environ.get("KINIC_CODEX_PLUGIN_DATA")
+    if explicit:
+        return Path(explicit) / "pending-sessions"
+    return Path.home() / ".codex" / "kinic-skill-recorder" / "pending-sessions"
+
+
 def safe_source_stem(value: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", value).replace("..", "-")
     normalized = re.sub(r"-{2,}", "-", normalized).strip("-._")
@@ -1042,6 +1184,9 @@ def main() -> int:
     record = subcommands.add_parser("record-claude-session")
     record.add_argument("--cli")
     record.add_argument("--pending-dir")
+    record_codex = subcommands.add_parser("record-codex-session")
+    record_codex.add_argument("--cli")
+    record_codex.add_argument("--pending-dir")
     args = parser.parse_args()
     if args.command == "record-claude-session":
         pending_dir = Path(args.pending_dir) if args.pending_dir else default_pending_dir()
@@ -1050,6 +1195,14 @@ def main() -> int:
             print(json.dumps(result, indent=2))
         except Exception as cause:
             print(f"kinic session capture skipped: {cause}", file=sys.stderr)
+        return 0
+    if args.command == "record-codex-session":
+        pending_dir = Path(args.pending_dir) if args.pending_dir else default_codex_pending_dir()
+        try:
+            result = record_codex_session(sys.stdin.read(), args.cli, pending_dir)
+            print(json.dumps(result, indent=2))
+        except Exception as cause:
+            print(f"kinic codex session capture skipped: {cause}", file=sys.stderr)
         return 0
     return 1
 

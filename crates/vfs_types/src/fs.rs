@@ -872,6 +872,9 @@ pub struct SourceEvidenceRef {
     pub via_path: String,
     pub raw_href: String,
     pub link_text: String,
+    pub source_etag: Option<String>,
+    pub source_updated_at: Option<i64>,
+    pub source_content_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]

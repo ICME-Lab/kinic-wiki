@@ -12,6 +12,7 @@ const { splitMarkdownPreviewSections } = await importTs("../lib/markdown-section
 const { renderWikilinksAsMarkdown } = await importTs("../lib/markdown-wikilinks.ts");
 const { graphRequestKey, nodeRequestKey, searchRequestKey } = await importTs("../lib/request-keys.ts");
 const { hrefForMarkdownLink } = await importTs("../lib/paths.ts");
+const { parseSearchOptions, prefixForSearchScope } = await importTs("../lib/search-options.ts");
 const { isRoutableDatabaseId, publicDatabasePath, publicDatabaseUrl, xShareDatabaseHref } = await importTs("../lib/share-links.ts");
 const { canExpandChildNode, inferNoteRole, parseModeTab, readIdentityMode } = await importTs("../lib/wiki-helpers.ts");
 const { classifyQueryInput, queryAnswerSearchTerms } = await importTs("../lib/query-actions.ts");
@@ -131,6 +132,11 @@ assert.match(queryPanelSource, /LLM answer/);
 assert.doesNotMatch(queryPanelSource, /Search by default/);
 assert.match(queryPanelSource, /non-LLM/);
 assert.match(queryPanelSource, /read-only/);
+assert.match(searchPanelSource, /Custom prefix/);
+assert.match(searchPanelSource, /onCustomPrefixCommit/);
+assert.match(searchPanelSource, /searchOptions\.limit/);
+assert.match(searchPanelSource, /searchOptions\.preview/);
+assert.match(vfsClientSource, /preview_mode: searchPreviewModeArg\(previewMode\)/);
 assert.match(queryContextSource, /isAnswerContextNode\(input\.currentNode\)/);
 assert.match(queryContextSource, /queryAnswerSearchTerms\(input\.question\)/);
 assert.match(queryContextSource, /readNodeContext\(input\.canisterId, input\.databaseId, hit\.path, 5/);
@@ -219,6 +225,32 @@ assert.deepEqual(
   rawSourceLinksFor("/Sources/raw/demo/source.md", "# Raw"),
   ["/Sources/raw/demo/source.md"]
 );
+
+assert.deepEqual(parseSearchOptions(new URLSearchParams("")), {
+  scope: "wiki",
+  prefix: "/Wiki",
+  limit: 20,
+  preview: "default"
+});
+assert.deepEqual(parseSearchOptions(new URLSearchParams("scope=sources&limit=50&preview=content-start")), {
+  scope: "sources",
+  prefix: "/Sources",
+  limit: 50,
+  preview: "content-start"
+});
+assert.deepEqual(parseSearchOptions(new URLSearchParams("scope=custom&prefix=Wiki/project&limit=100&preview=none")), {
+  scope: "custom",
+  prefix: "/Wiki/project",
+  limit: 100,
+  preview: "none"
+});
+assert.deepEqual(parseSearchOptions(new URLSearchParams("scope=custom&prefix=&limit=999&preview=semantic")), {
+  scope: "custom",
+  prefix: "/Wiki",
+  limit: 20,
+  preview: "default"
+});
+assert.equal(prefixForSearchScope("root", "/ignored"), "/");
 assert.equal(provenancePathFor("/Wiki/demo/facts.md"), "/Wiki/demo/provenance.md");
 assert.equal(provenancePathFor("/Wiki/demo/provenance.md"), null);
 
@@ -467,8 +499,8 @@ assert.equal(cycleTone(5_000_000_000_000n), "blue");
 assert.equal(cycleTone(1_000_000_000_000n), "amber");
 assert.equal(cycleTone(999_999_999_999n), "red");
 assert.equal(cycleTone(null), "gray");
-assert.match(searchPanelSource, /prefix = "\/Wiki"/);
-assert.match(searchPanelSource, /prefix, readIdentity/);
+assert.match(searchPanelSource, /searchOptions = DEFAULT_SEARCH_OPTIONS/);
+assert.match(searchPanelSource, /searchOptions\.prefix, searchOptions\.preview, readIdentity/);
 
 console.log("UI helper checks OK");
 

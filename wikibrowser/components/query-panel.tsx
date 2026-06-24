@@ -99,7 +99,7 @@ export function QueryPanel({
   async function searchWiki(action: Extract<QueryAction, { kind: "search" }>) {
     setBusy(true);
     try {
-      const hits = await searchNodes(canisterId, databaseId, action.query, 10, action.targetPath, readIdentity ?? undefined);
+      const hits = await searchNodes(canisterId, databaseId, action.query, 10, action.targetPath, "light", readIdentity ?? undefined);
       setResult({ kind: "search", query: action.query, hits });
     } catch (cause) {
       setResult({ kind: "message", tone: "error", text: errorMessage(cause) });

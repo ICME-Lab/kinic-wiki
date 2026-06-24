@@ -241,7 +241,10 @@ mod tests {
         assert!(plugin.join(".codex-plugin/plugin.json").is_file());
         assert!(plugin.join(".kinic-managed-plugin").is_file());
         assert!(plugin.join("scripts/record-run.sh").is_file());
+        assert!(plugin.join("scripts/record-session.sh").is_file());
+        assert!(plugin.join("hooks/hooks.json").is_file());
         assert!(plugin.join("kinic_agent_runtime/evidence.py").is_file());
+        assert!(plugin.join("kinic_agent_runtime/session.py").is_file());
         assert!(!plugin.join(".kinic-source-root").exists());
     }
 

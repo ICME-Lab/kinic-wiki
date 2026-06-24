@@ -237,6 +237,56 @@ class HermesKinicPluginTests(unittest.TestCase):
         self.assertTrue(hook["async"])
         self.assertNotIn("timeout", hook)
 
+    def test_codex_session_hook_uses_stop_without_async(self) -> None:
+        hook_path = PLUGIN_ROOT.parent / "codex/hooks/hooks.json"
+        config = json.loads(hook_path.read_text())
+        hook = config["hooks"]["Stop"][0]["hooks"][0]
+
+        self.assertEqual(hook["type"], "command")
+        self.assertIn("record-session.sh", hook["command"])
+        self.assertEqual(hook["timeout"], 10)
+        self.assertNotIn("async", hook)
+
+    def test_codex_record_session_script_passes_resolved_cli(self) -> None:
+        script = PLUGIN_ROOT.parent / "codex/scripts/record-session.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            package = runtime / "kinic_agent_runtime"
+            package.mkdir(parents=True)
+            (package / "__init__.py").write_text("")
+            (package / "session.py").write_text(
+                "import json, os, sys\n"
+                "with open(os.environ['KINIC_CAPTURE_ARGS'], 'w') as handle:\n"
+                "    json.dump(sys.argv, handle)\n"
+            )
+            fake_cli = root / "kinic-vfs-cli"
+            fake_cli.write_text("#!/usr/bin/env bash\nexit 0\n")
+            fake_cli.chmod(0o755)
+            capture = root / "argv.json"
+            env = {
+                **os.environ,
+                "KINIC_AGENT_RUNTIME_ROOT": str(runtime),
+                "KINIC_VFS_CLI": str(fake_cli),
+                "KINIC_CAPTURE_ARGS": str(capture),
+                "PATH": "/usr/bin:/bin",
+            }
+
+            result = subprocess.run(
+                ["/bin/bash", str(script)],
+                input=json.dumps({"session_id": "s", "transcript_path": "/tmp/t.jsonl"}),
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            argv = json.loads(capture.read_text())
+            self.assertIn("record-codex-session", argv)
+            self.assertIn("--cli", argv)
+            self.assertEqual(argv[argv.index("--cli") + 1], str(fake_cli))
+
     def test_allow_non_ii_env_adds_cli_flag(self) -> None:
         from kinic_hermes import client as client_module
         from kinic_agent_runtime import cli as runtime_cli

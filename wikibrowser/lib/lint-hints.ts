@@ -11,6 +11,7 @@ export type LintHint = {
 const futurePattern = /\b(deadline|meeting|check-?in|pending|tomorrow|next\s+\w+|will|plan to|scheduled)\b/i;
 const exactValuePattern = /(\b\d{4}-\d{2}-\d{2}\b|\b[A-Z]{2,}-?\d{4,}\b|\$\d|¥\d|\b\d{1,2}:\d{2}\b)/;
 const filePathPattern = /(`[^`]+\.[a-z0-9]+`|\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/;
+const sourcePathPattern = /\/Sources\/raw\/[^\s)`'"]+/;
 
 export function collectLintHints(path: string, content: string): LintHint[] {
   const role = path.split("/").at(-1) ?? "";
@@ -20,6 +21,21 @@ export function collectLintHints(path: string, content: string): LintHint[] {
   }
   if (role === "summary.md") {
     hints.push(...findLineHints(content, exactValuePattern, "Possible exact evidence leak", "summary.md should recap; exact dates, money, receipts, or IDs belong in canonical notes or raw sources."));
+  }
+  if (role === "open_questions.md") {
+    hints.push(...findLineHints(content, /\b(done|resolved|decided|completed)\b/i, "Possible resolved item", "open_questions.md should hold unresolved questions and verification gaps, not completed decisions."));
+  }
+  if (role === "preferences.md") {
+    hints.push(...findLineHints(content, /\b(todo|next action|deadline|scheduled)\b/i, "Possible action item", "preferences.md should hold decision criteria and choices; pending work belongs in plans.md."));
+  }
+  if (role === "provenance.md" && !sourcePathPattern.test(content)) {
+    hints.push({
+      severity: "warning",
+      title: "Missing raw source path",
+      detail: "provenance.md should link organized wiki content back to /Sources/raw evidence.",
+      line: null,
+      preview: null
+    });
   }
   hints.push(...findCodeNoteHints(path, content));
   return hints;

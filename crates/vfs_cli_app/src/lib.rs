@@ -11,6 +11,7 @@ pub mod commands;
 mod commands_fs_tests;
 #[cfg(test)]
 mod commands_maintenance_tests;
+pub mod context_pack;
 pub mod conversation_wiki;
 pub mod github_ingest;
 pub mod github_source;

@@ -307,7 +307,10 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const SourceEvidenceRef = idl.Record({
     link_text: idl.Text,
     via_path: idl.Text,
+    source_content_hash: idl.Opt(idl.Text),
     source_path: idl.Text,
+    source_updated_at: idl.Opt(idl.Int64),
+    source_etag: idl.Opt(idl.Text),
     raw_href: idl.Text
   });
   const SourceEvidence = idl.Record({ node_path: idl.Text, refs: idl.Vec(SourceEvidenceRef) });

@@ -630,7 +630,10 @@ export const expectedTypes = {
     fields: {
       link_text: "text",
       via_path: "text",
+      source_content_hash: "opt text",
       source_path: "text",
+      source_updated_at: "opt int64",
+      source_etag: "opt text",
       raw_href: "text"
     }
   },

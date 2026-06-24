@@ -1,0 +1,17 @@
+{
+  "description": "Persist completed Codex turns to Kinic raw sources.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${KINIC_CODEX_PLUGIN_ROOT:-$HOME/.codex/plugins/kinic-skill-recorder}/scripts/record-session.sh\"",
+            "timeout": 10,
+            "statusMessage": "Saving Codex turn to Kinic"
+          }
+        ]
+      }
+    ]
+  }
+}

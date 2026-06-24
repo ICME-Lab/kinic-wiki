@@ -4,7 +4,7 @@ MV3 Chrome extension for creating Kinic Wiki pages from the active tab and savin
 
 See [USAGE.md](./USAGE.md) for local canister setup and Chrome loading steps.
 
-ChatGPT/Claude raw-source export and URL ingest use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude raw-source export and active-tab raw-source capture use Internet Identity and require writer access for the selected database.
 
 ## Build
 
@@ -35,7 +35,7 @@ npm run release:package
 ```
 
 The package is written to `extensions/wiki-clipper/release/`. Public listing copy, permission reasons, review notes, generated store assets, and the privacy policy draft live in `store-listing/`. `release:check` verifies package inputs. `release:listing-check` also verifies required store image files and dimensions.
-Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude export, active-tab URL ingest, Internet Identity auth, and selected database storage behavior.
+Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL only after the public page covers Wiki Clipper's ChatGPT/Claude export, active-tab capture, Internet Identity auth, and selected database storage behavior.
 
 ## Flow
 
@@ -45,15 +45,15 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 4. Enter the number of recent chats to export. The default is `10`.
 5. Export to `/Sources/raw/<provider>/<source_id>.md`.
 
-## Active Tab URL Ingest
+## Active Tab Capture
 
-Clicking the extension toolbar icon queues the active `http` / `https` tab URL as a wiki ingest request. If settings or Internet Identity login are missing, the extension opens the settings page.
+Clicking the extension toolbar icon captures the active `http` / `https` tab DOM as a raw source, then queues generation from that source. If settings or Internet Identity login are missing, the extension opens the settings page.
 
 Required settings:
 
 - `Database`: loaded from writable active databases for the logged-in Internet Identity principal. If none exists, create one explicitly from settings.
 
-The active-tab flow writes `/Sources/ingest-requests/<request-id>.md` as a VFS `file`, then asks WikiBrowser to trigger the generator Worker with its server-side token.
+The active-tab flow writes `/Sources/raw/web/<source_id>.md` as a VFS `source`, then asks WikiBrowser to trigger generation for that source with its server-side token.
 
 ChatGPT/Claude export only writes raw evidence. Generate wiki pages later:
 
@@ -70,7 +70,7 @@ The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edite
 - Database ID is selected and saved automatically from writable active databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
 - Mainnet hosts require explicit confirmation before export.
-- ChatGPT/Claude raw-source export and URL ingest writes use the logged-in Internet Identity principal and require writer access for that principal.
-- URL ingest needs WikiBrowser `KINIC_WIKI_WORKER_TOKEN` configured to trigger processing.
+- ChatGPT/Claude raw-source export and active-tab capture writes use the logged-in Internet Identity principal and require writer access for that principal.
+- Active-tab generation needs WikiBrowser `KINIC_WIKI_WORKER_TOKEN` configured to trigger processing.
 - ChatGPT export uses private `/backend-api/*` endpoints. Claude export uses private `claude.ai/api/.../chat_conversations/*` endpoints. Endpoint shape can change without notice.
 - Public release requires owner, allowlist, token, delegation, or equivalent write authorization on the canister.

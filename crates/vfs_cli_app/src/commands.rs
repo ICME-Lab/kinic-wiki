@@ -2,8 +2,12 @@
 // What: Command handlers for FS-first remote reads and writes.
 // Why: The CLI should keep canister operations explicit and path-oriented.
 use crate::claude::run_claude_command;
-use crate::cli::{Cli, Command, IdentityCommand};
+use crate::cli::{Cli, Command, ContextPackCommand, IdentityCommand};
 use crate::codex::run_codex_command;
+use crate::context_pack::{
+    ContextPackExportOptions, ContextPackInspectOptions, ContextPackVerifyOptions,
+    run_context_pack_export, run_context_pack_inspect, run_context_pack_verify,
+};
 use crate::conversation_wiki::generate_conversation_wiki;
 use crate::github_ingest::run_github_command;
 use crate::hermes::run_hermes_command;
@@ -52,6 +56,41 @@ pub async fn run_command(
         Command::Github { command } => {
             run_github_command(client, require_database_id(database_id)?, command).await?;
         }
+        Command::ContextPack { command } => match command {
+            ContextPackCommand::Export(args) => {
+                run_context_pack_export(
+                    client,
+                    require_database_id(database_id)?,
+                    ContextPackExportOptions {
+                        task: args.task,
+                        namespace: args.namespace,
+                        budget_tokens: args.budget_tokens,
+                        depth: args.depth,
+                        entities: args.entities,
+                        out: args.out,
+                        expires_at: args.expires_at,
+                        trust_level: args.trust_level,
+                        approved_by: args.approved_by,
+                        overwrite: args.overwrite,
+                        json: args.json,
+                    },
+                )
+                .await?;
+            }
+            ContextPackCommand::Verify(args) => {
+                run_context_pack_verify(ContextPackVerifyOptions {
+                    path: args.path,
+                    fail_on_truncated: args.fail_on_truncated,
+                    json: args.json,
+                })?;
+            }
+            ContextPackCommand::Inspect(args) => {
+                run_context_pack_inspect(ContextPackInspectOptions {
+                    path: args.path,
+                    json: args.json,
+                })?;
+            }
+        },
         Command::Hermes { command } => {
             run_hermes_command(client, database_id, command).await?;
         }

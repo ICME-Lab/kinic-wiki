@@ -14,7 +14,7 @@ use vfs_types::{
 
 use vfs_cli::agent_tools::{
     create_anthropic_tools, create_openai_read_only_tools, create_openai_tools,
-    handle_anthropic_tool_call, handle_openai_tool_call,
+    handle_anthropic_tool_call, handle_openai_read_only_tool_call, handle_openai_tool_call,
 };
 #[derive(Default)]
 struct ToolMockClient {
@@ -413,6 +413,20 @@ fn read_only_tool_schemas_exclude_skill_record_run() {
     assert!(names.contains(&"skill_find".to_string()));
     assert!(names.contains(&"skill_read".to_string()));
     assert!(!names.contains(&"skill_record_run".to_string()));
+}
+
+#[tokio::test]
+async fn read_only_dispatch_rejects_write_tools() {
+    let client = ToolMockClient::default();
+    let result = handle_openai_read_only_tool_call(
+        &client,
+        "write",
+        r#"{"database_id":"default","path":"/Wiki/a.md","content":"body"}"#,
+    )
+    .await
+    .expect("read-only dispatch should return a tool result");
+    assert!(result.is_error);
+    assert!(result.text.contains("read-only tool set rejects"));
 }
 
 #[test]
