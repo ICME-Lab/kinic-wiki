@@ -1488,6 +1488,37 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
     assert_eq!(source.kind, NodeKind::Source);
     assert_eq!(source.metadata_json, r#"{"source_type":"url"}"#);
 
+    for path in [
+        "/Memory",
+        "/Sessions",
+        "/Wiki",
+        "/Wiki/foo",
+        "/Sources",
+        "/Sources/web",
+        "/Sources/sessions",
+        "/Sources/skill-runs",
+    ] {
+        let node = store
+            .read_node(path)
+            .expect("store root should read after migration")
+            .expect("store root should exist after migration");
+        assert_eq!(node.kind, NodeKind::Folder);
+    }
+
+    let root_children = store
+        .list_children(ListChildrenRequest {
+            database_id: "default".to_string(),
+            path: "/".to_string(),
+        })
+        .expect("store roots should list after migration");
+    assert_eq!(
+        root_children
+            .iter()
+            .map(|child| child.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/Memory", "/Sessions", "/Sources", "/Wiki"]
+    );
+
     let children = store
         .list_children(ListChildrenRequest {
             database_id: "default".to_string(),

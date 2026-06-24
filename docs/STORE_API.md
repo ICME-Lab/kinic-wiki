@@ -68,7 +68,7 @@ These methods are canister query methods. They do not mutate wiki content.
 - `enabled_stores`: `memory`, `knowledge`, `skill`, and `session`
 - `roots`: memory role pages, knowledge notes and evidence, skill packages and run evidence, session state and session evidence
 - `entry_roots`: primary roots for the enabled stores
-- `write_policy`: `store_recall_read_only`
+- `write_policy`: `stores_read_only`
 - `recommended_entrypoint`: `memory_recall`
 - `max_depth`: `2`
 - `max_query_limit`: `100`

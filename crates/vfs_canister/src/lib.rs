@@ -378,7 +378,7 @@ fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String
         ],
         capabilities: store_capabilities(),
         canonical_roles: canonical_roles(),
-        write_policy: "store_recall_read_only".to_string(),
+        write_policy: "stores_read_only".to_string(),
         recommended_entrypoint: "memory_recall".to_string(),
         max_depth: 2,
         max_query_limit: 100,

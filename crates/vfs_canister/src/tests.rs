@@ -2892,9 +2892,30 @@ fn store_entrypoints_return_four_store_contract() {
     })
     .expect("store manifest should load default database");
     assert_eq!(manifest.api_version, "kinic-stores-v1");
-    assert_eq!(manifest.write_policy, "store_recall_read_only");
+    assert_eq!(manifest.write_policy, "stores_read_only");
     assert_eq!(manifest.recommended_entrypoint, "memory_recall");
+    assert!(is_canister_method_entrypoint(
+        &manifest.recommended_entrypoint
+    ));
+    assert!(!is_canister_method_entrypoint("skill inspect"));
     assert_eq!(manifest.max_depth, 2);
+    assert_eq!(
+        manifest.enabled_stores,
+        vec!["memory", "knowledge", "skill", "session"]
+    );
+    assert_eq!(
+        manifest
+            .entry_roots
+            .iter()
+            .map(|root| (root.path.as_str(), root.kind.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            ("/Memory", "memory"),
+            ("/Wiki", "knowledge"),
+            ("/Wiki/skills", "skill"),
+            ("/Sessions", "session"),
+        ]
+    );
     assert!(manifest.purpose.contains("knowledge"));
     assert!(manifest.roots.iter().any(|root| root.path == "/Wiki"));
     assert!(
@@ -3005,6 +3026,22 @@ fn store_entrypoints_return_four_store_contract() {
         .expect("source evidence ref should exist");
     assert!(source_ref.source_etag.is_some());
     assert!(source_ref.source_updated_at.is_some());
+}
+
+fn is_canister_method_entrypoint(value: &str) -> bool {
+    fn method_chars(value: &str) -> bool {
+        !value.is_empty()
+            && value
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    }
+
+    let mut parts = value.splitn(2, ':');
+    let method = parts.next().unwrap_or_default();
+    if !method_chars(method) {
+        return false;
+    }
+    parts.next().is_none_or(|path| path.starts_with('/'))
 }
 
 #[test]
