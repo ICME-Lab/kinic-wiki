@@ -2,6 +2,7 @@
 
 Store/Recall MCP defines the read-only Kinic Wiki interface exposed through the Model Context Protocol.
 The v0 implementation is a local stdio MCP server exposed through `kinic-vfs-cli mcp serve`.
+For setup and MCP client configuration, see [`mcp.md`](mcp.md).
 
 ## Product Concept
 

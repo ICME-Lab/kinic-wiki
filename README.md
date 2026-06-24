@@ -113,6 +113,7 @@ Agents should discover relevant skills, inspect the package, use the instruction
 - CLI: scripted database operations and skill store workflows
 - Chrome extension: ChatGPT export and active-tab URL ingest
 - Store API: direct read-only canister queries such as `store_manifest`, `memory_recall`, and `knowledge_evidence`
+- Store/Recall MCP: local stdio MCP access to read-only Store API tools
 - Agent Tool Calling: embedded OpenAI-compatible and Anthropic-compatible tool schemas
 
 The Chrome extension connects browser work to Kinic Wiki. It can save recent ChatGPT conversations as session audit sources and queue active web pages for URL ingest. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.
@@ -123,6 +124,7 @@ Developer and operator guides:
 - OKF Context Pack export and verification: [docs/Context Pack.md](docs/Context%20Pack.md)
 - Skill Registry workflows: [docs/SKILL_REGISTRY.md](docs/SKILL_REGISTRY.md)
 - Canister Store API: [docs/STORE_API.md](docs/STORE_API.md)
+- Store/Recall MCP: [docs/mcp.md](docs/mcp.md)
 - Shared Rust library tool calling: [docs/AGENT_TOOL_CALLING.md](docs/AGENT_TOOL_CALLING.md)
 - VFS validation and benchmarks: [docs/validation/VFS_VALIDATION_PLAN.md](docs/validation/VFS_VALIDATION_PLAN.md)
 - Public CLI guide: https://wiki.kinic.xyz/cli
