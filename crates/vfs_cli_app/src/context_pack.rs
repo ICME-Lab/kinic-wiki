@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use vfs_client::VfsApi;
-use vfs_types::{Node, NodeKind, QueryContext, QueryContextRequest, SourceEvidenceRef};
+use vfs_types::{KnowledgeEvidenceRef, MemoryRecall, MemoryRecallRequest, Node, NodeKind};
 use wiki_domain::{RAW_SOURCES_PREFIX, WIKI_ROOT_PATH};
 
 const OKF_VERSION: &str = "0.1";
@@ -297,7 +297,7 @@ async fn export_okf_bundle(
 
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let context = client
-        .query_context(QueryContextRequest {
+        .memory_recall(MemoryRecallRequest {
             database_id: database_id.to_string(),
             task: options.task.clone(),
             entities: options.entities.clone(),
@@ -585,7 +585,7 @@ pub fn inspect_okf_bundle_dir(path: &Path) -> Result<OkfInspectResult> {
     })
 }
 
-fn collect_context_nodes(context: &QueryContext) -> Vec<BucketedNode> {
+fn collect_context_nodes(context: &MemoryRecall) -> Vec<BucketedNode> {
     context
         .nodes
         .iter()
@@ -597,7 +597,7 @@ fn collect_context_nodes(context: &QueryContext) -> Vec<BucketedNode> {
         .collect()
 }
 
-fn collect_context_references(context: &QueryContext) -> Vec<OkfReference> {
+fn collect_context_references(context: &MemoryRecall) -> Vec<OkfReference> {
     let mut references = BTreeMap::<String, OkfReference>::new();
     for evidence in &context.evidence {
         for item in &evidence.refs {
@@ -612,7 +612,7 @@ fn collect_context_references(context: &QueryContext) -> Vec<OkfReference> {
     references.into_values().collect()
 }
 
-fn okf_reference_from_evidence(item: &SourceEvidenceRef) -> OkfReference {
+fn okf_reference_from_evidence(item: &KnowledgeEvidenceRef) -> OkfReference {
     OkfReference {
         source_path: item.source_path.clone(),
         via_path: item.via_path.clone(),
@@ -1267,14 +1267,14 @@ mod tests {
     use vfs_types::{
         AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
         ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-        GlobNodeHit, GlobNodesRequest, ListChildrenRequest, MoveNodeRequest, MoveNodeResult,
-        MultiEditNodeRequest, MultiEditNodeResult, NodeContext, QueryContext, SearchNodeHit,
-        SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRef,
-        WriteNodeRequest, WriteNodeResult,
+        GlobNodeHit, GlobNodesRequest, KnowledgeEvidence, KnowledgeEvidenceRef,
+        ListChildrenRequest, MemoryRecall, MemoryRecallRequest, MoveNodeRequest, MoveNodeResult,
+        MultiEditNodeRequest, MultiEditNodeResult, NodeContext, SearchNodeHit,
+        SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest, WriteNodeResult,
     };
 
     struct MockClient {
-        context: QueryContext,
+        context: MemoryRecall,
         read_node_calls: AtomicUsize,
         list_nodes_calls: AtomicUsize,
     }
@@ -1282,7 +1282,7 @@ mod tests {
     impl Default for MockClient {
         fn default() -> Self {
             Self {
-                context: QueryContext {
+                context: MemoryRecall {
                     namespace: WIKI_ROOT_PATH.to_string(),
                     task: String::new(),
                     search_hits: Vec::new(),
@@ -1365,9 +1365,9 @@ mod tests {
             unreachable!()
         }
 
-        async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
+        async fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall> {
             assert!(request.include_evidence);
-            Ok(QueryContext {
+            Ok(MemoryRecall {
                 namespace: request
                     .namespace
                     .unwrap_or_else(|| WIKI_ROOT_PATH.to_string()),
@@ -1422,10 +1422,10 @@ mod tests {
         node_path: &str,
         source_path: &str,
         source_content_hash: &str,
-    ) -> SourceEvidence {
-        SourceEvidence {
+    ) -> KnowledgeEvidence {
+        KnowledgeEvidence {
             node_path: node_path.to_string(),
-            refs: vec![SourceEvidenceRef {
+            refs: vec![KnowledgeEvidenceRef {
                 source_path: source_path.to_string(),
                 via_path: node_path.to_string(),
                 raw_href: source_path.to_string(),
@@ -2066,7 +2066,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn export_allows_empty_query_context() {
+    async fn export_allows_empty_memory_recall() {
         let out = tempdir().expect("tempdir");
         let client = MockClient::default();
 
