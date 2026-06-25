@@ -49,49 +49,27 @@ CREATE TABLE database_mount_history (
   PRIMARY KEY (mount_id)
 );
 
-CREATE TABLE url_ingest_trigger_sessions (
+CREATE TABLE capability_sessions (
   database_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
   session_nonce TEXT NOT NULL,
   principal TEXT NOT NULL,
+  source_path TEXT,
+  source_etag TEXT,
   expires_at_ms INTEGER NOT NULL,
   created_at_ms INTEGER NOT NULL,
   refreshed_at_ms INTEGER NOT NULL,
-  PRIMARY KEY (database_id, session_nonce),
-  FOREIGN KEY (database_id) REFERENCES databases(database_id)
+  PRIMARY KEY (database_id, kind, session_nonce),
+  FOREIGN KEY (database_id) REFERENCES databases(database_id),
+  CHECK (kind IN ('url_ingest_trigger', 'ops_answer', 'source_run')),
+  CHECK (
+    (kind = 'source_run' AND source_path IS NOT NULL AND source_etag IS NOT NULL)
+    OR (kind <> 'source_run' AND source_path IS NULL AND source_etag IS NULL)
+  )
 );
 
-CREATE INDEX url_ingest_trigger_sessions_expiry_idx
-  ON url_ingest_trigger_sessions(expires_at_ms);
-
-CREATE TABLE ops_answer_sessions (
-  database_id TEXT NOT NULL,
-  session_nonce TEXT NOT NULL,
-  principal TEXT NOT NULL,
-  expires_at_ms INTEGER NOT NULL,
-  created_at_ms INTEGER NOT NULL,
-  refreshed_at_ms INTEGER NOT NULL,
-  PRIMARY KEY (database_id, session_nonce),
-  FOREIGN KEY (database_id) REFERENCES databases(database_id)
-);
-
-CREATE INDEX ops_answer_sessions_expiry_idx
-  ON ops_answer_sessions(expires_at_ms);
-
-CREATE TABLE source_run_sessions (
-  database_id TEXT NOT NULL,
-  source_path TEXT NOT NULL,
-  source_etag TEXT NOT NULL,
-  session_nonce TEXT NOT NULL,
-  principal TEXT NOT NULL,
-  expires_at_ms INTEGER NOT NULL,
-  created_at_ms INTEGER NOT NULL,
-  refreshed_at_ms INTEGER NOT NULL,
-  PRIMARY KEY (database_id, session_nonce),
-  FOREIGN KEY (database_id) REFERENCES databases(database_id)
-);
-
-CREATE INDEX source_run_sessions_expiry_idx
-  ON source_run_sessions(expires_at_ms);
+CREATE INDEX capability_sessions_expiry_idx
+  ON capability_sessions(expires_at_ms);
 
 CREATE TABLE database_restore_sessions (
   database_id TEXT PRIMARY KEY,

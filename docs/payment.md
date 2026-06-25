@@ -253,9 +253,7 @@ ledger transfer 成功後に pending DB activation や cycles apply が失敗し
 - `database_members`
 - `database_restore_chunks`
 - `database_restore_sessions`
-- `url_ingest_trigger_sessions`
-- `ops_answer_sessions`
-- `source_run_sessions`
+- `capability_sessions`
 - `databases`
 
 残った cycles balance は返金されず破棄される。

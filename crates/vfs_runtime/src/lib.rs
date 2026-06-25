@@ -110,6 +110,9 @@ pub const MAX_DATABASE_SIZE_BYTES: u64 = i64::MAX as u64;
 const URL_INGEST_TRIGGER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const OPS_ANSWER_SESSION_TTL_MS: i64 = 30 * 60 * 1000;
 const SOURCE_RUN_SESSION_TTL_MS: i64 = URL_INGEST_TRIGGER_SESSION_TTL_MS;
+const CAPABILITY_SESSION_KIND_URL_INGEST_TRIGGER: &str = "url_ingest_trigger";
+const CAPABILITY_SESSION_KIND_OPS_ANSWER: &str = "ops_answer";
+const CAPABILITY_SESSION_KIND_SOURCE_RUN: &str = "source_run";
 const MAX_PENDING_DATABASES_PER_CALLER: i64 = 3;
 const PENDING_DATABASE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 const MAX_DATABASE_MEMBERS_PER_DATABASE: i64 = 32;
@@ -238,7 +241,7 @@ pub struct VfsService {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndexPostMigrationAction {
     None,
-    SeedDatabaseProfileRootsThenInitialFreeGrants,
+    SeedDatabaseProfileRootsThenLatest,
 }
 
 impl VfsService {
@@ -311,7 +314,7 @@ impl VfsService {
     ) -> Result<(), String> {
         match action {
             IndexPostMigrationAction::None => Ok(()),
-            IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants => {
+            IndexPostMigrationAction::SeedDatabaseProfileRootsThenLatest => {
                 self.seed_active_database_profile_roots()?;
                 self.write_index(|tx| {
                     apply_initial_free_database_grants_migration(tx)?;
@@ -2911,18 +2914,21 @@ impl VfsService {
         )
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         self.write_index(|conn| {
-            purge_expired_url_ingest_trigger_sessions(conn, now)?;
+            purge_expired_capability_sessions(conn, now)?;
             conn.execute(
-                "INSERT INTO url_ingest_trigger_sessions
-             (database_id, session_nonce, principal, expires_at_ms, created_at_ms,
-              refreshed_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-             ON CONFLICT(database_id, session_nonce) DO UPDATE SET
+                "INSERT INTO capability_sessions
+             (database_id, kind, session_nonce, principal, source_path, source_etag,
+              expires_at_ms, created_at_ms, refreshed_at_ms)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?6)
+             ON CONFLICT(database_id, kind, session_nonce) DO UPDATE SET
                principal = excluded.principal,
+               source_path = excluded.source_path,
+               source_etag = excluded.source_etag,
                expires_at_ms = excluded.expires_at_ms,
                refreshed_at_ms = excluded.refreshed_at_ms",
                 params![
                     request.database_id,
+                    CAPABILITY_SESSION_KIND_URL_INGEST_TRIGGER,
                     request.session_nonce,
                     caller,
                     now + URL_INGEST_TRIGGER_SESSION_TTL_MS,
@@ -2948,11 +2954,17 @@ impl VfsService {
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         let principal: String = self.read_index(|conn| {
             conn.query_row(
-                "SELECT principal FROM url_ingest_trigger_sessions
+                "SELECT principal FROM capability_sessions
                  WHERE database_id = ?1
-                   AND session_nonce = ?2
-                   AND expires_at_ms >= ?3",
-                params![request.database_id, request.session_nonce, now],
+                   AND kind = ?2
+                   AND session_nonce = ?3
+                   AND expires_at_ms >= ?4",
+                params![
+                    request.database_id,
+                    CAPABILITY_SESSION_KIND_URL_INGEST_TRIGGER,
+                    request.session_nonce,
+                    now
+                ],
                 |row| crate::sqlite::row_get(row, 0),
             )
             .optional()
@@ -2978,18 +2990,21 @@ impl VfsService {
         }
         self.require_role(&request.database_id, caller, RequiredRole::Reader)?;
         self.write_index(|conn| {
-            purge_expired_ops_answer_sessions(conn, now)?;
+            purge_expired_capability_sessions(conn, now)?;
             conn.execute(
-                "INSERT INTO ops_answer_sessions
-             (database_id, session_nonce, principal, expires_at_ms, created_at_ms,
-              refreshed_at_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-             ON CONFLICT(database_id, session_nonce) DO UPDATE SET
+                "INSERT INTO capability_sessions
+             (database_id, kind, session_nonce, principal, source_path, source_etag,
+              expires_at_ms, created_at_ms, refreshed_at_ms)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5, ?6, ?6)
+             ON CONFLICT(database_id, kind, session_nonce) DO UPDATE SET
                principal = excluded.principal,
+               source_path = excluded.source_path,
+               source_etag = excluded.source_etag,
                expires_at_ms = excluded.expires_at_ms,
                refreshed_at_ms = excluded.refreshed_at_ms",
                 params![
                     request.database_id,
+                    CAPABILITY_SESSION_KIND_OPS_ANSWER,
                     request.session_nonce,
                     caller,
                     now + OPS_ANSWER_SESSION_TTL_MS,
@@ -3009,11 +3024,17 @@ impl VfsService {
         validate_ops_answer_session_check_request(&request)?;
         let principal: String = self.read_index(|conn| {
             conn.query_row(
-                "SELECT principal FROM ops_answer_sessions
+                "SELECT principal FROM capability_sessions
                  WHERE database_id = ?1
-                   AND session_nonce = ?2
-                   AND expires_at_ms >= ?3",
-                params![request.database_id, request.session_nonce, now],
+                   AND kind = ?2
+                   AND session_nonce = ?3
+                   AND expires_at_ms >= ?4",
+                params![
+                    request.database_id,
+                    CAPABILITY_SESSION_KIND_OPS_ANSWER,
+                    request.session_nonce,
+                    now
+                ],
                 |row| crate::sqlite::row_get(row, 0),
             )
             .optional()
@@ -3039,14 +3060,16 @@ impl VfsService {
         .map_err(|error| format!("LLM writer principal lacks writer access: {error}"))?;
         let principal: String = self.read_index(|conn| {
             conn.query_row(
-                "SELECT principal FROM source_run_sessions
+                "SELECT principal FROM capability_sessions
                  WHERE database_id = ?1
-                   AND source_path = ?2
-                   AND source_etag = ?3
-                   AND session_nonce = ?4
-                   AND expires_at_ms >= ?5",
+                   AND kind = ?2
+                   AND source_path = ?3
+                   AND source_etag = ?4
+                   AND session_nonce = ?5
+                   AND expires_at_ms >= ?6",
                 params![
                     request.database_id,
+                    CAPABILITY_SESSION_KIND_SOURCE_RUN,
                     request.source_path,
                     request.source_etag,
                     request.session_nonce,
@@ -3757,13 +3780,13 @@ impl VfsService {
         now: i64,
     ) -> Result<(), String> {
         self.write_index(|conn| {
-            purge_expired_source_run_sessions(conn, now)?;
+            purge_expired_capability_sessions(conn, now)?;
             conn.execute(
-                "INSERT INTO source_run_sessions
-                 (database_id, source_path, source_etag, session_nonce, principal,
+                "INSERT INTO capability_sessions
+                 (database_id, kind, session_nonce, principal, source_path, source_etag,
                   expires_at_ms, created_at_ms, refreshed_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
-                 ON CONFLICT(database_id, session_nonce) DO UPDATE SET
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                 ON CONFLICT(database_id, kind, session_nonce) DO UPDATE SET
                    source_path = excluded.source_path,
                    source_etag = excluded.source_etag,
                    principal = excluded.principal,
@@ -3771,10 +3794,11 @@ impl VfsService {
                    refreshed_at_ms = excluded.refreshed_at_ms",
                 params![
                     database_id,
-                    source_path,
-                    source_etag,
+                    CAPABILITY_SESSION_KIND_SOURCE_RUN,
                     session_nonce,
                     principal,
+                    source_path,
+                    source_etag,
                     now + SOURCE_RUN_SESSION_TTL_MS,
                     now
                 ],
@@ -3942,23 +3966,23 @@ fn ensure_existing_index_schema_is_latest(
             validate_cycles_billing_config(config)?;
             validate_pre_billing_index_schema(conn)?;
             apply_mainnet_011_to_latest_index_migration(conn, config)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenLatest)
         }
         IndexSchemaState::Mainnet026 => {
             apply_mainnet_026_to_latest_index_migration(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenLatest)
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
             apply_database_profile_migration(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenLatest)
         }
         IndexSchemaState::Mainnet032 => {
             apply_database_profile_migration(conn)?;
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenLatest)
         }
         IndexSchemaState::Mainnet033 => {
-            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenInitialFreeGrants)
+            Ok(IndexPostMigrationAction::SeedDatabaseProfileRootsThenLatest)
         }
         IndexSchemaState::Mainnet034 => {
             apply_initial_free_database_grants_migration(conn)?;
@@ -4000,6 +4024,12 @@ fn classify_existing_index_schema_state(
             ));
         }
         return Ok(IndexSchemaState::Latest);
+    }
+    if tx_sqlite_master_entry_exists(conn, "table", "capability_sessions")? {
+        return Err(
+            "unsupported partial index schema: table capability_sessions already exists"
+                .to_string(),
+        );
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE_ROOTS)? {
         return Ok(IndexSchemaState::Mainnet034);
@@ -4103,14 +4133,39 @@ fn apply_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String
 }
 
 fn apply_initial_free_database_grants_migration(conn: &Transaction<'_>) -> Result<(), String> {
-    conn.execute(
+    conn.execute_batch(
         "CREATE TABLE database_free_cycle_grants (
            principal TEXT PRIMARY KEY,
            database_id TEXT NOT NULL,
            grant_cycles INTEGER NOT NULL,
            created_at_ms INTEGER NOT NULL
-         )",
-        params![],
+         );
+         DROP INDEX url_ingest_trigger_sessions_expiry_idx;
+         DROP INDEX ops_answer_sessions_expiry_idx;
+         DROP INDEX source_run_sessions_expiry_idx;
+         DROP TABLE url_ingest_trigger_sessions;
+         DROP TABLE ops_answer_sessions;
+         DROP TABLE source_run_sessions;
+         CREATE TABLE capability_sessions (
+           database_id TEXT NOT NULL,
+           kind TEXT NOT NULL,
+           session_nonce TEXT NOT NULL,
+           principal TEXT NOT NULL,
+           source_path TEXT,
+           source_etag TEXT,
+           expires_at_ms INTEGER NOT NULL,
+           created_at_ms INTEGER NOT NULL,
+           refreshed_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (database_id, kind, session_nonce),
+           FOREIGN KEY (database_id) REFERENCES databases(database_id),
+           CHECK (kind IN ('url_ingest_trigger', 'ops_answer', 'source_run')),
+           CHECK (
+             (kind = 'source_run' AND source_path IS NOT NULL AND source_etag IS NOT NULL)
+             OR (kind <> 'source_run' AND source_path IS NULL AND source_etag IS NULL)
+           )
+         );
+         CREATE INDEX capability_sessions_expiry_idx
+           ON capability_sessions(expires_at_ms);",
     )
     .map_err(|error| error.to_string())?;
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_INITIAL_FREE_DATABASE_GRANTS)?;
@@ -4319,9 +4374,7 @@ const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
     "database_members",
     "database_restore_chunks",
     "database_mount_history",
-    "url_ingest_trigger_sessions",
-    "ops_answer_sessions",
-    "source_run_sessions",
+    "capability_sessions",
     "database_restore_sessions",
     "database_cycle_accounts",
     "database_cycle_ledger",
@@ -4537,6 +4590,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_purchase_pending_operations",
         "market_entitlements",
         "database_free_cycle_grants",
+        "capability_sessions",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "table", table)? {
             return Err(format!("unsupported index schema: missing table {table}"));
@@ -4687,6 +4741,20 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             "database_free_cycle_grants",
             &["principal", "database_id", "grant_cycles", "created_at_ms"][..],
         ),
+        (
+            "capability_sessions",
+            &[
+                "database_id",
+                "kind",
+                "session_nonce",
+                "principal",
+                "source_path",
+                "source_etag",
+                "expires_at_ms",
+                "created_at_ms",
+                "refreshed_at_ms",
+            ][..],
+        ),
     ] {
         for column in columns {
             if !index_column_exists(conn, table, column)? {
@@ -4707,9 +4775,28 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
         "market_purchase_pending_buyer_idx",
         "market_entitlements_database_buyer_active_idx",
         "market_entitlements_buyer_idx",
+        "capability_sessions_expiry_idx",
     ] {
         if !tx_sqlite_master_entry_exists(conn, "index", index)? {
             return Err(format!("unsupported index schema: missing index {index}"));
+        }
+    }
+    for table in [
+        "url_ingest_trigger_sessions",
+        "ops_answer_sessions",
+        "source_run_sessions",
+    ] {
+        if tx_sqlite_master_entry_exists(conn, "table", table)? {
+            return Err(format!("unsupported index schema: stale table {table}"));
+        }
+    }
+    for index in [
+        "url_ingest_trigger_sessions_expiry_idx",
+        "ops_answer_sessions_expiry_idx",
+        "source_run_sessions_expiry_idx",
+    ] {
+        if tx_sqlite_master_entry_exists(conn, "index", index)? {
+            return Err(format!("unsupported index schema: stale index {index}"));
         }
     }
     Ok(())
@@ -4968,12 +5055,8 @@ fn load_metric_principal_activity(
         "SELECT payout_principal, created_at_ms, created_at_ms FROM market_listings WHERE created_at_ms <= ?1",
         "SELECT payout_principal, created_at_ms, updated_at_ms FROM market_listings WHERE updated_at_ms <= ?1",
         "SELECT buyer_principal, purchased_at_ms, purchased_at_ms FROM market_entitlements WHERE purchased_at_ms <= ?1",
-        "SELECT principal, created_at_ms, created_at_ms FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?1",
-        "SELECT principal, created_at_ms, refreshed_at_ms FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?1",
-        "SELECT principal, created_at_ms, created_at_ms FROM ops_answer_sessions WHERE created_at_ms <= ?1",
-        "SELECT principal, created_at_ms, refreshed_at_ms FROM ops_answer_sessions WHERE refreshed_at_ms <= ?1",
-        "SELECT principal, created_at_ms, created_at_ms FROM source_run_sessions WHERE created_at_ms <= ?1",
-        "SELECT principal, created_at_ms, refreshed_at_ms FROM source_run_sessions WHERE refreshed_at_ms <= ?1",
+        "SELECT principal, created_at_ms, created_at_ms FROM capability_sessions WHERE created_at_ms <= ?1",
+        "SELECT principal, created_at_ms, refreshed_at_ms FROM capability_sessions WHERE refreshed_at_ms <= ?1",
     ] {
         collect_metric_principal_activity(conn, sql, as_of_ms, &mut activity, last_activity_at_ms)?;
     }
@@ -5043,12 +5126,8 @@ fn load_metric_database_activity(
         "SELECT database_id, purchased_at_ms FROM market_entitlements WHERE purchased_at_ms <= ?1",
         "SELECT database_id, created_at_ms FROM market_listings WHERE created_at_ms <= ?1",
         "SELECT database_id, updated_at_ms FROM market_listings WHERE updated_at_ms <= ?1",
-        "SELECT database_id, created_at_ms FROM url_ingest_trigger_sessions WHERE created_at_ms <= ?1",
-        "SELECT database_id, refreshed_at_ms FROM url_ingest_trigger_sessions WHERE refreshed_at_ms <= ?1",
-        "SELECT database_id, created_at_ms FROM ops_answer_sessions WHERE created_at_ms <= ?1",
-        "SELECT database_id, refreshed_at_ms FROM ops_answer_sessions WHERE refreshed_at_ms <= ?1",
-        "SELECT database_id, created_at_ms FROM source_run_sessions WHERE created_at_ms <= ?1",
-        "SELECT database_id, refreshed_at_ms FROM source_run_sessions WHERE refreshed_at_ms <= ?1",
+        "SELECT database_id, created_at_ms FROM capability_sessions WHERE created_at_ms <= ?1",
+        "SELECT database_id, refreshed_at_ms FROM capability_sessions WHERE refreshed_at_ms <= ?1",
     ] {
         collect_metric_database_activity(
             conn,
@@ -5370,9 +5449,7 @@ fn delete_database_index_rows(conn: &Connection, database_id: &str) -> Result<()
         "database_members",
         "database_restore_chunks",
         "database_restore_sessions",
-        "url_ingest_trigger_sessions",
-        "ops_answer_sessions",
-        "source_run_sessions",
+        "capability_sessions",
         "databases",
     ] {
         let sql = format!("DELETE FROM {table} WHERE database_id = ?1");
@@ -7524,27 +7601,9 @@ fn expect_frontmatter(
     }
 }
 
-fn purge_expired_url_ingest_trigger_sessions(conn: &Connection, now: i64) -> Result<(), String> {
+fn purge_expired_capability_sessions(conn: &Connection, now: i64) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM url_ingest_trigger_sessions WHERE expires_at_ms < ?1",
-        params![now],
-    )
-    .map(|_| ())
-    .map_err(|error| error.to_string())
-}
-
-fn purge_expired_ops_answer_sessions(conn: &Connection, now: i64) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM ops_answer_sessions WHERE expires_at_ms < ?1",
-        params![now],
-    )
-    .map(|_| ())
-    .map_err(|error| error.to_string())
-}
-
-fn purge_expired_source_run_sessions(conn: &Connection, now: i64) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM source_run_sessions WHERE expires_at_ms < ?1",
+        "DELETE FROM capability_sessions WHERE expires_at_ms < ?1",
         params![now],
     )
     .map(|_| ())

@@ -26,7 +26,7 @@ Stable-memory mount IDs are partitioned by purpose:
 
 The index DB tracks database metadata, membership, and cycles history. User DBs hold VFS node data, search data, and link data.
 
-The index DB startup path ensures the latest schema. Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
+The index DB startup path ensures the latest schema (`database_index:035_initial_free_database_grants`). Fresh index DBs are created directly at the latest schema, and already-latest DBs are validated only. The only supported automatic migration is the production mainnet `database_index:011_source_run_sessions` to latest upgrade. Partial billing schemas, index DBs without `schema_migrations`, and pre-011 schemas are rejected instead of repaired.
 
 Pending DBs have index metadata and cycle accounts but no stable-memory mount ID. Active, archiving, or restoring DBs consume one active user DB slot. Archived DBs release their active mount, but v1 does not recycle stable-memory mount IDs for another database. A pending DB consumes a mount ID only after the first successful cycle purchase activates it.
 

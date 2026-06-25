@@ -405,6 +405,14 @@ fn mainnet_011_index_upgrades_to_latest() {
         schema_migration_count(&root, "database_index:035_initial_free_database_grants"),
         1
     );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:036_capability_sessions"),
+        0
+    );
+    assert!(table_exists(&root, "capability_sessions"));
+    assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
+    assert!(!table_exists(&root, "ops_answer_sessions"));
+    assert!(!table_exists(&root, "source_run_sessions"));
     assert_eq!(cycles_billing_config_key_count(&root, "config_version"), 0);
 }
 
@@ -884,6 +892,16 @@ fn database_pending_operation_count(root: &std::path::Path, database_id: &str) -
     .expect("pending cycle operation count should load")
 }
 
+fn capability_session_count(root: &std::path::Path, database_id: &str) -> i64 {
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.query_row(
+        "SELECT COUNT(*) FROM capability_sessions WHERE database_id = ?1",
+        params![database_id],
+        |row| row.get(0),
+    )
+    .expect("capability session count should load")
+}
+
 fn cycle_database(
     service: &VfsService,
     database_id: &str,
@@ -976,9 +994,28 @@ fn fresh_index_schema_applies_app_balance_drop_marker_without_legacy_tables() {
     assert!(table_exists(&root, "market_listings"));
     assert!(table_exists(&root, "market_purchase_pending_operations"));
     assert!(table_exists(&root, "market_entitlements"));
+    assert!(table_exists(&root, "capability_sessions"));
+    assert!(!table_exists(&root, "url_ingest_trigger_sessions"));
+    assert!(!table_exists(&root, "ops_answer_sessions"));
+    assert!(!table_exists(&root, "source_run_sessions"));
     assert!(!table_exists(&root, "kinic_accounts"));
     assert!(!table_exists(&root, "kinic_ledger"));
     assert!(!table_exists(&root, "kinic_pending_operations"));
+}
+
+#[test]
+fn latest_marker_without_capability_sessions_is_rejected() {
+    let (service, root) = service_with_root();
+    let conn = Connection::open(root.join("index.sqlite3")).expect("index should open");
+    conn.execute("DROP TABLE capability_sessions", params![])
+        .expect("capability sessions table should drop");
+    drop(conn);
+
+    let error = service
+        .run_index_migrations()
+        .expect_err("partial latest schema should reject");
+
+    assert!(error.contains("missing table capability_sessions"));
 }
 
 fn mount_history_row(root: &std::path::Path, mount_id: u16) -> (String, String) {
@@ -1267,6 +1304,10 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
         1
     );
     assert_eq!(
+        schema_migration_count(&root, "database_index:036_capability_sessions"),
+        0
+    );
+    assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
         1
     );
@@ -1297,6 +1338,10 @@ fn index_migrations_create_cycle_ledger_only_schema_once() {
     assert_eq!(
         schema_migration_count(&root, "database_index:011_source_run_sessions"),
         1
+    );
+    assert_eq!(
+        schema_migration_count(&root, "database_index:036_capability_sessions"),
+        0
     );
     assert_eq!(
         schema_migration_count(&root, "database_index:010_database_name_breaking"),
@@ -1333,6 +1378,46 @@ fn url_ingest_trigger_session_requires_writer_and_allows_replay() {
             102,
         )
         .expect("session check should allow replay");
+}
+
+#[test]
+fn capability_sessions_allow_same_nonce_across_kinds() {
+    let service = service();
+    service
+        .create_database("alpha", "owner", 1)
+        .expect("database should create");
+    cycle_database(&service, "alpha", "owner", 1_000_000, 1, 2);
+    let request_path = "/Sources/ingest-requests/1.md";
+    write_url_ingest_request(&service, "owner", "alpha", request_path, "queued", "owner");
+
+    service
+        .authorize_url_ingest_trigger_session(
+            "owner",
+            url_ingest_session_request("alpha", "shared-session"),
+            100,
+        )
+        .expect("url ingest session should authorize");
+    service
+        .authorize_ops_answer_session(
+            "owner",
+            ops_answer_session_request("alpha", "shared-session"),
+            101,
+        )
+        .expect("ops answer session should authorize");
+
+    service
+        .check_url_ingest_trigger_session(
+            url_ingest_session_check_request("alpha", request_path, "shared-session"),
+            102,
+        )
+        .expect("url ingest session should remain separate");
+    let checked = service
+        .check_ops_answer_session(
+            ops_answer_session_check_request("alpha", "shared-session"),
+            102,
+        )
+        .expect("ops answer session should remain separate");
+    assert_eq!(checked.principal, "owner");
 }
 
 #[test]
@@ -2644,6 +2729,14 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
         .create_database("funded", "owner", 1)
         .expect("database should create");
     cycle_database(&service, "funded", "owner", 100_000_000, 1, 2);
+    service
+        .authorize_ops_answer_session(
+            "owner",
+            ops_answer_session_request("funded", "session-1"),
+            2,
+        )
+        .expect("session should authorize before delete");
+    assert_eq!(capability_session_count(&root, "funded"), 1);
 
     service
         .delete_database(delete_request("funded"), "owner", 3)
@@ -2651,6 +2744,7 @@ fn delete_database_removes_index_rows_and_discards_remaining_cycles() {
     assert!(!database_index_row_exists(&root, "funded"));
     assert_eq!(database_member_count(&root, "funded"), 0);
     assert_eq!(database_pending_operation_count(&root, "funded"), 0);
+    assert_eq!(capability_session_count(&root, "funded"), 0);
     assert!(database_ledger_kinds(&root, "funded").is_empty());
 }
 
