@@ -448,39 +448,39 @@ export const expectedTypes = {
       database_id: "text"
     }
   },
-  StoreCapability: { kind: "record", fields: { name: "text", description: "text" } },
-  StoreManifest: {
+  MemoryCapability: { kind: "record", fields: { name: "text", description: "text" } },
+  MemoryManifest: {
     kind: "record",
     fields: {
       api_version: "text",
       budget_unit: "text",
-      capabilities: "vec StoreCapability",
+      capabilities: "vec MemoryCapability",
       enabled_stores: "vec text",
-      entry_roots: "vec StoreRoot",
+      entry_roots: "vec MemoryRoot",
       max_depth: "nat32",
       max_query_limit: "nat32",
       recommended_entrypoint: "text",
       write_policy: "text",
       canonical_roles: "vec CanonicalRole",
       purpose: "text",
-      roots: "vec StoreRoot"
+      roots: "vec MemoryRoot"
     }
   },
-  StoreManifestRequest: { kind: "record", fields: { database_id: "text" } },
-  StoreRoot: { kind: "record", fields: { kind: "text", path: "text" } },
-  MemoryRecall: {
+  MemoryManifestRequest: { kind: "record", fields: { database_id: "text" } },
+  MemoryRoot: { kind: "record", fields: { kind: "text", path: "text" } },
+  QueryContext: {
     kind: "record",
     fields: {
       truncated: "bool",
       task: "text",
-      evidence: "vec KnowledgeEvidence",
+      evidence: "vec SourceEvidence",
       nodes: "vec NodeContext",
       graph_links: "vec LinkEdge",
       search_hits: "vec SearchNodeHit",
       namespace: "text"
     }
   },
-  MemoryRecallRequest: {
+  QueryContextRequest: {
     kind: "record",
     fields: {
       task: "text",
@@ -564,7 +564,7 @@ export const expectedTypes = {
   ResultLinks: { kind: "variant", cases: { Ok: "vec LinkEdge", Err: "text" } },
   ResultNode: { kind: "variant", cases: { Ok: "opt Node", Err: "text" } },
   ResultNodeContext: { kind: "variant", cases: { Ok: "opt NodeContext", Err: "text" } },
-  ResultMemoryRecall: { kind: "variant", cases: { Ok: "MemoryRecall", Err: "text" } },
+  ResultQueryContext: { kind: "variant", cases: { Ok: "QueryContext", Err: "text" } },
   ResultIndexSqlJsonQuery: { kind: "variant", cases: { Ok: "IndexSqlJsonQueryResult", Err: "text" } },
   ResultWikiMetrics: { kind: "variant", cases: { Ok: "WikiMetrics", Err: "text" } },
   ResultWikiMetricsSeries: { kind: "variant", cases: { Ok: "vec WikiMetricsPoint", Err: "text" } },
@@ -573,8 +573,8 @@ export const expectedTypes = {
     kind: "variant",
     cases: { Ok: "StorageBillingBatchResult", Err: "text" }
   },
-  ResultStoreManifest: { kind: "variant", cases: { Ok: "StoreManifest", Err: "text" } },
-  ResultKnowledgeEvidence: { kind: "variant", cases: { Ok: "KnowledgeEvidence", Err: "text" } },
+  ResultMemoryManifest: { kind: "variant", cases: { Ok: "MemoryManifest", Err: "text" } },
+  ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
   ResultOpsAnswerSessionCheck: {
     kind: "variant",
     cases: { Ok: "OpsAnswerSessionCheckResult", Err: "text" }
@@ -625,11 +625,11 @@ export const expectedTypes = {
   },
   SearchPreviewField: { kind: "variant", cases: { Path: "null", Content: "null" } },
   SearchPreviewMode: { kind: "variant", cases: { Light: "null", ContentStart: "null", None: "null" } },
-  KnowledgeEvidence: {
+  SourceEvidence: {
     kind: "record",
-    fields: { node_path: "text", refs: "vec KnowledgeEvidenceRef" }
+    fields: { node_path: "text", refs: "vec SourceEvidenceRef" }
   },
-  KnowledgeEvidenceRef: {
+  SourceEvidenceRef: {
     kind: "record",
     fields: {
       link_text: "text",
@@ -641,7 +641,7 @@ export const expectedTypes = {
       raw_href: "text"
     }
   },
-  KnowledgeEvidenceRequest: { kind: "record", fields: { node_path: "text", database_id: "text" } },
+  SourceEvidenceRequest: { kind: "record", fields: { node_path: "text", database_id: "text" } },
   StorageBillingBatchRequest: {
     kind: "record",
     fields: { limit: "opt nat32", cursor_mount_id: "opt nat16" }
@@ -661,37 +661,38 @@ export const expectedTypes = {
 export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
+  MemoryManifestRequest: "DeleteDatabaseRequest",
   ResultCyclesTopUpCheck: "Result_3",
   ResultOpsAnswerSessionCheck: "Result_4",
   ResultCreateDatabase: "Result_5",
   ResultDeleteNode: "Result_6",
   ResultCyclesBillingConfig: "Result_10",
   ResultLinks: "Result_12",
-  ResultKnowledgeEvidence: "Result_13",
-  ResultChildren: "Result_14",
-  ResultCyclesEntries: "Result_15",
-  ResultCyclesPendingPurchases: "Result_16",
-  ResultMembers: "Result_17",
-  ResultDatabases: "Result_18",
-  ResultNat64: "Result_20",
-  ResultMarketListing: "Result_21",
-  ResultMarketListingDetail: "Result_22",
-  ResultMarketEntitlementPage: "Result_23",
-  ResultMarketListings: "Result_24",
-  ResultMarketListingPage: "Result_25",
-  ResultMarketOrderPage: "Result_26",
-  ResultMarketPurchasePreview: "Result_27",
-  ResultMarketOrder: "Result_28",
-  ResultMemoryRecall: "Result_29",
-  ResultMkdirNode: "Result_30",
-  ResultMoveNode: "Result_31",
-  ResultCyclesPurchase: "Result_32",
+  ResultChildren: "Result_13",
+  ResultCyclesEntries: "Result_14",
+  ResultCyclesPendingPurchases: "Result_15",
+  ResultMembers: "Result_16",
+  ResultDatabases: "Result_17",
+  ResultNat64: "Result_19",
+  ResultMarketListing: "Result_20",
+  ResultMarketListingDetail: "Result_21",
+  ResultMarketEntitlementPage: "Result_22",
+  ResultMarketListings: "Result_23",
+  ResultMarketListingPage: "Result_24",
+  ResultMarketOrderPage: "Result_25",
+  ResultMarketPurchasePreview: "Result_26",
+  ResultMarketOrder: "Result_27",
+  ResultMemoryManifest: "Result_28",
+  ResultMkdirNode: "Result_29",
+  ResultMoveNode: "Result_30",
+  ResultCyclesPurchase: "Result_31",
+  ResultQueryContext: "Result_32",
   ResultIndexSqlJsonQuery: "Result_33",
   ResultNode: "Result_35",
   ResultNodeContext: "Result_36",
   ResultSearch: "Result_37",
   ResultStorageBillingBatch: "Result_38",
-  ResultStoreManifest: "Result_39",
+  ResultSourceEvidence: "Result_39",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
   ResultWriteSourceForGeneration: "Result_43",
@@ -738,11 +739,11 @@ export const expectedMethods = {
   market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_purchase_access: { input: ["MarketPurchaseRequest"], output: "ResultMarketOrder", mode: "update" },
   market_update_listing: { input: ["MarketUpdateListingRequest"], output: "ResultMarketListing", mode: "update" },
-  store_manifest: { input: ["StoreManifestRequest"], output: "ResultStoreManifest", mode: "query" },
+  memory_manifest: { input: ["MemoryManifestRequest"], output: "ResultMemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },
-  memory_recall: { input: ["MemoryRecallRequest"], output: "ResultMemoryRecall", mode: "query" },
+  query_context: { input: ["QueryContextRequest"], output: "ResultQueryContext", mode: "query" },
   query_database_sql_json: { input: ["text", "text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
   query_index_sql_json: { input: ["text", "nat32"], output: "ResultIndexSqlJsonQuery", mode: "query" },
   wiki_metrics: { input: [], output: "ResultWikiMetrics", mode: "query" },
@@ -752,7 +753,7 @@ export const expectedMethods = {
   revoke_database_access: { input: ["text", "text"], output: "ResultUnit", mode: "update" },
   search_node_paths: { input: ["SearchNodePathsRequest"], output: "ResultSearch", mode: "query" },
   search_nodes: { input: ["SearchNodesRequest"], output: "ResultSearch", mode: "query" },
-  knowledge_evidence: { input: ["KnowledgeEvidenceRequest"], output: "ResultKnowledgeEvidence", mode: "query" },
+  source_evidence: { input: ["SourceEvidenceRequest"], output: "ResultSourceEvidence", mode: "query" },
   settle_database_storage_charges_batch: { input: ["StorageBillingBatchRequest"], output: "ResultStorageBillingBatch", mode: "update" },
   update_cycles_billing_config: { input: ["CyclesBillingConfigUpdate"], output: "ResultUnit", mode: "update" },
   purchase_database_cycles: { input: ["DatabaseCyclesPurchaseRequest"], output: "ResultCyclesPurchase", mode: "update" },

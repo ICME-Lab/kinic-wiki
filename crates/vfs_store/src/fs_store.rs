@@ -18,15 +18,15 @@ use vfs_types::{
     AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence,
-    KnowledgeEvidenceRef, KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge, MarketCategoryGraphNode,
-    MarketListingPreview, MarketListingVerifiedStats, MarketPreviewExcerpt, MemoryRecall,
-    MemoryRecallRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
+    MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
+    MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
     MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
-    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodeHit,
-    SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, Status, WriteNodeItem,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
+    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 use crate::{
@@ -713,7 +713,7 @@ impl FsStore {
         })
     }
 
-    pub fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall, String> {
+    pub fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext, String> {
         if request.depth > 2 {
             return Err("depth must be 0, 1, or 2".to_string());
         }
@@ -789,8 +789,8 @@ impl FsStore {
             let evidence = if request.include_evidence {
                 let mut items = Vec::new();
                 for context in &nodes {
-                    let evidence = knowledge_evidence_for_path(conn, &context.node.path)?;
-                    let evidence_chars = estimate_knowledge_evidence_chars(&evidence);
+                    let evidence = source_evidence_for_path(conn, &context.node.path)?;
+                    let evidence_chars = estimate_source_evidence_chars(&evidence);
                     if !items.is_empty() && used_chars.saturating_add(evidence_chars) > budget_chars
                     {
                         truncated = true;
@@ -810,7 +810,7 @@ impl FsStore {
                 truncated = true;
             }
 
-            Ok(MemoryRecall {
+            Ok(QueryContext {
                 namespace,
                 task: request.task,
                 search_hits,
@@ -822,16 +822,16 @@ impl FsStore {
         })
     }
 
-    pub fn knowledge_evidence(
+    pub fn source_evidence(
         &self,
-        request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence, String> {
+        request: SourceEvidenceRequest,
+    ) -> Result<SourceEvidence, String> {
         let node_path = normalize_node_path(&request.node_path, false)?;
         self.read_conn(|conn| {
             let Some(_) = load_node(conn, &node_path)? else {
                 return Err(format!("node does not exist: {node_path}"));
             };
-            knowledge_evidence_for_path(conn, &node_path)
+            source_evidence_for_path(conn, &node_path)
         })
     }
 
@@ -2460,10 +2460,7 @@ fn load_node_context_for_memory(
     }))
 }
 
-fn knowledge_evidence_for_path(
-    conn: &Connection,
-    node_path: &str,
-) -> Result<KnowledgeEvidence, String> {
+fn source_evidence_for_path(conn: &Connection, node_path: &str) -> Result<SourceEvidence, String> {
     let mut refs = Vec::new();
     let mut seen = BTreeSet::new();
     collect_source_refs_from_path(conn, node_path, &mut refs, &mut seen)?;
@@ -2473,7 +2470,7 @@ fn knowledge_evidence_for_path(
     if let Some(provenance_path) = scope_root_provenance_path_for(node_path) {
         collect_source_refs_from_path(conn, &provenance_path, &mut refs, &mut seen)?;
     }
-    Ok(KnowledgeEvidence {
+    Ok(SourceEvidence {
         node_path: node_path.to_string(),
         refs,
     })
@@ -2482,7 +2479,7 @@ fn knowledge_evidence_for_path(
 fn collect_source_refs_from_path(
     conn: &Connection,
     path: &str,
-    refs: &mut Vec<KnowledgeEvidenceRef>,
+    refs: &mut Vec<SourceEvidenceRef>,
     seen: &mut BTreeSet<(String, String, String)>,
 ) -> Result<(), String> {
     let Some(_) = load_node(conn, path)? else {
@@ -2499,7 +2496,7 @@ fn collect_source_refs_from_path(
         );
         if seen.insert(key) {
             let source_node = load_node(conn, &edge.target_path)?;
-            refs.push(KnowledgeEvidenceRef {
+            refs.push(SourceEvidenceRef {
                 source_path: edge.target_path,
                 via_path: edge.source_path,
                 raw_href: edge.raw_href,
@@ -2545,7 +2542,7 @@ fn estimate_link_edge_chars(edge: &LinkEdge) -> usize {
         + edge.link_kind.chars().count()
 }
 
-fn estimate_knowledge_evidence_chars(evidence: &KnowledgeEvidence) -> usize {
+fn estimate_source_evidence_chars(evidence: &SourceEvidence) -> usize {
     evidence.node_path.chars().count()
         + evidence
             .refs

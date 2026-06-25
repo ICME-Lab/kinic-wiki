@@ -9,9 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use vfs_client::VfsApi;
-use vfs_types::{
-    KnowledgeEvidenceRef, LinkEdge, MemoryRecall, MemoryRecallRequest, Node, NodeKind,
-};
+use vfs_types::{LinkEdge, Node, NodeKind, QueryContext, QueryContextRequest, SourceEvidenceRef};
 use wiki_domain::{
     KNOWLEDGE_SOURCES_PREFIX, SESSION_SOURCES_PREFIX, SKILL_REGISTRY_ROOT, SKILL_RUNS_PREFIX,
     WIKI_ROOT_PATH, validate_canonical_source_path, validate_knowledge_source_path,
@@ -315,7 +313,7 @@ async fn export_okf_bundle(
 
     let generated_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let context = client
-        .memory_recall(MemoryRecallRequest {
+        .query_context(QueryContextRequest {
             database_id: database_id.to_string(),
             task: options.task.clone(),
             entities: options.entities.clone(),
@@ -596,7 +594,7 @@ pub fn inspect_okf_bundle_dir(path: &Path) -> Result<OkfInspectResult> {
     })
 }
 
-fn collect_context_nodes(context: &MemoryRecall) -> Vec<BucketedNode> {
+fn collect_context_nodes(context: &QueryContext) -> Vec<BucketedNode> {
     context
         .nodes
         .iter()
@@ -611,7 +609,7 @@ fn collect_context_nodes(context: &MemoryRecall) -> Vec<BucketedNode> {
 async fn collect_context_references(
     client: &impl VfsApi,
     database_id: &str,
-    context: &MemoryRecall,
+    context: &QueryContext,
 ) -> Result<Vec<OkfReference>> {
     let mut references = BTreeMap::<String, OkfReference>::new();
     for evidence in &context.evidence {
@@ -639,7 +637,7 @@ async fn collect_context_references(
     Ok(references.into_values().collect())
 }
 
-fn okf_reference_from_evidence(item: &KnowledgeEvidenceRef) -> OkfReference {
+fn okf_reference_from_evidence(item: &SourceEvidenceRef) -> OkfReference {
     let store = reference_store_for_path(&item.source_path)
         .expect("caller checked supported reference store")
         .to_string();
@@ -1289,7 +1287,7 @@ fn reference_store_for_path(path: &str) -> Option<&'static str> {
     {
         Some("session_evidence")
     } else if validate_knowledge_source_path(path).is_ok() {
-        Some("knowledge_evidence")
+        Some("source_evidence")
     } else if path_under_prefix(path, SESSION_ROOT_PATH) {
         Some("session")
     } else if path_under_prefix(path, SKILL_REGISTRY_ROOT) {
@@ -1381,15 +1379,15 @@ mod tests {
     use vfs_types::{
         AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
         ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
-        GlobNodeHit, GlobNodesRequest, KnowledgeEvidence, KnowledgeEvidenceRef,
-        ListChildrenRequest, MemoryRecall, MemoryRecallRequest, MoveNodeRequest, MoveNodeResult,
-        MultiEditNodeRequest, MultiEditNodeResult, NodeContext, SearchNodeHit,
-        SearchNodePathsRequest, SearchNodesRequest, WriteNodeRequest, WriteNodeResult,
+        GlobNodeHit, GlobNodesRequest, ListChildrenRequest, MoveNodeRequest, MoveNodeResult,
+        MultiEditNodeRequest, MultiEditNodeResult, NodeContext, QueryContext, QueryContextRequest,
+        SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SourceEvidence,
+        SourceEvidenceRef, WriteNodeRequest, WriteNodeResult,
     };
 
     struct MockClient {
-        context: MemoryRecall,
-        recall_requests: Mutex<Vec<MemoryRecallRequest>>,
+        context: QueryContext,
+        recall_requests: Mutex<Vec<QueryContextRequest>>,
         readable_nodes: BTreeMap<String, Node>,
         read_node_calls: AtomicUsize,
         list_nodes_calls: AtomicUsize,
@@ -1398,7 +1396,7 @@ mod tests {
     impl Default for MockClient {
         fn default() -> Self {
             Self {
-                context: MemoryRecall {
+                context: QueryContext {
                     namespace: WIKI_ROOT_PATH.to_string(),
                     task: String::new(),
                     search_hits: Vec::new(),
@@ -1486,13 +1484,13 @@ mod tests {
             unreachable!()
         }
 
-        async fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall> {
+        async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
             assert!(request.include_evidence);
             self.recall_requests
                 .lock()
                 .expect("recall request lock")
                 .push(request.clone());
-            Ok(MemoryRecall {
+            Ok(QueryContext {
                 namespace: request
                     .namespace
                     .unwrap_or_else(|| MEMORY_ROOT_PATH.to_string()),
@@ -1547,10 +1545,10 @@ mod tests {
         node_path: &str,
         source_path: &str,
         source_content_hash: &str,
-    ) -> KnowledgeEvidence {
-        KnowledgeEvidence {
+    ) -> SourceEvidence {
+        SourceEvidence {
             node_path: node_path.to_string(),
-            refs: vec![KnowledgeEvidenceRef {
+            refs: vec![SourceEvidenceRef {
                 source_path: source_path.to_string(),
                 via_path: node_path.to_string(),
                 raw_href: source_path.to_string(),
@@ -1709,7 +1707,7 @@ mod tests {
         let reference = fs::read_to_string(out.path().join("references/sources-web-source.md"))
             .expect("reference");
         assert!(reference.contains("type: Reference"));
-        assert!(reference.contains("store: knowledge_evidence"));
+        assert!(reference.contains("store: source_evidence"));
         assert!(reference.contains("store_path: /Sources/web/source.md"));
         assert!(reference.contains("source-etag"));
         assert!(reference.contains("sha256:sourcehash"));
@@ -2149,7 +2147,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
+            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: source_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
         )
         .expect("write");
 
@@ -2166,7 +2164,7 @@ mod tests {
         write_reserved_files(dir.path());
         fs::write(
             dir.path().join("source.md"),
-            "---\ntype: Reference\nkinic:\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
+            "---\ntype: Reference\nkinic:\n  store: source_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
         )
         .expect("write");
 
@@ -2212,14 +2210,14 @@ mod tests {
         );
         assert_eq!(
             reference_store_for_path("/Sources/web/source.md"),
-            Some("knowledge_evidence")
+            Some("source_evidence")
         );
         assert_eq!(
-            reference_store_for_path("/Sources/sessions/session-1/session-1.md"),
+            reference_store_for_path("/Sources/sessions/claudecode/session-1.md"),
             Some("session_evidence")
         );
         assert_eq!(
-            reference_store_for_path("/Sources/sessions/session-1/bad.md"),
+            reference_store_for_path("/Sources/sessions/claudecode/bad.txt"),
             None
         );
         assert_eq!(
@@ -2317,7 +2315,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n  etag: source-etag\n  content_hash: sha256:sourcehash\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge_evidence`\n- store_path: `/Sources/web/source.md`\n- via_path: `/Knowledge/projects/acme/facts.md`\n- target_href: `/Sources/web/source.md`\n- link_text: `Raw`\n- etag: `source-etag`\n- updated_at: `3`\n- content_hash: `sha256:sourcehash`\n\nReferenced store content is not copied into this OKF bundle.\n",
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: source_evidence\n  store_path: /Sources/web/source.md\n  etag: source-etag\n  content_hash: sha256:sourcehash\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `source_evidence`\n- store_path: `/Sources/web/source.md`\n- via_path: `/Knowledge/projects/acme/facts.md`\n- target_href: `/Sources/web/source.md`\n- link_text: `Raw`\n- etag: `source-etag`\n- updated_at: `3`\n- content_hash: `sha256:sourcehash`\n\nReferenced store content is not copied into this OKF bundle.\n",
         )
         .expect("write");
 
@@ -2335,7 +2333,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn export_allows_empty_memory_recall() {
+    async fn export_allows_empty_query_context() {
         let out = tempdir().expect("tempdir");
         let client = MockClient::default();
 

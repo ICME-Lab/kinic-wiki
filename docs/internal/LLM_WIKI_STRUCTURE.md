@@ -112,7 +112,7 @@ flowchart LR
 - `mkdir_node`, `glob_nodes`, `multi_edit_node`
 - `search_nodes`, `search_node_paths`
 - `read_node_context`, `incoming_links`, `outgoing_links`, `graph_links`, `graph_neighborhood`
-- `store_manifest`, `memory_recall`, `knowledge_evidence`
+- `memory_manifest`, `query_context`, `source_evidence`
 - `export_snapshot`, `fetch_updates`
 
 ### 5.6 `vfs_client`

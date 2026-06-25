@@ -44,7 +44,7 @@ const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.
 const searchPanelSource = readFileSync(new URL("../components/search-panel.tsx", import.meta.url), "utf8");
 const wikiBrowserSource = readFileSync(new URL("../components/wiki-browser.tsx", import.meta.url), "utf8");
 const queryPanelSource = readFileSync(new URL("../components/query-panel.tsx", import.meta.url), "utf8");
-const memoryRecallSource = readFileSync(new URL("../lib/query-context.ts", import.meta.url), "utf8");
+const queryContextSource = readFileSync(new URL("../lib/query-context.ts", import.meta.url), "utf8");
 const vfsClientSource = readFileSync(new URL("../lib/vfs-client.ts", import.meta.url), "utf8");
 const databasePreviewSource = readFileSync(new URL("../lib/database-preview.ts", import.meta.url), "utf8");
 const wranglerConfigSource = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
@@ -209,19 +209,19 @@ assert.match(searchPanelSource, /onCustomPrefixCommit/);
 assert.match(searchPanelSource, /searchOptions\.limit/);
 assert.match(searchPanelSource, /searchOptions\.preview/);
 assert.match(vfsClientSource, /preview_mode: searchPreviewModeArg\(previewMode\)/);
-assert.match(memoryRecallSource, /isAnswerContextNode\(input\.currentNode\)/);
-assert.match(memoryRecallSource, /queryAnswerSearchTerms\(input\.question\)/);
+assert.match(queryContextSource, /isAnswerContextNode\(input\.currentNode\)/);
+assert.match(queryContextSource, /queryAnswerSearchTerms\(input\.question\)/);
 assert.match(
-  memoryRecallSource,
-  /memoryRecall\(\s*input\.canisterId,\s*input\.databaseId,\s*input\.question,\s*CONTEXT_BUDGET_TOKENS,\s*input\.readIdentity \?\? undefined\s*\)/
+  queryContextSource,
+  /queryContext\(\s*input\.canisterId,\s*input\.databaseId,\s*input\.question,\s*CONTEXT_BUDGET_TOKENS,\s*input\.readIdentity \?\? undefined\s*\)/
 );
-assert.match(memoryRecallSource, /searchNodes\(input\.canisterId, input\.databaseId, term, MAX_CONTEXT_ITEMS \* 2, null, "light", input\.readIdentity \?\? undefined\)/);
-assert.match(memoryRecallSource, /rankAnswerPaths/);
-assert.match(memoryRecallSource, /isRawSourcePath/);
-assert.match(memoryRecallSource, /const primary = paths\.filter\(\(path\) => !isRawSourcePath\(path\)\)/);
-assert.match(memoryRecallSource, /return \[\.\.\.primary, \.\.\.sources\]/);
-assert.match(memoryRecallSource, /readNodeContext\(input\.canisterId, input\.databaseId, hit, 5/);
-assert.match(memoryRecallSource, /node\.kind === "file" \|\| node\.kind === "source"/);
+assert.match(queryContextSource, /searchNodes\(input\.canisterId, input\.databaseId, term, MAX_CONTEXT_ITEMS \* 2, null, "light", input\.readIdentity \?\? undefined\)/);
+assert.match(queryContextSource, /rankAnswerPaths/);
+assert.match(queryContextSource, /isRawSourcePath/);
+assert.match(queryContextSource, /const primary = paths\.filter\(\(path\) => !isRawSourcePath\(path\)\)/);
+assert.match(queryContextSource, /return \[\.\.\.primary, \.\.\.sources\]/);
+assert.match(queryContextSource, /readNodeContext\(input\.canisterId, input\.databaseId, hit, 5/);
+assert.match(queryContextSource, /node\.kind === "file" \|\| node\.kind === "source"/);
 assert.match(wikiBrowserSource, /ExplorerHeaderActions/);
 assert.match(wikiBrowserSource, /ExplorerCreateForm/);
 assert.match(wikiBrowserSource, /ExplorerMoveForm/);

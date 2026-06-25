@@ -37,7 +37,7 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
 
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
     if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
-        return validate_source_path_under_prefix(path, SESSION_SOURCES_PREFIX);
+        return validate_session_source_path(path);
     }
     if path_matches_prefix_boundary(path, SKILL_RUNS_PREFIX) {
         return validate_skill_run_source_path(path);
@@ -82,27 +82,27 @@ fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
-fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), String> {
+fn validate_session_source_path(path: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(&format!("{prefix}/"))
-        .ok_or_else(|| format!("source path must stay under {prefix}: {path}"))?;
+        .strip_prefix(&format!("{SESSION_SOURCES_PREFIX}/"))
+        .ok_or_else(|| format!("source path must stay under {SESSION_SOURCES_PREFIX}: {path}"))?;
     let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
-            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+            "source path must use canonical form {SESSION_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
-    let [directory_name, file_name] = segments.as_slice() else {
+    let [provider, file_name] = segments.as_slice() else {
         unreachable!();
     };
-    let Some(file_stem) = file_name.strip_suffix(".md") else {
+    let Some(source_id) = file_name.strip_suffix(".md") else {
         return Err(format!(
-            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+            "source path must use canonical form {SESSION_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     };
-    if !is_safe_source_segment(directory_name) || file_stem != *directory_name {
+    if !is_safe_provider_segment(provider) || !is_safe_source_segment(source_id) {
         return Err(format!(
-            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+            "source path must use canonical form {SESSION_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
     Ok(())
@@ -276,7 +276,18 @@ mod tests {
 
     #[test]
     fn canonical_source_path_accepts_sessions() {
-        assert!(validate_canonical_source_path("/Sources/sessions/session-1/session-1.md").is_ok());
+        assert!(
+            validate_canonical_source_path("/Sources/sessions/claudecode/session-1.md").is_ok()
+        );
+        assert!(validate_canonical_source_path("/Sources/sessions/codex/run_123.md").is_ok());
+        assert!(validate_canonical_source_path("/Sources/sessions/raw/a.md").is_ok());
+    }
+
+    #[test]
+    fn canonical_source_path_rejects_old_session_shape() {
+        let error = validate_canonical_source_path("/Sources/sessions/session-1/session-1.md")
+            .expect_err("old session source shape should fail");
+        assert!(error.contains("canonical form"));
     }
 
     #[test]
@@ -309,7 +320,8 @@ mod tests {
             "/Sources/chatgpt//alpha.md",
             "/Sources/sessions//session.md",
             "/Sources/sessions/../...md",
-            "/Sources/sessions/session-1/session..1.md",
+            "/Sources/sessions/claude/a..b.md",
+            "/Sources/sessions/claude/a.txt",
         ] {
             assert!(validate_canonical_source_path(path).is_err(), "{path}");
         }

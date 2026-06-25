@@ -301,7 +301,10 @@ async fn write_node_accepts_canonical_source_paths_only() {
     std::fs::write(&input, "source").expect("input should write");
     let client = MockClient::default();
 
-    for path in ["/Sources/foo/source.md", "/Sources/sessions/bar/bar.md"] {
+    for path in [
+        "/Sources/foo/source.md",
+        "/Sources/sessions/claudecode/session-1.md",
+    ] {
         run_command(
             &client,
             Cli {

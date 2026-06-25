@@ -49,20 +49,20 @@ use vfs_types::{
     DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, KnowledgeEvidence,
-    KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest,
-    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingDetail,
-    MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest,
-    OpsAnswerSessionCheckResult, OpsAnswerSessionRequest, OutgoingLinksRequest,
+    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
+    MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
+    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
+    MemoryManifestRequest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
     RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    StoreCapability, StoreManifest, StoreManifestRequest, StoreRoot,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
+    StorageBillingBatchRequest, StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest,
+    UrlIngestTriggerSessionRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
+    WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -351,9 +351,9 @@ fn canister_health() -> CanisterHealth {
 }
 
 #[query]
-fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String> {
+fn memory_manifest(request: MemoryManifestRequest) -> Result<MemoryManifest, String> {
     with_service(|service| service.status(&request.database_id, &caller_text()))?;
-    Ok(StoreManifest {
+    Ok(MemoryManifest {
         api_version: "kinic-stores-v1".to_string(),
         purpose: "Canister-backed memory, knowledge, skill, and session stores for agents"
             .to_string(),
@@ -366,7 +366,7 @@ fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String
             store_root("/Knowledge", "knowledge"),
             store_root("/Skills", "skill"),
             store_root("/Sessions", "session"),
-            store_root("/Sources", "knowledge_evidence"),
+            store_root("/Sources", "source_evidence"),
             store_root("/Sources/sessions", "session_evidence"),
             store_root("/Sources/skill-runs", "skill_run_evidence"),
         ],
@@ -379,15 +379,15 @@ fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String
         capabilities: store_capabilities(),
         canonical_roles: canonical_roles(),
         write_policy: "stores_read_only".to_string(),
-        recommended_entrypoint: "memory_recall".to_string(),
+        recommended_entrypoint: "query_context".to_string(),
         max_depth: 2,
         max_query_limit: 100,
         budget_unit: "approx_chars_from_tokens".to_string(),
     })
 }
 
-fn store_root(path: &str, kind: &str) -> StoreRoot {
-    StoreRoot {
+fn store_root(path: &str, kind: &str) -> MemoryRoot {
+    MemoryRoot {
         path: path.to_string(),
         kind: kind.to_string(),
     }
@@ -1372,13 +1372,13 @@ fn read_node_context(request: NodeContextRequest) -> Result<Option<NodeContext>,
 }
 
 #[query]
-fn memory_recall(request: MemoryRecallRequest) -> Result<MemoryRecall, String> {
-    with_service(|service| service.memory_recall(&caller_text(), request))
+fn query_context(request: QueryContextRequest) -> Result<QueryContext, String> {
+    with_service(|service| service.query_context(&caller_text(), request))
 }
 
 #[query]
-fn knowledge_evidence(request: KnowledgeEvidenceRequest) -> Result<KnowledgeEvidence, String> {
-    with_service(|service| service.knowledge_evidence(&caller_text(), request))
+fn source_evidence(request: SourceEvidenceRequest) -> Result<SourceEvidence, String> {
+    with_service(|service| service.source_evidence(&caller_text(), request))
 }
 
 #[update]
@@ -2245,18 +2245,18 @@ where
     })
 }
 
-fn store_capabilities() -> Vec<StoreCapability> {
+fn store_capabilities() -> Vec<MemoryCapability> {
     [
         (
-            "store_manifest",
+            "memory_manifest",
             "Discover the four-store API shape, limits, and policy",
         ),
         (
-            "memory_recall",
+            "query_context",
             "Primary memory-store entrypoint for task-scoped recall",
         ),
         (
-            "knowledge_evidence",
+            "source_evidence",
             "Read source-path evidence for one knowledge node",
         ),
         (
@@ -2270,7 +2270,7 @@ fn store_capabilities() -> Vec<StoreCapability> {
         ),
     ]
     .into_iter()
-    .map(|(name, description)| StoreCapability {
+    .map(|(name, description)| MemoryCapability {
         name: name.to_string(),
         description: description.to_string(),
     })

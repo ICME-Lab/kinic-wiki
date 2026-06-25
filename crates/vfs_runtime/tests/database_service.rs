@@ -17,9 +17,9 @@ use vfs_types::{
     AppendNodeRequest, CyclesBillingConfigUpdate, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
     DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest, KINIC_LEDGER_FEE_E8S,
     MarketCreateListingRequest, MarketListing, MarketListingStatus, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, SearchNodesRequest, SearchPreviewMode,
-    SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MoveNodeRequest, NodeKind,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionRequest, QueryContextRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceRunSessionCheckRequest, UrlIngestTriggerSessionCheckRequest,
     UrlIngestTriggerSessionRequest, WriteNodeRequest, WriteSourceForGenerationRequest,
 };
 
@@ -1972,13 +1972,13 @@ fn pending_database_activation_seeds_all_store_roots() {
 }
 
 #[test]
-fn memory_recall_defaults_namespace_to_memory() {
+fn query_context_defaults_namespace_to_memory() {
     let (service, _root) = service_with_root();
     let database_id = activate_pending_database(&service);
     let memory = service
-        .memory_recall(
+        .query_context(
             "owner",
-            MemoryRecallRequest {
+            QueryContextRequest {
                 database_id,
                 task: "remember facts".to_string(),
                 entities: vec![],

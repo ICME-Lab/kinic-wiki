@@ -170,11 +170,11 @@ Covered methods:
 - `graph_links`
 - `graph_neighborhood`
 - `read_node_context`
-- `store_manifest`
-- `memory_recall`
+- `memory_manifest`
+- `query_context`
 - `query_database_sql_json`
 - `query_index_sql_json`
-- `knowledge_evidence`
+- `source_evidence`
 - `search_node_paths`
 - `search_nodes`
 

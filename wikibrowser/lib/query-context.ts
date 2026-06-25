@@ -1,7 +1,7 @@
 import type { Identity } from "@icp-sdk/core/agent";
 import type { NodeContext, WikiNode } from "@/lib/types";
 import { queryAnswerSearchTerms } from "@/lib/query-actions";
-import { memoryRecall, readNodeContext, searchNodes } from "@/lib/vfs-client";
+import { queryContext, readNodeContext, searchNodes } from "@/lib/vfs-client";
 
 export type QueryAnswerContext = {
   path: string;
@@ -26,7 +26,7 @@ export async function collectQueryAnswerContext(input: {
   if (input.currentNode && isAnswerContextNode(input.currentNode)) {
     nodes.set(input.currentNode.path, input.currentNode);
   }
-  const context = await memoryRecall(
+  const context = await queryContext(
     input.canisterId,
     input.databaseId,
     input.question,

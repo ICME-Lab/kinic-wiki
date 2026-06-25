@@ -91,7 +91,7 @@ tags:
 kinic:
   database_id: db_alpha
   root: /Knowledge/projects/acme
-  store: knowledge_evidence
+  store: source_evidence
   store_path: /Sources/web/source.md
   etag: v4h:...
   content_hash: sha256:...
@@ -100,7 +100,7 @@ kinic:
 
 # Reference
 
-- store: `knowledge_evidence`
+- store: `source_evidence`
 - store_path: `/Sources/web/source.md`
 - via_path: `/Knowledge/projects/acme/facts.md`
 - target_href: `/Sources/web/source.md`
@@ -145,7 +145,7 @@ kinic-vfs-cli context-pack inspect ./okf --json
 ```
 
 `export` reads the remote database and writes a local OKF bundle.
-`export` uses `memory_recall`; it does not recursively dump the full namespace.
+`export` uses `query_context`; it does not recursively dump the full namespace.
 `verify` and `inspect` read only the local bundle and do not require a canister connection.
 Pass `--overwrite` to replace existing markdown files in the output directory.
 

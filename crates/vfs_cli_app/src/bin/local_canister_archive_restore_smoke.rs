@@ -116,12 +116,12 @@ fn parse_args() -> Result<SmokeArgs> {
     })
 }
 
-async fn assert_store_manifest(client: &CanisterVfsClient, database_id: &str) -> Result<()> {
-    let manifest = client.store_manifest(database_id).await?;
+async fn assert_memory_manifest(client: &CanisterVfsClient, database_id: &str) -> Result<()> {
+    let manifest = client.memory_manifest(database_id).await?;
     if manifest.write_policy != "stores_read_only" {
         return Err(anyhow!("unexpected store manifest write policy"));
     }
-    if manifest.recommended_entrypoint != "memory_recall" {
+    if manifest.recommended_entrypoint != "query_context" {
         return Err(anyhow!("unexpected store manifest entrypoint"));
     }
     Ok(())
@@ -140,7 +140,7 @@ async fn run_create_restore_smoke(
         .database_id;
     activate_smoke_database(client, &database_id, cycle_purchase_e8s).await?;
     activate_smoke_database(client, &isolation_database_id, cycle_purchase_e8s).await?;
-    assert_store_manifest(client, &database_id).await?;
+    assert_memory_manifest(client, &database_id).await?;
     ensure_parent_folders(client, &database_id, PRIMARY_SOURCE_PATH).await?;
     ensure_parent_folders(client, &isolation_database_id, PRIMARY_SOURCE_PATH).await?;
     client

@@ -16,13 +16,13 @@ use vfs_types::{
     CyclesTopUpConfig, DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseRole,
     DatabaseStatus, DeleteDatabaseRequest, DeleteNodeRequest, EditNodeRequest,
     ExportSnapshotRequest, FetchUpdatesRequest, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, KnowledgeEvidenceRequest,
-    ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest, MarketListingStatus,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecallRequest, MkdirNodeRequest,
-    MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
-    OutgoingLinksRequest, RenameDatabaseRequest, SearchNodePathsRequest, SearchNodesRequest,
-    SearchPreviewMode, StorageBillingBatchRequest, StoreManifestRequest, WriteNodeItem,
-    WriteNodeRequest, WriteNodesRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, KINIC_LEDGER_FEE_E8S, ListChildrenRequest,
+    ListNodesRequest, MarketCreateListingRequest, MarketListingStatus, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryManifestRequest, MkdirNodeRequest, MoveNodeRequest,
+    MultiEdit, MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind,
+    OutgoingLinksRequest, QueryContextRequest, RenameDatabaseRequest, SearchNodePathsRequest,
+    SearchNodesRequest, SearchPreviewMode, SourceEvidenceRequest, StorageBillingBatchRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
 };
 
 use super::{
@@ -38,22 +38,20 @@ use super::{
     fail_next_mount_database_file_for_test, fetch_updates, finalize_database_archive,
     finalize_database_restore, get_cycles_billing_config, glob_nodes, grant_database_access,
     graph_links, graph_neighborhood, icrc21_canister_call_consent_message, incoming_links,
-    knowledge_evidence, last_ledger_from_for_test, last_ledger_memo_for_test,
-    last_ledger_to_for_test, ledger_transfer_fees_for_test, list_children,
-    list_database_cycle_entries, list_database_cycles_pending_purchases, list_database_members,
-    list_databases, list_nodes, market_create_listing, market_get_listing,
-    market_list_seller_listings, market_pause_listing, market_purchase_access,
-    market_update_listing, memory_recall, mkdir_node, move_node, multi_edit_node, outgoing_links,
-    parse_upgrade_cycles_billing_config_arg, purchase_database_cycles, query_database_sql_json,
-    query_index_sql_json, read_database_archive_chunk, read_node, read_node_context,
-    rename_database, revoke_database_access, search_node_paths, search_nodes,
-    set_cycles_balance_for_test, set_cycles_top_up_in_progress_for_test,
-    set_next_cycles_top_up_launcher_result_for_test,
+    last_ledger_from_for_test, last_ledger_memo_for_test, last_ledger_to_for_test,
+    ledger_transfer_fees_for_test, list_children, list_database_cycle_entries,
+    list_database_cycles_pending_purchases, list_database_members, list_databases, list_nodes,
+    market_create_listing, market_get_listing, market_list_seller_listings, market_pause_listing,
+    market_purchase_access, market_update_listing, memory_manifest, mkdir_node, move_node,
+    multi_edit_node, outgoing_links, parse_upgrade_cycles_billing_config_arg,
+    purchase_database_cycles, query_context, query_database_sql_json, query_index_sql_json,
+    read_database_archive_chunk, read_node, read_node_context, rename_database,
+    revoke_database_access, search_node_paths, search_nodes, set_cycles_balance_for_test,
+    set_cycles_top_up_in_progress_for_test, set_next_cycles_top_up_launcher_result_for_test,
     set_next_ledger_transfer_from_outcome_for_test, set_test_caller_principal_for_test,
-    set_update_charge_units_for_test, settle_database_storage_charges_batch, status,
-    store_manifest, transfer_from_error_outcome, update_charge_cycles,
-    update_cycles_billing_config, wiki_metrics, wiki_metrics_series, write_database_restore_chunk,
-    write_node, write_nodes,
+    set_update_charge_units_for_test, settle_database_storage_charges_batch, source_evidence,
+    status, transfer_from_error_outcome, update_charge_cycles, update_cycles_billing_config,
+    wiki_metrics, wiki_metrics_series, write_database_restore_chunk, write_node, write_nodes,
 };
 
 fn install_test_service() {
@@ -2894,13 +2892,13 @@ fn status_stays_available_after_fs_migrations() {
 fn store_entrypoints_return_four_store_contract() {
     install_test_service();
 
-    let manifest = store_manifest(StoreManifestRequest {
+    let manifest = memory_manifest(MemoryManifestRequest {
         database_id: "default".to_string(),
     })
     .expect("store manifest should load default database");
     assert_eq!(manifest.api_version, "kinic-stores-v1");
     assert_eq!(manifest.write_policy, "stores_read_only");
-    assert_eq!(manifest.recommended_entrypoint, "memory_recall");
+    assert_eq!(manifest.recommended_entrypoint, "query_context");
     assert!(is_canister_method_entrypoint(
         &manifest.recommended_entrypoint
     ));
@@ -2941,7 +2939,7 @@ fn store_entrypoints_return_four_store_contract() {
         manifest
             .roots
             .iter()
-            .any(|root| root.path == "/Sources" && root.kind == "knowledge_evidence")
+            .any(|root| root.path == "/Sources" && root.kind == "source_evidence")
     );
     assert!(
         manifest
@@ -3000,7 +2998,7 @@ fn store_entrypoints_return_four_store_contract() {
         .expect("write should succeed");
     }
 
-    let context = memory_recall(MemoryRecallRequest {
+    let context = query_context(QueryContextRequest {
         database_id: "default".to_string(),
         task: "beam memory".to_string(),
         entities: Vec::new(),
@@ -3018,7 +3016,7 @@ fn store_entrypoints_return_four_store_contract() {
     );
     assert!(!context.evidence.is_empty());
 
-    let evidence = knowledge_evidence(KnowledgeEvidenceRequest {
+    let evidence = source_evidence(SourceEvidenceRequest {
         database_id: "default".to_string(),
         node_path: "/Knowledge/scope/overview.md".to_string(),
     })
@@ -3055,10 +3053,10 @@ fn is_canister_method_entrypoint(value: &str) -> bool {
 }
 
 #[test]
-fn store_manifest_roots_are_readable() {
+fn memory_manifest_roots_are_readable() {
     install_test_service();
     let database_id = "default".to_string();
-    let manifest = store_manifest(StoreManifestRequest {
+    let manifest = memory_manifest(MemoryManifestRequest {
         database_id: database_id.clone(),
     })
     .expect("store manifest should load");

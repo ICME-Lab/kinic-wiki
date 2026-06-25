@@ -369,7 +369,7 @@ export type NodeContext = {
   outgoingLinks: LinkEdge[];
 };
 
-export type KnowledgeEvidenceRef = {
+export type SourceEvidenceRef = {
   sourcePath: string;
   viaPath: string;
   rawHref: string;
@@ -379,18 +379,18 @@ export type KnowledgeEvidenceRef = {
   sourceContentHash: string | null;
 };
 
-export type KnowledgeEvidence = {
+export type SourceEvidence = {
   nodePath: string;
-  refs: KnowledgeEvidenceRef[];
+  refs: SourceEvidenceRef[];
 };
 
-export type MemoryRecall = {
+export type QueryContext = {
   namespace: string;
   task: string;
   searchHits: SearchNodeHit[];
   nodes: NodeContext[];
   graphLinks: LinkEdge[];
-  evidence: KnowledgeEvidence[];
+  evidence: SourceEvidence[];
   truncated: boolean;
 };
 

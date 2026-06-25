@@ -26,17 +26,17 @@ use vfs_types::{
     DatabaseSummary, DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
     EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
     FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence,
-    KnowledgeEvidenceRequest, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCategoryGraph,
-    MarketCreateListingRequest, MarketEntitlement, MarketEntitlementPage, MarketListing,
-    MarketListingDetail, MarketListingPage, MarketListingPreview, MarketListingStatus,
-    MarketListingVerifiedStats, MarketOrder, MarketOrderPage, MarketPurchasePreview,
-    MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest,
-    MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
-    MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
+    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCreateListingRequest,
+    MarketEntitlement, MarketEntitlementPage, MarketListing, MarketListingDetail,
+    MarketListingPage, MarketListingPreview, MarketListingStatus, MarketListingVerifiedStats,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    NodeKind, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest,
+    Status, StorageBillingBatchRequest, StorageBillingBatchResult,
     UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
@@ -3123,11 +3123,11 @@ impl VfsService {
         })
     }
 
-    pub fn memory_recall(
+    pub fn query_context(
         &self,
         caller: &str,
-        mut request: MemoryRecallRequest,
-    ) -> Result<MemoryRecall, String> {
+        mut request: QueryContextRequest,
+    ) -> Result<QueryContext, String> {
         let database_id = request.database_id.clone();
         self.require_role(&database_id, caller, RequiredRole::Reader)?;
         let meta = self.database_meta(&database_id)?;
@@ -3135,17 +3135,17 @@ impl VfsService {
             request.namespace = Some("/Memory".to_string());
         }
         let store = self.database_store(&meta)?;
-        store.memory_recall(request)
+        store.query_context(request)
     }
 
-    pub fn knowledge_evidence(
+    pub fn source_evidence(
         &self,
         caller: &str,
-        request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence, String> {
+        request: SourceEvidenceRequest,
+    ) -> Result<SourceEvidence, String> {
         let database_id = request.database_id.clone();
         self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.knowledge_evidence(request)
+            store.source_evidence(request)
         })
     }
 

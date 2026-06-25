@@ -3,10 +3,10 @@ use tempfile::tempdir;
 use vfs_store::FsStore;
 use vfs_types::{
     AppendNodeRequest, DeleteNodeRequest, EditNodeRequest, GlobNodeType, GlobNodesRequest,
-    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, KnowledgeEvidenceRequest,
-    ListNodesRequest, MemoryRecallRequest, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    SearchNodePathsRequest, SearchPreviewMode, WriteNodeRequest,
+    GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest, ListNodesRequest,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContextRequest, SearchNodePathsRequest,
+    SearchPreviewMode, SourceEvidenceRequest, WriteNodeRequest,
 };
 
 fn new_store() -> (tempfile::TempDir, FsStore) {
@@ -703,7 +703,7 @@ fn memory_queries_return_context_and_scope_evidence() {
     }
 
     let context = store
-        .memory_recall(MemoryRecallRequest {
+        .query_context(QueryContextRequest {
             database_id: "default".to_string(),
             task: "beam reset".to_string(),
             entities: vec!["alpha".to_string()],
@@ -730,7 +730,7 @@ fn memory_queries_return_context_and_scope_evidence() {
     }));
 
     let evidence = store
-        .knowledge_evidence(KnowledgeEvidenceRequest {
+        .source_evidence(SourceEvidenceRequest {
             database_id: "default".to_string(),
             node_path: "/Knowledge/scope/overview.md".to_string(),
         })
@@ -752,7 +752,7 @@ fn memory_queries_return_context_and_scope_evidence() {
     assert!(raw_ref.source_content_hash.is_some());
 
     let topic_evidence = store
-        .knowledge_evidence(KnowledgeEvidenceRequest {
+        .source_evidence(SourceEvidenceRequest {
             database_id: "default".to_string(),
             node_path: "/Knowledge/scope/topics/foo.md".to_string(),
         })
@@ -762,7 +762,7 @@ fn memory_queries_return_context_and_scope_evidence() {
     }));
 
     let small_context = store
-        .memory_recall(MemoryRecallRequest {
+        .query_context(QueryContextRequest {
             database_id: "default".to_string(),
             task: "summary".to_string(),
             entities: Vec::new(),
@@ -774,7 +774,7 @@ fn memory_queries_return_context_and_scope_evidence() {
         .expect("small context should load");
     assert!(small_context.truncated);
 
-    let invalid_depth = store.memory_recall(MemoryRecallRequest {
+    let invalid_depth = store.query_context(QueryContextRequest {
         database_id: "default".to_string(),
         task: "beam".to_string(),
         entities: Vec::new(),
@@ -790,7 +790,7 @@ fn memory_queries_return_context_and_scope_evidence() {
 }
 
 #[test]
-fn memory_recall_trims_search_hits_and_preserves_candidate_order() {
+fn query_context_trims_search_hits_and_preserves_candidate_order() {
     let (_dir, store) = new_store();
     for (path, content, now) in [
         ("/Knowledge/order/index.md", "# Index", 10),
@@ -821,7 +821,7 @@ fn memory_recall_trims_search_hits_and_preserves_candidate_order() {
     }
 
     let ordered = store
-        .memory_recall(MemoryRecallRequest {
+        .query_context(QueryContextRequest {
             database_id: "default".to_string(),
             task: "needle".to_string(),
             entities: Vec::new(),
@@ -865,7 +865,7 @@ fn memory_recall_trims_search_hits_and_preserves_candidate_order() {
         .expect("node write should succeed");
 
     let small = budget_store
-        .memory_recall(MemoryRecallRequest {
+        .query_context(QueryContextRequest {
             database_id: "default".to_string(),
             task: "needle".to_string(),
             entities: Vec::new(),

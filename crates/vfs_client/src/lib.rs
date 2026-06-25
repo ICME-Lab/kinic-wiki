@@ -18,15 +18,15 @@ use vfs_types::{
     DeleteDatabaseRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
     ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
     GlobNodeHit, GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest,
-    IncomingLinksRequest, IndexSqlJsonQueryResult, KnowledgeEvidence, KnowledgeEvidenceRequest,
-    LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCreateListingRequest,
-    MarketEntitlementPage, MarketListing, MarketListingPage, MarketOrder, MarketOrderPage,
-    MarketPurchasePreview, MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecall,
-    MemoryRecallRequest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
-    OutgoingLinksRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, Status, StoreManifest, StoreManifestRequest, WikiMetrics, WikiMetricsPoint,
-    WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
+    MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
+    MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
+    MarketUpdateListingRequest, MemoryManifest, MemoryManifestRequest, MkdirNodeRequest,
+    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
+    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
+    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -39,8 +39,8 @@ pub trait VfsApi: Sync {
     async fn canister_health(&self) -> Result<CanisterHealth> {
         Err(anyhow!("canister_health is not implemented by this client"))
     }
-    async fn store_manifest(&self, _database_id: &str) -> Result<StoreManifest> {
-        Err(anyhow!("store_manifest is not implemented by this client"))
+    async fn memory_manifest(&self, _database_id: &str) -> Result<MemoryManifest> {
+        Err(anyhow!("memory_manifest is not implemented by this client"))
     }
     async fn create_database(&self, _name: &str) -> Result<CreateDatabaseResult> {
         Err(anyhow!("create_database is not implemented by this client"))
@@ -295,8 +295,8 @@ pub trait VfsApi: Sync {
     }
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult>;
     async fn search_nodes(&self, request: SearchNodesRequest) -> Result<Vec<SearchNodeHit>>;
-    async fn memory_recall(&self, _request: MemoryRecallRequest) -> Result<MemoryRecall> {
-        Err(anyhow!("memory_recall is not implemented by this client"))
+    async fn query_context(&self, _request: QueryContextRequest) -> Result<QueryContext> {
+        Err(anyhow!("query_context is not implemented by this client"))
     }
     async fn query_database_sql_json(
         &self,
@@ -317,13 +317,8 @@ pub trait VfsApi: Sync {
             "wiki_metrics_series is not implemented by this client"
         ))
     }
-    async fn knowledge_evidence(
-        &self,
-        _request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence> {
-        Err(anyhow!(
-            "knowledge_evidence is not implemented by this client"
-        ))
+    async fn source_evidence(&self, _request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+        Err(anyhow!("source_evidence is not implemented by this client"))
     }
     async fn search_node_paths(
         &self,
@@ -530,11 +525,11 @@ impl VfsApi for CanisterVfsClient {
         self.query("canister_health", &()).await
     }
 
-    async fn store_manifest(&self, database_id: &str) -> Result<StoreManifest> {
-        let result: Result<StoreManifest, String> = self
+    async fn memory_manifest(&self, database_id: &str) -> Result<MemoryManifest> {
+        let result: Result<MemoryManifest, String> = self
             .query(
-                "store_manifest",
-                &StoreManifestRequest {
+                "memory_manifest",
+                &MemoryManifestRequest {
                     database_id: database_id.to_string(),
                 },
             )
@@ -963,8 +958,8 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall> {
-        let result: Result<MemoryRecall, String> = self.query("memory_recall", &request).await?;
+    async fn query_context(&self, request: QueryContextRequest) -> Result<QueryContext> {
+        let result: Result<QueryContext, String> = self.query("query_context", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 
@@ -996,12 +991,9 @@ impl VfsApi for CanisterVfsClient {
         result.map_err(|error| anyhow!(error))
     }
 
-    async fn knowledge_evidence(
-        &self,
-        request: KnowledgeEvidenceRequest,
-    ) -> Result<KnowledgeEvidence> {
-        let result: Result<KnowledgeEvidence, String> =
-            self.query("knowledge_evidence", &request).await?;
+    async fn source_evidence(&self, request: SourceEvidenceRequest) -> Result<SourceEvidence> {
+        let result: Result<SourceEvidence, String> =
+            self.query("source_evidence", &request).await?;
         result.map_err(|error| anyhow!(error))
     }
 

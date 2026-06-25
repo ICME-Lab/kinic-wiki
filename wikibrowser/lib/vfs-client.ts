@@ -38,13 +38,13 @@ import type {
   NodeContext,
   NodeEntryKind,
   NodeKind,
-  MemoryRecall,
+  QueryContext,
   QueryAnswerSessionCheckRequest,
   QueryAnswerSessionCheckResult,
   QueryAnswerSessionRequest,
   RecentNode,
   SearchNodeHit,
-  KnowledgeEvidence,
+  SourceEvidence,
   SourceRunSessionCheckRequest,
   UrlIngestTriggerSessionCheckRequest,
   UrlIngestTriggerSessionRequest,
@@ -436,7 +436,7 @@ type RawNodeContext = {
   outgoing_links: RawLinkEdge[];
 };
 
-type RawKnowledgeEvidenceRef = {
+type RawSourceEvidenceRef = {
   source_path: string;
   via_path: string;
   raw_href: string;
@@ -446,18 +446,18 @@ type RawKnowledgeEvidenceRef = {
   source_content_hash: [] | [string];
 };
 
-type RawKnowledgeEvidence = {
+type RawSourceEvidence = {
   node_path: string;
-  refs: RawKnowledgeEvidenceRef[];
+  refs: RawSourceEvidenceRef[];
 };
 
-type RawMemoryRecall = {
+type RawQueryContext = {
   namespace: string;
   task: string;
   search_hits: RawSearchHit[];
   nodes: RawNodeContext[];
   graph_links: RawLinkEdge[];
-  evidence: RawKnowledgeEvidence[];
+  evidence: RawSourceEvidence[];
   truncated: boolean;
 };
 
@@ -504,7 +504,7 @@ type VfsActor = {
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
-  memory_recall: (request: {
+  query_context: (request: {
     database_id: string;
     task: string;
     entities: string[];
@@ -512,7 +512,7 @@ type VfsActor = {
     budget_tokens: number;
     include_evidence: boolean;
     depth: number;
-  }) => Promise<{ Ok: RawMemoryRecall } | { Err: string }>;
+  }) => Promise<{ Ok: RawQueryContext } | { Err: string }>;
   query_database_sql_json: (databaseId: string, sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   query_index_sql_json: (sql: string, limit: number) => Promise<{ Ok: RawIndexSqlJsonQueryResult } | { Err: string }>;
   wiki_metrics: () => Promise<{ Ok: RawWikiMetrics } | { Err: string }>;
@@ -1234,17 +1234,17 @@ export async function graphNeighborhood(canisterId: string, databaseId: string, 
   });
 }
 
-export async function memoryRecall(
+export async function queryContext(
   canisterId: string,
   databaseId: string,
   task: string,
   budgetTokens: number,
   identity?: Identity,
   namespace?: string
-): Promise<MemoryRecall> {
+): Promise<QueryContext> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
-    const result = await actor.memory_recall({
+    const result = await actor.query_context({
       database_id: databaseId,
       task,
       entities: [],
@@ -1256,7 +1256,7 @@ export async function memoryRecall(
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
-    return normalizeMemoryRecall(result.Ok);
+    return normalizeQueryContext(result.Ok);
   });
 }
 
@@ -1624,19 +1624,19 @@ function normalizeNodeContext(raw: RawNodeContext): NodeContext {
   };
 }
 
-function normalizeMemoryRecall(raw: RawMemoryRecall): MemoryRecall {
+function normalizeQueryContext(raw: RawQueryContext): QueryContext {
   return {
     namespace: raw.namespace,
     task: raw.task,
     searchHits: raw.search_hits.map(normalizeSearchHit),
     nodes: raw.nodes.map(normalizeNodeContext),
     graphLinks: raw.graph_links.map(normalizeLinkEdge),
-    evidence: raw.evidence.map(normalizeKnowledgeEvidence),
+    evidence: raw.evidence.map(normalizeSourceEvidence),
     truncated: raw.truncated
   };
 }
 
-function normalizeKnowledgeEvidence(raw: RawKnowledgeEvidence): KnowledgeEvidence {
+function normalizeSourceEvidence(raw: RawSourceEvidence): SourceEvidence {
   return {
     nodePath: raw.node_path,
     refs: raw.refs.map((ref) => ({

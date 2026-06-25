@@ -22,7 +22,7 @@ For many medium-sized agent workflows, structured file-system search is often mo
 
 ## Four Stores
 
-- `memory`: short facts, preferences, and active context recalled through `memory_recall`.
+- `memory`: short facts, preferences, and active context recalled through `query_context`.
 - `knowledge`: long-term notes under `/Knowledge/...`, connected by wiki links and raw evidence under `/Sources/<provider>/...`.
 - `skill`: reusable `SKILL.md` packages under `/Skills/...`, with manifests, snapshots, status, and run evidence.
 - `session`: agent session state under `/Sessions/...` and session transcript evidence under `/Sources/sessions/...`; resumable summaries are a later workflow.
@@ -104,7 +104,7 @@ Agents should discover relevant skills, inspect the package, use the instruction
 - Browser: browse, search, edit, and manage database access
 - CLI: scripted database operations and skill store workflows
 - Chrome extension: ChatGPT export and active-tab source capture
-- Store API: direct read-only canister queries such as `store_manifest`, `memory_recall`, and `knowledge_evidence`
+- Store API: direct read-only canister queries such as `memory_manifest`, `query_context`, and `source_evidence`
 - Agent Tool Calling: embedded OpenAI-compatible and Anthropic-compatible tool schemas
 
 The Chrome extension connects browser work to Kinic Wiki. It saves recent ChatGPT conversations and active web page snapshots as raw knowledge evidence under `/Sources/<provider>/...`. The browser is the capture surface, the stores are the structured memory layer, and the CLI is the operator automation layer.

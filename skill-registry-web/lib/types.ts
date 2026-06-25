@@ -144,7 +144,7 @@ export type NodeContext = {
   outgoingLinks: LinkEdge[];
 };
 
-export type MemoryRecall = {
+export type QueryContext = {
   namespace: string;
   task: string;
   searchHits: SearchNodeHit[];

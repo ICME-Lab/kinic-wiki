@@ -3315,7 +3315,7 @@ fn move_node_allows_noncanonical_target_for_source_nodes() {
 fn move_node_accepts_canonical_target_for_source_nodes() {
     let (_dir, store) = new_store();
     ensure_parent_folders(&store, "/Sources/source/source.md", 1_919);
-    ensure_parent_folders(&store, "/Sources/sessions/renamed/renamed.md", 1_919);
+    ensure_parent_folders(&store, "/Sources/sessions/claudecode/renamed.md", 1_919);
     let created = store
         .write_node(
             WriteNodeRequest {
@@ -3335,7 +3335,7 @@ fn move_node_accepts_canonical_target_for_source_nodes() {
             MoveNodeRequest {
                 database_id: "default".to_string(),
                 from_path: "/Sources/source/source.md".to_string(),
-                to_path: "/Sources/sessions/renamed/renamed.md".to_string(),
+                to_path: "/Sources/sessions/claudecode/renamed.md".to_string(),
                 expected_etag: Some(created.node.etag),
                 overwrite: false,
             },
@@ -3343,9 +3343,9 @@ fn move_node_accepts_canonical_target_for_source_nodes() {
         )
         .expect("move should succeed");
 
-    assert_eq!(moved.node.path, "/Sources/sessions/renamed/renamed.md");
+    assert_eq!(moved.node.path, "/Sources/sessions/claudecode/renamed.md");
     let current = store
-        .read_node("/Sources/sessions/renamed/renamed.md")
+        .read_node("/Sources/sessions/claudecode/renamed.md")
         .expect("read should succeed")
         .expect("moved source should exist");
     assert_eq!(current.kind, NodeKind::Source);
@@ -3379,7 +3379,7 @@ fn source_nodes_accept_canonical_paths_under_both_roots() {
     let (_dir, store) = new_store();
     for (index, path) in [
         "/Sources/source/source.md",
-        "/Sources/sessions/session/session.md",
+        "/Sources/sessions/claudecode/session-1.md",
     ]
     .into_iter()
     .enumerate()

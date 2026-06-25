@@ -4,7 +4,7 @@
 This document covers wiki/database operator operations: connection, database management, node reads and writes, search, links, and archive/restore.
 Skill Registry commands use the same binary under `kinic-vfs-cli skill ...`; their source of truth is [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 
-The canister also exposes read-only Store API methods such as `store_manifest`, `memory_recall`, and `knowledge_evidence`; see [`STORE_API.md`](STORE_API.md).
+The canister also exposes read-only Store API methods such as `memory_manifest`, `query_context`, and `source_evidence`; see [`STORE_API.md`](STORE_API.md).
 Those are direct canister/client methods, not CLI commands in this document.
 Use the CLI commands below for shell workflows against the remote VFS.
 For embedded agent tool calling, use the shared Rust library described in [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md).
