@@ -1398,7 +1398,7 @@ fn fs_folder_migration_keeps_existing_file_source_etags_out_of_sync_delta() {
 }
 
 #[test]
-fn fs_folder_migration_seeds_sources_roots_from_current_schema() {
+fn fs_folder_migration_seeds_sources_reserved_folders_from_current_schema() {
     let (_dir, store) = old_fs_schema_store();
     let conn = Connection::open(store.database_path()).expect("db should open");
     conn.execute_batch(
@@ -1434,6 +1434,15 @@ fn fs_folder_migration_seeds_sources_roots_from_current_schema() {
     assert_eq!(sources_root.kind, NodeKind::Folder);
     assert_eq!(sources_root.content, "");
     assert_eq!(sources_root.metadata_json, "{}");
+    for path in ["/Sources/sessions", "/Sources/skill-runs"] {
+        let node = store
+            .read_node(path)
+            .expect("sources reserved folder should read")
+            .expect("sources reserved folder should exist");
+        assert_eq!(node.kind, NodeKind::Folder);
+        assert_eq!(node.content, "");
+        assert_eq!(node.metadata_json, "{}");
+    }
 }
 
 #[test]
