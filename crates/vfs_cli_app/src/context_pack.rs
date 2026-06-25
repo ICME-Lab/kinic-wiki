@@ -598,7 +598,7 @@ fn collect_context_nodes(context: &QueryContext) -> Vec<BucketedNode> {
     context
         .nodes
         .iter()
-        .filter(|context| matches!(context.node.kind, NodeKind::File | NodeKind::Source))
+        .filter(|context| context.node.kind == NodeKind::File)
         .map(|context| BucketedNode {
             bucket: bucket_for_path(&context.node.path),
             node: context.node.clone(),
@@ -1765,6 +1765,120 @@ mod tests {
                 .errors
                 .iter()
                 .any(|error| error.contains("kinic.content_hash mismatch"))
+        );
+    }
+
+    #[tokio::test]
+    async fn export_root_context_does_not_copy_source_nodes_as_concepts() {
+        let out = tempdir().expect("tempdir");
+        let mut client = MockClient::default();
+        client.context.nodes = vec![
+            test_node_context(
+                "/Knowledge/projects/acme/facts.md",
+                "Fact from /Sources/web/source.md\n",
+                "wiki-etag",
+            ),
+            NodeContext {
+                node: test_node(
+                    "/Sources/web/source.md",
+                    NodeKind::Source,
+                    "raw secret transcript",
+                    "raw-etag",
+                ),
+                incoming_links: Vec::new(),
+                outgoing_links: Vec::new(),
+            },
+        ];
+        client.context.evidence = vec![test_source_evidence(
+            "/Knowledge/projects/acme/facts.md",
+            "/Sources/web/source.md",
+            "sha256:sourcehash",
+        )];
+
+        let result = export_okf_bundle(
+            &client,
+            "alpha",
+            ContextPackExportOptions {
+                task: "root export".to_string(),
+                namespace: "/".to_string(),
+                budget_tokens: 8_000,
+                depth: 1,
+                entities: Vec::new(),
+                out: out.path().to_path_buf(),
+                expires_at: "2999-01-01T00:00:00Z".to_string(),
+                trust_level: "team-approved".to_string(),
+                approved_by: Vec::new(),
+                overwrite: false,
+                json: true,
+            },
+        )
+        .await
+        .expect("export");
+
+        assert_eq!(result.concept_count, 2);
+        assert_eq!(result.reference_count, 1);
+        assert!(!out.path().join("notes/sources-web-source.md").exists());
+        assert!(!out.path().join("facts/sources-web-source.md").exists());
+        let fact = fs::read_to_string(out.path().join("facts/knowledge-projects-acme-facts.md"))
+            .expect("fact");
+        assert!(!fact.contains("raw secret transcript"));
+        let reference = fs::read_to_string(out.path().join("references/sources-web-source.md"))
+            .expect("reference");
+        assert!(reference.contains("Referenced store content is not copied"));
+        assert!(!reference.contains("raw secret transcript"));
+        assert!(
+            verify_okf_bundle_dir(out.path(), false)
+                .expect("verify")
+                .valid
+        );
+    }
+
+    #[tokio::test]
+    async fn export_sources_namespace_does_not_copy_source_bodies() {
+        let out = tempdir().expect("tempdir");
+        let mut client = MockClient::default();
+        client.context.nodes = vec![NodeContext {
+            node: test_node(
+                "/Sources/web/source.md",
+                NodeKind::Source,
+                "raw secret transcript",
+                "raw-etag",
+            ),
+            incoming_links: Vec::new(),
+            outgoing_links: Vec::new(),
+        }];
+
+        let result = export_okf_bundle(
+            &client,
+            "alpha",
+            ContextPackExportOptions {
+                task: "source export".to_string(),
+                namespace: "/Sources".to_string(),
+                budget_tokens: 8_000,
+                depth: 1,
+                entities: Vec::new(),
+                out: out.path().to_path_buf(),
+                expires_at: "2999-01-01T00:00:00Z".to_string(),
+                trust_level: "team-approved".to_string(),
+                approved_by: Vec::new(),
+                overwrite: false,
+                json: true,
+            },
+        )
+        .await
+        .expect("export");
+
+        assert_eq!(result.concept_count, 0);
+        assert_eq!(result.reference_count, 0);
+        let manifest = read_okf_manifest(out.path()).expect("manifest");
+        assert_eq!(manifest.namespace, "/Sources");
+        assert!(manifest.selected_nodes.is_empty());
+        let index = fs::read_to_string(out.path().join(INDEX_FILE)).expect("index");
+        assert!(!index.contains("raw secret transcript"));
+        assert!(
+            verify_okf_bundle_dir(out.path(), false)
+                .expect("verify")
+                .valid
         );
     }
 
