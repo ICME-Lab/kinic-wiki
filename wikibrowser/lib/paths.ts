@@ -1,6 +1,8 @@
 import { databaseRouteBase } from "./share-links";
 import type { SearchLimit, SearchPreviewMode, SearchScope } from "./search-options";
 
+const INTERNAL_STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
+
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
     return "/Knowledge";
@@ -170,7 +172,7 @@ function isExternalHref(href: string): boolean {
 }
 
 function isInternalWikiPath(path: string): boolean {
-  return path === "/Knowledge" || path.startsWith("/Knowledge/") || path === "/Sources" || path.startsWith("/Sources/");
+  return INTERNAL_STORE_ROOT_PATHS.some((root) => path === root || path.startsWith(`${root}/`));
 }
 
 function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget): string {

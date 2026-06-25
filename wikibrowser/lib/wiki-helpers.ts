@@ -3,6 +3,8 @@ import type { ChildNode } from "@/lib/types";
 export type ViewMode = "preview" | "raw" | "edit";
 export type ModeTab = "explorer" | "query" | "ingest";
 export type ReadIdentityMode = "anonymous" | "user";
+export const STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
+export type StoreRootPath = (typeof STORE_ROOT_PATHS)[number];
 
 export type LoadState<T> = {
   data: T | null;
@@ -19,7 +21,7 @@ export class ApiError extends Error {
   }
 }
 
-export function rootChild(path: "/Knowledge" | "/Sources"): ChildNode {
+export function rootChild(path: StoreRootPath): ChildNode {
   return {
     path,
     name: path.slice(1),

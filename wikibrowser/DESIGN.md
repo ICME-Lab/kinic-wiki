@@ -14,7 +14,7 @@ The product is not a database admin UI. It should feel like a lightweight knowle
 
 ## Layout
 
-- Left sidebar: collapsible file tree for `/Knowledge` and `/Sources`
+- Left sidebar: collapsible file tree for `/Knowledge`, `/Memory`, `/Skills`, `/Sessions`, and `/Sources`
 - Center: selected Markdown note rendered as readable document
 - Right: inspector showing path, etag, updated_at, backlinks, outgoing links, note role, canonicality warnings, raw source, provenance
 - Top bar: global search, path search, full-text search, mode tabs: Browse, Search, Lint, Recent

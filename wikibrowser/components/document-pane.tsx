@@ -612,9 +612,6 @@ function FolderDocument({
   const indexNode = folderIndexNode.data ?? emptyFolderIndexNode(folder.path);
   const contentBytes = new TextEncoder().encode(indexNode.content).length;
   const isLargeContent = contentBytes > LARGE_CONTENT_BYTES;
-  if (!isWikiPath(folder.path)) {
-    return <DirectoryDocument childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={folder.path} />;
-  }
   if (view === "edit") {
     return (
       <EditDocument
@@ -764,10 +761,6 @@ function emptyFolderIndexNode(folderPath: string): WikiNode {
     etag: "",
     metadataJson: "{}"
   };
-}
-
-function isWikiPath(path: string): boolean {
-  return path === "/Knowledge" || path.startsWith("/Knowledge/");
 }
 
 function HeaderBadge({ label, tone }: { label: string; tone: "blue" | "green" | "yellow" }) {

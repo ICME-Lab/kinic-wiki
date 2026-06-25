@@ -37,6 +37,7 @@ import {
   parseModeTab,
   readIdentityMode as resolveReadIdentityMode,
   ApiError,
+  STORE_ROOT_PATHS,
   type ModeTab,
   type PathLoadState,
   type ViewMode
@@ -411,12 +412,12 @@ export function WikiBrowser() {
     : explorerNodeFromSelection(selectedPath, currentNode, currentChildren);
   const explorerWriteDisabledReason = writeDisabledReason(readIdentity, currentDatabaseRole, readIdentity && !currentDatabaseRole ? databaseListError : null, currentDatabaseCycleReason);
   const explorerCreateDirectory = createDirectoryForExplorerNode(selectedExplorerNode);
-  const explorerMutationTarget = selectedExplorerNode && isMutableWikiExplorerNode(selectedExplorerNode) ? selectedExplorerNode : null;
+  const explorerMutationTarget = selectedExplorerNode && isMutableExplorerNode(selectedExplorerNode) ? selectedExplorerNode : null;
   const selectedExplorerChildren = selectedExplorerNode?.kind === "folder"
     && currentChildren.path === selectedExplorerNode.path
     ? currentChildren.data ?? undefined
     : undefined;
-  const explorerDeleteTarget = explorerMutationTarget && isDeletableWikiExplorerNode(explorerMutationTarget, selectedExplorerChildren) ? explorerMutationTarget : null;
+  const explorerDeleteTarget = explorerMutationTarget && isDeletableExplorerNode(explorerMutationTarget, selectedExplorerChildren) ? explorerMutationTarget : null;
   useEffect(() => {
     const nextTargets = loadedWikiFolders(childNodesCache.current, explorerMutationTarget);
     setExplorerMoveTargets((currentTargets) => sameStringList(currentTargets, nextTargets) ? currentTargets : nextTargets);
@@ -477,12 +478,12 @@ export function WikiBrowser() {
     if (!readIdentity) throw new Error("Login with Internet Identity to rename nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
     if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
-    if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Knowledge Markdown files and folders can be renamed.");
+    if (!isMutableExplorerNode(target)) throw new Error("Only Markdown files and folders can be renamed.");
     if (!target.etag) throw new Error("Cannot rename a node without an etag.");
     const normalizedName = target.kind === "file" ? normalizeMarkdownFileName(nextName) : normalizePathSegment(nextName);
     if (!normalizedName) throw new Error("Enter a single valid name.");
     if (target.kind === "file" && isReservedFolderIndexName(normalizedName)) throw new Error("Use folder Edit to create index.md.");
-    const nextPath = `${parentPath(target.path) ?? "/Knowledge"}/${normalizedName}`;
+    const nextPath = childPath(parentPath(target.path) ?? "/", normalizedName);
     const { moveNodeAuthenticated } = await import("@/lib/vfs-client");
     await moveNodeAuthenticated(canisterId, readIdentity, {
       databaseId,
@@ -501,10 +502,9 @@ export function WikiBrowser() {
     if (!readIdentity) throw new Error("Login with Internet Identity to move nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
     if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
-    if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Knowledge Markdown files and folders can be moved.");
+    if (!isMutableExplorerNode(target)) throw new Error("Only Markdown files and folders can be moved.");
     if (!target.etag) throw new Error("Cannot move a node without an etag.");
-    if (!isWikiPath(targetDirectory)) throw new Error("Move destination must be under /Knowledge.");
-    const nextPath = `${targetDirectory}/${target.name}`;
+    const nextPath = childPath(targetDirectory, target.name);
     if (nextPath === target.path) return false;
     const { moveNodeAuthenticated } = await import("@/lib/vfs-client");
     await moveNodeAuthenticated(canisterId, readIdentity, {
@@ -527,7 +527,7 @@ export function WikiBrowser() {
     const targetChildren = target.kind === "folder"
       ? childNodesCache.current.get(nodeRequestKey(canisterId, databaseId, target.path, readPrincipal))
       : undefined;
-    if (!isDeletableWikiExplorerNode(target, targetChildren)) throw new Error("Only /Knowledge Markdown files and folders without visible children can be deleted.");
+    if (!isDeletableExplorerNode(target, targetChildren)) throw new Error("Only Markdown files and folders without visible children can be deleted.");
     if (!target.etag) throw new Error("Cannot delete a node without an etag.");
     if (!window.confirm(`Delete ${target.path}?`)) return false;
     const { deleteNodeAuthenticated, readNode } = await import("@/lib/vfs-client");
@@ -656,9 +656,9 @@ export function WikiBrowser() {
                 deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
                 fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
                 folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
-                renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Knowledge Markdown file or folder to rename")}
-                moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Knowledge Markdown file or folder to move")}
-                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Knowledge Markdown file or folder without visible children to delete")}
+                renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a Markdown file or folder to rename")}
+                moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a Markdown file or folder to move")}
+                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a Markdown file or folder without visible children to delete")}
                 onNewFile={() => {
                   setExplorerActionError(null);
                   setExplorerActionMode("file");
@@ -761,7 +761,7 @@ export function WikiBrowser() {
                   router.replace(hrefForPath(canisterId, databaseId, selectedPath, nextView, tab));
                 }}
                 isDirectory={currentNode.data?.kind === "folder" || (!currentNode.data && Boolean(currentChildren.data))}
-                canEditDirectory={currentNode.data?.kind === "folder" && isWikiPath(selectedPath)}
+                canEditDirectory={currentNode.data?.kind === "folder"}
               />
               <DocumentPane
                 node={currentNode}
@@ -1144,10 +1144,10 @@ function wikiMarkdownChildPath(directoryPath: string, fileName: string): string 
 }
 
 function wikiChildPath(directoryPath: string, name: string, label: string): string {
-  if (!isWikiPath(directoryPath)) {
-    throw new Error(`${label} can only be created under /Knowledge.`);
+  if (!isDatabasePath(directoryPath)) {
+    throw new Error(`${label} can only be created under a database path.`);
   }
-  return `${directoryPath}/${name}`;
+  return childPath(directoryPath, name);
 }
 
 function normalizeMarkdownFileName(fileName: string): string | null {
@@ -1170,22 +1170,22 @@ function createDirectoryForExplorerNode(node: ChildNode | null): string {
   if (!node) {
     return "/Knowledge";
   }
-  if ((node.kind === "directory" || node.kind === "folder") && isWikiPath(node.path)) {
+  if ((node.kind === "directory" || node.kind === "folder") && isDatabasePath(node.path)) {
     return node.path;
   }
-  if (node.kind === "file" && isWikiPath(node.path)) {
+  if (node.kind === "file" && isDatabasePath(node.path)) {
     return parentPath(node.path) ?? "/Knowledge";
   }
   return "/Knowledge";
 }
 
-function isMutableWikiExplorerNode(node: ChildNode): boolean {
-  if (node.isVirtual || !node.etag || isProtectedRootFolder(node.path) || !node.path.startsWith("/Knowledge/")) return false;
+function isMutableExplorerNode(node: ChildNode): boolean {
+  if (node.isVirtual || !node.etag || isProtectedRootFolder(node.path)) return false;
   return (node.kind === "file" && node.path.endsWith(".md")) || node.kind === "folder";
 }
 
-function isDeletableWikiExplorerNode(node: ChildNode, loadedChildren?: ChildNode[]): boolean {
-  if (!isMutableWikiExplorerNode(node)) return false;
+function isDeletableExplorerNode(node: ChildNode, loadedChildren?: ChildNode[]): boolean {
+  if (!isMutableExplorerNode(node)) return false;
   if (node.kind === "folder") {
     return loadedChildren ? visibleChildren(loadedChildren, node.path).length === 0 : !node.hasChildren;
   }
@@ -1193,16 +1193,16 @@ function isDeletableWikiExplorerNode(node: ChildNode, loadedChildren?: ChildNode
 }
 
 function loadedWikiFolders(cache: Map<string, ChildNode[]>, excludedNode: ChildNode | null): string[] {
-  const paths = new Set<string>(["/Knowledge"]);
+  const paths = new Set<string>(STORE_ROOT_PATHS);
   for (const children of cache.values()) {
     for (const child of children) {
-      if (child.kind === "folder" && isWikiPath(child.path) && !isExcludedMoveFolder(child.path, excludedNode)) {
+      if (child.kind === "folder" && isDatabasePath(child.path) && !isExcludedMoveFolder(child.path, excludedNode)) {
         paths.add(child.path);
       }
     }
   }
   const excludedParent = excludedNode ? parentPath(excludedNode.path) : null;
-  if (excludedParent && isWikiPath(excludedParent)) {
+  if (excludedParent && isDatabasePath(excludedParent)) {
     paths.add(excludedParent);
   }
   return [...paths].sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }));
@@ -1218,12 +1218,16 @@ function isExcludedMoveFolder(path: string, node: ChildNode | null): boolean {
   return path === node.path || path.startsWith(`${node.path}/`);
 }
 
-function isWikiPath(path: string): boolean {
-  return path === "/Knowledge" || path.startsWith("/Knowledge/");
+function isDatabasePath(path: string): boolean {
+  return STORE_ROOT_PATHS.some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+function childPath(directoryPath: string, name: string): string {
+  return directoryPath === "/" ? `/${name}` : `${directoryPath}/${name}`;
 }
 
 function isProtectedRootFolder(path: string): boolean {
-  return path === "/Knowledge" || path === "/Sources";
+  return STORE_ROOT_PATHS.some((root) => path === root);
 }
 
 function writeDisabledReason(

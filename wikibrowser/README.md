@@ -50,9 +50,9 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 
 ## Scope
 
-- Browse `/Knowledge` and `/Sources`
+- Browse `/Knowledge`, `/Memory`, `/Skills`, `/Sessions`, and `/Sources`
 - Create databases and manage database access
-- Edit Markdown nodes under `/Knowledge`
+- Edit Markdown notes when the selected node is editable
 - Create web source captures under `/Sources/web/...` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
@@ -72,12 +72,6 @@ Open a database route and select the `ingest` left-pane tab:
 
 ```text
 /<database-id>/Knowledge?tab=ingest
-```
-
-Select the `clipper` left-pane tab to check the current database, writer readiness, Chrome extension setup steps, and Clipper storage paths without leaving WikiBrowser:
-
-```text
-/<database-id>/Knowledge?tab=clipper
 ```
 
 Submitting a web page snapshot writes raw evidence to the same database:
