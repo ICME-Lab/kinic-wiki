@@ -19,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-export function rootChild(path: "/Wiki" | "/Sources"): ChildNode {
+export function rootChild(path: "/Knowledge" | "/Sources"): ChildNode {
   return {
     path,
     name: path.slice(1),

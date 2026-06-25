@@ -167,7 +167,7 @@ node -e '
   after_setup_file="${RESULT_DIR}/${scenario}.after_setup_cycles.txt"
   after_measure_file="${RESULT_DIR}/${scenario}.after_measure_cycles.txt"
   stderr_file="${RESULT_DIR}/${scenario}.stderr.txt"
-  prefix="/Wiki/bench/deployed/${RUN_TIMESTAMP}/latency/${scenario}"
+  prefix="/Knowledge/bench/deployed/${RUN_TIMESTAMP}/latency/${scenario}"
   bench_log "canister latency ${scenario}"
   capture_canister_cycles_json "${CANISTER_ID}" "${before_file}"
   "${BENCH_BIN}" latency-setup \

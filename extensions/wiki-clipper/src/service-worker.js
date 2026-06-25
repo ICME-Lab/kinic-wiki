@@ -537,7 +537,7 @@ async function createSettingsContextMenu() {
   }
   chrome.contextMenus.create({
     id: CREATE_WIKI_MENU_ID,
-    title: "Create Kinic wiki page",
+    title: "Create knowledge page",
     contexts: ["action"]
   });
   chrome.contextMenus.create({

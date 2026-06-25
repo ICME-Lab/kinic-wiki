@@ -501,7 +501,7 @@ test("context menu opens settings without starting source capture", async () => 
     await handleContextMenuClickForTest({ menuItemId: "kinic-wiki-clipper-settings" });
 
     assert.deepEqual(createdMenus, [
-      { id: "kinic-wiki-clipper-create-wiki", title: "Create Kinic wiki page", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-create-wiki", title: "Create knowledge page", contexts: ["action"] },
       { id: "kinic-wiki-clipper-save-raw", title: "Save raw", contexts: ["action"] },
       { id: "kinic-wiki-clipper-settings", title: "Settings", contexts: ["action"] }
     ]);

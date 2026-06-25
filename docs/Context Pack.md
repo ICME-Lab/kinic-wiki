@@ -38,11 +38,11 @@ Reserved files:
 
 Concept files:
 
-- `facts/*.md`: settled fact concepts from `facts.md` wiki nodes.
-- `decisions/*.md`: decision concepts from decision wiki nodes.
+- `facts/*.md`: settled fact concepts from `facts.md` knowledge nodes.
+- `decisions/*.md`: decision concepts from decision knowledge nodes.
 - `tasks/*.md`: pending work from `plans.md` or `tasks.md`.
 - `policies/*.md`: style, preference, and do-not-do concepts.
-- `notes/*.md`: general wiki notes that do not map to a narrower type.
+- `notes/*.md`: general knowledge notes that do not map to a narrower type.
 - `references/*.md`: store references without target body text.
 
 ## Frontmatter
@@ -56,15 +56,15 @@ Example:
 ---
 type: Decision
 title: sqlite vfs
-description: Generated from Kinic Wiki node /Wiki/projects/acme/decisions/sqlite-vfs.md
-resource: kinic://db_alpha/Wiki/projects/acme/decisions/sqlite-vfs.md
+description: Generated from Kinic Wiki node /Knowledge/projects/acme/decisions/sqlite-vfs.md
+resource: kinic://db_alpha/Knowledge/projects/acme/decisions/sqlite-vfs.md
 tags:
 - kinic
 - decisions
 timestamp: 2026-06-22T00:00:00Z
 kinic:
   database_id: db_alpha
-  root: /Wiki/projects/acme
+  root: /Knowledge/projects/acme
   etag: v4h:...
   content_hash: sha256:...
   trust_level: team-approved
@@ -90,7 +90,7 @@ tags:
 - reference
 kinic:
   database_id: db_alpha
-  root: /Wiki/projects/acme
+  root: /Knowledge/projects/acme
   store: knowledge_evidence
   store_path: /Sources/web/source.md
   etag: v4h:...
@@ -102,7 +102,7 @@ kinic:
 
 - store: `knowledge_evidence`
 - store_path: `/Sources/web/source.md`
-- via_path: `/Wiki/projects/acme/facts.md`
+- via_path: `/Knowledge/projects/acme/facts.md`
 - target_href: `/Sources/web/source.md`
 - link_text: `Raw`
 - etag: `v4h:...`
@@ -114,7 +114,7 @@ Referenced store content is not copied into this OKF bundle.
 
 ## Canonicality Rules
 
-- `/Wiki/...` is the organized knowledge layer.
+- `/Knowledge/...` is the organized knowledge layer.
 - `/Sources/...` is the canonical raw evidence layer.
 - Prefer reviewed role-page concepts over unreviewed working-note concepts for trusted agent handoff.
 - Referenced store body text is not copied into `references/*.md`.
@@ -130,7 +130,7 @@ Export:
 ```bash
 kinic-vfs-cli --database-id <database-id> context-pack export \
   --task "review auth token refresh design" \
-  --namespace /Wiki/projects/acme \
+  --namespace /Knowledge/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \

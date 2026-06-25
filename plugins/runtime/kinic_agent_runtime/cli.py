@@ -51,12 +51,3 @@ def run_cli(cli: str, *args: str, check: bool = True) -> subprocess.CompletedPro
         capture_output=True,
     )
 
-
-def resolve_runner() -> list[str] | None:
-    candidate = os.environ.get("KINIC_SKILL_EVOLVE")
-    if candidate:
-        return [candidate] if Path(candidate).exists() or shutil.which(candidate) else None
-    runner = shutil.which("kinic-skill-evolve")
-    if runner:
-        return [runner]
-    return None

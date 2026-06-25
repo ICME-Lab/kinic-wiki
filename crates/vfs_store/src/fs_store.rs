@@ -52,7 +52,7 @@ use crate::{
 };
 
 const QUERY_RESULT_LIMIT_MAX: u32 = 100;
-const WIKI_ROOT_PATH: &str = "/Wiki";
+const WIKI_ROOT_PATH: &str = "/Knowledge";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
@@ -188,7 +188,7 @@ impl FsStore {
                 top_level_paths: load_marketplace_top_level_paths(conn)?,
                 excerpts: load_marketplace_preview_excerpts(conn)?,
                 category_graph: load_marketplace_category_graph(conn)?,
-                graph_links: load_graph_links(conn, "/Wiki", 100)?,
+                graph_links: load_graph_links(conn, "/Knowledge", 100)?,
                 preview_stale: false,
             };
             Ok((stats, preview))
@@ -358,6 +358,7 @@ impl FsStore {
             let revision = record_change(tx, &node)?;
             update_path_state(tx, &node.path, revision)?;
             node.etag = compute_node_etag(&node);
+            ensure_missing_store_root_for_path(tx, &node.path, now)?;
             let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
             sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
             sync_node_links(tx, &node)?;
@@ -420,6 +421,13 @@ impl FsStore {
                 }
                 return Err(format!("node already exists and is not a folder: {path}"));
             }
+            if is_protected_root_folder(&path) {
+                ensure_store_root_folder(tx, &path, now)?;
+                return Ok(MkdirNodeResult {
+                    path,
+                    created: true,
+                });
+            }
             let mut node = Node {
                 path: path.clone(),
                 kind: NodeKind::Folder,
@@ -432,6 +440,7 @@ impl FsStore {
             let revision = record_change(tx, &node)?;
             update_path_state(tx, &node.path, revision)?;
             node.etag = compute_node_etag(&node);
+            ensure_missing_store_root_for_path(tx, &node.path, now)?;
             save_node(tx, None, &node)?;
             Ok(MkdirNodeResult {
                 path,
@@ -490,6 +499,7 @@ impl FsStore {
                     let old_path = moved.path.clone();
                     moved.path = rebase_path(&old_path, &from_path, &to_path)?;
                     moved.updated_at = now;
+                    ensure_missing_store_root_for_path(tx, &moved.path, now)?;
                     let from_revision = record_path_removal(tx, &old_path)?;
                     update_path_state(tx, &old_path, from_revision)?;
                     let to_revision = record_change(tx, &moved)?;
@@ -515,6 +525,7 @@ impl FsStore {
             let mut moved = current.node.clone();
             moved.path = to_path.clone();
             moved.updated_at = now;
+            ensure_missing_store_root_for_path(tx, &moved.path, now)?;
             let from_revision = record_path_removal(tx, &from_path)?;
             update_path_state(tx, &from_path, from_revision)?;
             let to_revision = record_change(tx, &moved)?;
@@ -610,47 +621,47 @@ impl FsStore {
     ) -> Result<DeleteNodeResult, String> {
         let path = normalize_node_path(&request.path, false)?;
         self.write_conn(|tx| {
-        let current =
-            load_stored_node(tx, &path)?.ok_or_else(|| format!("node does not exist: {path}"))?;
-        if current.node.etag != request.expected_etag.unwrap_or_default() {
-            return Err(format!("expected_etag does not match current etag: {path}"));
-        }
-        if current.node.kind == NodeKind::Folder {
-            if is_protected_root_folder(&path) {
-                return Err(format!("cannot delete protected folder: {path}"));
+            let current = load_stored_node(tx, &path)?
+                .ok_or_else(|| format!("node does not exist: {path}"))?;
+            if current.node.etag != request.expected_etag.unwrap_or_default() {
+                return Err(format!("expected_etag does not match current etag: {path}"));
             }
-            let index_path = folder_index_path(&path);
-            let index_node = load_folder_index_child(tx, current.row_id, &index_path)?;
-            if has_visible_folder_children(tx, current.row_id, &index_path)? {
-                return Err(format!("folder is not empty: {path}"));
-            }
-            match index_node {
-                Some(index_node) => {
-                    let expected_index_etag = request
-                        .expected_folder_index_etag
-                        .as_deref()
-                        .ok_or_else(|| {
-                            format!("expected_folder_index_etag is required: {index_path}")
-                        })?;
-                    if index_node.node.etag != expected_index_etag {
-                        return Err(format!(
-                            "expected_folder_index_etag does not match current etag: {index_path}"
-                        ));
+            if current.node.kind == NodeKind::Folder {
+                if is_protected_root_folder(&path) {
+                    return Err(format!("cannot delete protected folder: {path}"));
+                }
+                let index_path = folder_index_path(&path);
+                let index_node = load_folder_index_child(tx, current.row_id, &index_path)?;
+                if has_visible_folder_children(tx, current.row_id, &index_path)? {
+                    return Err(format!("folder is not empty: {path}"));
+                }
+                match index_node {
+                    Some(index_node) => {
+                        let expected_index_etag = request
+                            .expected_folder_index_etag
+                            .as_deref()
+                            .ok_or_else(|| {
+                                format!("expected_folder_index_etag is required: {index_path}")
+                            })?;
+                        if index_node.node.etag != expected_index_etag {
+                            return Err(format!(
+                                "expected_folder_index_etag does not match current etag: {index_path}"
+                            ));
+                        }
+                        delete_node_with_history(tx, &index_node)?;
                     }
-                    delete_node_with_history(tx, &index_node)?;
+                    None if request.expected_folder_index_etag.is_some() => {
+                        return Err(format!("folder index node does not exist: {index_path}"));
+                    }
+                    None => {}
                 }
-                None if request.expected_folder_index_etag.is_some() => {
-                    return Err(format!("folder index node does not exist: {index_path}"));
-                }
-                None => {}
+            } else if request.expected_folder_index_etag.is_some() {
+                return Err(format!(
+                    "expected_folder_index_etag is only valid for folder deletes: {path}"
+                ));
             }
-        } else if request.expected_folder_index_etag.is_some() {
-            return Err(format!(
-                "expected_folder_index_etag is only valid for folder deletes: {path}"
-            ));
-        }
-        delete_node_with_history(tx, &current)?;
-        Ok(DeleteNodeResult { path })
+            delete_node_with_history(tx, &current)?;
+            Ok(DeleteNodeResult { path })
         })
     }
 
@@ -1184,6 +1195,7 @@ fn write_node_in_tx(
     let revision = record_change(tx, &node)?;
     update_path_state(tx, &node.path, revision)?;
     node.etag = compute_node_etag(&node);
+    ensure_missing_store_root_for_path(tx, &node.path, now)?;
     let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
     sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
     sync_node_links(tx, &node)?;
@@ -1548,7 +1560,7 @@ fn load_marketplace_verified_stats(
     ) = conn
         .query_row(
             "SELECT COUNT(*),
-                    SUM(CASE WHEN path = '/Wiki' OR path LIKE '/Wiki/%' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN path = '/Knowledge' OR path LIKE '/Knowledge/%' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'source' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'folder' THEN 1 ELSE 0 END),
                     SUM(CASE WHEN kind = 'file' THEN length(content) ELSE 0 END),
@@ -1593,7 +1605,7 @@ fn load_marketplace_top_level_paths(conn: &Connection) -> Result<Vec<String>, St
             "SELECT child.path
              FROM fs_nodes child
              JOIN fs_nodes parent ON parent.id = child.parent_id
-             WHERE parent.path = '/Wiki'
+             WHERE parent.path = '/Knowledge'
              ORDER BY CASE child.kind WHEN 'folder' THEN 0 WHEN 'file' THEN 1 ELSE 2 END,
                       child.path ASC
              LIMIT 12",
@@ -1614,7 +1626,7 @@ fn load_marketplace_preview_excerpts(
                     length(content)
              FROM fs_nodes
              WHERE kind = 'file'
-               AND (path = '/Wiki' OR path LIKE '/Wiki/%')
+               AND (path = '/Knowledge' OR path LIKE '/Knowledge/%')
              ORDER BY path ASC
              LIMIT ?1",
         )
@@ -1636,7 +1648,7 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
         .prepare(
             "SELECT path
              FROM fs_nodes
-             WHERE path = '/Wiki' OR path LIKE '/Wiki/%'
+             WHERE path = '/Knowledge' OR path LIKE '/Knowledge/%'
              ORDER BY path ASC",
         )
         .map_err(|error| error.to_string())?;
@@ -1673,8 +1685,8 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
         .prepare(
             "SELECT source_path, target_path
              FROM fs_links
-             WHERE (source_path = '/Wiki' OR source_path LIKE '/Wiki/%')
-               AND (target_path = '/Wiki' OR target_path LIKE '/Wiki/%')",
+             WHERE (source_path = '/Knowledge' OR source_path LIKE '/Knowledge/%')
+               AND (target_path = '/Knowledge' OR target_path LIKE '/Knowledge/%')",
         )
         .map_err(|error| error.to_string())?;
     let edges = crate::sqlite::query_map(&mut stmt, params![], |row| {
@@ -1724,12 +1736,12 @@ fn load_marketplace_category_graph(conn: &Connection) -> Result<MarketCategoryGr
 }
 
 fn marketplace_top_category(path: &str) -> Option<String> {
-    let rest = path.strip_prefix("/Wiki/")?;
+    let rest = path.strip_prefix("/Knowledge/")?;
     let segment = rest.split('/').next()?.trim();
     if segment.is_empty() {
         None
     } else {
-        Some(format!("/Wiki/{segment}"))
+        Some(format!("/Knowledge/{segment}"))
     }
 }
 
@@ -1800,7 +1812,10 @@ fn load_child_rows(
 }
 
 fn allows_empty_directory_listing(path: &str) -> bool {
-    matches!(path, "/" | "/Memory" | "/Sessions" | "/Wiki" | "/Sources")
+    matches!(
+        path,
+        "/" | "/Memory" | "/Knowledge" | "/Skills" | "/Sessions" | "/Sources"
+    )
 }
 
 fn build_child_nodes(parent_path: &str, rows: Vec<ChildRow>) -> Result<Vec<ChildNode>, String> {
@@ -2184,8 +2199,68 @@ fn has_visible_folder_children(
         .map_err(|error| error.to_string())
 }
 
+fn ensure_missing_store_root_for_path(
+    tx: &Transaction<'_>,
+    path: &str,
+    now: i64,
+) -> Result<(), String> {
+    let Some(root_path) = store_root_for_child_path(path) else {
+        return Ok(());
+    };
+    ensure_store_root_folder(tx, root_path, now)
+}
+
+fn ensure_store_root_folder(tx: &Transaction<'_>, path: &str, now: i64) -> Result<(), String> {
+    if let Some(existing) = load_stored_node(tx, path)? {
+        if existing.node.kind == NodeKind::Folder {
+            return Ok(());
+        }
+        return Err(format!("protected root is not a folder: {path}"));
+    }
+    let mut node = Node {
+        path: path.to_string(),
+        kind: NodeKind::Folder,
+        content: String::new(),
+        created_at: now,
+        updated_at: now,
+        etag: String::new(),
+        metadata_json: "{}".to_string(),
+    };
+    let revision = record_change(tx, &node)?;
+    update_path_state(tx, &node.path, revision)?;
+    node.etag = compute_node_etag(&node);
+    save_node(tx, None, &node)?;
+    Ok(())
+}
+
+fn store_root_for_child_path(path: &str) -> Option<&'static str> {
+    let root = path.split('/').nth(1)?;
+    let root_path = match root {
+        "Memory" => "/Memory",
+        "Knowledge" => "/Knowledge",
+        "Skills" => "/Skills",
+        "Sessions" => "/Sessions",
+        "Sources" => "/Sources",
+        _ => return None,
+    };
+    if path == root_path {
+        None
+    } else {
+        Some(root_path)
+    }
+}
+
 fn is_protected_root_folder(path: &str) -> bool {
-    matches!(path, "/Memory" | "/Sessions" | "/Wiki" | "/Sources")
+    matches!(
+        path,
+        "/Memory"
+            | "/Knowledge"
+            | "/Skills"
+            | "/Sessions"
+            | "/Sources"
+            | "/Sources/sessions"
+            | "/Sources/skill-runs"
+    )
 }
 
 fn split_parent_path_and_name(path: &str) -> Result<(Option<String>, String), String> {
@@ -2364,7 +2439,7 @@ fn scope_root_provenance_path_for(node_path: &str) -> Option<String> {
     let mut parts = node_path.trim_matches('/').split('/');
     let root = parts.next()?;
     let scope = parts.next()?;
-    if root != "Wiki" {
+    if root != "Knowledge" {
         return None;
     }
     Some(format!("/{root}/{scope}/provenance.md"))

@@ -32,7 +32,7 @@ export function SearchPanel({
   readIdentity,
   emptyMessage = "Use the header search.",
   eyebrow = "Search",
-  title = "Wiki search"
+  title = "Database search"
 }: {
   canisterId: string;
   databaseId: string;
@@ -142,7 +142,7 @@ export function SearchPanel({
         />
         {!urlQuery && !error ? <p className="rounded-xl border border-line bg-paper p-4 text-sm text-muted">{emptyMessage}</p> : null}
         {error ? <ErrorBox message={error} hint={isCurrentSearchState ? searchState.hint : null} /> : null}
-        {loading ? <p className="rounded-xl border border-line bg-paper p-4 text-sm text-muted">Searching wiki...</p> : null}
+        {loading ? <p className="rounded-xl border border-line bg-paper p-4 text-sm text-muted">Searching database...</p> : null}
         {!loading && hasSearched && !error && results.length === 0 ? (
           <p className="rounded-xl border border-line bg-paper p-4 text-sm text-muted">No results.</p>
         ) : null}
@@ -193,9 +193,8 @@ function SearchControls({
       <label className="grid gap-1">
         <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Scope</span>
         <select className="h-10 rounded-lg border border-line bg-white px-3 text-sm text-ink outline-none focus:border-accent" value={scope} onChange={(event) => onScopeChange(parseScopeInput(event.target.value))}>
-          <option value="wiki">/Wiki</option>
-          <option value="sources">/Sources</option>
           <option value="root">/</option>
+          <option value="sources">/Sources</option>
           <option value="custom">Custom prefix</option>
         </select>
       </label>
@@ -222,7 +221,7 @@ function SearchControls({
           <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">Custom prefix</span>
           <input
             className="h-10 rounded-lg border border-line bg-white px-3 font-mono text-sm text-ink outline-none focus:border-accent"
-            placeholder="/Wiki/project"
+            placeholder="/Knowledge/project"
             value={customPrefixDraft}
             onBlur={onCustomPrefixCommit}
             onChange={(event) => onCustomPrefixChange(event.target.value)}
@@ -241,7 +240,7 @@ function SearchControls({
 
 function parseScopeInput(value: string): SearchScope {
   if (value === "sources" || value === "root" || value === "custom") return value;
-  return "wiki";
+  return DEFAULT_SEARCH_OPTIONS.scope;
 }
 
 function parseLimitInput(value: string): SearchLimit {

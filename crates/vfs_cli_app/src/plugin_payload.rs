@@ -22,11 +22,6 @@ pub const CODEX_PLUGIN_FILES: &[PayloadFile] = &[
         executable: false,
     },
     PayloadFile {
-        path: "scripts/evolve-job.sh",
-        content: include_str!("../../../plugins/codex/scripts/evolve-job.sh"),
-        executable: true,
-    },
-    PayloadFile {
         path: "scripts/record-run.sh",
         content: include_str!("../../../plugins/codex/scripts/record-run.sh"),
         executable: true,
@@ -39,11 +34,6 @@ pub const CODEX_PLUGIN_FILES: &[PayloadFile] = &[
     PayloadFile {
         path: "hooks/hooks.json",
         content: include_str!("../../../plugins/codex/hooks/hooks.json"),
-        executable: false,
-    },
-    PayloadFile {
-        path: "skills/kinic-evolve-skill-job/SKILL.md",
-        content: include_str!("../../../plugins/codex/skills/kinic-evolve-skill-job/SKILL.md"),
         executable: false,
     },
     PayloadFile {
@@ -60,11 +50,6 @@ pub const CLAUDE_PLUGIN_FILES: &[PayloadFile] = &[
         executable: false,
     },
     PayloadFile {
-        path: "scripts/evolve-job.sh",
-        content: include_str!("../../../plugins/claude-code/scripts/evolve-job.sh"),
-        executable: true,
-    },
-    PayloadFile {
         path: "scripts/record-run.sh",
         content: include_str!("../../../plugins/claude-code/scripts/record-run.sh"),
         executable: true,
@@ -77,13 +62,6 @@ pub const CLAUDE_PLUGIN_FILES: &[PayloadFile] = &[
     PayloadFile {
         path: "hooks/hooks.json",
         content: include_str!("../../../plugins/claude-code/hooks/hooks.json"),
-        executable: false,
-    },
-    PayloadFile {
-        path: "skills/kinic-evolve-skill-job/SKILL.md",
-        content: include_str!(
-            "../../../plugins/claude-code/skills/kinic-evolve-skill-job/SKILL.md"
-        ),
         executable: false,
     },
     PayloadFile {
@@ -109,11 +87,6 @@ pub const HERMES_PLUGIN_FILES: &[PayloadFile] = &[
     PayloadFile {
         path: "kinic_hermes/client.py",
         content: include_str!("../../../plugins/hermes/kinic_hermes/client.py"),
-        executable: false,
-    },
-    PayloadFile {
-        path: "kinic_hermes/evolve.py",
-        content: include_str!("../../../plugins/hermes/kinic_hermes/evolve.py"),
         executable: false,
     },
     PayloadFile {
@@ -147,11 +120,6 @@ pub const RUNTIME_FILES: &[PayloadFile] = &[
     PayloadFile {
         path: "kinic_agent_runtime/evidence.py",
         content: include_str!("../../../plugins/runtime/kinic_agent_runtime/evidence.py"),
-        executable: false,
-    },
-    PayloadFile {
-        path: "kinic_agent_runtime/evolve.py",
-        content: include_str!("../../../plugins/runtime/kinic_agent_runtime/evolve.py"),
         executable: false,
     },
     PayloadFile {

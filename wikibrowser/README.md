@@ -14,7 +14,7 @@ pnpm dev
 Open a database with:
 
 ```text
-http://localhost:3010/<database-id>/Wiki
+http://localhost:3010/<database-id>/Knowledge
 ```
 
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
@@ -50,9 +50,9 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 
 ## Scope
 
-- Browse `/Wiki` and `/Sources`
+- Browse `/Knowledge` and `/Sources`
 - Create databases and manage database access
-- Edit Markdown nodes under `/Wiki`
+- Edit Markdown nodes under `/Knowledge`
 - Create web source captures under `/Sources/web/...` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
@@ -71,13 +71,13 @@ No full lint workflow is included.
 Open a database route and select the `ingest` left-pane tab:
 
 ```text
-/<database-id>/Wiki?tab=ingest
+/<database-id>/Knowledge?tab=ingest
 ```
 
 Select the `clipper` left-pane tab to check the current database, writer readiness, Chrome extension setup steps, and Clipper storage paths without leaving WikiBrowser:
 
 ```text
-/<database-id>/Wiki?tab=clipper
+/<database-id>/Knowledge?tab=clipper
 ```
 
 Submitting a web page snapshot writes raw evidence to the same database:
@@ -89,7 +89,7 @@ Submitting a web page snapshot writes raw evidence to the same database:
 Raw web evidence under `/Sources/<provider>/<id>.md` is stored as `source`.
 
 When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, `/api/source/run` checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `sourcePath`, `sourceEtag`, and `sessionNonce` to the generator Worker with bearer auth. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
-The worker reads `/Sources/<provider>/<id>.md`, then generates review-ready pages under `/Wiki/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
+The worker reads `/Sources/<provider>/<id>.md`, then generates review-ready pages under `/Knowledge/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
 
 ## Public Access
 
@@ -138,7 +138,7 @@ pnpm dev
 Run the browser smoke against an existing file node:
 
 ```bash
-pnpm smoke -- --url http://127.0.0.1:3010/<database-id>/Wiki/<existing-file>.md
+pnpm smoke -- --url http://127.0.0.1:3010/<database-id>/Knowledge/<existing-file>.md
 ```
 
 The URL must point to a readable file node. Directory paths and missing files intentionally fail.
@@ -232,7 +232,7 @@ pnpm preview
 Post-deploy public smoke:
 
 ```bash
-pnpm smoke:public -- --base-url https://<deployment>.workers.dev --database-id <database-id> --path /Wiki/<existing-file>.md
+pnpm smoke:public -- --base-url https://<deployment>.workers.dev --database-id <database-id> --path /Knowledge/<existing-file>.md
 ```
 
 `--path` must point to an existing file node on the mainnet canister.

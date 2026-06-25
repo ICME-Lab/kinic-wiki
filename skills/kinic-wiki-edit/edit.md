@@ -2,7 +2,7 @@
 
 ## Goal
 
-Apply small, auditable repairs to existing canister-backed wiki nodes without accidental broad rewrites.
+Apply small, auditable repairs to existing canister-backed knowledge nodes without accidental broad rewrites.
 
 ## Command Selection
 
@@ -18,7 +18,7 @@ Apply small, auditable repairs to existing canister-backed wiki nodes without ac
 Use for a single replacement.
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <db> edit-node --path /Wiki/page.md --old-text '<old>' --new-text '<new>' --expected-etag <etag> --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <db> edit-node --path /Knowledge/page.md --old-text '<old>' --new-text '<new>' --expected-etag <etag> --json
 ```
 
 Add `--replace-all` only after confirming every match in that node should change.
@@ -35,7 +35,7 @@ Use for several replacements in the same node.
 ```
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <db> multi-edit-node --path /Wiki/page.md --edits-file /tmp/edits.json --expected-etag <etag> --json
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <db> multi-edit-node --path /Knowledge/page.md --edits-file /tmp/edits.json --expected-etag <etag> --json
 ```
 
 Semantics:

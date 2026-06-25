@@ -1,14 +1,14 @@
 // Where: crates/wiki_domain/src/lib.rs
 // What: Wiki-specific path validation layered on top of the reusable VFS.
-// Why: `/Wiki` and `/Sources/...` semantics must stay centralized outside the generic VFS crates.
+// Why: `/Knowledge` and `/Sources/...` semantics must stay centralized outside the generic VFS crates.
 use vfs_types::NodeKind;
 
-pub const WIKI_ROOT_PATH: &str = "/Wiki";
-pub const WIKI_INDEX_PATH: &str = "/Wiki/index.md";
-pub const WIKI_SOURCES_PREFIX: &str = "/Wiki/sources";
-pub const WIKI_ENTITIES_PREFIX: &str = "/Wiki/entities";
-pub const WIKI_CONCEPTS_PREFIX: &str = "/Wiki/concepts";
-pub const SKILL_REGISTRY_ROOT: &str = "/Wiki/skills";
+pub const WIKI_ROOT_PATH: &str = "/Knowledge";
+pub const WIKI_INDEX_PATH: &str = "/Knowledge/index.md";
+pub const WIKI_SOURCES_PREFIX: &str = "/Knowledge/sources";
+pub const WIKI_ENTITIES_PREFIX: &str = "/Knowledge/entities";
+pub const WIKI_CONCEPTS_PREFIX: &str = "/Knowledge/concepts";
+pub const SKILL_REGISTRY_ROOT: &str = "/Skills";
 pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = SKILL_REGISTRY_ROOT;
 pub const KNOWLEDGE_SOURCES_PREFIX: &str = "/Sources";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
@@ -318,7 +318,7 @@ mod tests {
     #[test]
     fn wiki_relative_path_strips_wiki_root() {
         assert_eq!(
-            wiki_relative_path("/Wiki/nested/file.md").expect("path should strip"),
+            wiki_relative_path("/Knowledge/nested/file.md").expect("path should strip"),
             "nested/file.md"
         );
         assert_eq!(

@@ -34,9 +34,9 @@ Tool roles:
 
 - `kinic.store_manifest(database_id)`: return API version, roots, limits, and capability summary.
 - `kinic.memory_recall(database_id, task, entities, namespace, budget_tokens)`: return task-scoped memory context and evidence. Omitted namespace uses `/Memory`.
-- `kinic.get_context_pack(database_id, root, budget_tokens)`: generate a Context Pack-shaped response for a wiki namespace.
+- `kinic.get_context_pack(database_id, root, budget_tokens)`: generate a Context Pack-shaped response for a knowledge namespace.
 - `kinic.verify_context_pack(pack)`: validate schema, expiration, etags, hashes, and approval metadata.
-- `kinic.knowledge_evidence(database_id, node_path)`: return source references for one known wiki node.
+- `kinic.knowledge_evidence(database_id, node_path)`: return source references for one known knowledge node.
 - `kinic.skill_find(database_id, query)`: find skill store packages for a task.
 - `kinic.get_decisions(database_id, project)`: return decision context for a project namespace.
 - `kinic.get_do_not_do(database_id, project)`: return prohibited actions, failed attempts, and fragile areas for a project namespace.
@@ -52,14 +52,14 @@ MCP client
   -> existing Rust client or Store API
   -> Kinic Wiki canister
   -> canister-backed VFS
-  -> /Wiki nodes and /Sources evidence
+  -> /Knowledge nodes and /Sources evidence
 ```
 
 `kinic.memory_recall` should map to the same semantics as `memory_recall`.
 `kinic.knowledge_evidence` should map to the same semantics as `knowledge_evidence`.
 `kinic.store_manifest` should expose discovery data and must not be treated as content evidence.
 
-`kinic.get_context_pack` can generate a pack-shaped result directly from current wiki nodes.
+`kinic.get_context_pack` can generate a pack-shaped result directly from current knowledge nodes.
 It must not copy raw source transcripts into the returned pack.
 It should include source references, etags, expiration, and context hash metadata for stale-context checks.
 

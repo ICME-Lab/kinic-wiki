@@ -1,13 +1,13 @@
 # Kinic Wiki
 
 Kinic Wiki is a canister-backed four-store interface for coding agents.
-It stores durable wiki nodes in an Internet Computer canister and exposes them through a browser UI, `kinic-vfs-cli`, and agent-readable APIs.
+It stores durable knowledge nodes in an Internet Computer canister and exposes them through a browser UI, `kinic-vfs-cli`, and agent-readable APIs.
 
 ## Why Kinic Wiki
 
 Vector databases are useful for retrieving nearby text fragments from large corpora. Agent memory has a different shape. Agents need stable places for current decisions, source evidence, open questions, operating procedures, and relationships between notes.
 
-Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/<provider>/...`. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
+Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Knowledge/...`; raw evidence lives under `/Sources/<provider>/...`. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
 
 For many medium-sized agent workflows, structured file-system search is often more useful than embedding-only retrieval. A result is not just a similar chunk; it is a named, linked, updateable knowledge node.
 
@@ -23,8 +23,8 @@ For many medium-sized agent workflows, structured file-system search is often mo
 ## Four Stores
 
 - `memory`: short facts, preferences, and active context recalled through `memory_recall`.
-- `knowledge`: long-term notes under `/Wiki/...`, connected by wiki links and raw evidence under `/Sources/<provider>/...`.
-- `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`, with manifests, status, proposals, and run evidence.
+- `knowledge`: long-term notes under `/Knowledge/...`, connected by wiki links and raw evidence under `/Sources/<provider>/...`.
+- `skill`: reusable `SKILL.md` packages under `/Skills/...`, with manifests, snapshots, status, and run evidence.
 - `session`: agent session state under `/Sessions/...` and session transcript evidence under `/Sources/sessions/...`; resumable summaries are a later workflow.
 
 Context Pack is not a fifth store. It is an OKF handoff artifact generated from store content.
@@ -36,7 +36,7 @@ https://wiki.kinic.xyz
 
 The official Kinic Wiki database is:
 
-https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Wiki
+https://wiki.kinic.xyz/db/db_kva4v2twg6jv/Knowledge
 
 Database ID:
 
@@ -66,7 +66,7 @@ Most commands need a database id. Pass it per command, link it once for a worksp
 kinic-vfs-cli database create "My agent memory"
 kinic-vfs-cli --database-id <database-id> status --json
 kinic-vfs-cli database link <database-id>
-VFS_DATABASE_ID=<database-id> kinic-vfs-cli search-remote "query text" --prefix /Wiki --json
+VFS_DATABASE_ID=<database-id> kinic-vfs-cli search-remote "query text" --prefix /Knowledge --json
 ```
 
 Every database uses the same four-store roots and the same physical VFS schema.
@@ -74,14 +74,14 @@ Every database uses the same four-store roots and the same physical VFS schema.
 Read exact nodes when a path is known:
 
 ```bash
-kinic-vfs-cli read-node --path /Wiki/page.md --json
-kinic-vfs-cli read-node-context --path /Wiki/page.md --json
+kinic-vfs-cli read-node --path /Knowledge/page.md --json
+kinic-vfs-cli read-node-context --path /Knowledge/page.md --json
 ```
 
 For writes, read first, keep the returned `etag`, then mutate with an expected etag:
 
 ```bash
-kinic-vfs-cli edit-node --path /Wiki/page.md --old-text before --new-text after --expected-etag <etag> --json
+kinic-vfs-cli edit-node --path /Knowledge/page.md --old-text before --new-text after --expected-etag <etag> --json
 ```
 
 Public databases can be read anonymously only when the database grants reader access to the anonymous principal.

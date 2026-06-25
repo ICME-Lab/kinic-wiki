@@ -6,7 +6,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub(super) const PRIVATE_ROOT: &str = "/Wiki/skills";
+pub(super) const PRIVATE_ROOT: &str = "/Skills";
 pub(super) const RUN_ROOT: &str = "/Sources/skill-runs";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +144,9 @@ pub(super) fn parse_manifest(content: &str) -> Result<SkillManifest> {
     }
     if manifest.entry != "SKILL.md" {
         return Err(anyhow!("manifest entry must be SKILL.md"));
+    }
+    if !valid_package_version(&manifest.version) {
+        return Err(anyhow!("manifest version must use MAJOR.MINOR.PATCH"));
     }
     SkillId::parse(&manifest.id)?;
     Ok(manifest)
@@ -301,10 +304,6 @@ pub(super) fn skill_base_path(id: &SkillId) -> String {
     format!("{}/{}", PRIVATE_ROOT, id.name)
 }
 
-pub(super) fn run_base_path(id: &SkillId) -> String {
-    format!("{}/{}", RUN_ROOT, id.name)
-}
-
 pub(super) fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -343,4 +342,25 @@ fn valid_segment(value: &str) -> bool {
         && value.len() <= 128
         && !value.contains("..")
         && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+}
+
+fn valid_package_version(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    let Some(patch) = parts.next() else {
+        return false;
+    };
+    parts.next().is_none()
+        && valid_version_number(major)
+        && valid_version_number(minor)
+        && valid_version_number(patch)
+}
+
+fn valid_version_number(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
 }

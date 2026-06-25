@@ -62,7 +62,7 @@ const writeNodesCommands = [
     database_id = "<database-id>";
     nodes = vec {
       record {
-        path = "/Wiki/example.md";
+        path = "/Knowledge/example.md";
         kind = variant { File };
         content = "# Example";
         metadata_json = "{}";
@@ -85,7 +85,7 @@ const parameters = [
   { name: "database_id", type: "text", detail: "Readable wiki database ID. Private DBs require a member identity; anonymous-readable DBs can use anonymous." },
   { name: "sql", type: "text", detail: "Restricted JSON SELECT over fs_nodes or fs_links." },
   { name: "limit", type: "nat32", detail: "Maximum rows returned by the canister response envelope." },
-  { name: "path", type: "text", detail: "Exact VFS path, for example /Wiki/index.md or a path returned by query_database_sql_json." },
+  { name: "path", type: "text", detail: "Exact VFS path, for example /Knowledge/index.md or a path returned by query_database_sql_json." },
   { name: "nodes", type: "vec WriteNodeItem", detail: "Batch of File or Source writes. Each item has path, kind, content, metadata_json, and optional expected_etag." },
   { name: "expected_etag", type: "opt text", detail: "Use null for create or unchecked replace; use opt \"<etag>\" to reject stale overwrites." }
 ];

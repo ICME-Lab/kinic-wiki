@@ -1,6 +1,6 @@
 # Kinic Claude Code Plugin
 
-Claude Code adapter for recording Skill Registry run evidence and processing skill evolution jobs.
+Claude Code adapter for recording Skill Registry run evidence.
 Install through the CLI:
 
 ```bash
@@ -10,7 +10,6 @@ kinic-vfs-cli claude setup
 Skills:
 
 - `kinic-record-skill-run`: records run evidence after a skill materially affects a task.
-- `kinic-evolve-skill-job`: processes queued improvement jobs with Claude Code.
 
 Session capture:
 

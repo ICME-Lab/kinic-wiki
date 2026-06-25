@@ -4,7 +4,7 @@
 
 `llm-wiki` は「IC canister 上の VFS を正本にした wiki / agent memory 基盤」。
 現行の主軸は Rust workspace 9 crate と、検証・運用・agent 向け skill 補助で構成される。
-現在の中心概念は `/Wiki/...` と `/Sources/...` を同一 VFS 上で扱う FS-first 構成と、agent が読むための task-scoped memory query。
+現在の中心概念は `/Knowledge/...` と `/Sources/...` を同一 VFS 上で扱う FS-first 構成と、agent が読むための task-scoped memory query。
 
 ## 2. 全体像
 

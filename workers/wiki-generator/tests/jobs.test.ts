@@ -11,7 +11,7 @@ const completedJob: SourceJob = {
   source_path: "/Sources/a/a.md",
   source_etag: "etag-1",
   status: "completed",
-  target_path: "/Wiki/conversations/a.md",
+  target_path: "/Knowledge/conversations/a.md",
   attempts: 1,
   last_error: null,
   updated_at: "2026-05-12T00:00:00.000Z"

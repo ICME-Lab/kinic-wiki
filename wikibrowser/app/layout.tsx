@@ -1,8 +1,5 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { AppHeader } from "./app-header";
-import { AppSessionProvider } from "./app-session-provider";
-import { AdminShell } from "@/components/admin-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const metadata: Metadata = {
@@ -26,14 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <AppSessionProvider>
-          <TooltipProvider delayDuration={120}>
-            <div className="flex min-h-screen flex-col">
-              <AppHeader />
-              <AdminShell>{children}</AdminShell>
-            </div>
-          </TooltipProvider>
-        </AppSessionProvider>
+        <TooltipProvider delayDuration={120}>
+          <div className="flex min-h-screen flex-col">{children}</div>
+        </TooltipProvider>
       </body>
     </html>
   );

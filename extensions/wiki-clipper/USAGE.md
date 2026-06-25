@@ -98,15 +98,15 @@ Non-web pages such as `chrome://extensions` are rejected.
 
 Confirm that `/Sources/...` is created in the selected database after successful exports.
 
-## Generate Wiki Pages
+## Generate Knowledge Pages
 
-ChatGPT/Claude export only writes raw evidence. Generate wiki pages from the CLI:
+ChatGPT/Claude export only writes raw evidence. Generate knowledge pages from the CLI:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/chatgpt/<conversationId>.md
 ```
 
-This command creates a wiki scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.
+This command creates a knowledge scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.
 
 ## Known Limits
 

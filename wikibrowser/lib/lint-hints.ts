@@ -101,7 +101,7 @@ export function rawSourceLinksFor(path: string, content: string): string[] {
 }
 
 export function provenancePathFor(path: string): string | null {
-  if (!path.startsWith("/Wiki/") || path.endsWith("/provenance.md")) {
+  if (!path.startsWith("/Knowledge/") || path.endsWith("/provenance.md")) {
     return null;
   }
   const index = path.lastIndexOf("/");

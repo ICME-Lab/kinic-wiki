@@ -363,8 +363,8 @@ fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String
             .collect(),
         roots: vec![
             store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Wiki/skills", "skill"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
             store_root("/Sessions", "session"),
             store_root("/Sources", "knowledge_evidence"),
             store_root("/Sources/sessions", "session_evidence"),
@@ -372,8 +372,8 @@ fn store_manifest(request: StoreManifestRequest) -> Result<StoreManifest, String
         ],
         entry_roots: vec![
             store_root("/Memory", "memory"),
-            store_root("/Wiki", "knowledge"),
-            store_root("/Wiki/skills", "skill"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
             store_root("/Sessions", "session"),
         ],
         capabilities: store_capabilities(),

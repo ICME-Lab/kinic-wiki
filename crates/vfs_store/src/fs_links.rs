@@ -497,8 +497,8 @@ fn resolve_link_target(source_path: &str, raw_href: &str, strip_title: bool) -> 
 }
 
 fn is_internal_wiki_path(path: &str) -> bool {
-    path == "/Wiki"
-        || path.starts_with("/Wiki/")
+    path == "/Knowledge"
+        || path.starts_with("/Knowledge/")
         || path == "/Sources"
         || path.starts_with("/Sources/")
 }
@@ -615,7 +615,7 @@ mod tests {
     use super::*;
 
     fn edges_for(content: &str) -> Vec<LinkEdge> {
-        extract_link_edges("/Wiki/topic/source.md", content, 10)
+        extract_link_edges("/Knowledge/topic/source.md", content, 10)
     }
 
     #[test]
@@ -625,11 +625,11 @@ mod tests {
         );
 
         assert_eq!(edges.len(), 3);
-        assert_eq!(edges[0].target_path, "/Wiki/alpha.md");
+        assert_eq!(edges[0].target_path, "/Knowledge/alpha.md");
         assert_eq!(edges[0].raw_href, "../alpha.md \"Alpha title\"");
-        assert_eq!(edges[1].target_path, "/Wiki/paren.md");
+        assert_eq!(edges[1].target_path, "/Knowledge/paren.md");
         assert_eq!(edges[1].raw_href, "../paren.md (Paren title)");
-        assert_eq!(edges[2].target_path, "/Wiki/after.md");
+        assert_eq!(edges[2].target_path, "/Knowledge/after.md");
         assert_eq!(edges[2].raw_href, "../after.md");
     }
 
@@ -638,11 +638,11 @@ mod tests {
         let edges = edges_for("[Project](Project (Alpha).md) [Nested](Project (Alpha (Draft)).md)");
 
         assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0].target_path, "/Wiki/topic/Project (Alpha).md");
+        assert_eq!(edges[0].target_path, "/Knowledge/topic/Project (Alpha).md");
         assert_eq!(edges[0].raw_href, "Project (Alpha).md");
         assert_eq!(
             edges[1].target_path,
-            "/Wiki/topic/Project (Alpha (Draft)).md"
+            "/Knowledge/topic/Project (Alpha (Draft)).md"
         );
         assert_eq!(edges[1].raw_href, "Project (Alpha (Draft)).md");
     }
@@ -654,7 +654,7 @@ mod tests {
         );
 
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].target_path, "/Wiki/gamma.md");
+        assert_eq!(edges[0].target_path, "/Knowledge/gamma.md");
         assert_eq!(edges[0].raw_href, "../gamma.md?view=raw#section \"Gamma\"");
     }
 
@@ -663,9 +663,12 @@ mod tests {
         let edges = edges_for("[[Project \"Alpha\".md]] [[Project (Alpha).md]]");
 
         assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0].target_path, "/Wiki/topic/Project \"Alpha\".md");
+        assert_eq!(
+            edges[0].target_path,
+            "/Knowledge/topic/Project \"Alpha\".md"
+        );
         assert_eq!(edges[0].raw_href, "Project \"Alpha\".md");
-        assert_eq!(edges[1].target_path, "/Wiki/topic/Project (Alpha).md");
+        assert_eq!(edges[1].target_path, "/Knowledge/topic/Project (Alpha).md");
         assert_eq!(edges[1].raw_href, "Project (Alpha).md");
     }
 
@@ -678,10 +681,10 @@ mod tests {
         assert_eq!(edges[0].target_path, "/Sources/a/a.md");
         assert_eq!(edges[0].raw_href, "/Sources/a/a.md|opencode.ai/DESIGN.md");
         assert_eq!(edges[0].link_text, "opencode.ai/DESIGN.md");
-        assert_eq!(edges[1].target_path, "/Wiki/topic/relative.md");
+        assert_eq!(edges[1].target_path, "/Knowledge/topic/relative.md");
         assert_eq!(edges[1].raw_href, "relative.md|");
         assert_eq!(edges[1].link_text, "relative.md");
-        assert_eq!(edges[2].target_path, "/Wiki/topic/note.md");
+        assert_eq!(edges[2].target_path, "/Knowledge/topic/note.md");
         assert_eq!(edges[2].raw_href, "note.md|A|B");
         assert_eq!(edges[2].link_text, "A|B");
     }
@@ -693,7 +696,7 @@ mod tests {
         );
 
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].target_path, "/Wiki/topic/beta.md");
+        assert_eq!(edges[0].target_path, "/Knowledge/topic/beta.md");
         assert_eq!(edges[0].link_text, "Beta");
     }
 
@@ -704,8 +707,8 @@ mod tests {
         );
 
         assert_eq!(edges.len(), 2);
-        assert_eq!(edges[0].target_path, "/Wiki/topic/gamma.md");
-        assert_eq!(edges[1].target_path, "/Wiki/topic/beta.md");
+        assert_eq!(edges[0].target_path, "/Knowledge/topic/gamma.md");
+        assert_eq!(edges[1].target_path, "/Knowledge/topic/beta.md");
     }
 
     #[test]
@@ -713,18 +716,18 @@ mod tests {
         let edges = edges_for("    [[alpha.md|Alpha]]\n\t[Alpha](alpha.md)\n[[beta.md|Beta]]");
 
         assert_eq!(edges.len(), 1);
-        assert_eq!(edges[0].target_path, "/Wiki/topic/beta.md");
+        assert_eq!(edges[0].target_path, "/Knowledge/topic/beta.md");
     }
 
     #[test]
     fn absolute_internal_link_targets_require_segment_boundary() {
         let edges = edges_for(
-            "[Wiki](/Wiki) [Wiki page](/Wiki/a.md) [Sources](/Sources) [Source](/Sources/a.md) [Bad wiki](/Wikipedia/a.md) [Bad source](/SourcesBackup/a.md)",
+            "[Wiki](/Knowledge) [Wiki page](/Knowledge/a.md) [Sources](/Sources) [Source](/Sources/a.md) [Bad wiki](/Wikipedia/a.md) [Bad source](/SourcesBackup/a.md)",
         );
 
         assert_eq!(edges.len(), 4);
-        assert_eq!(edges[0].target_path, "/Wiki");
-        assert_eq!(edges[1].target_path, "/Wiki/a.md");
+        assert_eq!(edges[0].target_path, "/Knowledge");
+        assert_eq!(edges[1].target_path, "/Knowledge/a.md");
         assert_eq!(edges[2].target_path, "/Sources");
         assert_eq!(edges[3].target_path, "/Sources/a.md");
     }

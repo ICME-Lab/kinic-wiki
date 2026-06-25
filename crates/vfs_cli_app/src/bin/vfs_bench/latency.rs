@@ -390,7 +390,7 @@ mod tests {
             benchmark_name: "latency".to_string(),
             replica_host: "http://127.0.0.1:8000".to_string(),
             canister_id: "aaaaa-aa".to_string(),
-            prefix: "/Wiki/bench".to_string(),
+            prefix: "/Knowledge/bench".to_string(),
             payload_size_bytes: 1024,
             iterations: 3,
             warmup_iterations: 0,

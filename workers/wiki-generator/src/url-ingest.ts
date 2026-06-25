@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/url-ingest.ts
 // What: URL ingest request parsing, source persistence, and request state writes.
-// Why: Browser-submitted URLs should become raw sources before wiki page generation.
+// Why: Browser-submitted URLs should become raw sources before knowledge page generation.
 import { enqueueSourceJob, loadJob } from "./jobs.js";
 import { loadConfig } from "./config.js";
 import { parseFrontmatter, renderFrontmatter } from "./frontmatter.js";

@@ -9,8 +9,8 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 ## Four Stores
 
 - `memory`: short facts, preferences, and active context. `memory_recall` assembles task-scoped context from canonical role pages, search hits, links, and optional evidence.
-- `knowledge`: long-term notes under `/Wiki/...` plus raw evidence under `/Sources/<provider>/...`. Wiki links form the knowledge mesh; `knowledge_evidence` resolves store references for a known node.
-- `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`. The Skill Registry CLI owns package upsert, discovery, run evidence, proposal, and status workflows.
+- `knowledge`: long-term notes under `/Knowledge/...` plus raw evidence under `/Sources/<provider>/...`. Wiki links form the knowledge mesh; `knowledge_evidence` resolves store references for a known node.
+- `skill`: reusable `SKILL.md` packages under `/Skills/...`. The Skill Registry CLI owns package upsert, snapshots, discovery, run evidence, rollback, and status workflows.
 - `session`: agent session state under `/Sessions/...` plus session transcript evidence under `/Sources/sessions/...`. Resumable summaries are outside v1.
 
 Context Pack is an export artifact generated from store content. It is not a store.
@@ -26,7 +26,7 @@ Kinic store trust follows this lifecycle:
 ```
 
 - `/Sources/<provider>/...` is canonical raw evidence.
-- `/Wiki/...` is organized knowledge, but not automatically canonical.
+- `/Knowledge/...` is organized knowledge, but not automatically canonical.
 - Working notes can help review, but they are not a separate canonical lifecycle state.
 - Role pages are the memory recall layer when their claims are backed by source evidence or human review.
 - Agents should prefer role-page claims plus `knowledge_evidence` over working-note text or search previews.
@@ -54,9 +54,9 @@ Do not answer from working notes as if they were canonical memory.
 ## Methods
 
 - `store_manifest(StoreManifestRequest)`: discover the API version, enabled stores, roots, capability summary, canonical roles, limits, and recommended entrypoint.
-- `memory_recall(MemoryRecallRequest)`: read task-scoped wiki context. This is the primary entrypoint for normal agent questions.
+- `memory_recall(MemoryRecallRequest)`: read task-scoped knowledge context. This is the primary entrypoint for normal agent questions.
 - `query_database_sql_json(database_id, sql, limit)`: run a database-scoped read-only SQL query and receive JSON object text rows.
-- `knowledge_evidence(KnowledgeEvidenceRequest)`: read `/Sources` evidence references for one known wiki node path.
+- `knowledge_evidence(KnowledgeEvidenceRequest)`: read `/Sources` evidence references for one known knowledge node path.
 
 These methods are canister query methods. They do not mutate wiki content.
 
@@ -87,7 +87,7 @@ The `canonical_roles` list mirrors the current wiki schema. Agents should use it
 - `entities`: optional names, topics, or paths that should bias recall.
 - `namespace`: optional scope root. If omitted, `memory_recall` uses `/Memory`.
 - `budget_tokens`: approximate context budget. `0` uses the canister default.
-- `include_evidence`: include knowledge evidence for returned wiki nodes when true.
+- `include_evidence`: include knowledge evidence for returned knowledge nodes when true.
 - `depth`: local graph depth. Valid values are `0`, `1`, and `2`.
 
 Minimal request shape:
@@ -121,14 +121,14 @@ If `truncated` is true, narrow the `namespace`, reduce `entities`, or issue a fo
 
 ## Knowledge Evidence
 
-Use `knowledge_evidence` when the caller already knows the exact wiki node path and needs source refs for trust checking or citations.
+Use `knowledge_evidence` when the caller already knows the exact knowledge node path and needs source refs for trust checking or citations.
 The request takes `database_id` and `node_path`.
-The response returns the wiki `node_path` and refs with source path, linking path, raw href, and link text.
+The response returns the knowledge `node_path` and refs with source path, linking path, raw href, and link text.
 Refs also include source freshness metadata when the source node can be read: `source_etag`, `source_updated_at`, and `source_content_hash`.
 Use freshness metadata to detect whether a citation was checked against the same source revision.
 Freshness metadata does not make a working note canonical.
 
-`knowledge_evidence` returns an error when the wiki node does not exist.
+`knowledge_evidence` returns an error when the knowledge node does not exist.
 
 ## Database SQL JSON Query
 
@@ -164,7 +164,7 @@ The response shape is:
 
 ```json
 {
-  "rows": ["{\"path\":\"/Wiki/example.md\",\"updated_at\":1700000000000}"],
+  "rows": ["{\"path\":\"/Knowledge/example.md\",\"updated_at\":1700000000000}"],
   "row_count": 1,
   "limit": 20
 }

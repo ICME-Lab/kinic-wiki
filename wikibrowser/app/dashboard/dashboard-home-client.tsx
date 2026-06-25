@@ -161,7 +161,7 @@ export function DashboardHomeClient() {
       );
       await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
-      router.push(hrefForPath(canisterId, result.database_id, "/Wiki"));
+      router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
     } catch (cause) {
       if (createdDatabaseId) {
         await refreshDatabases(authClient);

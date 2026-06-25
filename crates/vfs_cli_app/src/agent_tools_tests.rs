@@ -34,6 +34,8 @@ struct ToolMockClient {
     multi_edit_requests: std::sync::Mutex<Vec<MultiEditNodeRequest>>,
     search_requests: std::sync::Mutex<Vec<SearchNodesRequest>>,
     path_search_requests: std::sync::Mutex<Vec<SearchNodePathsRequest>>,
+    search_hits: std::sync::Mutex<Vec<SearchNodeHit>>,
+    path_search_hits: std::sync::Mutex<Vec<SearchNodeHit>>,
 }
 
 #[async_trait]
@@ -68,8 +70,8 @@ impl VfsApi for ToolMockClient {
             .push(request.clone());
         Ok(Some(vfs_types::NodeContext {
             node: sample_node(&request.path, "body", "etag-1"),
-            incoming_links: vec![sample_link("/Wiki/source.md", &request.path)],
-            outgoing_links: vec![sample_link(&request.path, "/Wiki/target.md")],
+            incoming_links: vec![sample_link("/Knowledge/source.md", &request.path)],
+            outgoing_links: vec![sample_link(&request.path, "/Knowledge/target.md")],
         }))
     }
 
@@ -179,7 +181,7 @@ impl VfsApi for ToolMockClient {
             .expect("glob lock should succeed")
             .push(request);
         Ok(vec![GlobNodeHit {
-            path: "/Wiki/nested".to_string(),
+            path: "/Knowledge/nested".to_string(),
             kind: NodeEntryKind::Directory,
             has_children: true,
         }])
@@ -193,7 +195,7 @@ impl VfsApi for ToolMockClient {
             .lock()
             .expect("graph links lock should succeed")
             .push(request);
-        Ok(vec![sample_link("/Wiki/a.md", "/Wiki/b.md")])
+        Ok(vec![sample_link("/Knowledge/a.md", "/Knowledge/b.md")])
     }
 
     async fn graph_neighborhood(
@@ -204,7 +206,7 @@ impl VfsApi for ToolMockClient {
             .lock()
             .expect("graph lock should succeed")
             .push(request);
-        Ok(vec![sample_link("/Wiki/a.md", "/Wiki/b.md")])
+        Ok(vec![sample_link("/Knowledge/a.md", "/Knowledge/b.md")])
     }
 
     async fn incoming_links(
@@ -215,7 +217,7 @@ impl VfsApi for ToolMockClient {
             .lock()
             .expect("incoming lock should succeed")
             .push(request);
-        Ok(vec![sample_link("/Wiki/source.md", "/Wiki/a.md")])
+        Ok(vec![sample_link("/Knowledge/source.md", "/Knowledge/a.md")])
     }
 
     async fn outgoing_links(
@@ -226,7 +228,7 @@ impl VfsApi for ToolMockClient {
             .lock()
             .expect("outgoing lock should succeed")
             .push(request);
-        Ok(vec![sample_link("/Wiki/a.md", "/Wiki/target.md")])
+        Ok(vec![sample_link("/Knowledge/a.md", "/Knowledge/target.md")])
     }
 
     async fn multi_edit_node(&self, request: MultiEditNodeRequest) -> Result<MultiEditNodeResult> {
@@ -248,6 +250,14 @@ impl VfsApi for ToolMockClient {
             .lock()
             .expect("search lock should succeed")
             .push(request.clone());
+        let search_hits = self
+            .search_hits
+            .lock()
+            .expect("search hits lock should succeed");
+        if !search_hits.is_empty() {
+            return Ok(search_hits.clone());
+        }
+        drop(search_hits);
         let nodes = self.nodes.lock().expect("nodes lock should succeed");
         if !nodes.is_empty() {
             return Ok(nodes
@@ -277,11 +287,38 @@ impl VfsApi for ToolMockClient {
         self.path_search_requests
             .lock()
             .expect("path search lock should succeed")
-            .push(request);
+            .push(request.clone());
+        let path_search_hits = self
+            .path_search_hits
+            .lock()
+            .expect("path search hits lock should succeed");
+        if !path_search_hits.is_empty() {
+            return Ok(path_search_hits.clone());
+        }
+        drop(path_search_hits);
+        let nodes = self.nodes.lock().expect("nodes lock should succeed");
+        if !nodes.is_empty() {
+            return Ok(nodes
+                .values()
+                .filter(|node| {
+                    node.path
+                        .starts_with(request.prefix.as_deref().unwrap_or_default())
+                        && node.path.contains(&request.query_text)
+                })
+                .map(|node| SearchNodeHit {
+                    path: node.path.clone(),
+                    kind: node.kind.clone(),
+                    snippet: Some(node.path.clone()),
+                    preview: None,
+                    score: -1.0,
+                    match_reasons: vec!["path_substring".to_string()],
+                })
+                .collect());
+        }
         Ok(vec![SearchNodeHit {
-            path: "/Wiki/nested/beta.md".to_string(),
+            path: "/Knowledge/nested/beta.md".to_string(),
             kind: NodeKind::File,
-            snippet: Some("/Wiki/nested/beta.md".to_string()),
+            snippet: Some("/Knowledge/nested/beta.md".to_string()),
             preview: None,
             score: 15.0,
             match_reasons: vec!["path_substring".to_string()],
@@ -368,6 +405,87 @@ async fn agent_tools_default_read_scopes_to_vfs_root() {
     );
 }
 
+#[tokio::test]
+async fn agent_search_ranks_sources_last_when_prefix_is_omitted() {
+    let client = ToolMockClient::default();
+    *client
+        .search_hits
+        .lock()
+        .expect("search hits lock should succeed") = vec![
+        sample_hit("/Sources/raw/chat.md"),
+        sample_hit("/Knowledge/answer.md"),
+        sample_hit("/Memory/context.md"),
+        sample_hit("/Sources/web/page.md"),
+    ];
+    *client
+        .path_search_hits
+        .lock()
+        .expect("path search hits lock should succeed") = vec![
+        sample_hit("/Sources/raw/chat.md"),
+        sample_hit("/Knowledge/answer.md"),
+        sample_hit("/Memory/context.md"),
+        sample_hit("/Sources/web/page.md"),
+    ];
+
+    let search = handle_anthropic_tool_call(
+        &client,
+        "search",
+        serde_json::json!({ "database_id": "default", "query_text": "answer" }),
+    )
+    .await
+    .expect("search tool should succeed");
+    assert_eq!(
+        hit_paths(&search),
+        vec![
+            "/Knowledge/answer.md",
+            "/Memory/context.md",
+            "/Sources/raw/chat.md",
+            "/Sources/web/page.md"
+        ]
+    );
+
+    let path_search = handle_anthropic_tool_call(
+        &client,
+        "search_paths",
+        serde_json::json!({ "database_id": "default", "query_text": "answer" }),
+    )
+    .await
+    .expect("path search tool should succeed");
+    assert_eq!(
+        hit_paths(&path_search),
+        vec![
+            "/Knowledge/answer.md",
+            "/Memory/context.md",
+            "/Sources/raw/chat.md",
+            "/Sources/web/page.md"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn agent_search_preserves_order_when_prefix_is_explicit() {
+    let client = ToolMockClient::default();
+    *client
+        .search_hits
+        .lock()
+        .expect("search hits lock should succeed") = vec![
+        sample_hit("/Sources/raw/chat.md"),
+        sample_hit("/Knowledge/answer.md"),
+    ];
+
+    let search = handle_anthropic_tool_call(
+        &client,
+        "search",
+        serde_json::json!({ "database_id": "default", "query_text": "answer", "prefix": "/" }),
+    )
+    .await
+    .expect("search tool should succeed");
+    assert_eq!(
+        hit_paths(&search),
+        vec!["/Sources/raw/chat.md", "/Knowledge/answer.md"]
+    );
+}
+
 #[test]
 fn tool_schemas_include_minimal_vfs_tools() {
     let openai = create_openai_tools();
@@ -421,7 +539,7 @@ async fn read_only_dispatch_rejects_write_tools() {
     let result = handle_openai_read_only_tool_call(
         &client,
         "write",
-        r#"{"database_id":"default","path":"/Wiki/a.md","content":"body"}"#,
+        r#"{"database_id":"default","path":"/Knowledge/a.md","content":"body"}"#,
     )
     .await
     .expect("read-only dispatch should return a tool result");
@@ -470,7 +588,7 @@ async fn openai_dispatch_routes_append_and_edit() {
     let append = handle_openai_tool_call(
         &client,
         "append",
-        r#"{"database_id":"default","path":"/Wiki/a.md","content":"tail","expected_etag":"etag-1","separator":"\n"}"#,
+        r#"{"database_id":"default","path":"/Knowledge/a.md","content":"tail","expected_etag":"etag-1","separator":"\n"}"#,
     )
     .await
     .expect("append dispatch should succeed");
@@ -479,7 +597,7 @@ async fn openai_dispatch_routes_append_and_edit() {
     let edit = handle_openai_tool_call(
         &client,
         "edit",
-        r#"{"database_id":"default","path":"/Wiki/a.md","old_text":"before","new_text":"after","replace_all":false}"#,
+        r#"{"database_id":"default","path":"/Knowledge/a.md","old_text":"before","new_text":"after","replace_all":false}"#,
     )
     .await
     .expect("edit dispatch should succeed");
@@ -490,7 +608,7 @@ async fn openai_dispatch_routes_append_and_edit() {
         .lock()
         .expect("append lock should succeed");
     assert_eq!(append_requests.len(), 1);
-    assert_eq!(append_requests[0].path, "/Wiki/a.md");
+    assert_eq!(append_requests[0].path, "/Knowledge/a.md");
     drop(append_requests);
 
     let edit_requests = client
@@ -509,7 +627,7 @@ async fn anthropic_dispatch_returns_tool_error_for_edit_failures() {
         "edit",
         serde_json::json!({
             "database_id": "default",
-            "path": "/Wiki/a.md",
+            "path": "/Knowledge/a.md",
             "old_text": "missing",
             "new_text": "after",
             "replace_all": false
@@ -528,7 +646,7 @@ async fn anthropic_dispatch_routes_mkdir() {
     let result = handle_anthropic_tool_call(
         &client,
         "mkdir",
-        serde_json::json!({ "database_id": "default", "path": "/Wiki/new-dir" }),
+        serde_json::json!({ "database_id": "default", "path": "/Knowledge/new-dir" }),
     )
     .await
     .expect("mkdir tool should succeed");
@@ -538,7 +656,7 @@ async fn anthropic_dispatch_routes_mkdir() {
         .lock()
         .expect("mkdir lock should succeed");
     assert_eq!(mkdirs.len(), 1);
-    assert_eq!(mkdirs[0].path, "/Wiki/new-dir");
+    assert_eq!(mkdirs[0].path, "/Knowledge/new-dir");
 }
 
 #[tokio::test]
@@ -547,16 +665,16 @@ async fn anthropic_dispatch_rm_autofills_folder_index_etag() {
     {
         let mut nodes = client.nodes.lock().expect("nodes lock should succeed");
         nodes.insert(
-            "/Wiki/topic".to_string(),
+            "/Knowledge/topic".to_string(),
             Node {
                 kind: NodeKind::Folder,
                 etag: "etag-folder".to_string(),
-                ..sample_node("/Wiki/topic", "", "etag-folder")
+                ..sample_node("/Knowledge/topic", "", "etag-folder")
             },
         );
         nodes.insert(
-            "/Wiki/topic/index.md".to_string(),
-            sample_node("/Wiki/topic/index.md", "", "etag-index"),
+            "/Knowledge/topic/index.md".to_string(),
+            sample_node("/Knowledge/topic/index.md", "", "etag-index"),
         );
     }
 
@@ -565,7 +683,7 @@ async fn anthropic_dispatch_rm_autofills_folder_index_etag() {
         "rm",
         serde_json::json!({
             "database_id": "default",
-            "path": "/Wiki/topic",
+            "path": "/Knowledge/topic",
             "expected_etag": "etag-folder"
         }),
     )
@@ -577,7 +695,7 @@ async fn anthropic_dispatch_rm_autofills_folder_index_etag() {
         .delete_requests
         .lock()
         .expect("delete lock should succeed");
-    assert_eq!(deletes[0].path, "/Wiki/topic");
+    assert_eq!(deletes[0].path, "/Knowledge/topic");
     assert_eq!(deletes[0].expected_etag.as_deref(), Some("etag-folder"));
     assert_eq!(
         deletes[0].expected_folder_index_etag.as_deref(),
@@ -591,16 +709,16 @@ async fn anthropic_dispatch_rm_keeps_explicit_folder_index_etag() {
     {
         let mut nodes = client.nodes.lock().expect("nodes lock should succeed");
         nodes.insert(
-            "/Wiki/topic".to_string(),
+            "/Knowledge/topic".to_string(),
             Node {
                 kind: NodeKind::Folder,
                 etag: "etag-folder".to_string(),
-                ..sample_node("/Wiki/topic", "", "etag-folder")
+                ..sample_node("/Knowledge/topic", "", "etag-folder")
             },
         );
         nodes.insert(
-            "/Wiki/topic/index.md".to_string(),
-            sample_node("/Wiki/topic/index.md", "", "etag-index"),
+            "/Knowledge/topic/index.md".to_string(),
+            sample_node("/Knowledge/topic/index.md", "", "etag-index"),
         );
     }
 
@@ -609,7 +727,7 @@ async fn anthropic_dispatch_rm_keeps_explicit_folder_index_etag() {
         "rm",
         serde_json::json!({
             "database_id": "default",
-            "path": "/Wiki/topic",
+            "path": "/Knowledge/topic",
             "expected_etag": "etag-folder",
             "expected_folder_index_etag": "stale"
         }),
@@ -637,8 +755,8 @@ async fn anthropic_dispatch_routes_move_glob_and_multi_edit() {
         "mv",
         serde_json::json!({
             "database_id": "default",
-            "from_path": "/Wiki/a.md",
-            "to_path": "/Wiki/b.md",
+            "from_path": "/Knowledge/a.md",
+            "to_path": "/Knowledge/b.md",
             "expected_etag": "etag-1",
             "overwrite": true
         }),
@@ -653,7 +771,7 @@ async fn anthropic_dispatch_routes_move_glob_and_multi_edit() {
         serde_json::json!({
             "database_id": "default",
             "pattern": "**/*.md",
-            "path": "/Wiki",
+            "path": "/Knowledge",
             "node_type": "directory"
         }),
     )
@@ -666,7 +784,7 @@ async fn anthropic_dispatch_routes_move_glob_and_multi_edit() {
         "multi_edit",
         serde_json::json!({
             "database_id": "default",
-            "path": "/Wiki/a.md",
+            "path": "/Knowledge/a.md",
             "expected_etag": "etag-1",
             "edits": [
                 { "old_text": "before", "new_text": "after" },
@@ -722,7 +840,7 @@ async fn anthropic_dispatch_routes_search_paths() {
         serde_json::json!({
             "database_id": "default",
             "query_text": "nested",
-            "prefix": "/Wiki",
+            "prefix": "/Knowledge",
             "top_k": 5,
             "preview_mode": "content_start"
         }),
@@ -730,7 +848,7 @@ async fn anthropic_dispatch_routes_search_paths() {
     .await
     .expect("search paths tool should succeed");
     assert!(!result.is_error);
-    assert!(result.text.contains("/Wiki/nested/beta.md"));
+    assert!(result.text.contains("/Knowledge/nested/beta.md"));
     assert!(result.text.contains("path_substring"));
     assert_eq!(
         client
@@ -751,7 +869,7 @@ async fn anthropic_dispatch_routes_search_preview_mode() {
         serde_json::json!({
             "database_id": "default",
             "query_text": "body",
-            "prefix": "/Wiki",
+            "prefix": "/Knowledge",
             "top_k": 5,
             "preview_mode": "content_start"
         }),
@@ -854,7 +972,7 @@ async fn skill_read_rejects_non_package_paths_and_requires_database() {
 
     for file in [
         "../secret.md",
-        "/Wiki/skills/legal-review/SKILL.md",
+        "/Skills/legal-review/SKILL.md",
         "https://example.com/a.md",
     ] {
         let result = handle_anthropic_tool_call(
@@ -889,23 +1007,23 @@ async fn anthropic_dispatch_routes_link_tools() {
     for (name, input) in [
         (
             "read_context",
-            serde_json::json!({ "database_id": "default", "path": "/Wiki/a.md", "link_limit": 7 }),
+            serde_json::json!({ "database_id": "default", "path": "/Knowledge/a.md", "link_limit": 7 }),
         ),
         (
             "graph_neighborhood",
-            serde_json::json!({ "database_id": "default", "center_path": "/Wiki/a.md", "depth": 2, "limit": 9 }),
+            serde_json::json!({ "database_id": "default", "center_path": "/Knowledge/a.md", "depth": 2, "limit": 9 }),
         ),
         (
             "graph_links",
-            serde_json::json!({ "database_id": "default", "prefix": "/Wiki", "limit": 11 }),
+            serde_json::json!({ "database_id": "default", "prefix": "/Knowledge", "limit": 11 }),
         ),
         (
             "incoming_links",
-            serde_json::json!({ "database_id": "default", "path": "/Wiki/a.md", "limit": 13 }),
+            serde_json::json!({ "database_id": "default", "path": "/Knowledge/a.md", "limit": 13 }),
         ),
         (
             "outgoing_links",
-            serde_json::json!({ "database_id": "default", "path": "/Wiki/a.md", "limit": 15 }),
+            serde_json::json!({ "database_id": "default", "path": "/Knowledge/a.md", "limit": 15 }),
         ),
     ] {
         let result = handle_anthropic_tool_call(&client, name, input)
@@ -968,6 +1086,32 @@ fn sample_node(path: &str, content: &str, etag: &str) -> Node {
     }
 }
 
+fn sample_hit(path: &str) -> SearchNodeHit {
+    SearchNodeHit {
+        path: path.to_string(),
+        kind: NodeKind::File,
+        snippet: Some(path.to_string()),
+        preview: None,
+        score: -1.0,
+        match_reasons: vec!["content_fts".to_string()],
+    }
+}
+
+fn hit_paths(result: &vfs_cli::agent_tools::ToolResult) -> Vec<String> {
+    let value: Value = serde_json::from_str(&result.text).expect("tool result should be JSON");
+    value["hits"]
+        .as_array()
+        .expect("hits should be an array")
+        .iter()
+        .map(|hit| {
+            hit["path"]
+                .as_str()
+                .expect("hit path should be a string")
+                .to_string()
+        })
+        .collect()
+}
+
 fn sample_ack(path: &str, kind: NodeKind, etag: &str) -> NodeMutationAck {
     NodeMutationAck {
         path: path.to_string(),
@@ -992,7 +1136,7 @@ fn seed_skill_nodes(client: &ToolMockClient) {
     let mut nodes = client.nodes.lock().expect("nodes lock should succeed");
     for (path, content) in [
         (
-            "/Wiki/skills/legal-review/manifest.md",
+            "/Skills/legal-review/manifest.md",
             concat!(
                 "---\n",
                 "kind: kinic.skill\n",
@@ -1010,15 +1154,15 @@ fn seed_skill_nodes(client: &ToolMockClient) {
             ),
         ),
         (
-            "/Wiki/skills/legal-review/SKILL.md",
+            "/Skills/legal-review/SKILL.md",
             "# Legal Review\n\ncontract review",
         ),
         (
-            "/Wiki/skills/legal-review/ingest.md",
+            "/Skills/legal-review/ingest.md",
             "# Ingest\n\ncontract ingest",
         ),
         (
-            "/Wiki/skills/old-skill/manifest.md",
+            "/Skills/old-skill/manifest.md",
             concat!(
                 "---\n",
                 "kind: kinic.skill\n",
@@ -1031,10 +1175,7 @@ fn seed_skill_nodes(client: &ToolMockClient) {
                 "---\n"
             ),
         ),
-        (
-            "/Wiki/skills/old-skill/SKILL.md",
-            "# Old\n\ncontract review",
-        ),
+        ("/Skills/old-skill/SKILL.md", "# Old\n\ncontract review"),
     ] {
         nodes.insert(path.to_string(), sample_node(path, content, "etag-skill"));
     }

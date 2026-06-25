@@ -89,25 +89,6 @@ export async function recordSkillRun(
   });
 }
 
-export async function approveSkillProposal(canisterId: string, databaseId: string, identity: Identity, skill: CatalogSkill, proposalPath: string): Promise<void> {
-  const { proposalId, statusPath } = proposalStatusPathForSkill(skill, proposalPath);
-  const current = await requireNode(canisterId, databaseId, statusPath, identity);
-  assertProposalStatus(current.content, skill.manifest.id, proposalId, ["proposed"]);
-  await writeNodeAuthenticated(canisterId, identity, {
-    databaseId,
-    path: statusPath,
-    kind: "file",
-    content: ["---", "kind: kinic.skill_evolution_proposal_status", "schema_version: 1", `skill_id: ${JSON.stringify(skill.manifest.id)}`, `proposal_id: ${JSON.stringify(proposalId)}`, "status: reviewed", `recorded_at: ${new Date().toISOString()}`, "---", "# Proposal Status"].join("\n"),
-    metadataJson: current.metadataJson,
-    expectedEtag: current.etag
-  });
-  await recordSkillEvent(canisterId, databaseId, identity, skill.manifest.id, {
-    action: "proposal.review",
-    targetPath: statusPath,
-    result: "reviewed"
-  });
-}
-
 export async function recordSkillEvent(
   canisterId: string,
   databaseId: string,
@@ -180,52 +161,6 @@ function frontmatterEnd(rest: string): number {
 
 function quoteYaml(value: string): string {
   return JSON.stringify(value);
-}
-
-function proposalStatusPathForSkill(skill: CatalogSkill, proposalPath: string): { proposalId: string; statusPath: string } {
-  const prefix = `${skill.basePath}/proposals/`;
-  if (!proposalPath.startsWith(prefix)) throw new Error("Proposal path is outside this skill package.");
-  const proposalId = proposalPath.slice(prefix.length);
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(proposalId) || proposalId.includes("..")) {
-    throw new Error("Proposal id must be a single safe path segment.");
-  }
-  return { proposalId, statusPath: `${proposalPath}/status.md` };
-}
-
-export function assertProposalStatus(content: string, skillId: string, proposalId: string, allowedStatuses: readonly string[]): void {
-  const fields = frontmatterFields(content);
-  if (fields.kind !== "kinic.skill_evolution_proposal_status") throw new Error("Proposal status kind is invalid.");
-  if (fields.schema_version !== "1") throw new Error("Proposal status schema_version is invalid.");
-  if (fields.skill_id !== skillId) throw new Error("Proposal status skill_id does not match.");
-  if (fields.proposal_id !== proposalId) throw new Error("Proposal status proposal_id does not match.");
-  if (!fields.recorded_at || Number.isNaN(Date.parse(fields.recorded_at))) throw new Error("Proposal status recorded_at is invalid.");
-  if (!fields.status || !allowedStatuses.includes(fields.status)) throw new Error("Proposal status is not in an updateable state.");
-}
-
-function frontmatterFields(content: string): Record<string, string> {
-  if (!content.startsWith("---\n")) return {};
-  const rest = content.slice(4);
-  const end = frontmatterEnd(rest);
-  if (end < 0) return {};
-  const fields: Record<string, string> = {};
-  for (const line of rest.slice(0, end).split("\n")) {
-    const match = line.match(/^([^:\s][^:]*):(.*)$/);
-    if (!match) continue;
-    fields[match[1].trim()] = cleanYamlScalar(match[2].trim());
-  }
-  return fields;
-}
-
-function cleanYamlScalar(value: string): string {
-  if (value.startsWith('"') && value.endsWith('"')) {
-    try {
-      const parsed: unknown = JSON.parse(value);
-      return typeof parsed === "string" ? parsed : value;
-    } catch {
-      return value;
-    }
-  }
-  return value;
 }
 
 async function sha256Hex(value: string): Promise<string> {

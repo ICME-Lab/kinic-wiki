@@ -7940,8 +7940,8 @@ struct StoreSeedNode {
 fn database_store_seed_nodes() -> Vec<StoreSeedNode> {
     vec![
         folder_seed("/Memory"),
-        folder_seed("/Wiki"),
-        folder_seed("/Wiki/skills"),
+        folder_seed("/Knowledge"),
+        folder_seed("/Skills"),
         folder_seed("/Sessions"),
         folder_seed("/Sources"),
         folder_seed("/Sources/sessions"),
@@ -8472,7 +8472,7 @@ mod tests {
             &index_path,
             &databases_dir,
             "legacy_active",
-            &["/Memory", "/Sessions", "/Wiki/skills"],
+            &["/Memory", "/Sessions", "/Skills"],
         );
         let service = VfsService::new(index_path.clone(), databases_dir);
 
@@ -8480,7 +8480,7 @@ mod tests {
             .run_index_migrations_for_upgrade(None)
             .expect("mainnet 032 index should seed store roots");
 
-        for path in ["/Memory", "/Sessions", "/Wiki/skills"] {
+        for path in ["/Memory", "/Sessions", "/Skills"] {
             assert!(
                 service
                     .read_node("legacy_active", "owner", path)
@@ -8510,7 +8510,7 @@ mod tests {
             &index_path,
             &databases_dir,
             "store_without_roots",
-            &["/Memory", "/Sessions", "/Wiki/skills"],
+            &["/Memory", "/Sessions", "/Skills"],
         );
         let service = VfsService::new(index_path.clone(), databases_dir);
 
@@ -8541,7 +8541,7 @@ mod tests {
             &index_path,
             &databases_dir,
             "partial_roots",
-            &["/Sessions", "/Wiki/skills"],
+            &["/Sessions", "/Skills"],
         );
         let service = VfsService::new(index_path.clone(), databases_dir);
 
@@ -8549,7 +8549,7 @@ mod tests {
             .run_index_migrations_for_upgrade(None)
             .expect("existing folder roots should be kept");
 
-        for path in ["/Memory", "/Sessions", "/Wiki/skills"] {
+        for path in ["/Memory", "/Sessions", "/Skills"] {
             assert!(
                 service
                     .read_node("partial_roots", "owner", path)
@@ -8575,7 +8575,7 @@ mod tests {
             &index_path,
             &databases_dir,
             "colliding_roots",
-            &["/Memory", "/Sessions", "/Wiki/skills"],
+            &["/Memory", "/Sessions", "/Skills"],
         );
         FsStore::new(PathBuf::from(&db_file_name))
             .write_node(
@@ -9784,7 +9784,7 @@ mod tests {
                 "owner",
                 WriteNodeRequest {
                     database_id: database_id.to_string(),
-                    path: "/Wiki/storage.md".to_string(),
+                    path: "/Knowledge/storage.md".to_string(),
                     kind: NodeKind::File,
                     content: format!("storage billing payload {index}"),
                     metadata_json: "{}".to_string(),

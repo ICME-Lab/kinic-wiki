@@ -9,7 +9,6 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Check, FilePlus, FolderPlus, GitBranch, HelpCircle, Menu, MoveRight, Network, PanelRight, Pencil, Search, Share2, Trash2, Wallet, X } from "lucide-react";
-import { ClipperPanel } from "@/components/clipper-panel";
 import { DocumentHeader, DocumentPane, type DocumentEditState } from "@/components/document-pane";
 import { ExplorerTree } from "@/components/explorer-tree";
 import { HelpPanel } from "@/components/help-panel";
@@ -43,7 +42,7 @@ import {
   type ViewMode
 } from "@/lib/wiki-helpers";
 
-const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest", "clipper"];
+const SIDEBAR_TABS: ModeTab[] = ["explorer", "query", "ingest"];
 const HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline";
 const EMPTY_EDIT_STATE: DocumentEditState = { dirty: false, saveState: "idle" };
 const UNSAVED_MARKDOWN_MESSAGE = "You have unsaved Markdown changes. Leave edit mode?";
@@ -85,7 +84,7 @@ export function WikiBrowser() {
   const graphCenter = isGraphPage ? searchParams.get("center") : null;
   const graphDepth = parseGraphDepth(searchParams.get("depth"));
   const selectedPath = useMemo(
-    () => isSearchPage || isHelpPage ? "/Wiki" : isGraphPage ? graphCenter ?? "/Wiki" : routeState.nodePath,
+    () => isSearchPage || isHelpPage ? "/Knowledge" : isGraphPage ? graphCenter ?? "/Knowledge" : routeState.nodePath,
     [graphCenter, isGraphPage, isHelpPage, isSearchPage, routeState.nodePath]
   );
   const view = parseView(searchParams.get("view"));
@@ -127,8 +126,8 @@ export function WikiBrowser() {
   const [selectedExplorerState, setSelectedExplorerState] = useState<{ key: string; node: ChildNode } | null>(null);
   const [explorerActionMode, setExplorerActionMode] = useState<"file" | "folder" | "rename" | null>(null);
   const [explorerMoveOpen, setExplorerMoveOpen] = useState(false);
-  const [explorerMoveTarget, setExplorerMoveTarget] = useState("/Wiki");
-  const [explorerMoveTargets, setExplorerMoveTargets] = useState<string[]>(["/Wiki"]);
+  const [explorerMoveTarget, setExplorerMoveTarget] = useState("/Knowledge");
+  const [explorerMoveTargets, setExplorerMoveTargets] = useState<string[]>(["/Knowledge"]);
   const [explorerDraftName, setExplorerDraftName] = useState("");
   const [explorerActionError, setExplorerActionError] = useState<string | null>(null);
   const [explorerBusyAction, setExplorerBusyAction] = useState<"file" | "folder" | "rename" | "move" | "delete" | null>(null);
@@ -478,12 +477,12 @@ export function WikiBrowser() {
     if (!readIdentity) throw new Error("Login with Internet Identity to rename nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
     if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
-    if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Wiki Markdown files and folders can be renamed.");
+    if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Knowledge Markdown files and folders can be renamed.");
     if (!target.etag) throw new Error("Cannot rename a node without an etag.");
     const normalizedName = target.kind === "file" ? normalizeMarkdownFileName(nextName) : normalizePathSegment(nextName);
     if (!normalizedName) throw new Error("Enter a single valid name.");
     if (target.kind === "file" && isReservedFolderIndexName(normalizedName)) throw new Error("Use folder Edit to create index.md.");
-    const nextPath = `${parentPath(target.path) ?? "/Wiki"}/${normalizedName}`;
+    const nextPath = `${parentPath(target.path) ?? "/Knowledge"}/${normalizedName}`;
     const { moveNodeAuthenticated } = await import("@/lib/vfs-client");
     await moveNodeAuthenticated(canisterId, readIdentity, {
       databaseId,
@@ -502,9 +501,9 @@ export function WikiBrowser() {
     if (!readIdentity) throw new Error("Login with Internet Identity to move nodes.");
     if (currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner") throw new Error("Writer or owner access required.");
     if (currentDatabaseCycleReason) throw new Error(currentDatabaseCycleReason);
-    if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Wiki Markdown files and folders can be moved.");
+    if (!isMutableWikiExplorerNode(target)) throw new Error("Only /Knowledge Markdown files and folders can be moved.");
     if (!target.etag) throw new Error("Cannot move a node without an etag.");
-    if (!isWikiPath(targetDirectory)) throw new Error("Move destination must be under /Wiki.");
+    if (!isWikiPath(targetDirectory)) throw new Error("Move destination must be under /Knowledge.");
     const nextPath = `${targetDirectory}/${target.name}`;
     if (nextPath === target.path) return false;
     const { moveNodeAuthenticated } = await import("@/lib/vfs-client");
@@ -528,7 +527,7 @@ export function WikiBrowser() {
     const targetChildren = target.kind === "folder"
       ? childNodesCache.current.get(nodeRequestKey(canisterId, databaseId, target.path, readPrincipal))
       : undefined;
-    if (!isDeletableWikiExplorerNode(target, targetChildren)) throw new Error("Only /Wiki Markdown files and folders without visible children can be deleted.");
+    if (!isDeletableWikiExplorerNode(target, targetChildren)) throw new Error("Only /Knowledge Markdown files and folders without visible children can be deleted.");
     if (!target.etag) throw new Error("Cannot delete a node without an etag.");
     if (!window.confirm(`Delete ${target.path}?`)) return false;
     const { deleteNodeAuthenticated, readNode } = await import("@/lib/vfs-client");
@@ -544,7 +543,7 @@ export function WikiBrowser() {
     invalidateBrowserCaches();
     setEditState(EMPTY_EDIT_STATE);
     if (selectedPath === target.path) {
-      router.replace(hrefForPath(canisterId, databaseId, parentPath(target.path) ?? "/Wiki", undefined, tab));
+      router.replace(hrefForPath(canisterId, databaseId, parentPath(target.path) ?? "/Knowledge", undefined, tab));
     }
     return true;
   }, [canLeaveDirtyEdit, canisterId, currentDatabaseCycleReason, currentDatabaseRole, databaseId, invalidateBrowserCaches, readIdentity, readPrincipal, router, selectedPath, setEditState, tab]);
@@ -657,9 +656,9 @@ export function WikiBrowser() {
                 deleteDisabled={Boolean(explorerWriteDisabledReason) || explorerBusyAction !== null || !explorerDeleteTarget}
                 fileTitle={explorerWriteDisabledReason ?? `New file in ${explorerCreateDirectory}`}
                 folderTitle={explorerWriteDisabledReason ?? `New folder in ${explorerCreateDirectory}`}
-                renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to rename")}
-                moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Wiki Markdown file or folder to move")}
-                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Wiki Markdown file or folder without visible children to delete")}
+                renameTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Rename ${explorerMutationTarget.path}` : "Select a /Knowledge Markdown file or folder to rename")}
+                moveTitle={explorerWriteDisabledReason ?? (explorerMutationTarget ? `Move ${explorerMutationTarget.path}` : "Select a /Knowledge Markdown file or folder to move")}
+                deleteTitle={explorerWriteDisabledReason ?? (explorerDeleteTarget ? `Delete ${explorerDeleteTarget.path}` : "Select a /Knowledge Markdown file or folder without visible children to delete")}
                 onNewFile={() => {
                   setExplorerActionError(null);
                   setExplorerActionMode("file");
@@ -683,7 +682,7 @@ export function WikiBrowser() {
                   if (!explorerMutationTarget) return;
                   setExplorerActionError(null);
                   setExplorerActionMode(null);
-                  setExplorerMoveTarget(explorerMoveTargets[0] ?? "/Wiki");
+                  setExplorerMoveTarget(explorerMoveTargets[0] ?? "/Knowledge");
                   setExplorerMoveOpen(true);
                 }}
                 onDelete={() => void runExplorerDelete()}
@@ -735,7 +734,6 @@ export function WikiBrowser() {
             currentNode={currentNode.data}
             readIdentityMode={currentReadIdentityMode}
             databaseCyclesError={currentDatabaseCycleReason}
-            currentDatabaseRole={currentDatabaseRole}
             explorerRevision={explorerRevision}
             onSelectedExplorerNode={rememberSelectedExplorerNode}
           />
@@ -840,7 +838,6 @@ function LeftPane({
   currentNode,
   readIdentityMode,
   databaseCyclesError,
-  currentDatabaseRole,
   explorerRevision,
   onSelectedExplorerNode
 }: {
@@ -855,7 +852,6 @@ function LeftPane({
   currentNode: WikiNode | null;
   readIdentityMode: "anonymous" | "user";
   databaseCyclesError: string | null;
-  currentDatabaseRole: DatabaseRole | null;
   explorerRevision: number;
   onSelectedExplorerNode: (node: ChildNode) => void;
 }) {
@@ -879,17 +875,6 @@ function LeftPane({
         canisterId={canisterId}
         databaseId={databaseId}
         readIdentity={readIdentity}
-        databaseCyclesError={databaseCyclesError}
-      />
-    );
-  }
-  if (tab === "clipper") {
-    return (
-      <ClipperPanel
-        databaseId={databaseId}
-        ingestHref={hrefForPath(canisterId, databaseId, selectedPath, undefined, "ingest")}
-        readIdentity={readIdentity}
-        currentDatabaseRole={currentDatabaseRole}
         databaseCyclesError={databaseCyclesError}
       />
     );
@@ -1160,7 +1145,7 @@ function wikiMarkdownChildPath(directoryPath: string, fileName: string): string 
 
 function wikiChildPath(directoryPath: string, name: string, label: string): string {
   if (!isWikiPath(directoryPath)) {
-    throw new Error(`${label} can only be created under /Wiki.`);
+    throw new Error(`${label} can only be created under /Knowledge.`);
   }
   return `${directoryPath}/${name}`;
 }
@@ -1183,19 +1168,19 @@ function normalizePathSegment(name: string): string | null {
 
 function createDirectoryForExplorerNode(node: ChildNode | null): string {
   if (!node) {
-    return "/Wiki";
+    return "/Knowledge";
   }
   if ((node.kind === "directory" || node.kind === "folder") && isWikiPath(node.path)) {
     return node.path;
   }
   if (node.kind === "file" && isWikiPath(node.path)) {
-    return parentPath(node.path) ?? "/Wiki";
+    return parentPath(node.path) ?? "/Knowledge";
   }
-  return "/Wiki";
+  return "/Knowledge";
 }
 
 function isMutableWikiExplorerNode(node: ChildNode): boolean {
-  if (node.isVirtual || !node.etag || isProtectedRootFolder(node.path) || !node.path.startsWith("/Wiki/")) return false;
+  if (node.isVirtual || !node.etag || isProtectedRootFolder(node.path) || !node.path.startsWith("/Knowledge/")) return false;
   return (node.kind === "file" && node.path.endsWith(".md")) || node.kind === "folder";
 }
 
@@ -1208,7 +1193,7 @@ function isDeletableWikiExplorerNode(node: ChildNode, loadedChildren?: ChildNode
 }
 
 function loadedWikiFolders(cache: Map<string, ChildNode[]>, excludedNode: ChildNode | null): string[] {
-  const paths = new Set<string>(["/Wiki"]);
+  const paths = new Set<string>(["/Knowledge"]);
   for (const children of cache.values()) {
     for (const child of children) {
       if (child.kind === "folder" && isWikiPath(child.path) && !isExcludedMoveFolder(child.path, excludedNode)) {
@@ -1234,11 +1219,11 @@ function isExcludedMoveFolder(path: string, node: ChildNode | null): boolean {
 }
 
 function isWikiPath(path: string): boolean {
-  return path === "/Wiki" || path.startsWith("/Wiki/");
+  return path === "/Knowledge" || path.startsWith("/Knowledge/");
 }
 
 function isProtectedRootFolder(path: string): boolean {
-  return path === "/Wiki" || path === "/Sources";
+  return path === "/Knowledge" || path === "/Sources";
 }
 
 function writeDisabledReason(
@@ -1347,7 +1332,7 @@ function TopBar({
   const router = useRouter();
   const graphLinkCenter = isGraphPage ? graphCenter : selectedPath;
   const graphHref = isGraphPage
-    ? hrefForPath(canisterId, databaseId, graphLinkCenter ?? "/Wiki")
+    ? hrefForPath(canisterId, databaseId, graphLinkCenter ?? "/Knowledge")
     : hrefForGraph(canisterId, databaseId, graphLinkCenter);
   const visibleError = authError ?? databaseListError;
   const cycles = databaseCyclesView(currentDatabase, cyclesConfig);
@@ -1429,7 +1414,7 @@ function TopBar({
         ) : null}
         <Link
           className={`${HEADER_ICON_LINK_CLASS} rounded-2xl lg:hidden ${isHelpPage ? "border-accent bg-accent text-white" : "border-line bg-white text-ink shadow-[0_4px_10px_#14142b0a] hover:border-accent hover:bg-accent hover:text-white"}`}
-          href={isHelpPage ? hrefForPath(canisterId, databaseId, "/Wiki") : hrefForHelp(canisterId, databaseId)}
+          href={isHelpPage ? hrefForPath(canisterId, databaseId, "/Knowledge") : hrefForHelp(canisterId, databaseId)}
           aria-label="Help"
           title={isHelpPage ? "Close help" : "Help"}
         >
@@ -1626,7 +1611,7 @@ function ModeTabs({
 }) {
   return (
     <nav className="border-b border-line bg-white px-3 py-2" aria-label="Left sidebar mode">
-      <div className="grid grid-cols-4 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-[11px]">
+      <div className="grid grid-cols-3 gap-1 rounded-2xl border border-line bg-paper p-1 text-center text-[11px]">
         {SIDEBAR_TABS.map((value) => (
           <Link
             key={value}
@@ -1644,7 +1629,6 @@ function ModeTabs({
 function tabTitle(tab: ModeTab): string {
   if (tab === "query") return "Query";
   if (tab === "ingest") return "Ingest";
-  if (tab === "clipper") return "Clipper";
   return "Explorer";
 }
 
@@ -1739,7 +1723,7 @@ function validateCanisterText(canisterId: string): string | null {
 function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath: string } {
   const segments = pathname.split("/").filter(Boolean);
   if (segments[0] !== "db" || !segments[1]) {
-    return { databaseId: null, nodePath: "/Wiki" };
+    return { databaseId: null, nodePath: "/Knowledge" };
   }
   const path = segments
     .slice(2)
@@ -1748,7 +1732,7 @@ function parseWikiRoute(pathname: string): { databaseId: string | null; nodePath
     .join("/");
   return {
     databaseId: decodePathSegment(segments[1]),
-    nodePath: path ? `/${path}` : "/Wiki",
+    nodePath: path ? `/${path}` : "/Knowledge",
   };
 }
 

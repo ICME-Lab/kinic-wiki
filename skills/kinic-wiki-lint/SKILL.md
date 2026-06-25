@@ -9,7 +9,7 @@ Use this skill when the user wants to:
 
 - inspect wiki health
 - look for isolated or duplicated pages
-- check whether `/Wiki/index.md` is stale
+- check whether `/Knowledge/index.md` is stale
 - review missing links, weak structure, or outdated organization
 - decide what to fix next without auto-applying changes
 
@@ -24,7 +24,7 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/<provider>/<id>.md`.
+- Organized knowledge nodes live under `/Knowledge/...`; raw sources live under `/Sources/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Default to report-only behavior.
 - Do not silently fix pages.

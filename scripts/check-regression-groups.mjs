@@ -16,13 +16,13 @@ const groups = {
     ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "normalizedHttpUrl accepts only http and https"]
   ],
   skill_registry_schema: [
-    ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_approve_proposal_rejects_wrong_path_and_frontmatter"],
+    ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_upsert_snapshots_existing_skill_before_update"],
     ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_upsert_rejects_noncanonical_skill_ids_before_writing"],
     ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_set_status_removes_stale_status_metadata"],
-    ["wikibrowser/scripts/check-skill-registry.mjs", "improvement-proposals|kinic\\.skill_improvement_proposal"],
+    ["wikibrowser/scripts/check-skill-registry.mjs", "parseProposalRoot|\\/proposals"],
     ["wikibrowser/scripts/check-skill-registry.mjs", "skill..v1"],
-    ["skill-registry-web/scripts/check-skill-registry-web.mjs", "baseEtag"],
-    ["docs/SKILL_REGISTRY.md", "/Wiki/skills/<name>/proposals/<proposal-id>/"]
+    ["skill-registry-web/scripts/check-skill-registry-web.mjs", "skill-evolution-jobs|\\/proposals"],
+    ["docs/SKILL_REGISTRY.md", "/Skills/<id>/versions/<snapshot-id>/SKILL.md"]
   ],
   frontmatter_markdown: [
     ["workers/wiki-generator/tests/frontmatter.test.ts", "frontmatter parser requires a whole-line terminator"],

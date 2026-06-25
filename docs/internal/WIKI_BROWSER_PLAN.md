@@ -4,7 +4,7 @@
 
 ## Summary
 
-`wikibrowser/` に Next.js App Router の public read-only UI を追加する。UI は VSC 風 3 ペインで、任意 canister ID の `/Wiki` / `/Sources` を閲覧・検索できる。初期は認証なし、編集導線なし。将来 Internet Identity と asset canister deploy を追加できる構造にする。
+`wikibrowser/` に Next.js App Router の public read-only UI を追加する。UI は VSC 風 3 ペインで、任意 canister ID の `/Knowledge` / `/Sources` を閲覧・検索できる。初期は認証なし、編集導線なし。将来 Internet Identity と asset canister deploy を追加できる構造にする。
 
 主要方針:
 
@@ -13,7 +13,7 @@
 - Markdown: `react-markdown` + `remark-gfm`
 - Canister access: Next API route -> `@dfinity/agent`
 - URL: `/site/[canisterId]/[...nodePath]`
-- Default path: `/site/[canisterId]` -> `/site/[canisterId]/Wiki`
+- Default path: `/site/[canisterId]` -> `/site/[canisterId]/Knowledge`
 - IC host: `WIKI_IC_HOST` env。production default は `https://icp0.io`
 - canister allowlist: なし。API route で principal 形式のみ検証
 
@@ -37,8 +37,8 @@
 - `wikibrowser/` に Next.js app を追加する。
   - route: `/site/[canisterId]/[...nodePath]`
   - API:
-    - `GET /api/site/[canisterId]/node?path=/Wiki/...`
-    - `GET /api/site/[canisterId]/children?path=/Wiki/...`
+    - `GET /api/site/[canisterId]/node?path=/Knowledge/...`
+    - `GET /api/site/[canisterId]/children?path=/Knowledge/...`
     - `GET /api/site/[canisterId]/search-path?q=...`
     - `GET /api/site/[canisterId]/search?q=...`
   - JSON の bigint 系値は string で返す
@@ -83,13 +83,13 @@ URL state:
 ## Test Plan
 
 - Rust / canister:
-  - `list_children("/Wiki")` が直下だけ返す
+  - `list_children("/Knowledge")` が直下だけ返す
   - nested path から virtual directory を返す
   - file path は `not a directory`
   - relative path は拒否
-  - `/Wiki/` は `/Wiki` に正規化
+  - `/Knowledge/` は `/Knowledge` に正規化
   - sort が directories first + name asc
-  - CLI `list-children --path /Wiki --json` が通る
+  - CLI `list-children --path /Knowledge --json` が通る
 
 - Next API:
   - invalid canister ID は 400
@@ -99,8 +99,8 @@ URL state:
   - production default は `https://icp0.io`
 
 - UI:
-  - `/site/[canisterId]` が `/Wiki` を開く
-  - `/site/[canisterId]/Wiki/...` が該当 node を開く
+  - `/site/[canisterId]` が `/Knowledge` を開く
+  - `/site/[canisterId]/Knowledge/...` が該当 node を開く
   - tree 展開、search、preview/raw 切替が動く
   - inspector が metadata / links / hints を表示する
   - Playwright で desktop と mobile 表示を確認する

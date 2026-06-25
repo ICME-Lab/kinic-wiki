@@ -13,8 +13,8 @@ use vfs_types::{
     KnowledgeEvidenceRef, LinkEdge, MemoryRecall, MemoryRecallRequest, Node, NodeKind,
 };
 use wiki_domain::{
-    SESSION_SOURCES_PREFIX, SKILL_REGISTRY_ROOT, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH,
-    validate_canonical_source_path, validate_knowledge_source_path,
+    KNOWLEDGE_SOURCES_PREFIX, SESSION_SOURCES_PREFIX, SKILL_REGISTRY_ROOT, SKILL_RUNS_PREFIX,
+    WIKI_ROOT_PATH, validate_canonical_source_path, validate_knowledge_source_path,
 };
 
 const OKF_VERSION: &str = "0.1";
@@ -30,8 +30,16 @@ const OKF_OWNED_DIRS: &[&str] = &[
     "references",
 ];
 const LEGACY_TOP_LEVEL_JSON: &[&str] = &["manifest.json", "sources.json", "provenance.json"];
+const DATABASE_ROOT_PATH: &str = "/";
 const MEMORY_ROOT_PATH: &str = "/Memory";
 const SESSION_ROOT_PATH: &str = "/Sessions";
+const CONTEXT_PACK_NAMESPACE_ROOTS: &[&str] = &[
+    WIKI_ROOT_PATH,
+    MEMORY_ROOT_PATH,
+    SKILL_REGISTRY_ROOT,
+    SESSION_ROOT_PATH,
+    KNOWLEDGE_SOURCES_PREFIX,
+];
 
 #[derive(Debug, Clone)]
 pub struct ContextPackExportOptions {
@@ -1231,13 +1239,19 @@ fn remove_path_if_exists(path: &Path) -> Result<()> {
 
 fn normalize_wiki_namespace(namespace: &str) -> Result<String> {
     let trimmed = namespace.trim();
-    if !path_under_prefix(trimmed, WIKI_ROOT_PATH) {
-        bail!("context pack namespace must stay under {WIKI_ROOT_PATH}: {namespace}");
+    if trimmed == DATABASE_ROOT_PATH {
+        return Ok(DATABASE_ROOT_PATH.to_string());
     }
-    if trimmed == WIKI_ROOT_PATH {
-        return Ok(WIKI_ROOT_PATH.to_string());
+    for root in CONTEXT_PACK_NAMESPACE_ROOTS {
+        if path_under_prefix(trimmed, root) {
+            return if trimmed == *root {
+                Ok((*root).to_string())
+            } else {
+                Ok(trimmed.trim_end_matches('/').to_string())
+            };
+        }
     }
-    Ok(trimmed.trim_end_matches('/').to_string())
+    bail!("context pack namespace must be / or stay under a known database root: {namespace}");
 }
 
 fn path_under_prefix(path: &str, prefix: &str) -> bool {
@@ -1359,7 +1373,10 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
     use tempfile::tempdir;
     use vfs_types::{
         AppendNodeRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
@@ -1372,6 +1389,7 @@ mod tests {
 
     struct MockClient {
         context: MemoryRecall,
+        recall_requests: Mutex<Vec<MemoryRecallRequest>>,
         readable_nodes: BTreeMap<String, Node>,
         read_node_calls: AtomicUsize,
         list_nodes_calls: AtomicUsize,
@@ -1389,6 +1407,7 @@ mod tests {
                     evidence: Vec::new(),
                     truncated: false,
                 },
+                recall_requests: Mutex::new(Vec::new()),
                 readable_nodes: BTreeMap::new(),
                 read_node_calls: AtomicUsize::new(0),
                 list_nodes_calls: AtomicUsize::new(0),
@@ -1469,10 +1488,14 @@ mod tests {
 
         async fn memory_recall(&self, request: MemoryRecallRequest) -> Result<MemoryRecall> {
             assert!(request.include_evidence);
+            self.recall_requests
+                .lock()
+                .expect("recall request lock")
+                .push(request.clone());
             Ok(MemoryRecall {
                 namespace: request
                     .namespace
-                    .unwrap_or_else(|| WIKI_ROOT_PATH.to_string()),
+                    .unwrap_or_else(|| MEMORY_ROOT_PATH.to_string()),
                 task: request.task,
                 ..self.context.clone()
             })
@@ -1542,12 +1565,12 @@ mod tests {
     async fn export_reference_bundle(out: &Path, truncated: bool) {
         let mut client = MockClient::default();
         client.context.nodes = vec![test_node_context(
-            "/Wiki/projects/acme/facts.md",
+            "/Knowledge/projects/acme/facts.md",
             "Fact from /Sources/web/source.md\n",
             "wiki-etag",
         )];
         client.context.evidence = vec![test_source_evidence(
-            "/Wiki/projects/acme/facts.md",
+            "/Knowledge/projects/acme/facts.md",
             "/Sources/web/source.md",
             "sha256:sourcehash",
         )];
@@ -1557,7 +1580,7 @@ mod tests {
             "alpha",
             ContextPackExportOptions {
                 task: "acme facts".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 entities: vec!["acme".to_string()],
@@ -1573,6 +1596,32 @@ mod tests {
         .expect("export");
     }
 
+    #[test]
+    fn namespace_normalization_accepts_database_roots() {
+        assert_eq!(normalize_wiki_namespace("/").expect("root"), "/");
+        assert_eq!(
+            normalize_wiki_namespace("/Knowledge/projects/acme/").expect("knowledge"),
+            "/Knowledge/projects/acme"
+        );
+        assert_eq!(
+            normalize_wiki_namespace("/Memory/session").expect("memory"),
+            "/Memory/session"
+        );
+        assert_eq!(
+            normalize_wiki_namespace("/Skills/tool").expect("skills"),
+            "/Skills/tool"
+        );
+        assert_eq!(
+            normalize_wiki_namespace("/Sessions/chat").expect("sessions"),
+            "/Sessions/chat"
+        );
+        assert_eq!(
+            normalize_wiki_namespace("/Sources/raw/a.md").expect("sources"),
+            "/Sources/raw/a.md"
+        );
+        assert!(normalize_wiki_namespace("/Private/a.md").is_err());
+    }
+
     fn write_reserved_files(dir: &Path) {
         fs::write(dir.join(INDEX_FILE), "# Index\n").expect("index");
         fs::write(dir.join(LOG_FILE), "# Log\n").expect("log");
@@ -1582,7 +1631,7 @@ mod tests {
                 okf_version: OKF_VERSION.to_string(),
                 generated_at: "2999-01-01T00:00:00Z".to_string(),
                 task: "test".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 truncated: false,
@@ -1604,7 +1653,7 @@ mod tests {
         fs::write(
             &path,
             format!(
-                "---\ntype: Fact\nresource: kinic://alpha/Wiki/projects/acme/facts.md\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n{hash_yaml}---\n\n{body}\n"
+                "---\ntype: Fact\nresource: kinic://alpha/Knowledge/projects/acme/facts.md\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n{hash_yaml}---\n\n{body}\n"
             ),
         )
         .expect("fact");
@@ -1616,12 +1665,12 @@ mod tests {
         let out = tempdir().expect("tempdir");
         let mut client = MockClient::default();
         client.context.nodes = vec![test_node_context(
-            "/Wiki/projects/acme/facts.md",
+            "/Knowledge/projects/acme/facts.md",
             "Fact from /Sources/web/source.md\n",
             "wiki-etag",
         )];
         client.context.evidence = vec![test_source_evidence(
-            "/Wiki/projects/acme/facts.md",
+            "/Knowledge/projects/acme/facts.md",
             "/Sources/web/source.md",
             "sha256:sourcehash",
         )];
@@ -1632,7 +1681,7 @@ mod tests {
             "alpha",
             ContextPackExportOptions {
                 task: "acme facts".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 entities: vec!["acme".to_string()],
@@ -1652,8 +1701,8 @@ mod tests {
         assert_eq!(result.concept_count, 2);
         assert_eq!(result.reference_count, 1);
         assert!(result.truncated);
-        let fact =
-            fs::read_to_string(out.path().join("facts/wiki-projects-acme-facts.md")).expect("fact");
+        let fact = fs::read_to_string(out.path().join("facts/knowledge-projects-acme-facts.md"))
+            .expect("fact");
         assert!(fact.starts_with("---\n"));
         assert!(fact.contains("type: Fact"));
         assert!(fact.contains("Fact from /Sources/web/source.md"));
@@ -1679,17 +1728,17 @@ mod tests {
         let manifest = read_okf_manifest(out.path()).expect("manifest");
         assert_eq!(manifest.okf_version, OKF_VERSION);
         assert_eq!(manifest.task, "acme facts");
-        assert_eq!(manifest.namespace, "/Wiki/projects/acme");
+        assert_eq!(manifest.namespace, "/Knowledge/projects/acme");
         assert_eq!(manifest.budget_tokens, 8_000);
         assert_eq!(manifest.depth, 1);
         assert!(manifest.truncated);
         assert_eq!(manifest.concept_count, 2);
         assert_eq!(manifest.reference_count, 1);
         assert!(manifest.selected_nodes.iter().any(|node| {
-            node.path == "/Wiki/projects/acme/facts.md"
+            node.path == "/Knowledge/projects/acme/facts.md"
                 && node.concept_type == "Fact"
                 && node.etag == "wiki-etag"
-                && node.output_path == "facts/wiki-projects-acme-facts.md"
+                && node.output_path == "facts/knowledge-projects-acme-facts.md"
         }));
         assert!(manifest.selected_nodes.iter().any(|node| {
             node.path == "/Sources/web/source.md"
@@ -1707,7 +1756,7 @@ mod tests {
                 .any(|error| error.contains("truncated context"))
         );
 
-        let fact_path = out.path().join("facts/wiki-projects-acme-facts.md");
+        let fact_path = out.path().join("facts/knowledge-projects-acme-facts.md");
         let mut tampered = fs::read_to_string(&fact_path).expect("fact read");
         tampered.push_str("\nTampered line\n");
         fs::write(&fact_path, tampered).expect("tamper fact");
@@ -1726,7 +1775,7 @@ mod tests {
         let out = tempdir().expect("tempdir");
         let mut client = MockClient::default();
         client.context.nodes = vec![test_node_context(
-            "/Wiki/projects/acme/summary.md",
+            "/Knowledge/projects/acme/summary.md",
             "Project summary",
             "summary-etag",
         )];
@@ -1736,7 +1785,7 @@ mod tests {
             "alpha",
             ContextPackExportOptions {
                 task: "summary".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 entities: Vec::new(),
@@ -1753,7 +1802,7 @@ mod tests {
 
         assert_eq!(result.concept_count, 1);
         assert_eq!(result.reference_count, 0);
-        let note = fs::read_to_string(out.path().join("notes/wiki-projects-acme-summary.md"))
+        let note = fs::read_to_string(out.path().join("notes/knowledge-projects-acme-summary.md"))
             .expect("note");
         assert!(note.contains("type: Note"));
         assert!(note.contains("Project summary"));
@@ -1770,14 +1819,14 @@ mod tests {
         let session_path = "/Sessions/codex/session.md";
         client.context.nodes = vec![NodeContext {
             node: test_node(
-                "/Wiki/projects/acme/provenance.md",
+                "/Knowledge/projects/acme/provenance.md",
                 NodeKind::File,
                 "Session [audit](/Sessions/codex/session.md)",
                 "wiki-etag",
             ),
             incoming_links: Vec::new(),
             outgoing_links: vec![LinkEdge {
-                source_path: "/Wiki/projects/acme/provenance.md".to_string(),
+                source_path: "/Knowledge/projects/acme/provenance.md".to_string(),
                 target_path: session_path.to_string(),
                 raw_href: session_path.to_string(),
                 link_text: "audit".to_string(),
@@ -1800,7 +1849,7 @@ mod tests {
             "alpha",
             ContextPackExportOptions {
                 task: "session audit".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 entities: Vec::new(),
@@ -2100,7 +2149,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
+            "---\ntype: Fact\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n---\n\n# Source\n",
         )
         .expect("write");
 
@@ -2135,7 +2184,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/bad.md"),
-            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  store: knowledge\n  store_path: /Bad/root.md\n  etag: bad-etag\n  content_hash: sha256:bad\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge`\n- store_path: `/Bad/root.md`\n- via_path: `/Wiki/projects/acme/facts.md`\n- target_href: `/Bad/root.md`\n- link_text: `Bad`\n- etag: `bad-etag`\n- updated_at: `3`\n- content_hash: `sha256:bad`\n\nReferenced store content is not copied into this OKF bundle.\n",
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: knowledge\n  store_path: /Bad/root.md\n  etag: bad-etag\n  content_hash: sha256:bad\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge`\n- store_path: `/Bad/root.md`\n- via_path: `/Knowledge/projects/acme/facts.md`\n- target_href: `/Bad/root.md`\n- link_text: `Bad`\n- etag: `bad-etag`\n- updated_at: `3`\n- content_hash: `sha256:bad`\n\nReferenced store content is not copied into this OKF bundle.\n",
         )
         .expect("write");
 
@@ -2149,9 +2198,12 @@ mod tests {
     #[test]
     fn reference_store_mapping_covers_four_store_roots_and_evidence_roots() {
         assert_eq!(reference_store_for_path("/Memory/facts.md"), Some("memory"));
-        assert_eq!(reference_store_for_path("/Wiki/page.md"), Some("knowledge"));
         assert_eq!(
-            reference_store_for_path("/Wiki/skills/review/SKILL.md"),
+            reference_store_for_path("/Knowledge/page.md"),
+            Some("knowledge")
+        );
+        assert_eq!(
+            reference_store_for_path("/Skills/review/SKILL.md"),
             Some("skill")
         );
         assert_eq!(
@@ -2196,7 +2248,7 @@ mod tests {
 
         let mut client = MockClient::default();
         client.context.nodes = vec![test_node_context(
-            "/Wiki/projects/acme/facts.md",
+            "/Knowledge/projects/acme/facts.md",
             "Fact",
             "wiki-etag",
         )];
@@ -2206,7 +2258,7 @@ mod tests {
             "alpha",
             ContextPackExportOptions {
                 task: "facts".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 entities: Vec::new(),
@@ -2226,7 +2278,7 @@ mod tests {
         assert!(!out.path().join("facts/nested/stale.txt").exists());
         assert!(
             out.path()
-                .join("facts/wiki-projects-acme-facts.md")
+                .join("facts/knowledge-projects-acme-facts.md")
                 .is_file()
         );
         assert!(
@@ -2245,7 +2297,7 @@ mod tests {
                 okf_version: OKF_VERSION.to_string(),
                 generated_at: "2999-01-01T00:00:00Z".to_string(),
                 task: "inspect".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 truncated: true,
@@ -2265,7 +2317,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n  etag: source-etag\n  content_hash: sha256:sourcehash\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge_evidence`\n- store_path: `/Sources/web/source.md`\n- via_path: `/Wiki/projects/acme/facts.md`\n- target_href: `/Sources/web/source.md`\n- link_text: `Raw`\n- etag: `source-etag`\n- updated_at: `3`\n- content_hash: `sha256:sourcehash`\n\nReferenced store content is not copied into this OKF bundle.\n",
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Knowledge/projects/acme\n  store: knowledge_evidence\n  store_path: /Sources/web/source.md\n  etag: source-etag\n  content_hash: sha256:sourcehash\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n\n- store: `knowledge_evidence`\n- store_path: `/Sources/web/source.md`\n- via_path: `/Knowledge/projects/acme/facts.md`\n- target_href: `/Sources/web/source.md`\n- link_text: `Raw`\n- etag: `source-etag`\n- updated_at: `3`\n- content_hash: `sha256:sourcehash`\n\nReferenced store content is not copied into this OKF bundle.\n",
         )
         .expect("write");
 
@@ -2273,13 +2325,13 @@ mod tests {
         assert_eq!(result.concept_count, 1);
         assert_eq!(result.reference_count, 1);
         assert_eq!(result.task, "inspect");
-        assert_eq!(result.namespace, "/Wiki/projects/acme");
+        assert_eq!(result.namespace, "/Knowledge/projects/acme");
         assert_eq!(result.budget_tokens, 8_000);
         assert_eq!(result.depth, 1);
         assert!(result.truncated);
         assert_eq!(result.types.get("Reference"), Some(&1));
         assert_eq!(result.kinic.database_ids, vec!["alpha"]);
-        assert_eq!(result.kinic.roots, vec!["/Wiki/projects/acme"]);
+        assert_eq!(result.kinic.roots, vec!["/Knowledge/projects/acme"]);
     }
 
     #[tokio::test]
@@ -2292,7 +2344,7 @@ mod tests {
             "alpha",
             ContextPackExportOptions {
                 task: "missing".to_string(),
-                namespace: "/Wiki/projects/acme".to_string(),
+                namespace: "/Knowledge/projects/acme".to_string(),
                 budget_tokens: 8_000,
                 depth: 1,
                 entities: Vec::new(),
@@ -2316,5 +2368,39 @@ mod tests {
                 .expect("verify")
                 .valid
         );
+    }
+
+    #[tokio::test]
+    async fn export_uses_database_root_namespace_explicitly() {
+        let out = tempdir().expect("tempdir");
+        let client = MockClient::default();
+
+        export_okf_bundle(
+            &client,
+            "alpha",
+            ContextPackExportOptions {
+                task: "root search".to_string(),
+                namespace: "/".to_string(),
+                budget_tokens: 8_000,
+                depth: 1,
+                entities: Vec::new(),
+                out: out.path().to_path_buf(),
+                expires_at: "2999-01-01T00:00:00Z".to_string(),
+                trust_level: "draft".to_string(),
+                approved_by: Vec::new(),
+                overwrite: false,
+                json: true,
+            },
+        )
+        .await
+        .expect("export");
+
+        let requests = client.recall_requests.lock().expect("recall request lock");
+        assert_eq!(requests[0].namespace.as_deref(), Some("/"));
+        let manifest: OkfBundleManifest = serde_yaml::from_str(
+            &fs::read_to_string(out.path().join(OKF_MANIFEST_FILE)).expect("manifest file"),
+        )
+        .expect("manifest");
+        assert_eq!(manifest.namespace, "/");
     }
 }

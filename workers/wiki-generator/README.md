@@ -1,6 +1,6 @@
 # Wiki Generator Worker
 
-Cloudflare Worker for turning raw sources into review-ready wiki pages.
+Cloudflare Worker for turning raw sources into review-ready knowledge pages.
 
 ## LLM
 
@@ -23,8 +23,8 @@ For each queued request it:
 
 1. fetches one `http` or `https` URL with a bounded response size,
 2. stores normalized evidence under `/Sources/<provider>/<id>.md`,
-3. queues the raw source for wiki page generation,
-4. writes the generated page under `/Wiki/conversations`,
+3. queues the raw source for knowledge page generation,
+4. writes the generated page under `/Knowledge/conversations`,
 5. updates the request status to `completed` or `failed`.
 
 The worker identity in `KINIC_WIKI_WORKER_IDENTITY_PEM` must have writer access to the target database.
@@ -55,6 +55,6 @@ Use this order when enabling WikiBrowser URL ingest:
 3. Grant the Worker identity writer access to target databases, or keep the default LLM writer service principal grant.
 4. Set WikiBrowser `KINIC_WIKI_GENERATOR_URL` to this Worker URL.
 5. Set the same `KINIC_WIKI_WORKER_TOKEN` as a WikiBrowser runtime secret.
-6. Run a smoke from WikiBrowser's `/<database-id>/Wiki?tab=ingest` route and confirm `/Sources/ingest-requests/...` plus `/Sources/...` output.
+6. Run a smoke from WikiBrowser's `/<database-id>/Knowledge?tab=ingest` route and confirm `/Sources/ingest-requests/...` plus `/Sources/...` output.
 
 PDF, authenticated pages, and multi-URL batching are out of scope for this worker path.

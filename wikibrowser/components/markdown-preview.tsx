@@ -75,7 +75,7 @@ function TrustBanner({
       {storePath ? (
         <p className="mt-2 truncate font-mono text-xs">
           store{" "}
-          <Link className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Wiki/index.md", storePath) ?? "#"}>
+          <Link className="text-accent no-underline hover:underline" href={hrefForMarkdownLink(canisterId, databaseId, "/Knowledge/index.md", storePath) ?? "#"}>
             {storePath}
           </Link>
         </p>

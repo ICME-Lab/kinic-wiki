@@ -1,6 +1,6 @@
 // Where: crates/vfs_cli_app/src/conversation_wiki.rs
-// What: Generate a minimal conversation wiki scope from a persisted raw source node.
-// Why: Chrome capture should only persist evidence; wiki pages are created on demand.
+// What: Generate a minimal conversation knowledge scope from a persisted raw source node.
+// Why: Chrome capture should only persist evidence; knowledge pages are created on demand.
 use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde::Serialize;
@@ -8,7 +8,7 @@ use vfs_client::VfsApi;
 use vfs_types::{NodeKind, WriteNodeRequest};
 use wiki_domain::{KNOWLEDGE_SOURCES_PREFIX, validate_knowledge_source_path};
 
-const CONVERSATION_WIKI_PREFIX: &str = "/Wiki/conversations";
+const CONVERSATION_WIKI_PREFIX: &str = "/Knowledge/conversations";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawConversation {
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn generated_wiki_does_not_copy_transcript_body() {
         let raw = parse_raw_conversation("/Sources/chatgpt/abc.md", RAW).expect("raw should parse");
-        let docs = build_wiki_documents(&raw, "/Wiki/conversations/chatgpt-abc");
+        let docs = build_wiki_documents(&raw, "/Knowledge/conversations/chatgpt-abc");
         assert!(docs.iter().any(|doc| doc.path.ends_with("/provenance.md")));
         assert!(docs.iter().all(|doc| !doc.content.contains("secret fact")));
         assert!(docs.iter().all(|doc| !doc.content.contains("answer")));

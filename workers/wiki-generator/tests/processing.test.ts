@@ -3,7 +3,7 @@
 // Why: Optional worker log writes must not decide source generation status.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, runManual } from "../src/processing.js";
+import { bestEffortAppendWorkerLog, parseManualRunInput, parseQueueMessageEnvelope, processQueueMessageEnvelope, processSourceQueueMessageForTest, rankContextHits, runManual } from "../src/processing.js";
 import type { ExportSnapshotPage, FetchUpdatesPage, SearchNodeHit, WikiNode, WriteNodeAck, WriteNodeRequest } from "../src/types.js";
 import type { VfsClient } from "../src/vfs.js";
 import { testEnv, TestQueue, TestVfsClient, workerConfig } from "./url-ingest-fixtures.js";
@@ -95,7 +95,7 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
 
     assert.equal(response.status, 200);
     const body = (await response.json()) as { targetPath?: string; content?: string };
-    assert.equal(body.targetPath, "/Wiki/conversations/日本語記事.md");
+    assert.equal(body.targetPath, "/Knowledge/conversations/日本語記事.md");
     assert.match(body.content ?? "", /## 概要/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -118,6 +118,18 @@ test("manual source run input requires source etag", () => {
   });
 });
 
+test("context hits rank Sources after database notes", () => {
+  assert.deepEqual(
+    rankContextHits([
+      contextHit("/Sources/raw/a.md"),
+      contextHit("/Memory/session.md"),
+      contextHit("/Sources/raw/b.md"),
+      contextHit("/Knowledge/fact.md")
+    ]).map((hit) => hit.path),
+    ["/Memory/session.md", "/Knowledge/fact.md", "/Sources/raw/a.md", "/Sources/raw/b.md"]
+  );
+});
+
 test("worker log append failure is non-fatal", async () => {
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
@@ -125,7 +137,7 @@ test("worker log append failure is non-fatal", async () => {
     warnings.push(args);
   };
   try {
-    const written = await bestEffortAppendWorkerLog(failingLogVfs(), "db_1", "/Wiki/conversations", "/Wiki/conversations/a.md", "/Sources/a.md");
+    const written = await bestEffortAppendWorkerLog(failingLogVfs(), "db_1", "/Knowledge/conversations", "/Knowledge/conversations/a.md", "/Sources/a.md");
 
     assert.equal(written, false);
     assert.match(String(warnings[0]?.[0]), /failed to append wiki-generator log/);
@@ -167,7 +179,7 @@ test("legacy url ingest queue message without nonce marks request failed", async
       databaseId: "db_1",
       sourcePath: "/Sources/a/a.md",
       sourceEtag: "etag-source",
-      requestPath: "/Wiki/not-ingest.md",
+      requestPath: "/Knowledge/not-ingest.md",
       sessionNonce: "session-1"
     }).kind,
     "invalid"
@@ -188,7 +200,7 @@ test("legacy url ingest queue message without nonce marks request failed", async
       kind: "url_ingest",
       canisterId: "canister-1",
       databaseId: "db_1",
-      requestPath: "/Wiki/not-ingest.md",
+      requestPath: "/Knowledge/not-ingest.md",
       sessionNonce: "session-1"
     }).kind,
     "invalid"
@@ -270,7 +282,7 @@ test("source queue uses source run session before DeepSeek", async () => {
     ]);
     assert.equal(deepSeekCalls, 1);
     assert.equal(writtenPages.length, 2);
-    assert.equal(writtenPages[0]?.path, "/Wiki/conversations/project-notes.md");
+    assert.equal(writtenPages[0]?.path, "/Knowledge/conversations/project-notes.md");
     assert.match(writtenPages[0]?.content ?? "", /## Summary/);
     assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'completed'")));
   } finally {
@@ -579,5 +591,14 @@ function sourceNode(etag: string): WikiNode {
     content: "raw source",
     etag,
     metadataJson: "{}"
+  };
+}
+
+function contextHit(path: string): SearchNodeHit {
+  return {
+    path,
+    kind: "file",
+    previewExcerpt: null,
+    snippet: null
   };
 }

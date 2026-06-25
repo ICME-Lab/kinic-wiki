@@ -41,7 +41,7 @@ export function GraphPanel({
 }) {
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   const isFullGraph = centerPath === null;
-  const queryPath = isFullGraph ? "/Wiki" : centerPath;
+  const queryPath = isFullGraph ? "/Knowledge" : centerPath;
   const requestScope = isFullGraph ? `all:${queryPath}` : queryPath;
   const currentRequestKey = graphRequestKey(canisterId, databaseId, requestScope, depth, readPrincipal);
   const [links, setLinks] = useState<GraphLoadState>({ centerPath: null, requestKey: null, data: null, error: null, loading: false });
@@ -87,7 +87,7 @@ export function GraphPanel({
           {isFullGraph ? (
             <p className="mt-2 text-sm text-muted">Showing links for whole database index.</p>
           ) : (
-            <p className="mt-2 text-sm text-muted">Open Graph from a wiki page to inspect its local neighborhood.</p>
+            <p className="mt-2 text-sm text-muted">Open Graph from a knowledge page to inspect its local neighborhood.</p>
           )}
           {isFullGraph ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">

@@ -119,7 +119,7 @@ function DocumentHeaderPath({
     return <div className="flex h-10 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-3 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a]">/</div>;
   }
   return (
-    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-3 font-mono text-xs shadow-[0_4px_10px_#14142b0a]" aria-label="Current wiki path">
+    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-3 font-mono text-xs shadow-[0_4px_10px_#14142b0a]" aria-label="Current knowledge path">
       {segments.map((segment, index) => {
         const crumbPath = `/${segments.slice(0, index + 1).join("/")}`;
         const last = index === segments.length - 1;
@@ -286,14 +286,14 @@ function NotFoundState({
     <div className="flex h-full items-center justify-center p-6">
       <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Not found</p>
-        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">No wiki node at this path</h3>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">No knowledge node at this path</h3>
         <p className="mt-3 break-all font-mono text-xs text-muted">{path}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
           <Link
             className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
-            href={hrefForPath(canisterId, databaseId, "/Wiki")}
+            href={hrefForPath(canisterId, databaseId, "/Knowledge")}
           >
-            Open /Wiki
+            Open /Knowledge
           </Link>
           <Link
             className="rounded-lg border border-line bg-white px-3 py-2 no-underline"
@@ -767,7 +767,7 @@ function emptyFolderIndexNode(folderPath: string): WikiNode {
 }
 
 function isWikiPath(path: string): boolean {
-  return path === "/Wiki" || path.startsWith("/Wiki/");
+  return path === "/Knowledge" || path.startsWith("/Knowledge/");
 }
 
 function HeaderBadge({ label, tone }: { label: string; tone: "blue" | "green" | "yellow" }) {
@@ -813,7 +813,7 @@ function LoadingBlock() {
   return (
     <div className="flex h-full items-center justify-center text-muted">
       <Loader2 size={20} className="mr-2 animate-spin" />
-      Loading wiki node
+      Loading knowledge node
     </div>
   );
 }

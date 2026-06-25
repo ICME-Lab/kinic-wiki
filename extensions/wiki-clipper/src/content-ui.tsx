@@ -77,7 +77,7 @@ function Modal() {
           <img class="kinic-logo" src={logoUrl} alt="" />
           <div>
             <strong>Kinic Wiki Clipper</strong>
-            <p>Export {exportProviderLabel.value} conversations into your wiki</p>
+            <p>Export {exportProviderLabel.value} conversations into your knowledge store</p>
           </div>
           <span class="pill">{exportProviderLabel.value} export</span>
         </div>

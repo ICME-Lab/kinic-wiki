@@ -10,7 +10,7 @@ import type { ChildNode } from "@/lib/types";
 import { visibleChildren } from "@/lib/folder-index";
 import { canExpandChildNode, errorMessage, rootChild, type LoadState } from "@/lib/wiki-helpers";
 
-const WIKI_ROOT_NODE = rootChild("/Wiki");
+const WIKI_ROOT_NODE = rootChild("/Knowledge");
 const SOURCES_ROOT_NODE = rootChild("/Sources");
 
 export function ExplorerTree({
@@ -33,7 +33,7 @@ export function ExplorerTree({
   const readPrincipal = readIdentity?.getPrincipal().toText() ?? null;
   return (
     <div className="min-h-0 flex-1 space-y-1 overflow-auto p-2">
-      <TreeNode key={`${canisterId}:${databaseId}:/Wiki:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={WIKI_ROOT_NODE} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} onSelectedNode={onSelectedNode} />
+      <TreeNode key={`${canisterId}:${databaseId}:/Knowledge:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={WIKI_ROOT_NODE} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} onSelectedNode={onSelectedNode} />
       <TreeNode key={`${canisterId}:${databaseId}:/Sources:${readPrincipal ?? "anonymous"}`} canisterId={canisterId} databaseId={databaseId} node={SOURCES_ROOT_NODE} selectedPath={selectedPath} depth={0} autoExpandSelected={autoExpandSelected} readIdentity={readIdentity} childNodesCache={childNodesCache} onSelectedNode={onSelectedNode} />
     </div>
   );

@@ -232,7 +232,8 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
     let mut folders = std::collections::BTreeMap::<String, (i64, i64)>::new();
     folders.insert("/Memory".to_string(), (0, 0));
     folders.insert("/Sessions".to_string(), (0, 0));
-    folders.insert("/Wiki".to_string(), (0, 0));
+    folders.insert("/Knowledge".to_string(), (0, 0));
+    folders.insert("/Skills".to_string(), (0, 0));
     folders.insert("/Sources".to_string(), (0, 0));
     folders.insert("/Sources/sessions".to_string(), (0, 0));
     folders.insert("/Sources/skill-runs".to_string(), (0, 0));

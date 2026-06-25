@@ -1,6 +1,6 @@
 // Where: workers/wiki-generator/src/auth.ts
 // What: Bearer token validation for manual worker triggers.
-// Why: Manual generation can spend tokens and write wiki pages.
+// Why: Manual generation can spend tokens and write knowledge pages.
 export async function isAuthorized(request: Request, token: string | undefined): Promise<boolean> {
   if (!token) return false;
   const header = request.headers.get("authorization") ?? "";

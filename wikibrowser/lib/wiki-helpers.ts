@@ -1,7 +1,7 @@
 import type { ChildNode } from "@/lib/types";
 
 export type ViewMode = "preview" | "raw" | "edit";
-export type ModeTab = "explorer" | "query" | "ingest" | "clipper";
+export type ModeTab = "explorer" | "query" | "ingest";
 export type ReadIdentityMode = "anonymous" | "user";
 
 export type LoadState<T> = {
@@ -19,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-export function rootChild(path: "/Wiki" | "/Sources"): ChildNode {
+export function rootChild(path: "/Knowledge" | "/Sources"): ChildNode {
   return {
     path,
     name: path.slice(1),
@@ -38,7 +38,7 @@ export function canExpandChildNode(node: ChildNode): boolean {
 
 export function parseModeTab(value: string | null): ModeTab {
   if (value === "query") return "query";
-  if (value === "ingest" || value === "clipper" || value === "explorer") return value;
+  if (value === "ingest" || value === "explorer") return value;
   return "explorer";
 }
 
