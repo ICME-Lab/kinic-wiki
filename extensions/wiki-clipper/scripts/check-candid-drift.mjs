@@ -9,6 +9,7 @@ const actor = readFileSync(new URL("../src/vfs-actor.js", import.meta.url), "utf
 
 const expectedTypes = {
   DatabaseRole: { kind: "variant", fields: { Reader: "null", Writer: "null", Owner: "null" } },
+  DatabaseProfile: { kind: "variant", fields: { Skill: "null", Memory: "null", Workspace: "null", Session: "null", Knowledge: "null" } },
   DatabaseStatus: { kind: "variant", fields: { Active: "null", Pending: "null", Restoring: "null", Archiving: "null", Archived: "null", Deleted: "null" } },
   DatabaseSummary: {
     kind: "record",
@@ -21,7 +22,8 @@ const expectedTypes = {
       cycles_balance: "opt nat64",
       cycles_suspended_at_ms: "opt int64",
       archived_at_ms: "opt int64",
-      deleted_at_ms: "opt int64"
+      deleted_at_ms: "opt int64",
+      profile: "DatabaseProfile"
     }
   },
   CyclesBillingConfig: {
@@ -38,8 +40,8 @@ const expectedTypes = {
     kind: "record",
     fields: { enabled: "bool", launcher_principal: "text", threshold_cycles: "nat" }
   },
-  CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
-  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
+  CreateDatabaseRequest: { kind: "record", fields: { name: "text", profile: "DatabaseProfile" } },
+  CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text", profile: "DatabaseProfile" } },
   NodeKind: { kind: "variant", fields: { File: "null", Source: "null", Folder: "null" } },
   Node: {
     kind: "record",
@@ -181,8 +183,8 @@ function normalizeDidResult(value) {
   if (normalized === "Result_1") return "ResultUnit";
   if (normalized === "Result_10") return "ResultCyclesBillingConfig";
   if (normalized === "Result_5") return "ResultCreateDatabase";
-  if (normalized === "Result_17") return "ResultDatabases";
-  if (normalized === "Result_29") return "ResultMkdirNode";
+  if (normalized === "Result_18") return "ResultDatabases";
+  if (normalized === "Result_30") return "ResultMkdirNode";
   if (normalized === "Result_35") return "ResultNode";
   if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";

@@ -24,8 +24,8 @@ const databaseLayoutSource = readFileSync(new URL("../app/db/[databaseId]/layout
 const linkPreviewImageSource = readFileSync(new URL("../app/link-preview-image.tsx", import.meta.url), "utf8");
 const openGraphImageSource = readFileSync(new URL("../app/opengraph-image.tsx", import.meta.url), "utf8");
 const twitterImageSource = readFileSync(new URL("../app/twitter-image.tsx", import.meta.url), "utf8");
-const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId]/opengraph-image.tsx", import.meta.url), "utf8");
-const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image.tsx", import.meta.url), "utf8");
+const databaseOpenGraphImageSource = readFileSync(new URL("../app/db/[databaseId]/opengraph-image/route.ts", import.meta.url), "utf8");
+const databaseTwitterImageSource = readFileSync(new URL("../app/db/[databaseId]/twitter-image/route.ts", import.meta.url), "utf8");
 const markdownEditDocumentSource = readFileSync(new URL("../components/markdown-edit-document.tsx", import.meta.url), "utf8");
 const markdownEditorSource = readFileSync(new URL("../components/markdown-editor.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../components/panel.tsx", import.meta.url), "utf8");
@@ -41,7 +41,8 @@ const tailwindConfig = readFileSync(new URL("../tailwind.config.ts", import.meta
 assert.match(explorerTreeSource, /childNodesCache\.current\.get\(requestKey\)/);
 assert.match(explorerTreeSource, /childNodesCache\.current\.set\(requestKey, data\)/);
 assert.match(explorerTreeSource, /visibleChildren\(childrenState\.data\)/);
-assert.match(explorerTreeSource, /key=\{`\$\{canisterId\}:\$\{databaseId\}:\/Wiki:/);
+assert.match(explorerTreeSource, /STORE_ROOT_PATHS\.map/);
+assert.match(explorerTreeSource, /key=\{`\$\{canisterId\}:\$\{databaseId\}:\$\{node\.path\}:/);
 assert.match(explorerTreeSource, /onSelectedNode/);
 assert.doesNotMatch(explorerTreeSource, /onCreateMarkdownFile/);
 assert.doesNotMatch(explorerTreeSource, /onDeleteMarkdownNode/);
@@ -59,7 +60,7 @@ assert.match(wikiBrowserSource, /lg:grid-cols-\[auto_minmax\(280px,720px\)_auto\
 assert.match(wikiBrowserSource, /lg:col-start-2 lg:row-start-1/);
 assert.match(wikiBrowserSource, /lg:col-start-3 lg:row-start-1 lg:justify-end/);
 assert.match(wikiBrowserSource, /HEADER_ICON_LINK_CLASS = "inline-flex h-9 items-center justify-center gap-1 rounded-lg border px-3 text-sm no-underline"/);
-assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Wiki"/);
+assert.match(wikiBrowserSource, /const graphHref = isGraphPage[\s\S]*hrefForPath\(canisterId, databaseId, graphLinkCenter \?\? "\/Knowledge"/);
 assert.match(wikiBrowserSource, /<Network size=\{18\} aria-hidden \/>/);
 assert.match(wikiBrowserSource, /<Share2 aria-hidden size=\{18\} \/>/);
 assert.match(wikiBrowserSource, /sr-only sm:not-sr-only/);
@@ -85,7 +86,7 @@ assert.doesNotMatch(wikiBrowserSource, /path: indexNode\.path/);
 assert.match(wikiBrowserSource, /expectedFolderIndexEtag: indexNode\?\.etag \?\? null/);
 assert.doesNotMatch(wikiBrowserSource, /currentFolderIndexNode\.data\?\.path === folderIndexPath\(target\.path\)/);
 assert.match(wikiBrowserSource, /memberDatabases\.find/);
-assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest", "clipper"\]/);
+assert.match(wikiBrowserSource, /SIDEBAR_TABS: ModeTab\[\] = \["explorer", "query", "ingest"\]/);
 assert.match(wikiBrowserSource, /publicDatabaseIds/);
 assert.match(wikiBrowserSource, /databaseName=\{currentDatabase\?\.name \?\? databaseId\}/);
 assert.match(inspectorSource, /databaseName: string/);
@@ -114,15 +115,18 @@ assert.match(databaseLayoutSource, /loadDatabasePreview/);
 assert.match(databaseLayoutSource, /databasePreviewTitle/);
 assert.match(databaseLayoutSource, /opengraph-image/);
 assert.match(databaseLayoutSource, /twitter-image/);
-assert.match(databaseOpenGraphImageSource, /Kinic Wiki database/);
+assert.match(databaseOpenGraphImageSource, /readCachedDatabaseLinkPreviewImage/);
+assert.match(databaseOpenGraphImageSource, /"\/opengraph-image"/);
 assert.doesNotMatch(databaseOpenGraphImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
-assert.match(databaseOpenGraphImageSource, /preview\.databaseName/);
-assert.match(databaseTwitterImageSource, /Kinic Wiki database/);
+assert.match(databaseOpenGraphImageSource, /params: Promise<\{ databaseId: string \}>/);
+assert.match(databaseTwitterImageSource, /readCachedDatabaseLinkPreviewImage/);
+assert.match(databaseTwitterImageSource, /"\/twitter-image"/);
 assert.doesNotMatch(databaseTwitterImageSource, /isReservedDatabaseRouteSlug|notFound\(\)/);
-assert.match(databaseTwitterImageSource, /preview\.databaseName/);
+assert.match(databaseTwitterImageSource, /params: Promise<\{ databaseId: string \}>/);
 assert.match(databasePreviewSource, /databasePreviewTitle/);
 assert.match(databasePreviewSource, /databasePreviewDescription/);
-assert.match(databasePreviewSource, /listDatabasesPublic/);
+assert.match(databasePreviewSource, /unknownDatabasePreview/);
+assert.doesNotMatch(databasePreviewSource, /listDatabasesPublic/);
 assert.match(queryPanelSource, /authorizeQueryAnswerSession/);
 assert.match(queryPanelSource, /Login with Internet Identity to ask wiki questions/);
 assert.match(queryPanelSource, /sessionNonce/);
@@ -139,7 +143,7 @@ assert.match(searchPanelSource, /searchOptions\.preview/);
 assert.match(vfsClientSource, /preview_mode: searchPreviewModeArg\(previewMode\)/);
 assert.match(memoryRecallSource, /isAnswerContextNode\(input\.currentNode\)/);
 assert.match(memoryRecallSource, /queryAnswerSearchTerms\(input\.question\)/);
-assert.match(memoryRecallSource, /readNodeContext\(input\.canisterId, input\.databaseId, hit\.path, 5/);
+assert.match(memoryRecallSource, /readNodeContext\(input\.canisterId, input\.databaseId, hit, 5/);
 assert.match(memoryRecallSource, /node\.kind === "file" \|\| node\.kind === "source"/);
 assert.match(wikiBrowserSource, /ExplorerHeaderActions/);
 assert.match(wikiBrowserSource, /ExplorerCreateForm/);
@@ -152,9 +156,9 @@ assert.match(wikiBrowserSource, /normalizePathSegment/);
 assert.match(wikiBrowserSource, /trimmed\.endsWith\("\.md"\) \? trimmed : `\$\{trimmed\}\.md`/);
 assert.match(wikiBrowserSource, /createDirectoryForExplorerNode/);
 assert.match(wikiBrowserSource, /currentDatabaseRole !== "writer" && currentDatabaseRole !== "owner"/);
-assert.match(wikiBrowserSource, /isMutableWikiExplorerNode/);
+assert.match(wikiBrowserSource, /isMutableExplorerNode/);
 assert.match(wikiBrowserSource, /isProtectedRootFolder\(node\.path\)/);
-assert.match(wikiBrowserSource, /path === "\/Wiki" \|\| path === "\/Sources"/);
+assert.match(wikiBrowserSource, /STORE_ROOT_PATHS\.some\(\(root\) => path === root/);
 assert.match(wikiBrowserSource, /node\.kind === "folder"/);
 assert.match(wikiBrowserSource, /visibleChildren\(loadedChildren, node\.path\)\.length === 0/);
 assert.match(wikiBrowserSource, /: !node\.hasChildren/);
@@ -227,8 +231,8 @@ assert.deepEqual(
 );
 
 assert.deepEqual(parseSearchOptions(new URLSearchParams("")), {
-  scope: "wiki",
-  prefix: "/Wiki",
+  scope: "root",
+  prefix: "/",
   limit: 20,
   preview: "default"
 });
@@ -246,7 +250,7 @@ assert.deepEqual(parseSearchOptions(new URLSearchParams("scope=custom&prefix=Wik
 });
 assert.deepEqual(parseSearchOptions(new URLSearchParams("scope=custom&prefix=&limit=999&preview=semantic")), {
   scope: "custom",
-  prefix: "/Wiki",
+  prefix: "/",
   limit: 20,
   preview: "default"
 });
@@ -307,30 +311,30 @@ assert.deepEqual(classifyQueryInput("sql: SELECT json_object('url', 'https://exa
 });
 assert.deepEqual(classifyQueryInput("topic", "/Wiki", "user"), {
   kind: "search",
-  targetPath: "/Wiki",
+  targetPath: "current database",
   sideEffect: "none",
   identityMode: "user",
   query: "topic"
 });
 assert.equal(classifyQueryInput("recent", "/Wiki", "user").kind, "search");
-assert.equal(classifyQueryInput("lint facts", "/Wiki/current.md", "user").targetPath, "/Wiki/facts.md");
+assert.equal(classifyQueryInput("lint facts", "/Wiki/current.md", "user").targetPath, "/Knowledge/facts.md");
 assert.deepEqual(classifyQueryInput("budget", "/Wiki", "anonymous"), {
   kind: "search",
-  targetPath: "/Wiki",
+  targetPath: "current database",
   sideEffect: "none",
   identityMode: "anonymous",
   query: "budget"
 });
 assert.deepEqual(classifyQueryInput("search: budget", "/Wiki", "user"), {
   kind: "search",
-  targetPath: "/Wiki",
+  targetPath: "current database",
   sideEffect: "none",
   identityMode: "user",
   query: "budget"
 });
 assert.deepEqual(classifyQueryInput("ask: budget status", "/Wiki", "user"), {
   kind: "ask",
-  targetPath: "/Wiki",
+  targetPath: "/Knowledge",
   sideEffect: "none",
   identityMode: "user",
   question: "budget status"
@@ -404,17 +408,17 @@ assert.notEqual(
   graphRequestKey("aaaaa-aa", "alpha", "/Wiki/index.md", 1, "aaaaa-aa")
 );
 assert.notEqual(searchRequestKey("aaaaa-aa", "alpha", "path", "budget"), searchRequestKey("aaaaa-aa", "alpha", "path", "budget", "aaaaa-aa"));
-assert.equal(publicDatabasePath("alpha/db"), "/db/alpha%2Fdb/Wiki");
-assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db/db_kva4v2twg6jv/Wiki");
-assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/db/alpha%20db/Wiki");
-assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/db/alpha%20db/Wiki");
+assert.equal(publicDatabasePath("alpha/db"), "/db/alpha%2Fdb/Knowledge");
+assert.equal(publicDatabasePath("db_kva4v2twg6jv"), "/db/db_kva4v2twg6jv/Knowledge");
+assert.equal(publicDatabaseUrl("alpha db"), "https://wiki.kinic.xyz/db/alpha%20db/Knowledge");
+assert.equal(publicDatabaseUrl("alpha db", "http://127.0.0.1:3000"), "http://127.0.0.1:3000/db/alpha%20db/Knowledge");
 assert.equal(isRoutableDatabaseId("db_xuwmtks27uik"), true);
 assert.equal(isRoutableDatabaseId("dashboard"), true);
 assert.equal(isRoutableDatabaseId(""), false);
 assert.throws(() => publicDatabasePath(""), /invalid database id/);
 assert.equal(
   xShareDatabaseHref({ databaseId: "alpha db", databaseName: "Research DB", origin: "https://wiki.kinic.xyz" }),
-  "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Fdb%2Falpha%2520db%2FWiki"
+  "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Fdb%2Falpha%2520db%2FKnowledge"
 );
 assert.equal(
   renderWikilinksAsMarkdown("[[/Sources/evidence/a/a.md|opencode.ai/DESIGN.md]]"),
@@ -459,10 +463,10 @@ assert.equal(
 );
 assert.equal(renderWikilinksAsMarkdown("![[notes/alpha.md|Alpha]]"), "![[notes/alpha.md|Alpha]]");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|Alpha]]"), "[Alpha](<notes/alpha.md>)");
-assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/foo.md"), "/db/db-1/Wiki/foo.md");
-assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
-assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wikipedia/foo.md"), null);
-assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/SourcesBackup/foo.md"), null);
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/Knowledge/foo.md"), "/db/db-1/Knowledge/foo.md");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/KnowledgeBase/foo.md"), null);
+assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/SourcesBackup/foo.md"), null);
 assert.equal(inferNoteRole("/Sources/evidence/web/abc.md"), "evidence_source");
 assert.equal(inferNoteRole("/Sources/evidencefoo/abc.md"), "markdown_note");
 

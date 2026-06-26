@@ -16,6 +16,7 @@ export async function createVfsActor({ canisterId, host, identity }) {
 
 function idlFactory({ IDL: idl }) {
   const DatabaseRole = idl.Variant({ Reader: idl.Null, Writer: idl.Null, Owner: idl.Null });
+  const DatabaseProfile = idl.Variant({ Skill: idl.Null, Memory: idl.Null, Workspace: idl.Null, Session: idl.Null, Knowledge: idl.Null });
   const DatabaseStatus = idl.Variant({
     Active: idl.Null,
     Pending: idl.Null,
@@ -33,7 +34,8 @@ function idlFactory({ IDL: idl }) {
     cycles_balance: idl.Opt(idl.Nat64),
     cycles_suspended_at_ms: idl.Opt(idl.Int64),
     archived_at_ms: idl.Opt(idl.Int64),
-    deleted_at_ms: idl.Opt(idl.Int64)
+    deleted_at_ms: idl.Opt(idl.Int64),
+    profile: DatabaseProfile
   });
   const CyclesTopUpConfig = idl.Record({
     enabled: idl.Bool,
@@ -47,8 +49,8 @@ function idlFactory({ IDL: idl }) {
     min_update_cycles: idl.Nat64,
     top_up: CyclesTopUpConfig
   });
-  const CreateDatabaseRequest = idl.Record({ name: idl.Text });
-  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text });
+  const CreateDatabaseRequest = idl.Record({ name: idl.Text, profile: DatabaseProfile });
+  const CreateDatabaseResult = idl.Record({ database_id: idl.Text, name: idl.Text, profile: DatabaseProfile });
   const NodeKind = idl.Variant({ File: idl.Null, Source: idl.Null, Folder: idl.Null });
   const Node = idl.Record({
     path: idl.Text,
@@ -96,7 +98,7 @@ export async function createDatabase(config, name) {
 }
 
 export async function createDatabaseWithActor(actor, name) {
-  const result = await actor.create_database({ name });
+  const result = await actor.create_database({ name, profile: { Workspace: null } });
   if ("Err" in result) {
     throw new Error(result.Err);
   }
@@ -146,7 +148,8 @@ export function normalizeWritableDatabases(rawDatabases, cyclesConfig = null) {
 export function normalizeCreateDatabaseResult(raw) {
   return {
     databaseId: raw.database_id,
-    name: String(raw.name || "")
+    name: String(raw.name || ""),
+    profile: variantKey(raw.profile)
   };
 }
 
@@ -155,6 +158,7 @@ function normalizeDatabaseSummary(raw) {
     databaseId: raw.database_id,
     name: String(raw.name || ""),
     role: variantKey(raw.role),
+    profile: variantKey(raw.profile),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes?.toString?.() ?? String(raw.logical_size_bytes ?? "0"),
     cyclesBalance: raw.cycles_balance?.[0]?.toString?.() ?? "0",

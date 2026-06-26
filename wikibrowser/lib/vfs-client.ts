@@ -98,6 +98,7 @@ type RawDatabaseSummary = {
   logical_size_bytes: bigint;
   database_id: string;
   name: string;
+  profile: Variant;
   cycles_balance: [] | [bigint];
   cycles_suspended_at_ms: [] | [bigint];
   archived_at_ms: [] | [bigint];
@@ -504,7 +505,7 @@ type VfsActor = {
   graph_links: (request: { database_id: string; prefix: string; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   graph_neighborhood: (request: { database_id: string; center_path: string; depth: number; limit: number }) => Promise<{ Ok: RawLinkEdge[] } | { Err: string }>;
   read_node_context: (request: { database_id: string; path: string; link_limit: number }) => Promise<{ Ok: [] | [RawNodeContext] } | { Err: string }>;
-  query_context: (request: {
+  memory_recall: (request: {
     database_id: string;
     task: string;
     entities: string[];
@@ -1244,7 +1245,7 @@ export async function queryContext(
 ): Promise<QueryContext> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
-    const result = await actor.query_context({
+    const result = await actor.memory_recall({
       database_id: databaseId,
       task,
       entities: [],
@@ -1353,6 +1354,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
     name: raw.name,
+    profile: normalizeDatabaseProfile(raw.profile),
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
@@ -1746,6 +1748,15 @@ function candidSourceRunSessionCheckRequest(request: SourceRunSessionCheckReques
     source_etag: request.sourceEtag,
     session_nonce: request.sessionNonce
   };
+}
+
+function normalizeDatabaseProfile(profile: Variant): DatabaseSummary["profile"] {
+  if ("Workspace" in profile) return "workspace";
+  if ("Knowledge" in profile) return "knowledge";
+  if ("Memory" in profile) return "memory";
+  if ("Skill" in profile) return "skill";
+  if ("Session" in profile) return "session";
+  throw new ApiError(`Unknown database profile variant: ${Object.keys(profile).join(",")}`, 502);
 }
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {

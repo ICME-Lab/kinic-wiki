@@ -278,7 +278,7 @@ await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY
       assert.match(systemPrompt, /Example JSON/);
       const promptInput = JSON.parse(body.messages.at(-1).content);
       assert.equal(promptInput.question, "What does the wiki say?");
-      assert.equal(promptInput.selectedPath, "/Wiki/demo.md");
+      assert.equal(promptInput.selectedPath, "/Knowledge/demo.md");
       assert.equal(promptInput.databaseId, undefined);
       assert.equal(promptInput.sessionNonce, undefined);
       return Response.json({
@@ -287,7 +287,7 @@ await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY
             message: {
               content: JSON.stringify({
                 answer: "Answer from context.",
-                citations: ["/Wiki/demo.md", "/Wiki/outside.md"],
+                citations: ["/Knowledge/demo.md", "/Knowledge/outside.md"],
                 abstained: false
               })
             }
@@ -299,7 +299,7 @@ await withEnv({ NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID: "aaaaa-aa", DEEPSEEK_API_KEY
   const response = await queryAnswerRouteModule.POST(queryAnswerRequest("https://wiki.kinic.xyz"));
   const body = await response.json();
   assert.equal(response.status, 200);
-  assert.deepEqual(body.citations, ["/Wiki/demo.md"]);
+  assert.deepEqual(body.citations, ["/Knowledge/demo.md"]);
   assert.equal(body.abstained, false);
   queryAnswerRouteModule.setQueryAnswerDepsForTest();
 });
@@ -380,9 +380,9 @@ function queryAnswerRequest(origin, overrides = {}) {
     body: JSON.stringify({
       question: "What does the wiki say?",
       databaseId: "db_1",
-      selectedPath: "/Wiki/demo.md",
+      selectedPath: "/Knowledge/demo.md",
       sessionNonce: "session-1",
-      context: [{ path: "/Wiki/demo.md", title: "Demo", excerpt: "Demo context" }],
+      context: [{ path: "/Knowledge/demo.md", title: "Demo", excerpt: "Demo context" }],
       ...overrides
     })
   });

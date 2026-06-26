@@ -15,7 +15,7 @@ type Variant = Record<string, null>;
 type RawNode = { path: string; kind: Variant; content: string; created_at: bigint; updated_at: bigint; etag: string; metadata_json: string };
 type RawNodeMutationAck = { path: string; kind: Variant; updated_at: bigint; etag: string };
 type RawChild = { path: string; name: string; kind: Variant; updated_at: [] | [bigint]; etag: [] | [string]; size_bytes: [] | [bigint]; is_virtual: boolean; has_children: boolean };
-type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; name: string; archived_at_ms: [] | [bigint]; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
+type RawDatabaseSummary = { status: Variant; role: Variant; logical_size_bytes: bigint; database_id: string; name: string; profile: Variant; archived_at_ms: [] | [bigint]; deleted_at_ms: [] | [bigint]; cycles_balance: [] | [bigint]; cycles_suspended_at_ms: [] | [bigint] };
 type RawDatabaseMember = { database_id: string; principal: string; role: Variant; created_at_ms: bigint };
 type RawWriteNodeRequest = { database_id: string; path: string; kind: Variant; content: string; metadata_json: string; expected_etag: [] | [string] };
 type RawWriteNodeResult = { created: boolean; node: RawNodeMutationAck };
@@ -176,6 +176,7 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
   return {
     databaseId: raw.database_id,
     name: raw.name,
+    profile: normalizeDatabaseProfile(raw.profile),
     role: normalizeDatabaseRole(raw.role),
     status: normalizeDatabaseStatus(raw.status),
     logicalSizeBytes: raw.logical_size_bytes.toString(),
@@ -184,6 +185,15 @@ function normalizeDatabaseSummary(raw: RawDatabaseSummary): DatabaseSummary {
     archivedAtMs: raw.archived_at_ms[0]?.toString() ?? null,
     deletedAtMs: raw.deleted_at_ms[0]?.toString() ?? null,
   };
+}
+
+function normalizeDatabaseProfile(profile: Variant): DatabaseSummary["profile"] {
+  if ("Workspace" in profile) return "workspace";
+  if ("Knowledge" in profile) return "knowledge";
+  if ("Memory" in profile) return "memory";
+  if ("Skill" in profile) return "skill";
+  if ("Session" in profile) return "session";
+  throw new ApiError(`Unknown database profile variant: ${Object.keys(profile).join(",")}`, 502);
 }
 
 function normalizeDatabaseStatus(status: Variant): DatabaseStatus {

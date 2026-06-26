@@ -100,9 +100,9 @@ const queryEndpoints = [
   { name: "search_node_paths(request)", detail: "Search paths only." },
   { name: "list_children(request)", detail: "List direct children under one folder path." },
   { name: "read_node_context(request)", detail: "Read a node with nearby link context." },
-  { name: "query_context(request)", detail: "Recall task-scoped memory from role pages, search, and linked nodes." },
-  { name: "source_evidence(request)", detail: "Resolve source evidence for a knowledge node." },
-  { name: "memory_manifest(request)", detail: "Inspect the workspace four-store layout and recall limits." }
+  { name: "memory_recall(request)", detail: "Recall task-scoped memory from role pages, search, and linked nodes." },
+  { name: "knowledge_evidence(request)", detail: "Resolve source evidence for a knowledge node." },
+  { name: "store_manifest(request)", detail: "Inspect the workspace four-store layout and recall limits." }
 ];
 
 const writeEndpoints = [

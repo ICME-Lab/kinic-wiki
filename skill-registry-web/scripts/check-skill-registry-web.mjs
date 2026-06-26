@@ -31,9 +31,10 @@ assert.doesNotMatch(details, /\/Knowledge\/skill-evolution-jobs|\/proposals|pars
 assert.doesNotMatch(catalog, /ProposalStatus|SkillProposal|EvolutionJob|proposals|jobs/);
 assert.doesNotMatch(operations, /kinic\.skill_evolution_proposal_status|assertProposalStatus|proposalStatusPathForSkill/);
 assert.match(operations, /frontmatterEnd\(rest\)/);
+assert.match(operations, /expectedEtag: node\.etag/);
 assert.doesNotMatch(operations, /indexOf\("\\n---"\)/);
-assert.match(wikiHelpers, /isKnowledgeSourcePath\(path\)/);
-assert.match(wikiHelpers, /RESERVED_SOURCE_PROVIDERS/);
+assert.match(wikiHelpers, /path === "\/Sources\/evidence"/);
+assert.match(wikiHelpers, /evidence_source/);
 assert.doesNotMatch(wikiHelpers, /path\.startsWith\("\/Sources\/raw/);
 assert.match(types, /DatabaseStatus = "pending" \| "active" \| "restoring" \| "archiving" \| "archived" \| "deleted"/);
 assert.doesNotMatch(vfsIdl, /Hot: idl\.Null/);

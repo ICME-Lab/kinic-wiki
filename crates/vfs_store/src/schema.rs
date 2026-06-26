@@ -288,7 +288,7 @@ fn backfill_folder_nodes(conn: &crate::sqlite::Transaction<'_>) -> Result<(), St
         let id = conn
             .query_row(
                 "SELECT id FROM fs_nodes WHERE path = ?1",
-                params![path],
+                params![path.as_str()],
                 |row| crate::sqlite::row_get::<i64>(row, 0),
             )
             .map_err(|error| error.to_string())?;
