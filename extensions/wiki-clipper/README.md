@@ -1,10 +1,10 @@
 # Kinic Wiki Clipper
 
-MV3 Chrome extension for creating Kinic Wiki knowledge pages from the active tab and saving recent ChatGPT and Claude conversations as raw sources.
+MV3 Chrome extension for creating Kinic Wiki pages from the active tab and saving recent ChatGPT and Claude conversations as evidence sources.
 
 See [USAGE.md](./USAGE.md) for local canister setup and Chrome loading steps.
 
-ChatGPT/Claude raw-source export and active-tab raw-source capture use Internet Identity and require writer access for the selected database.
+ChatGPT/Claude evidence-source export and active-tab evidence-source capture use Internet Identity and require writer access for the selected database.
 
 ## Build
 
@@ -43,25 +43,25 @@ Use `https://kinic.io/privacy-policy` as the Chrome Web Store privacy policy URL
 2. Select a database from extension settings, or create one there if none exists.
 3. Use the page-level `Kinic Memory` button.
 4. Enter the number of recent chats to export. The default is `10`.
-5. Export to `/Sources/<provider>/<source_id>.md`.
+5. Export to `/Sources/evidence/<provider>/<source_id>.md`.
 
 ## Active Tab Capture
 
-Clicking the extension toolbar icon captures the active `http` / `https` tab DOM as a raw source, then queues generation from that source. If settings or Internet Identity login are missing, the extension opens the settings page.
+Clicking the extension toolbar icon captures the active `http` / `https` tab DOM as a evidence source, then queues generation from that source. If settings or Internet Identity login are missing, the extension opens the settings page.
 
 Required settings:
 
 - `Database`: loaded from writable active databases for the logged-in Internet Identity principal. If none exists, create one explicitly from settings.
 
-The active-tab flow writes `/Sources/web/<source_id>.md` as a VFS `source`, then asks WikiBrowser to trigger generation for that source with its server-side token.
+The active-tab flow writes `/Sources/evidence/web/<source_id>.md` as a VFS `source`, then asks WikiBrowser to trigger generation for that source with its server-side token.
 
-ChatGPT/Claude export only writes raw evidence. Generate knowledge pages later:
+ChatGPT/Claude export only writes source evidence. Generate wiki pages later:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/chatgpt/<conversationId>.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/evidence/chatgpt/<conversationId>.md
 ```
 
-The CLI creates a conversation knowledge scaffold. Re-running it preserves hand-edited scaffold pages unless `--force` is supplied.
+The CLI creates a conversation wiki scaffold. Re-running it preserves hand-edited scaffold pages unless `--force` is supplied.
 
 ## Safety Notes
 
@@ -70,7 +70,7 @@ The CLI creates a conversation knowledge scaffold. Re-running it preserves hand-
 - Database ID is selected and saved automatically from writable active databases. If none exists, settings can create a new database after the user enters a name and clicks `Create`. `KINIC_CAPTURE_DATABASE_ID` only preselects a matching settings option.
 - Public manifest host permissions exclude local `localhost` and `127.0.0.1` canister hosts.
 - Mainnet hosts require explicit confirmation before export.
-- ChatGPT/Claude raw-source export and active-tab capture writes use the logged-in Internet Identity principal and require writer access for that principal.
+- ChatGPT/Claude evidence-source export and active-tab capture writes use the logged-in Internet Identity principal and require writer access for that principal.
 - Active-tab generation needs WikiBrowser `KINIC_WIKI_WORKER_TOKEN` configured to trigger processing.
 - ChatGPT export uses private `/backend-api/*` endpoints. Claude export uses private `claude.ai/api/.../chat_conversations/*` endpoints. Endpoint shape can change without notice.
 - Public release requires owner, allowlist, token, delegation, or equivalent write authorization on the canister.

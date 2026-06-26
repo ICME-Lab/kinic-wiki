@@ -1,16 +1,16 @@
 // Where: crates/vfs_cli_app/src/purge_url_ingest.rs
 // What: Accident-response cleanup for URL ingest artifacts.
-// Why: Operators need one dry-run-first command that finds request/source/knowledge nodes before deleting them.
+// Why: Operators need one dry-run-first command that finds request/source/wiki nodes before deleting them.
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use vfs_client::VfsApi;
 use vfs_types::{DeleteNodeRequest, ListNodesRequest, Node, NodeKind};
-use wiki_domain::validate_knowledge_source_path;
+use wiki_domain::validate_canonical_source_path;
 
 const REQUEST_PREFIX: &str = "/Sources/ingest-requests";
-const GENERATED_TARGET_PREFIX: &str = "/Knowledge/conversations";
+const GENERATED_TARGET_PREFIX: &str = "/Wiki/conversations";
 const WIDE_DELETE_PATH_COUNT: usize = 1;
 
 #[derive(Debug, Default, Deserialize)]
@@ -161,12 +161,12 @@ async fn request_for_source(
     };
     let Some(frontmatter) = parse_frontmatter(&source.content)? else {
         return Ok(SourceLookup::Skipped(format!(
-            "{source_path}: missing raw web source frontmatter"
+            "{source_path}: missing evidence web source frontmatter"
         )));
     };
-    if frontmatter.kind.as_deref() != Some("kinic.raw_web_source") {
+    if frontmatter.kind.as_deref() != Some("kinic.evidence_web_source") {
         return Ok(SourceLookup::Skipped(format!(
-            "{source_path}: not kinic.raw_web_source"
+            "{source_path}: not kinic.evidence_web_source"
         )));
     }
     let entries = client
@@ -419,14 +419,13 @@ fn normalize_request_path(path: &str) -> Result<String> {
 
 fn normalize_source_path(path: &str) -> Result<String> {
     let path = normalize_absolute_path(path, "source_path")?;
-    validate_knowledge_source_path(&path).map_err(anyhow::Error::msg)?;
+    validate_canonical_source_path(&path).map_err(anyhow::Error::msg)?;
     Ok(path)
 }
 
 fn normalize_target_path(path: &str) -> Result<String> {
     let path = normalize_absolute_path(path, "target_path")?;
-    if path == "/" || path == "/Knowledge" || path == "/Sources" || path == GENERATED_TARGET_PREFIX
-    {
+    if path == "/" || path == "/Wiki" || path == "/Sources" || path == GENERATED_TARGET_PREFIX {
         return Err(anyhow!("refusing protected target_path: {path}"));
     }
     if !is_same_or_descendant(&path, GENERATED_TARGET_PREFIX) {
@@ -595,18 +594,12 @@ mod tests {
     async fn build_delete_plan_omits_folder_index_when_folder_is_planned() -> Result<()> {
         let client = PlanClient {
             entries: vec![
-                node_entry("/Knowledge/conversations/web-1", NodeEntryKind::Folder),
-                node_entry(
-                    "/Knowledge/conversations/web-1/index.md",
-                    NodeEntryKind::File,
-                ),
-                node_entry(
-                    "/Knowledge/conversations/web-1/facts.md",
-                    NodeEntryKind::File,
-                ),
+                node_entry("/Wiki/conversations/web-1", NodeEntryKind::Folder),
+                node_entry("/Wiki/conversations/web-1/index.md", NodeEntryKind::File),
+                node_entry("/Wiki/conversations/web-1/facts.md", NodeEntryKind::File),
             ],
         };
-        let request = matched_request(Some("/Knowledge/conversations/web-1"));
+        let request = matched_request(Some("/Wiki/conversations/web-1"));
 
         let plan = build_delete_plan(&client, "default", &[request]).await?;
 
@@ -614,24 +607,27 @@ mod tests {
             plan.paths
                 .contains(&"/Sources/ingest-requests/r1.md".to_string())
         );
-        assert!(plan.paths.contains(&"/Sources/web/1.md".to_string()));
         assert!(
             plan.paths
-                .contains(&"/Knowledge/conversations/web-1".to_string())
+                .contains(&"/Sources/evidence/web/1.md".to_string())
         );
         assert!(
             plan.paths
-                .contains(&"/Knowledge/conversations/web-1/facts.md".to_string())
+                .contains(&"/Wiki/conversations/web-1".to_string())
+        );
+        assert!(
+            plan.paths
+                .contains(&"/Wiki/conversations/web-1/facts.md".to_string())
         );
         assert!(
             !plan
                 .paths
-                .contains(&"/Knowledge/conversations/web-1/index.md".to_string())
+                .contains(&"/Wiki/conversations/web-1/index.md".to_string())
         );
         assert!(
             plan.target_groups[0]
                 .paths
-                .contains(&"/Knowledge/conversations/web-1/index.md".to_string())
+                .contains(&"/Wiki/conversations/web-1/index.md".to_string())
         );
         Ok(())
     }
@@ -640,17 +636,17 @@ mod tests {
     async fn build_delete_plan_keeps_standalone_folder_index() -> Result<()> {
         let client = PlanClient {
             entries: vec![node_entry(
-                "/Knowledge/conversations/web-1/index.md",
+                "/Wiki/conversations/web-1/index.md",
                 NodeEntryKind::File,
             )],
         };
-        let request = matched_request(Some("/Knowledge/conversations/web-1/index.md"));
+        let request = matched_request(Some("/Wiki/conversations/web-1/index.md"));
 
         let plan = build_delete_plan(&client, "default", &[request]).await?;
 
         assert!(
             plan.paths
-                .contains(&"/Knowledge/conversations/web-1/index.md".to_string())
+                .contains(&"/Wiki/conversations/web-1/index.md".to_string())
         );
         Ok(())
     }
@@ -659,7 +655,7 @@ mod tests {
         MatchedRequest {
             path: "/Sources/ingest-requests/r1.md".to_string(),
             url: "https://example.com/page".to_string(),
-            source_path: Some("/Sources/web/1.md".to_string()),
+            source_path: Some("/Sources/evidence/web/1.md".to_string()),
             target_path: target_path.map(ToString::to_string),
             status: Some("completed".to_string()),
         }

@@ -11,7 +11,7 @@ export type LintHint = {
 const futurePattern = /\b(deadline|meeting|check-?in|pending|tomorrow|next\s+\w+|will|plan to|scheduled)\b/i;
 const exactValuePattern = /(\b\d{4}-\d{2}-\d{2}\b|\b[A-Z]{2,}-?\d{4,}\b|\$\d|¥\d|\b\d{1,2}:\d{2}\b)/;
 const filePathPattern = /(`[^`]+\.[a-z0-9]+`|\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+)/;
-const sourcePathPattern = /\/Sources\/(?!raw\/|sessions\/|skill-runs\/|ingest-requests\/)[a-z0-9]{1,32}\/(?![A-Za-z0-9._-]*\.\.)[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md/;
+const sourcePathPattern = /\/Sources\/evidence\/[^\s)`'"]+/;
 
 export function collectLintHints(path: string, content: string): LintHint[] {
   const role = path.split("/").at(-1) ?? "";
@@ -20,7 +20,7 @@ export function collectLintHints(path: string, content: string): LintHint[] {
     hints.push(...findLineHints(content, futurePattern, "Possible future or pending item", "facts.md should hold stable facts, not schedules, pending decisions, or next actions."));
   }
   if (role === "summary.md") {
-    hints.push(...findLineHints(content, exactValuePattern, "Possible exact evidence leak", "summary.md should recap; exact dates, money, receipts, or IDs belong in canonical notes or raw sources."));
+    hints.push(...findLineHints(content, exactValuePattern, "Possible exact evidence leak", "summary.md should recap; exact dates, money, receipts, or IDs belong in canonical notes or evidence sources."));
   }
   if (role === "open_questions.md") {
     hints.push(...findLineHints(content, /\b(done|resolved|decided|completed)\b/i, "Possible resolved item", "open_questions.md should hold unresolved questions and verification gaps, not completed decisions."));
@@ -31,8 +31,8 @@ export function collectLintHints(path: string, content: string): LintHint[] {
   if (role === "provenance.md" && !sourcePathPattern.test(content)) {
     hints.push({
       severity: "warning",
-      title: "Missing raw source path",
-      detail: "provenance.md should link organized wiki content back to /Sources/<provider> evidence.",
+      title: "Missing evidence source path",
+      detail: "provenance.md should link organized wiki content back to /Sources/evidence.",
       line: null,
       preview: null
     });
@@ -83,25 +83,25 @@ function findCodeNoteHints(path: string, content: string): LintHint[] {
   return hints;
 }
 
-export function rawSourceLinksFor(path: string, content: string): string[] {
+export function evidenceSourceLinksFor(path: string, content: string): string[] {
   const links = new Set<string>();
-  if (sourcePathPattern.test(path)) {
+  if (path.startsWith("/Sources/evidence/")) {
     links.add(path);
   }
   if (path.endsWith("/provenance.md")) {
     for (const line of content.split("\n")) {
-      const sourcePath = line.match(sourcePathPattern)?.[0];
+      const sourcePath = line.match(/\/Sources\/evidence\/[^\s)`'"]+/)?.[0];
       if (sourcePath) links.add(sourcePath);
     }
   }
-  for (const match of content.matchAll(new RegExp(sourcePathPattern.source, "g"))) {
+  for (const match of content.matchAll(/\/Sources\/evidence\/[^\s)`'"]+/g)) {
     links.add(match[0]);
   }
   return [...links].slice(0, 8);
 }
 
 export function provenancePathFor(path: string): string | null {
-  if (!path.startsWith("/Knowledge/") || path.endsWith("/provenance.md")) {
+  if (!path.startsWith("/Wiki/") || path.endsWith("/provenance.md")) {
     return null;
   }
   const index = path.lastIndexOf("/");

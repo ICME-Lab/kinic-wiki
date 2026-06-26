@@ -412,7 +412,7 @@ async fn agent_search_ranks_sources_last_when_prefix_is_omitted() {
         .search_hits
         .lock()
         .expect("search hits lock should succeed") = vec![
-        sample_hit("/Sources/raw/chat.md"),
+        sample_hit("/Sources/evidence/chat.md"),
         sample_hit("/Knowledge/answer.md"),
         sample_hit("/Memory/context.md"),
         sample_hit("/Sources/web/page.md"),
@@ -421,7 +421,7 @@ async fn agent_search_ranks_sources_last_when_prefix_is_omitted() {
         .path_search_hits
         .lock()
         .expect("path search hits lock should succeed") = vec![
-        sample_hit("/Sources/raw/chat.md"),
+        sample_hit("/Sources/evidence/chat.md"),
         sample_hit("/Knowledge/answer.md"),
         sample_hit("/Memory/context.md"),
         sample_hit("/Sources/web/page.md"),
@@ -439,7 +439,7 @@ async fn agent_search_ranks_sources_last_when_prefix_is_omitted() {
         vec![
             "/Knowledge/answer.md",
             "/Memory/context.md",
-            "/Sources/raw/chat.md",
+            "/Sources/evidence/chat.md",
             "/Sources/web/page.md"
         ]
     );
@@ -456,7 +456,7 @@ async fn agent_search_ranks_sources_last_when_prefix_is_omitted() {
         vec![
             "/Knowledge/answer.md",
             "/Memory/context.md",
-            "/Sources/raw/chat.md",
+            "/Sources/evidence/chat.md",
             "/Sources/web/page.md"
         ]
     );
@@ -469,7 +469,7 @@ async fn agent_search_preserves_order_when_prefix_is_explicit() {
         .search_hits
         .lock()
         .expect("search hits lock should succeed") = vec![
-        sample_hit("/Sources/raw/chat.md"),
+        sample_hit("/Sources/evidence/chat.md"),
         sample_hit("/Knowledge/answer.md"),
     ];
 
@@ -482,7 +482,7 @@ async fn agent_search_preserves_order_when_prefix_is_explicit() {
     .expect("search tool should succeed");
     assert_eq!(
         hit_paths(&search),
-        vec!["/Sources/raw/chat.md", "/Knowledge/answer.md"]
+        vec!["/Sources/evidence/chat.md", "/Knowledge/answer.md"]
     );
 }
 

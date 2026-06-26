@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/tests/url-ingest-request.test.mjs
 // What: URL normalization tests for browser snapshots.
-// Why: Extension-created raw sources must capture canonical HTTP(S) URLs.
+// Why: Extension-created evidence sources must capture canonical HTTP(S) URLs.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizedHttpUrl } from "../src/url-ingest-request.js";

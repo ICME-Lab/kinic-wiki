@@ -1,14 +1,14 @@
 // Where: extensions/wiki-clipper/src/service-worker.js
 // What: MV3 background workflow for canister persistence.
 // Why: Content scripts fetch AI conversation data while the worker owns canister writes.
-import { buildRawSource } from "./raw-source.js";
+import { buildEvidenceSource } from "./evidence-source.js";
 import {
   DEFAULT_CANISTER_ID,
   DEFAULT_IC_HOST,
-  SOURCE_CAPTURE_STATUS_KEY,
+  URL_INGEST_STATUS_KEY,
   normalizedHttpUrl
 } from "./url-ingest-request.js";
-import { buildWebRawSource, collectWebPageSnapshot, webSourcePathForUrl } from "./web-source.js";
+import { buildWebEvidenceSource, collectWebPageSnapshot, webSourcePathForUrl } from "./web-source.js";
 
 const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
@@ -32,16 +32,16 @@ const PROVIDERS = {
 const ALLOWED_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const MAX_MESSAGE_COUNT = 500;
 const MAX_MESSAGE_CONTENT_CHARS = 200_000;
-const MAX_RAW_SOURCE_CHARS = 1_500_000;
+const MAX_EVIDENCE_SOURCE_CHARS = 1_500_000;
 const SETTINGS_OPEN_THROTTLE_MS = 2_000;
 const SETTINGS_MENU_ID = "kinic-wiki-clipper-settings";
 const CREATE_WIKI_MENU_ID = "kinic-wiki-clipper-create-wiki";
-const SAVE_RAW_MENU_ID = "kinic-wiki-clipper-save-raw";
-const SOURCE_CAPTURE_IN_FLIGHT_KEY = "kinic-source-capture-in-flight-v1";
-const SOURCE_CAPTURE_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
+const SAVE_EVIDENCE_MENU_ID = "kinic-wiki-clipper-save-evidence";
+const URL_INGEST_IN_FLIGHT_KEY = "kinic-url-ingest-in-flight-v1";
+const URL_INGEST_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
 let offscreenBridge = defaultOffscreenBridge;
 let lastSettingsOpenedAt = 0;
-const activeSourceCaptures = new Set();
+const activeUrlIngests = new Set();
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -56,7 +56,7 @@ if (globalThis.chrome?.runtime?.onMessage) {
 if (globalThis.chrome?.action?.onClicked) {
   chrome.action.onClicked.addListener((tab) => {
     handleActionClick(tab).catch((error) => {
-      writeLatestSourceCaptureStatus(errorStatus(error instanceof Error ? error.message : String(error)));
+      writeLatestUrlIngestStatus(errorStatus(error instanceof Error ? error.message : String(error)));
       setActionBadge("ERR", "#b42318");
     });
   });
@@ -93,7 +93,7 @@ if (globalThis.chrome?.tabs?.onUpdated) {
 if (globalThis.chrome?.contextMenus?.onClicked) {
   chrome.contextMenus.onClicked.addListener((info, tab) => {
     handleContextMenuClick(info, tab).catch((error) => {
-      writeLatestSourceCaptureStatus(errorStatus(error instanceof Error ? error.message : String(error), tab?.url || ""));
+      writeLatestUrlIngestStatus(errorStatus(error instanceof Error ? error.message : String(error), tab?.url || ""));
       setActionBadge("ERR", "#b42318");
     });
   });
@@ -126,8 +126,8 @@ export async function handleMessage(message, sender) {
     await openSettingsOnce();
     return { ok: true };
   }
-  if (message?.type === "latest-source-capture-status") {
-    return { ok: true, value: await readLatestSourceCaptureStatus() };
+  if (message?.type === "latest-url-ingest-status") {
+    return { ok: true, value: await readLatestUrlIngestStatus() };
   }
   if (message?.type === "export-state-get") {
     return { ok: true, value: await readSessionValue(message.key) };
@@ -160,20 +160,20 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     }
     const sourcePath = await webSourcePathForUrl(url);
     await deps.findWebSource(config, sourcePath);
-    inFlightKey = sourceCaptureInFlightKey(config.databaseId, url);
-    reservedInFlight = await deps.reserveSourceCapture(inFlightKey);
+    inFlightKey = urlIngestInFlightKey(config.databaseId, url);
+    reservedInFlight = await deps.reserveUrlIngest(inFlightKey);
     if (!reservedInFlight) {
       const status = busyStatus(url);
       await deps.writeStatus(status);
       await deps.setBadge("BUSY", "#5f6368", tabId);
       return { ok: false, error: status.message };
     }
-    const rawSource = await deps.captureTabSource(tab, url);
+    const evidenceSource = await deps.captureTabSource(tab, url);
     await deps.ensureOffscreen();
     const saveResponse = await deps.sendOffscreen({
       target: "offscreen",
-      type: "save-raw-source",
-      rawSource,
+      type: "save-evidence-source",
+      evidenceSource,
       config
     });
     if (!saveResponse?.ok) {
@@ -208,7 +208,7 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     const status = sourceCaptureStatus(result);
     await deps.writeStatus(status);
     if (result.generationSkipped) {
-      await deps.setBadge("RAW", "#5f6368", tabId);
+      await deps.setBadge("SRC", "#5f6368", tabId);
       return { ok: true, result };
     }
     if (!result.generationQueued) {
@@ -227,7 +227,7 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     return { ok: false, error: message };
   } finally {
     if (reservedInFlight && inFlightKey) {
-      await deps.releaseSourceCapture(inFlightKey);
+      await deps.releaseUrlIngest(inFlightKey);
     }
   }
 }
@@ -241,13 +241,13 @@ async function saveSource(capture, overrideConfig, sender) {
   if (!config.databaseId) {
     throw new Error("database id is required");
   }
-  const raw = buildRawSource(capture);
+  const raw = buildEvidenceSource(capture);
   let result;
   try {
     result = await offscreenBridge({
       target: "offscreen",
-      type: "save-raw-source",
-      rawSource: raw,
+      type: "save-evidence-source",
+      evidenceSource: raw,
       config
     });
   } catch (error) {
@@ -257,7 +257,7 @@ async function saveSource(capture, overrideConfig, sender) {
     throw error;
   }
   if (!result?.ok) {
-    const message = result?.error || "raw source save failed";
+    const message = result?.error || "evidence source save failed";
     if (shouldOpenSettingsForError(message)) {
       await openSettingsOnce();
     }
@@ -374,14 +374,14 @@ async function removeSessionValue(key) {
   await chrome.storage.session.remove(key);
 }
 
-async function readLatestSourceCaptureStatus() {
-  const values = await chrome.storage.session.get(SOURCE_CAPTURE_STATUS_KEY);
-  return values?.[SOURCE_CAPTURE_STATUS_KEY] ?? null;
+async function readLatestUrlIngestStatus() {
+  const values = await chrome.storage.session.get(URL_INGEST_STATUS_KEY);
+  return values?.[URL_INGEST_STATUS_KEY] ?? null;
 }
 
-async function writeLatestSourceCaptureStatus(status) {
+async function writeLatestUrlIngestStatus(status) {
   if (!globalThis.chrome?.storage?.session) return;
-  await chrome.storage.session.set({ [SOURCE_CAPTURE_STATUS_KEY]: JSON.stringify(status) });
+  await chrome.storage.session.set({ [URL_INGEST_STATUS_KEY]: JSON.stringify(status) });
 }
 
 function sourceCaptureStatus(result) {
@@ -391,7 +391,7 @@ function sourceCaptureStatus(result) {
       url: result?.url || "",
       title: result?.title || "",
       sourcePath: result?.sourcePath || "",
-      message: "Raw source saved.",
+      message: "Evidence source saved.",
       updatedAt: new Date().toISOString()
     };
   }
@@ -434,7 +434,7 @@ function busyStatus(url = "") {
   return {
     status: "busy",
     url,
-    message: "Source capture is already running for this page.",
+    message: "URL ingest is already running for this page.",
     updatedAt: new Date().toISOString()
   };
 }
@@ -444,11 +444,11 @@ function defaultActionDeps() {
     loadConfig,
     ensureOffscreen,
     sendOffscreen: (message) => chrome.runtime.sendMessage(message),
-    writeStatus: writeLatestSourceCaptureStatus,
+    writeStatus: writeLatestUrlIngestStatus,
     setBadge: setActionBadge,
     openSettings: openSettingsOnce,
-    reserveSourceCapture,
-    releaseSourceCapture,
+    reserveUrlIngest,
+    releaseUrlIngest,
     captureTabSource,
     findWebSource
   };
@@ -484,7 +484,7 @@ async function captureTabSource(tab, url) {
     func: collectWebPageSnapshot
   });
   const snapshot = results?.[0]?.result;
-  return buildWebRawSource({ ...snapshot, url });
+  return buildWebEvidenceSource({ ...snapshot, url });
 }
 
 async function refreshCurrentTabBadge() {
@@ -533,16 +533,16 @@ async function refreshTabBadge(tab, deps = defaultActionDeps()) {
 async function createSettingsContextMenu() {
   if (!globalThis.chrome?.contextMenus) return;
   if (typeof chrome.contextMenus.remove === "function") {
-    await Promise.all([CREATE_WIKI_MENU_ID, SAVE_RAW_MENU_ID, SETTINGS_MENU_ID].map((id) => chrome.contextMenus.remove(id).catch(() => {})));
+    await Promise.all([CREATE_WIKI_MENU_ID, SAVE_EVIDENCE_MENU_ID, SETTINGS_MENU_ID].map((id) => chrome.contextMenus.remove(id).catch(() => {})));
   }
   chrome.contextMenus.create({
     id: CREATE_WIKI_MENU_ID,
-    title: "Create knowledge page",
+    title: "Create Kinic wiki page",
     contexts: ["action"]
   });
   chrome.contextMenus.create({
-    id: SAVE_RAW_MENU_ID,
-    title: "Save raw",
+    id: SAVE_EVIDENCE_MENU_ID,
+    title: "Save evidence",
     contexts: ["action"]
   });
   chrome.contextMenus.create({
@@ -565,7 +565,7 @@ async function handleContextMenuClick(info, tab) {
     await handleActionClick(tab);
     return;
   }
-  if (info?.menuItemId === SAVE_RAW_MENU_ID) {
+  if (info?.menuItemId === SAVE_EVIDENCE_MENU_ID) {
     await handleActionClick(tab, defaultActionDeps(), { queueGeneration: false });
   }
 }
@@ -574,8 +574,8 @@ export function handleContextMenuClickForTest(info, tab) {
   return handleContextMenuClick(info, tab);
 }
 
-export function resetSourceCaptureInFlightForTest() {
-  activeSourceCaptures.clear();
+export function resetUrlIngestInFlightForTest() {
+  activeUrlIngests.clear();
 }
 
 async function ensureOffscreen() {
@@ -634,8 +634,8 @@ export function validateSaveSource(capture, sender) {
       throw new Error(`capture message content must not exceed ${MAX_MESSAGE_CONTENT_CHARS} characters`);
     }
   }
-  if (estimatedRawSourceSize(capture) > MAX_RAW_SOURCE_CHARS) {
-    throw new Error(`capture raw source must not exceed ${MAX_RAW_SOURCE_CHARS} characters`);
+  if (estimatedEvidenceSourceSize(capture) > MAX_EVIDENCE_SOURCE_CHARS) {
+    throw new Error(`capture evidence source must not exceed ${MAX_EVIDENCE_SOURCE_CHARS} characters`);
   }
 }
 
@@ -665,7 +665,7 @@ function isIsoDateTime(value) {
   return Number.isFinite(timestamp);
 }
 
-function estimatedRawSourceSize(capture) {
+function estimatedEvidenceSourceSize(capture) {
   return (
     String(capture.provider || "").length +
     String(capture.url || "").length +
@@ -720,36 +720,30 @@ async function openSettingsOnce(open = openSettings) {
   await open();
 }
 
-async function reserveSourceCapture(key) {
-  if (activeSourceCaptures.has(key)) return false;
-  activeSourceCaptures.add(key);
-  try {
-    const current = await readInFlightRecord();
-    const now = Date.now();
-    if (current?.key === key && current.expiresAt > now) {
-      activeSourceCaptures.delete(key);
-      return false;
-    }
-    await writeInFlightRecord({ key, expiresAt: now + SOURCE_CAPTURE_IN_FLIGHT_TTL_MS });
-    return true;
-  } catch (error) {
-    activeSourceCaptures.delete(key);
-    throw error;
+async function reserveUrlIngest(key) {
+  if (activeUrlIngests.has(key)) return false;
+  const current = await readInFlightRecord();
+  const now = Date.now();
+  if (current?.key === key && current.expiresAt > now) {
+    return false;
   }
+  await writeInFlightRecord({ key, expiresAt: now + URL_INGEST_IN_FLIGHT_TTL_MS });
+  activeUrlIngests.add(key);
+  return true;
 }
 
-async function releaseSourceCapture(key) {
-  activeSourceCaptures.delete(key);
+async function releaseUrlIngest(key) {
+  activeUrlIngests.delete(key);
   const current = await readInFlightRecord();
   if (current?.key === key) {
-    await chrome.storage.session.remove(SOURCE_CAPTURE_IN_FLIGHT_KEY);
+    await chrome.storage.session.remove(URL_INGEST_IN_FLIGHT_KEY);
   }
 }
 
 async function readInFlightRecord() {
   if (!globalThis.chrome?.storage?.session) return null;
-  const values = await chrome.storage.session.get(SOURCE_CAPTURE_IN_FLIGHT_KEY);
-  const raw = values?.[SOURCE_CAPTURE_IN_FLIGHT_KEY];
+  const values = await chrome.storage.session.get(URL_INGEST_IN_FLIGHT_KEY);
+  const raw = values?.[URL_INGEST_IN_FLIGHT_KEY];
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -762,10 +756,10 @@ async function readInFlightRecord() {
 
 async function writeInFlightRecord(record) {
   if (!globalThis.chrome?.storage?.session) return;
-  await chrome.storage.session.set({ [SOURCE_CAPTURE_IN_FLIGHT_KEY]: JSON.stringify(record) });
+  await chrome.storage.session.set({ [URL_INGEST_IN_FLIGHT_KEY]: JSON.stringify(record) });
 }
 
-function sourceCaptureInFlightKey(databaseId, url) {
+function urlIngestInFlightKey(databaseId, url) {
   return `${databaseId}:${url}`;
 }
 

@@ -1,10 +1,8 @@
 import type { ChildNode } from "@/lib/types";
 
 export type ViewMode = "preview" | "raw" | "edit";
-export type ModeTab = "explorer" | "query" | "ingest";
+export type ModeTab = "explorer" | "query" | "ingest" | "clipper";
 export type ReadIdentityMode = "anonymous" | "user";
-export const STORE_ROOT_PATHS = ["/Knowledge", "/Memory", "/Skills", "/Sessions", "/Sources"] as const;
-export type StoreRootPath = (typeof STORE_ROOT_PATHS)[number];
 
 export type LoadState<T> = {
   data: T | null;
@@ -21,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-export function rootChild(path: StoreRootPath): ChildNode {
+export function rootChild(path: "/Wiki" | "/Sources"): ChildNode {
   return {
     path,
     name: path.slice(1),
@@ -40,7 +38,7 @@ export function canExpandChildNode(node: ChildNode): boolean {
 
 export function parseModeTab(value: string | null): ModeTab {
   if (value === "query") return "query";
-  if (value === "ingest" || value === "explorer") return value;
+  if (value === "ingest" || value === "clipper" || value === "explorer") return value;
   return "explorer";
 }
 
@@ -93,14 +91,9 @@ export function inferNoteRole(path: string): string {
   if (name === "schema.md") return "schema";
   if (name === "provenance.md") return "provenance";
   if (path.includes("/topics/") && path.endsWith(".md")) return "topics";
-  if (isKnowledgeSourcePath(path)) return "raw_source";
+  if (path === "/Sources/evidence" || path.startsWith("/Sources/evidence/")) return "evidence_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";
-}
-
-export function isKnowledgeSourcePath(path: string): boolean {
-  const match = path.match(/^\/Sources\/([a-z0-9]{1,32})\/([A-Za-z0-9][A-Za-z0-9._-]{0,127})\.md$/);
-  return !!match && !["raw", "sessions", "skill-runs", "ingest-requests"].includes(match[1]) && !match[2].includes("..");
 }
 
 export function extractMarkdownLinks(content: string): string[] {

@@ -1,16 +1,15 @@
-// Where: extensions/wiki-clipper/src/raw-source.js
-// What: Convert captured conversations into canonical raw source nodes.
-// Why: Raw source evidence is grouped by provider under /Sources/<provider>/<id>.md.
+// Where: extensions/wiki-clipper/src/evidence-source.js
+// What: Convert captured conversations into canonical evidence source nodes.
+// Why: Evidence source is grouped by provider under /Sources/evidence/<provider>/<id>.md.
 const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
-const RESERVED_SOURCE_PROVIDERS = new Set(["raw", "sessions", "skill-runs", "ingest-requests"]);
 
-export function buildRawSource(capture, now = new Date()) {
+export function buildEvidenceSource(capture, now = new Date()) {
   if (!capture.messages || capture.messages.length === 0) {
     throw new Error("no conversation messages found");
   }
   const provider = safeProvider(capture.provider || "conversation");
   const sourceId = sourceIdForCapture(capture, now, provider);
-  const path = `/Sources/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
+  const path = `/Sources/evidence/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
   const metadata = {
     provider: capture.provider,
     source_url: capture.url,
@@ -67,7 +66,7 @@ function conversationIdFromUrl(value) {
 
 function rawMarkdown(capture, sourceText) {
   const lines = [
-    "# Raw Conversation Source",
+    "# Evidence Conversation Source",
     "",
     "## Metadata",
     "",
@@ -123,9 +122,7 @@ function slug(value) {
 
 function safeProvider(value) {
   const normalized = String(value).toLowerCase().replace(/[^a-z0-9]+/g, "");
-  return /^[a-z0-9]{1,32}$/.test(normalized) && !RESERVED_SOURCE_PROVIDERS.has(normalized)
-    ? normalized
-    : "conversation";
+  return /^[a-z][a-z0-9]{0,31}$/.test(normalized) ? normalized : "conversation";
 }
 
 function safeSourceStem(value) {

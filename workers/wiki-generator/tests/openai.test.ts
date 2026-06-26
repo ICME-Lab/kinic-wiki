@@ -20,7 +20,7 @@ const draftJson = JSON.stringify({
     none: "none"
   },
   summary: "Short summary",
-  key_facts: [{ text: "Fact", source_path: "/Sources/a/a.md" }],
+  key_facts: [{ text: "Fact", source_path: "/Sources/evidence/a/a.md" }],
   decisions: [],
   open_questions: [],
   follow_ups: []
@@ -29,20 +29,20 @@ const draftJson = JSON.stringify({
 test("DeepSeek chat completion content parses into a draft", () => {
   const draft = parseDraftResponse({ choices: [{ message: { content: draftJson } }] });
   assert.equal(draft.title, "Project Notes");
-  validateDraftSources(draft, "/Sources/a/a.md");
+  validateDraftSources(draft, "/Sources/evidence/a/a.md");
 });
 
 test("invalid draft schema is rejected", () => {
   assert.throws(() => parseDraftText('{"title":"Bad"}'), /schema/);
   const draft = parseDraftResponse({ choices: [{ message: { content: draftJson } }] });
-  assert.throws(() => validateDraftSources(draft, "/Sources/b/b.md"), /unsupported source/);
+  assert.throws(() => validateDraftSources(draft, "/Sources/evidence/b/b.md"), /unsupported source/);
   assert.throws(() => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), extra: true })), /schema/);
   assert.throws(
     () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), labels: { ...JSON.parse(draftJson).labels, extra: true } })),
     /schema/
   );
   assert.throws(
-    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), key_facts: [{ text: "Fact", source_path: "/Sources/a/a.md", extra: true }] })),
+    () => parseDraftText(JSON.stringify({ ...JSON.parse(draftJson), key_facts: [{ text: "Fact", source_path: "/Sources/evidence/a/a.md", extra: true }] })),
     /schema/
   );
 });
@@ -77,7 +77,7 @@ test("generateDraft calls DeepSeek chat completions", async () => {
   try {
     const draft = await generateDraft(
       {
-        path: "/Sources/a/a.md",
+        path: "/Sources/evidence/a/a.md",
         kind: "source",
         content: "raw",
         etag: "etag-1",
@@ -107,7 +107,7 @@ test("generateDraft reports non-JSON DeepSeek failures before parsing", async ()
     await assert.rejects(
       generateDraft(
         {
-          path: "/Sources/a/a.md",
+          path: "/Sources/evidence/a/a.md",
           kind: "source",
           content: "raw",
           etag: "etag-1",
@@ -129,9 +129,9 @@ function config(): WorkerConfig {
     canisterId: "xis3j-paaaa-aaaai-axumq-cai",
     icHost: "https://icp0.io",
     model: "deepseek-v4-flash",
-    targetRoot: "/Knowledge/conversations",
-    sourcePrefix: "/Sources",
-    contextPrefix: "/",
+    targetRoot: "/Wiki/conversations",
+    sourcePrefix: "/Sources/evidence",
+    contextPrefix: "/Wiki",
     maxRawChars: 120_000,
     maxFetchedBytes: 5_000_000,
     maxSourceChars: 300_000,

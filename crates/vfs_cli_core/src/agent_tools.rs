@@ -397,7 +397,7 @@ fn rank_search_hits_for_agent(
     let mut primary = Vec::new();
     let mut sources = Vec::new();
     for hit in hits {
-        if is_raw_source_path(&hit.path) {
+        if is_source_path(&hit.path) {
             sources.push(hit);
         } else {
             primary.push(hit);
@@ -407,7 +407,7 @@ fn rank_search_hits_for_agent(
     primary
 }
 
-fn is_raw_source_path(path: &str) -> bool {
+fn is_source_path(path: &str) -> bool {
     path == "/Sources" || path.starts_with("/Sources/")
 }
 
