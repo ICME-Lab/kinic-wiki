@@ -376,6 +376,13 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "List skill store packages for local sync")]
+    List {
+        #[arg(long, value_delimiter = ',')]
+        status: Vec<SkillStatusArg>,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "Inspect one skill store package, files, and recent run evidence")]
     Inspect {
         id: String,
@@ -461,6 +468,19 @@ pub enum SkillCommand {
         id: String,
         #[arg(long)]
         lockfile: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Sync reviewed or promoted skill packages into a local directory")]
+    Sync {
+        #[arg(long)]
+        target: PathBuf,
+        #[arg(long, value_delimiter = ',')]
+        status: Vec<SkillStatusArg>,
+        #[arg(long)]
+        prune: bool,
+        #[arg(long)]
+        dry_run: bool,
         #[arg(long)]
         json: bool,
     },
@@ -652,7 +672,9 @@ impl Command {
             Self::Market { command: _ } => true,
             Self::Skill { command } => !matches!(
                 command,
-                SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
+                SkillCommand::Find { .. }
+                    | SkillCommand::List { .. }
+                    | SkillCommand::Inspect { .. }
             ),
             Self::Hermes { command } => matches!(
                 command,
@@ -702,7 +724,9 @@ impl Command {
         match self {
             Self::Skill { command } => matches!(
                 command,
-                SkillCommand::Find { .. } | SkillCommand::Inspect { .. }
+                SkillCommand::Find { .. }
+                    | SkillCommand::List { .. }
+                    | SkillCommand::Inspect { .. }
             ),
             Self::ReadNode { .. }
             | Self::ContextPack {
@@ -1842,6 +1866,64 @@ mod tests {
         };
         assert_eq!(id, "legal-review");
         assert_eq!(lockfile.to_string_lossy(), "skill.lock.json");
+        assert!(json);
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "list",
+            "--status",
+            "draft,reviewed,promoted",
+            "--json",
+        ]);
+        let Command::Skill {
+            command: SkillCommand::List { status, json },
+        } = cli.command
+        else {
+            panic!("expected skill list command");
+        };
+        assert_eq!(
+            status,
+            vec![
+                SkillStatusArg::Draft,
+                SkillStatusArg::Reviewed,
+                SkillStatusArg::Promoted
+            ]
+        );
+        assert!(json);
+
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "skill",
+            "sync",
+            "--target",
+            "./skills-local",
+            "--status",
+            "reviewed,promoted",
+            "--prune",
+            "--dry-run",
+            "--json",
+        ]);
+        let Command::Skill {
+            command:
+                SkillCommand::Sync {
+                    target,
+                    status,
+                    prune,
+                    dry_run,
+                    json,
+                },
+        } = cli.command
+        else {
+            panic!("expected skill sync command");
+        };
+        assert_eq!(target.to_string_lossy(), "./skills-local");
+        assert_eq!(
+            status,
+            vec![SkillStatusArg::Reviewed, SkillStatusArg::Promoted]
+        );
+        assert!(prune);
+        assert!(dry_run);
         assert!(json);
     }
 

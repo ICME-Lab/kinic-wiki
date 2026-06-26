@@ -106,6 +106,8 @@ Common commands:
 - `skill rollback`: restore a snapshot and snapshot the replaced current version.
 - `skill history`: list `versions`, `runs`, and `corrections`.
 - `skill install`: write a downstream lockfile only.
+- `skill list`: list packages for local sync, defaulting to `reviewed,promoted`.
+- `skill sync`: sync registry packages into a local skill directory with dry-run and managed prune.
 
 `skill history --json` returns rollback-ready snapshot IDs:
 
@@ -117,6 +119,21 @@ Common commands:
   "corrections": [{ "path": "/Sources/skill-runs/legal-review/run-1.correction.1782360000000.md" }]
 }
 ```
+
+`skill sync` treats the registry as the remote source and the target directory as a managed local projection.
+Run dry-run first:
+
+```bash
+kinic-vfs-cli skill sync --target ~/.codex/skills --status reviewed,promoted --prune --dry-run --json
+```
+
+Then run the same command without `--dry-run`.
+The sync lock lives at `<target>/.kinic-skill-sync.json`.
+`--prune` only removes skills recorded in that lockfile.
+If the lockfile is absent and `<target>/<skill-id>` already exists, sync reports `conflicts: unmanaged_existing_dir` so first-run local skills are not overwritten or deleted.
+Managed local edits also report `conflicts` and are not overwritten.
+All managed runtime files are hash-checked through the sync lock.
+Resolve by publishing local as source of truth with `skill upsert --source-dir <target>/<skill-id> --id <skill-id>`, or by moving/removing the local directory when remote should win.
 
 ## Run Evidence
 
