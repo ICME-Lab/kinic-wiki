@@ -34,6 +34,7 @@ assert.match(operations, /frontmatterEnd\(rest\)/);
 assert.doesNotMatch(operations, /indexOf\("\\n---"\)/);
 assert.match(wikiHelpers, /isKnowledgeSourcePath\(path\)/);
 assert.match(wikiHelpers, /RESERVED_SOURCE_PROVIDERS/);
+assert.doesNotMatch(wikiHelpers, /raw_source/);
 assert.doesNotMatch(wikiHelpers, /path\.startsWith\("\/Sources\/raw/);
 assert.match(types, /DatabaseStatus = "pending" \| "active" \| "restoring" \| "archiving" \| "archived" \| "deleted"/);
 assert.doesNotMatch(vfsIdl, /Hot: idl\.Null/);

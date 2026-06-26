@@ -1,8 +1,7 @@
 // Where: extensions/wiki-clipper/src/offscreen.js
-// What: DOM-backed authenticated URL/source ingest worker for the MV3 extension.
+// What: DOM-backed authenticated source write worker for the MV3 extension.
 // Why: Internet Identity AuthClient requires a window-like context, not the service worker.
 import { authSnapshot as defaultAuthSnapshot, resetAuthClient as defaultResetAuthClient } from "./auth-client.js";
-import { buildUrlIngestRequest } from "./url-ingest-request.js";
 import {
   createVfsActor as defaultCreateVfsActor,
   getCyclesBillingConfigOrNull,
@@ -10,16 +9,12 @@ import {
   requireDatabaseWriteCyclesAvailable
 } from "./vfs-actor.js";
 
-const URL_INGEST_TRIGGER_URL = "https://wiki.kinic.xyz/api/url-ingest/trigger";
 const SOURCE_RUN_TRIGGER_URL = "https://wiki.kinic.xyz/api/source/run";
-const TRIGGER_SESSION_TTL_MS = 30 * 60 * 1000;
-const TRIGGER_SESSION_REFRESH_MS = 2 * 60 * 1000;
 
 let authSnapshotFactory = defaultAuthSnapshot;
 let resetAuthClientFactory = defaultResetAuthClient;
 let vfsActorFactory = defaultCreateVfsActor;
 let fetchFactory = (...args) => fetch(...args);
-const triggerSessionCache = new Map();
 
 if (globalThis.chrome?.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -35,55 +30,19 @@ if (globalThis.chrome?.runtime?.onMessage) {
 }
 
 export function handleOffscreenMessage(message) {
-  return message?.type === "queue-url-ingest"
-    ? queueUrlIngest(message.tab, message.config)
-    : message?.type === "save-evidence-source"
-      ? saveEvidenceSource(message.evidenceSource, message.config)
-      : message?.type === "trigger-source-generation"
-        ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
-        : message?.type === "web-source-exists"
-          ? webSourceExists(message.sourcePath, message.config)
-          : message?.type === "auth-status"
-            ? authStatus()
-            : message?.type === "list-writable-databases"
-              ? listWritableDatabases(message.config)
-              : message?.type === "reset-auth-client"
-                ? resetOffscreenAuthState()
-                : null;
-}
-
-export async function queueUrlIngest(tab, config) {
-  if (!tab?.url) throw new Error("active tab URL is required");
-  if (!config?.canisterId) throw new Error("canister id is required");
-  if (!config?.databaseId) throw new Error("database id is required");
-  const snapshot = await authenticatedSnapshot();
-  const actor = await vfsActorFactory({ ...config, identity: snapshot.identity });
-  await requireDatabaseWriteCyclesAvailable(actor, config.databaseId);
-  const session = await ensureTriggerSession(actor, config.databaseId, snapshot.principal);
-  const request = buildUrlIngestRequest({
-    url: tab.url,
-    requestedBy: snapshot.principal
-  });
-  await ensureParentFolders(actor, config.databaseId, request.writeRequest.path);
-  const result = await actor.write_node({
-    database_id: config.databaseId,
-    path: request.writeRequest.path,
-    kind: request.writeRequest.kind,
-    content: request.writeRequest.content,
-    metadata_json: request.writeRequest.metadataJson,
-    expected_etag: request.writeRequest.expectedEtag
-  });
-  if ("Err" in result) throw new Error(result.Err);
-  const trigger = await triggerUrlIngest(config.canisterId, config.databaseId, request.requestPath, session);
-  return {
-    requestPath: request.requestPath,
-    url: tab.url,
-    title: tab.title || "",
-    principal: snapshot.principal,
-    etag: result.Ok.node.etag,
-    triggered: trigger.ok,
-    triggerError: trigger.error
-  };
+  return message?.type === "save-evidence-source"
+    ? saveEvidenceSource(message.evidenceSource, message.config)
+    : message?.type === "trigger-source-generation"
+      ? triggerSourceGeneration(message.config, message.sourcePath, message.sourceEtag, message.sessionNonce)
+      : message?.type === "web-source-exists"
+        ? webSourceExists(message.sourcePath, message.config)
+        : message?.type === "auth-status"
+          ? authStatus()
+          : message?.type === "list-writable-databases"
+            ? listWritableDatabases(message.config)
+            : message?.type === "reset-auth-client"
+              ? resetOffscreenAuthState()
+              : null;
 }
 
 export async function saveEvidenceSource(evidenceSource, config) {
@@ -185,12 +144,10 @@ export function setOffscreenDepsForTest(deps = {}) {
   resetAuthClientFactory = deps.resetAuthClient || defaultResetAuthClient;
   vfsActorFactory = deps.createVfsActor || defaultCreateVfsActor;
   fetchFactory = deps.fetch || ((...args) => fetch(...args));
-  triggerSessionCache.clear();
 }
 
 export async function resetOffscreenAuthState() {
   await resetAuthClientFactory();
-  triggerSessionCache.clear();
   return { reset: true };
 }
 
@@ -204,61 +161,6 @@ async function authenticatedSnapshot() {
     throw new Error("UNAUTHENTICATED");
   }
   return snapshot;
-}
-
-async function ensureTriggerSession(actor, databaseId, principal) {
-  return ensureSession(triggerSessionCache, (request) => actor.authorize_url_ingest_trigger_session(request), databaseId, principal);
-}
-
-async function ensureSession(cache, authorize, databaseId, principal) {
-  const key = `${databaseId}:${principal}`;
-  const now = Date.now();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAtMs - now > TRIGGER_SESSION_REFRESH_MS) {
-    return cached.sessionNonce;
-  }
-  if (cached?.promise) {
-    return cached.promise;
-  }
-  const sessionNonce = crypto.randomUUID();
-  const promise = authorize({
-    database_id: databaseId,
-    session_nonce: sessionNonce
-  })
-    .then((result) => {
-      if ("Err" in result) throw new Error(result.Err);
-      cache.set(key, {
-        sessionNonce,
-        expiresAtMs: now + TRIGGER_SESSION_TTL_MS
-      });
-      return sessionNonce;
-    })
-    .catch((error) => {
-      cache.delete(key);
-      throw error;
-    });
-  cache.set(key, {
-    sessionNonce,
-    expiresAtMs: now,
-    promise
-  });
-  return promise;
-}
-
-async function triggerUrlIngest(canisterId, databaseId, requestPath, sessionNonce) {
-  try {
-    const response = await fetchFactory(URL_INGEST_TRIGGER_URL, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ canisterId, databaseId, requestPath, sessionNonce })
-    });
-    if (!response.ok) {
-      return { ok: false, error: `worker trigger failed: HTTP ${response.status}` };
-    }
-    return { ok: true, error: null };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "worker trigger failed" };
-  }
 }
 
 async function triggerSourceRun(canisterId, databaseId, sourcePath, sourceEtag, sessionNonce) {

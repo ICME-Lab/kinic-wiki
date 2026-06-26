@@ -575,8 +575,8 @@ assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/Wikipedia/foo.md"), null);
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Knowledge/current.md", "/SourcesBackup/foo.md"), null);
-assert.equal(inferNoteRole("/Sources/web/abc.md"), "raw_source");
-assert.equal(inferNoteRole("/Sources/123/abc.md"), "raw_source");
+assert.equal(inferNoteRole("/Sources/web/abc.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/123/abc.md"), "evidence_source");
 assert.equal(inferNoteRole("/Sources/sessions/abc/abc.md"), "markdown_note");
 assert.equal(inferNoteRole("/Sources/skill-runs/name/run.md"), "markdown_note");
 assert.equal(inferNoteRole("/Sources/raw/abc.md"), "markdown_note");

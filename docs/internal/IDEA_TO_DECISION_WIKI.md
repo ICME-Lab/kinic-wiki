@@ -37,13 +37,13 @@ MVP は `Seed -> Draft -> Review -> Canonical -> Archive` を扱う。`Canonical
 推奨 root:
 
 ```text
-/raw
+/Sources
   /discord
   /meetings
   /links
   /uploads
 
-/wiki
+/Knowledge
   /ideas
   /problems
   /projects
@@ -52,28 +52,28 @@ MVP は `Seed -> Draft -> Review -> Canonical -> Archive` を扱う。`Canonical
   /organizations
   /open-questions
 
-/meta
-  schema.md
-  permissions.md
-  editorial-policy.md
-  index.md
-  log.md
+/Knowledge/meta
+  /schema.md
+  /permissions.md
+  /editorial-policy.md
+  /index.md
+  /log.md
 ```
 
 役割:
 
-- `/raw`: Discord 投稿、会議録、外部リンク、添付ファイルなどの evidence source。
-- `/wiki/ideas`: lifecycle を持つ idea page。
-- `/wiki/problems`: 解決したい課題の整理。
-- `/wiki/projects`: 実装・検証単位。
-- `/wiki/decisions`: Canonical 化された意思決定。
-- `/wiki/open-questions`: 未解決の問い、矛盾、検証待ち。
-- `/meta/schema.md`: LLM と人間が従う page schema。
-- `/meta/permissions.md`: lifecycle ごとの閲覧・編集・昇格権限。
-- `/meta/editorial-policy.md`: claim、hypothesis、opinion の扱い。
-- `/meta/log.md`: append-only の変更・昇格・archive log。
+- `/Sources`: Discord 投稿、会議録、外部リンク、添付ファイルなどの evidence source。
+- `/Knowledge/ideas`: lifecycle を持つ idea page。
+- `/Knowledge/problems`: 解決したい課題の整理。
+- `/Knowledge/projects`: 実装・検証単位。
+- `/Knowledge/decisions`: Canonical 化された意思決定。
+- `/Knowledge/open-questions`: 未解決の問い、矛盾、検証待ち。
+- `/Knowledge/meta/schema.md`: LLM と人間が従う page schema。
+- `/Knowledge/meta/permissions.md`: lifecycle ごとの閲覧・編集・昇格権限。
+- `/Knowledge/meta/editorial-policy.md`: claim、hypothesis、opinion の扱い。
+- `/Knowledge/meta/log.md`: append-only の変更・昇格・archive log。
 
-既存の repo-local note role では `/Sources/...` と `/Wiki/...` が正本だが、この Product Spec では product-facing path として `/raw` と `/wiki` を使う。実装時は canister 内の実 path を `/Sources/...` と `/Wiki/...` に正規化してもよい。
+現在の canister 正本は `/Sources/...` と `/Knowledge/...` のみ。
 
 ## Evidence Policy
 
@@ -237,7 +237,7 @@ Product:
 - LLM が既存 wiki と照合し、Draft を生成できる。
 - Review で反論、類似案、検証項目、未解決問いを追加できる。
 - 権限者だけが Canonical に昇格できる。
-- Canonical decision が `/wiki/decisions` に残る。
+- Canonical decision が `/Knowledge/decisions` に残る。
 - `Archive` された案も検索可能で、編集不可になる。
 
 Safety:

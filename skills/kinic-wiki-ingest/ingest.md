@@ -75,7 +75,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 
 - Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, trust model, and current role mapping.
 - Runtime `facts.md` extraction policy follows [docs/STORE_API.md](../../docs/STORE_API.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
-- Treat local `Wiki/` content as the human review surface.
+- Treat local `/Knowledge/...` content as the human review surface.
 - Keep OKF Context Pack export separate from source ingestion; use `kinic-context-pack` after `/Knowledge/...` is ready.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.

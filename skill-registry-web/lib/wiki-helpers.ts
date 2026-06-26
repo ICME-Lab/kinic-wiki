@@ -85,7 +85,7 @@ export function inferNoteRole(path: string): string {
   if (name === "plans.md") return "plans";
   if (name === "summary.md") return "summary";
   if (name === "open_questions.md") return "open_questions";
-  if (isKnowledgeSourcePath(path)) return "raw_source";
+  if (isKnowledgeSourcePath(path)) return "evidence_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";
 }
