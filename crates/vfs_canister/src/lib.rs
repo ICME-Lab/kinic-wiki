@@ -44,25 +44,24 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
     ListNodesRequest, MarketCreateListingRequest, MarketEntitlementPage, MarketListing,
     MarketListingDetail, MarketListingPage, MarketOrder, MarketOrderPage, MarketPurchasePreview,
     MarketPurchaseRequest, MarketUpdateListingRequest, MemoryCapability, MemoryManifest,
-    MemoryManifestRequest, MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
-    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
-    NodeContextRequest, NodeEntry, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
-    OpsAnswerSessionRequest, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceEvidence, SourceEvidenceRequest, SourceRunSessionCheckRequest, Status,
-    StorageBillingBatchRequest, StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest,
-    UrlIngestTriggerSessionRequest, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest, WriteSourceForGenerationRequest,
-    WriteSourceForGenerationResult, kinic_base_units_per_token,
+    MemoryRoot, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
+    MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry,
+    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
+    OutgoingLinksRequest, QueryContext, QueryContextRequest, RenameDatabaseRequest, SearchNodeHit,
+    SearchNodePathsRequest, SearchNodesRequest, SourceEvidence, SourceEvidenceRequest,
+    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
+    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
+    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -351,7 +350,7 @@ fn canister_health() -> CanisterHealth {
 }
 
 #[query]
-fn memory_manifest(request: MemoryManifestRequest) -> Result<MemoryManifest, String> {
+fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String> {
     with_service(|service| service.status(&request.database_id, &caller_text()))?;
     Ok(MemoryManifest {
         api_version: "kinic-stores-v1".to_string(),
@@ -1056,7 +1055,7 @@ fn update_cycles_billing_config(update: CyclesBillingConfigUpdate) -> Result<(),
 }
 
 #[update]
-fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
+fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_unmetered_update(
         "delete_database",

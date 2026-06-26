@@ -293,7 +293,7 @@ export const expectedTypes = {
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
-  DeleteDatabaseRequest: { kind: "record", fields: { database_id: "text" } },
+  DatabaseIdRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -466,7 +466,6 @@ export const expectedTypes = {
       roots: "vec MemoryRoot"
     }
   },
-  MemoryManifestRequest: { kind: "record", fields: { database_id: "text" } },
   MemoryRoot: { kind: "record", fields: { kind: "text", path: "text" } },
   QueryContext: {
     kind: "record",
@@ -661,7 +660,6 @@ export const expectedTypes = {
 export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
-  MemoryManifestRequest: "DeleteDatabaseRequest",
   ResultCyclesTopUpCheck: "Result_3",
   ResultOpsAnswerSessionCheck: "Result_4",
   ResultCreateDatabase: "Result_5",
@@ -710,7 +708,7 @@ export const expectedMethods = {
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
-  delete_database: { input: ["DeleteDatabaseRequest"], output: "ResultUnit", mode: "update" },
+  delete_database: { input: ["DatabaseIdRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
@@ -739,7 +737,7 @@ export const expectedMethods = {
   market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_purchase_access: { input: ["MarketPurchaseRequest"], output: "ResultMarketOrder", mode: "update" },
   market_update_listing: { input: ["MarketUpdateListingRequest"], output: "ResultMarketListing", mode: "update" },
-  memory_manifest: { input: ["MemoryManifestRequest"], output: "ResultMemoryManifest", mode: "query" },
+  memory_manifest: { input: ["DatabaseIdRequest"], output: "ResultMemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },

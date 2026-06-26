@@ -21,12 +21,12 @@ use vfs_types::{
     IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest,
     MarketCreateListingRequest, MarketEntitlementPage, MarketListing, MarketListingPage,
     MarketOrder, MarketOrderPage, MarketPurchasePreview, MarketPurchaseRequest,
-    MarketUpdateListingRequest, MemoryManifest, MemoryManifestRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeContext, NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext,
-    QueryContextRequest, RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics,
-    WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
+    MarketUpdateListingRequest, MemoryManifest, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest,
+    MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext,
+    NodeContextRequest, NodeEntry, OutgoingLinksRequest, QueryContext, QueryContextRequest,
+    RenameDatabaseRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SourceEvidence, SourceEvidenceRequest, Status, WikiMetrics, WikiMetricsPoint, WriteNodeRequest,
+    WriteNodeResult, WriteNodesRequest,
 };
 
 #[async_trait]
@@ -529,7 +529,7 @@ impl VfsApi for CanisterVfsClient {
         let result: Result<MemoryManifest, String> = self
             .query(
                 "memory_manifest",
-                &MemoryManifestRequest {
+                &vfs_types::DatabaseIdRequest {
                     database_id: database_id.to_string(),
                 },
             )

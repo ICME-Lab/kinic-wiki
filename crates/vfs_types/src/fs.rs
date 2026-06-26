@@ -359,9 +359,11 @@ pub struct RenameDatabaseRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct DeleteDatabaseRequest {
+pub struct DatabaseIdRequest {
     pub database_id: String,
 }
+
+pub type DeleteDatabaseRequest = DatabaseIdRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct DatabaseArchiveInfo {
@@ -817,10 +819,7 @@ pub struct MemoryCapability {
     pub description: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
-pub struct MemoryManifestRequest {
-    pub database_id: String,
-}
+pub type MemoryManifestRequest = DatabaseIdRequest;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
 pub struct CanonicalRole {

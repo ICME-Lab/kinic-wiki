@@ -106,6 +106,7 @@ type DatabaseCyclesPurchaseRequest = record {
   database_id : text;
   min_expected_cycles : nat64;
 };
+type DatabaseIdRequest = record { database_id : text };
 type DatabaseMember = record {
   "principal" : text;
   role : DatabaseRole;
@@ -137,7 +138,6 @@ type DatabaseSummary = record {
   archived_at_ms : opt int64;
   deleted_at_ms : opt int64;
 };
-type DeleteDatabaseRequest = record { database_id : text };
 type DeleteNodeRequest = record {
   path : text;
   expected_etag : opt text;
@@ -669,7 +669,7 @@ service : (CyclesBillingConfig) -> {
       Result_1,
     ) query;
   create_database : (CreateDatabaseRequest) -> (Result_5);
-  delete_database : (DeleteDatabaseRequest) -> (Result_1);
+  delete_database : (DatabaseIdRequest) -> (Result_1);
   delete_node : (DeleteNodeRequest) -> (Result_6);
   edit_node : (EditNodeRequest) -> (Result_7);
   export_snapshot : (ExportSnapshotRequest) -> (Result_8) query;
@@ -709,7 +709,7 @@ service : (CyclesBillingConfig) -> {
   market_publish_listing : (text) -> (Result_20);
   market_purchase_access : (MarketPurchaseRequest) -> (Result_27);
   market_update_listing : (MarketUpdateListingRequest) -> (Result_20);
-  memory_manifest : (DeleteDatabaseRequest) -> (Result_28) query;
+  memory_manifest : (DatabaseIdRequest) -> (Result_28) query;
   mkdir_node : (MkdirNodeRequest) -> (Result_29);
   move_node : (MoveNodeRequest) -> (Result_30);
   multi_edit_node : (MultiEditNodeRequest) -> (Result_7);

@@ -228,7 +228,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
-  const DeleteDatabaseRequest = idl.Record({ database_id: idl.Text });
+  const DatabaseIdRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
     role: DatabaseRole,
@@ -306,7 +306,6 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     purpose: idl.Text,
     roots: idl.Vec(MemoryRoot)
   });
-  const MemoryManifestRequest = idl.Record({ database_id: idl.Text });
   const SourceEvidenceRef = idl.Record({
     link_text: idl.Text,
     via_path: idl.Text,
@@ -481,7 +480,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
-    delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
+    delete_database: idl.Func([DatabaseIdRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
@@ -508,7 +507,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     market_publish_listing: idl.Func([idl.Text], [ResultMarketListing], []),
     market_purchase_access: idl.Func([MarketPurchaseRequest], [ResultMarketOrder], []),
     market_update_listing: idl.Func([MarketUpdateListingRequest], [ResultMarketListing], []),
-    memory_manifest: idl.Func([MemoryManifestRequest], [ResultMemoryManifest], ["query"]),
+    memory_manifest: idl.Func([DatabaseIdRequest], [ResultMemoryManifest], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     move_node: idl.Func([MoveNodeRequest], [ResultMoveNode], []),
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),
