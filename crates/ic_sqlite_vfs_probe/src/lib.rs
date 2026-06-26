@@ -44,11 +44,14 @@ mod canister;
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
     use ic_stable_structures::DefaultMemoryImpl;
     use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
     use proptest::prelude::*;
     use proptest::test_runner::{Config as ProptestConfig, FileFailurePersistence};
+
+    static PROBE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn get_from_update(handle: DbHandle, key: &str) -> Result<Option<String>, DbError> {
         handle.update(|connection| {
@@ -61,6 +64,9 @@ mod tests {
 
     #[test]
     fn db_handles_are_isolated_by_memory_id() {
+        let _guard = PROBE_TEST_LOCK
+            .lock()
+            .expect("probe test lock should acquire");
         let manager = MemoryManager::init(DefaultMemoryImpl::default());
         let first = init_probe(manager.get(MemoryId::new(120))).expect("first handle initializes");
         let second =
@@ -167,6 +173,7 @@ mod tests {
         fn random_operation_sequences_match_a_map_model(
             operations in prop::collection::vec(operation_strategy(), 1..80),
         ) {
+            let _guard = PROBE_TEST_LOCK.lock().expect("probe test lock should acquire");
             let manager = MemoryManager::init(DefaultMemoryImpl::default());
             let (mut first, mut second) = init_handles(&manager);
             let mut model = BTreeMap::<(u8, String), String>::new();

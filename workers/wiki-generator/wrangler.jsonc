@@ -17,9 +17,9 @@
     "KINIC_WIKI_CANISTER_ID": "xis3j-paaaa-aaaai-axumq-cai",
     "KINIC_WIKI_IC_HOST": "https://icp0.io",
     "KINIC_WIKI_WORKER_MODEL": "deepseek-v4-flash",
-    "KINIC_WIKI_WORKER_TARGET_ROOT": "/Wiki/conversations",
+    "KINIC_WIKI_WORKER_TARGET_ROOT": "/Knowledge/conversations",
     "KINIC_WIKI_WORKER_SOURCE_PREFIX": "/Sources/evidence",
-    "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/Wiki"
+    "KINIC_WIKI_WORKER_CONTEXT_PREFIX": "/"
   },
   "d1_databases": [
     {

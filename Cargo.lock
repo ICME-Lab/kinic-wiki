@@ -3537,7 +3537,6 @@ dependencies = [
  "hex",
  "ic-sqlite-vfs",
  "kinic-vfs-types",
- "kinic-wiki-domain",
  "proptest",
  "pulldown-cmark",
  "rusqlite",

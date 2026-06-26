@@ -26,7 +26,7 @@ export function HelpPanel() {
           <HelpItem
             icon={<BookOpen aria-hidden size={17} />}
             title="Browse"
-            body="Use Explorer for /Wiki and /Sources, breadcrumbs for parent folders, and Preview, Raw, or Edit for the active note."
+            body="Use Explorer for /Knowledge and /Sources, breadcrumbs for parent folders, and Preview, Raw, or Edit for the active note."
           />
           <HelpItem
             icon={<GitBranch aria-hidden size={17} />}

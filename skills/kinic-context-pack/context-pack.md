@@ -2,11 +2,11 @@
 
 ## Goal
 
-Export a selected `/Wiki/...` scope into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied evidence source bodies.
+Export a selected `/Knowledge/...` scope into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied evidence source bodies.
 
 ## Workflow
 
-1. Identify the `database_id` and the `/Wiki/...` root to export.
+1. Identify the `database_id` and the `/Knowledge/...` root to export.
 2. Export the scope with `context-pack export`.
 3. Verify the output directory with `context-pack verify`.
 4. Inspect the bundle with `context-pack inspect` when a summary or JSON handoff record is useful.
@@ -18,7 +18,7 @@ Export:
 
 ```bash
 kinic-vfs-cli --database-id <db> context-pack export \
-  --root /Wiki/projects/acme \
+  --root /Knowledge/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \

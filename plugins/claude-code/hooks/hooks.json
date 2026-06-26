@@ -1,5 +1,5 @@
 {
-  "description": "Persist completed Claude Code sessions to Kinic evidence sources.",
+  "description": "Persist completed Claude Code sessions to Kinic raw sources.",
   "hooks": {
     "SessionEnd": [
       {

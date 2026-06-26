@@ -5,8 +5,8 @@ use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use vfs_cli::cli::VfsCommand;
 pub use vfs_cli::cli::{
-    ConnectionArgs, CyclesCommand, DatabaseCommand, DatabaseProfileArg, GlobNodeTypeArg,
-    IdentityModeArg, MarketCommand, NodeKindArg, SearchPreviewModeArg,
+    ConnectionArgs, CyclesCommand, DatabaseCommand, GlobNodeTypeArg, IdentityModeArg,
+    MarketCommand, NodeKindArg, SearchPreviewModeArg,
 };
 use wiki_domain::WIKI_ROOT_PATH;
 
@@ -81,7 +81,7 @@ pub enum Command {
         #[arg(long)]
         scope: String,
     },
-    #[command(about = "Generate wiki nodes from a local conversation source")]
+    #[command(about = "Generate knowledge nodes from a local conversation source")]
     GenerateConversationWiki {
         #[arg(long)]
         source_path: String,
@@ -108,7 +108,7 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List direct children under one wiki path; agents should prefer --json")]
+    #[command(about = "List direct children under one knowledge path; agents should prefer --json")]
     ListChildren {
         #[arg(long, default_value = WIKI_ROOT_PATH)]
         path: String,
@@ -388,8 +388,6 @@ pub enum SkillCommand {
         #[arg(long, conflicts_with_all = ["task", "outcome", "notes_file", "agent"])]
         evidence_json: Option<PathBuf>,
         #[arg(long)]
-        create_ready_jobs: bool,
-        #[arg(long)]
         task: Option<String>,
         #[arg(long, value_enum)]
         outcome: Option<SkillRunOutcomeArg>,
@@ -415,42 +413,12 @@ pub enum SkillCommand {
         #[command(subcommand)]
         source: SkillImportCommand,
     },
-    #[command(about = "Write an evidence-backed skill improvement proposal")]
-    ProposeImprovement {
-        id: String,
-        #[arg(long = "runs", required = true)]
-        runs: Vec<String>,
-        #[arg(long)]
-        summary: String,
-        #[arg(long)]
-        diff_file: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Mark a skill improvement proposal as reviewed")]
-    ApproveProposal {
-        id: String,
-        proposal_path: String,
-        #[arg(long)]
-        json: bool,
-    },
     #[command(about = "Record a correction for an existing skill run")]
     RecordCorrection {
         id: String,
         run_id: String,
         #[arg(long)]
         notes_file: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Apply a reviewed skill proposal when the base etag still matches")]
-    ApplyProposal {
-        id: String,
-        proposal_id: String,
-        #[arg(long)]
-        job_id: Option<String>,
-        #[arg(long)]
-        projection_dir: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -482,16 +450,11 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "List skill versions, proposals, jobs, runs, and corrections")]
+    #[command(about = "List skill versions, runs, and corrections")]
     History {
         id: String,
         #[arg(long)]
         json: bool,
-    },
-    #[command(about = "Manage queued skill store evolution jobs")]
-    EvolveJobs {
-        #[command(subcommand)]
-        command: SkillEvolveJobsCommand,
     },
     #[command(about = "Write a lockfile for a selected skill package")]
     Install {
@@ -505,18 +468,26 @@ pub enum SkillCommand {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ContextPackCommand {
-    #[command(about = "Export an OKF markdown bundle from a wiki namespace")]
+    #[command(about = "Export an OKF markdown bundle from a database namespace")]
     Export(ContextPackExportArgs),
     #[command(about = "Verify a local OKF bundle directory")]
-    Verify(ContextPackLocalArgs),
+    Verify(ContextPackVerifyArgs),
     #[command(about = "Inspect a local OKF bundle summary")]
     Inspect(ContextPackLocalArgs),
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct ContextPackExportArgs {
-    #[arg(long, default_value = WIKI_ROOT_PATH)]
-    pub root: String,
+    #[arg(long)]
+    pub task: String,
+    #[arg(long, default_value = "/")]
+    pub namespace: String,
+    #[arg(long, default_value_t = 8_000)]
+    pub budget_tokens: u32,
+    #[arg(long, default_value_t = 1)]
+    pub depth: u32,
+    #[arg(long = "entity")]
+    pub entities: Vec<String>,
     #[arg(long)]
     pub out: PathBuf,
     #[arg(long)]
@@ -534,6 +505,15 @@ pub struct ContextPackExportArgs {
 #[derive(Args, Debug, Clone)]
 pub struct ContextPackLocalArgs {
     pub path: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ContextPackVerifyArgs {
+    pub path: PathBuf,
+    #[arg(long)]
+    pub fail_on_truncated: bool,
     #[arg(long)]
     pub json: bool,
 }
@@ -592,53 +572,6 @@ pub enum ClaudeCommand {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Subcommand, Debug, Clone)]
-pub enum SkillEvolveJobsCommand {
-    #[command(about = "Create queued evolution jobs for skills with enough new evidence")]
-    CreateReady {
-        #[arg(long, default_value_t = 5)]
-        min_new_runs: u32,
-        #[arg(long, default_value_t = 24)]
-        cooldown_hours: u32,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "List skill evolution jobs")]
-    List {
-        #[arg(long, value_enum)]
-        status: Option<SkillEvolutionJobStatusArg>,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Claim one queued evolution job")]
-    Claim {
-        job_id: String,
-        #[arg(long, default_value_t = 3600)]
-        lease_seconds: u32,
-        #[arg(long)]
-        json: bool,
-    },
-    #[command(about = "Complete one evolution job with a terminal status")]
-    Complete {
-        job_id: String,
-        #[arg(long, value_enum)]
-        status: SkillEvolutionJobStatusArg,
-        #[arg(long)]
-        summary: String,
-        #[arg(long)]
-        json: bool,
-    },
-}
-
-#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SkillEvolutionJobStatusArg {
-    Queued,
-    Running,
-    Done,
-    Conflict,
-    Failed,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1046,8 +979,8 @@ impl Command {
 mod tests {
     use super::{
         ClaudeCommand, Cli, CodexCommand, Command, ContextPackCommand, CyclesCommand,
-        DatabaseCommand, DatabaseProfileArg, HermesCommand, IdentityModeArg, MarketCommand,
-        NodeKindArg, SkillCommand, SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
+        DatabaseCommand, HermesCommand, IdentityModeArg, MarketCommand, NodeKindArg, SkillCommand,
+        SkillImportCommand, SkillRunOutcomeArg, SkillStatusArg,
     };
     use clap::{CommandFactory, Parser};
     use vfs_cli::cli::VfsCommand;
@@ -1109,7 +1042,7 @@ mod tests {
             "kinic-vfs-cli",
             "read-node-context",
             "--path",
-            "/Wiki/a.md",
+            "/Knowledge/a.md",
             "--link-limit",
             "7",
             "--json",
@@ -1122,7 +1055,7 @@ mod tests {
         else {
             panic!("expected read-node-context command");
         };
-        assert_eq!(path, "/Wiki/a.md");
+        assert_eq!(path, "/Knowledge/a.md");
         assert_eq!(link_limit, 7);
         assert!(json);
 
@@ -1130,7 +1063,7 @@ mod tests {
             "kinic-vfs-cli",
             "graph-neighborhood",
             "--center-path",
-            "/Wiki/a.md",
+            "/Knowledge/a.md",
             "--depth",
             "2",
             "--limit",
@@ -1145,7 +1078,7 @@ mod tests {
         else {
             panic!("expected graph-neighborhood command");
         };
-        assert_eq!(center_path, "/Wiki/a.md");
+        assert_eq!(center_path, "/Knowledge/a.md");
         assert_eq!(depth, 2);
         assert_eq!(limit, 9);
         assert!(!json);
@@ -1155,29 +1088,12 @@ mod tests {
     fn main_cli_parses_database_link_commands() {
         let cli = Cli::parse_from(["kinic-vfs-cli", "database", "create", "team-db"]);
         let Command::Database {
-            command: DatabaseCommand::Create { name, profile },
+            command: DatabaseCommand::Create { name },
         } = cli.command
         else {
             panic!("expected database create command");
         };
         assert_eq!(name, "team-db");
-        assert_eq!(profile, DatabaseProfileArg::Workspace);
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "database",
-            "create",
-            "--profile",
-            "memory",
-            "team-memory",
-        ]);
-        let Command::Database {
-            command: DatabaseCommand::Create { name, profile },
-        } = cli.command
-        else {
-            panic!("expected database create command");
-        };
-        assert_eq!(name, "team-memory");
-        assert_eq!(profile, DatabaseProfileArg::Memory);
         assert!(Cli::try_parse_from(["kinic-vfs-cli", "database", "create"]).is_err());
 
         let cli = Cli::parse_from([
@@ -1374,8 +1290,16 @@ mod tests {
             "kinic-vfs-cli",
             "context-pack",
             "export",
-            "--root",
-            "/Wiki/projects/acme",
+            "--task",
+            "review auth",
+            "--namespace",
+            "/Knowledge/projects/acme",
+            "--budget-tokens",
+            "12000",
+            "--depth",
+            "2",
+            "--entity",
+            "auth",
             "--out",
             "pack",
             "--expires-at",
@@ -1393,7 +1317,11 @@ mod tests {
         else {
             panic!("expected context-pack export command");
         };
-        assert_eq!(args.root, "/Wiki/projects/acme");
+        assert_eq!(args.task, "review auth");
+        assert_eq!(args.namespace, "/Knowledge/projects/acme");
+        assert_eq!(args.budget_tokens, 12000);
+        assert_eq!(args.depth, 2);
+        assert_eq!(args.entities, vec!["auth"]);
         assert_eq!(args.out.to_string_lossy(), "pack");
         assert_eq!(args.expires_at, "2999-01-01T00:00:00Z");
         assert_eq!(args.trust_level, "team-approved");
@@ -1401,7 +1329,33 @@ mod tests {
         assert!(args.overwrite);
         assert!(args.json);
 
-        let verify = Cli::parse_from(["kinic-vfs-cli", "context-pack", "verify", "pack", "--json"]);
+        let export_default_namespace = Cli::parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "export",
+            "--task",
+            "review auth",
+            "--out",
+            "pack",
+            "--expires-at",
+            "2999-01-01T00:00:00Z",
+        ]);
+        let Command::ContextPack {
+            command: ContextPackCommand::Export(args),
+        } = export_default_namespace.command
+        else {
+            panic!("expected context-pack export command");
+        };
+        assert_eq!(args.namespace, "/");
+
+        let verify = Cli::parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "verify",
+            "pack",
+            "--fail-on-truncated",
+            "--json",
+        ]);
         let Command::ContextPack {
             command: ContextPackCommand::Verify(args),
         } = verify.command
@@ -1409,6 +1363,7 @@ mod tests {
             panic!("expected context-pack verify command");
         };
         assert_eq!(args.path.to_string_lossy(), "pack");
+        assert!(args.fail_on_truncated);
         assert!(args.json);
 
         let inspect = Cli::parse_from(["kinic-vfs-cli", "context-pack", "inspect", "pack"]);
@@ -1420,11 +1375,31 @@ mod tests {
         };
         assert_eq!(args.path.to_string_lossy(), "pack");
         assert!(!args.json);
+
+        let root_arg = Cli::try_parse_from([
+            "kinic-vfs-cli",
+            "context-pack",
+            "export",
+            "--root",
+            "/Knowledge/projects/acme",
+            "--task",
+            "review auth",
+            "--out",
+            "pack",
+            "--expires-at",
+            "2999-01-01T00:00:00Z",
+        ]);
+        assert!(root_arg.is_err());
     }
 
     #[test]
     fn command_identity_requirement_keeps_reads_anonymous() {
-        let read = Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
+        let read = Cli::parse_from([
+            "kinic-vfs-cli",
+            "read-node",
+            "--path",
+            "/Knowledge/index.md",
+        ]);
         assert!(!read.command.requires_identity());
         assert!(read.command.probes_anonymous_database_read());
 
@@ -1444,6 +1419,8 @@ mod tests {
             "kinic-vfs-cli",
             "context-pack",
             "export",
+            "--task",
+            "summary",
             "--out",
             "pack",
             "--expires-at",
@@ -1485,7 +1462,7 @@ mod tests {
             "kinic-vfs-cli",
             "write-node",
             "--path",
-            "/Wiki/index.md",
+            "/Knowledge/index.md",
             "--input",
             "index.md",
         ]);
@@ -1532,7 +1509,7 @@ mod tests {
     }
 
     #[test]
-    fn main_cli_parses_record_run_create_ready_jobs() {
+    fn main_cli_parses_record_run() {
         let cli = Cli::parse_from([
             "kinic-vfs-cli",
             "skill",
@@ -1544,14 +1521,12 @@ mod tests {
             "success",
             "--notes-file",
             "notes.md",
-            "--create-ready-jobs",
             "--json",
         ]);
         let Command::Skill {
             command:
                 SkillCommand::RecordRun {
                     id,
-                    create_ready_jobs,
                     task,
                     outcome,
                     notes_file,
@@ -1563,7 +1538,6 @@ mod tests {
             panic!("expected skill record-run command");
         };
         assert_eq!(id, "legal-review");
-        assert!(create_ready_jobs);
         assert_eq!(task.as_deref(), Some("review redlines"));
         assert_eq!(outcome, Some(SkillRunOutcomeArg::Success));
         assert_eq!(notes_file.unwrap().to_string_lossy(), "notes.md");
@@ -1571,44 +1545,28 @@ mod tests {
     }
 
     #[test]
-    fn main_cli_parses_apply_proposal_job_id() {
-        let cli = Cli::parse_from([
-            "kinic-vfs-cli",
-            "skill",
+    fn main_cli_rejects_removed_skill_proposal_commands() {
+        for removed_command in [
+            "propose-improvement",
+            "approve-proposal",
             "apply-proposal",
-            "legal-review",
-            "p1",
-            "--job-id",
-            "job-1",
-            "--projection-dir",
-            "skills",
-            "--json",
-        ]);
-        let Command::Skill {
-            command:
-                SkillCommand::ApplyProposal {
-                    id,
-                    proposal_id,
-                    job_id,
-                    projection_dir,
-                    json,
-                    ..
-                },
-        } = cli.command
-        else {
-            panic!("expected skill apply-proposal command");
-        };
-        assert_eq!(id, "legal-review");
-        assert_eq!(proposal_id, "p1");
-        assert_eq!(job_id.as_deref(), Some("job-1"));
-        assert_eq!(projection_dir.unwrap().to_string_lossy(), "skills");
-        assert!(json);
+            "evolve-jobs",
+        ] {
+            assert!(
+                Cli::try_parse_from(["kinic-vfs-cli", "skill", removed_command]).is_err(),
+                "{removed_command} should be removed"
+            );
+        }
     }
 
     #[test]
     fn main_cli_parses_identity_mode() {
-        let default_cli =
-            Cli::parse_from(["kinic-vfs-cli", "read-node", "--path", "/Wiki/index.md"]);
+        let default_cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "read-node",
+            "--path",
+            "/Knowledge/index.md",
+        ]);
         assert_eq!(default_cli.connection.identity_mode, IdentityModeArg::Auto);
         assert!(!default_cli.connection.allow_non_ii_identity);
 
@@ -1618,7 +1576,7 @@ mod tests {
             "anonymous",
             "read-node",
             "--path",
-            "/Wiki/index.md",
+            "/Knowledge/index.md",
         ]);
         assert_eq!(
             anonymous_cli.connection.identity_mode,
@@ -1631,7 +1589,7 @@ mod tests {
             "identity",
             "write-node",
             "--path",
-            "/Wiki/index.md",
+            "/Knowledge/index.md",
             "--input",
             "index.md",
         ]);
@@ -1645,7 +1603,7 @@ mod tests {
             "--allow-non-ii-identity",
             "read-node",
             "--path",
-            "/Wiki/index.md",
+            "/Knowledge/index.md",
         ]);
         assert!(non_ii_cli.connection.allow_non_ii_identity);
     }
@@ -1668,7 +1626,7 @@ mod tests {
             "kinic-vfs-cli",
             "write-node",
             "--path",
-            "/Wiki/folder",
+            "/Knowledge/folder",
             "--kind",
             "folder",
             "--input",
@@ -1680,7 +1638,7 @@ mod tests {
             "kinic-vfs-cli",
             "append-node",
             "--path",
-            "/Wiki/folder",
+            "/Knowledge/folder",
             "--kind",
             "folder",
             "--input",
@@ -1692,7 +1650,7 @@ mod tests {
             "kinic-vfs-cli",
             "write-node",
             "--path",
-            "/Sources/evidence/source/source.md",
+            "/Sources/source/source.md",
             "--kind",
             "source",
             "--input",
@@ -1733,7 +1691,7 @@ mod tests {
             "search-nodes",
             "incident",
             "--prefix",
-            "/Wiki/run",
+            "/Knowledge/run",
             "--json",
         ]);
         let Command::SearchRemote {
@@ -1746,14 +1704,14 @@ mod tests {
             panic!("expected search-remote command");
         };
         assert_eq!(query_text, "incident");
-        assert_eq!(prefix, "/Wiki/run");
+        assert_eq!(prefix, "/Knowledge/run");
         assert!(json);
 
         let read = Cli::parse_from([
             "kinic-vfs-cli",
             "read-node",
             "--path",
-            "/Wiki/index.md",
+            "/Knowledge/index.md",
             "--metadata-only",
             "--fields",
             "path,kind,etag",

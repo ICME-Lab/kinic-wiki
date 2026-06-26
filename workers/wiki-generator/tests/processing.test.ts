@@ -95,7 +95,7 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
 
     assert.equal(response.status, 200);
     const body = (await response.json()) as { targetPath?: string; content?: string };
-    assert.equal(body.targetPath, "/Wiki/conversations/日本語記事.md");
+    assert.equal(body.targetPath, "/Knowledge/conversations/日本語記事.md");
     assert.match(body.content ?? "", /## 概要/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -125,7 +125,7 @@ test("worker log append failure is non-fatal", async () => {
     warnings.push(args);
   };
   try {
-    const written = await bestEffortAppendWorkerLog(failingLogVfs(), "db_1", "/Wiki/conversations", "/Wiki/conversations/a.md", "/Sources/evidence/a.md");
+    const written = await bestEffortAppendWorkerLog(failingLogVfs(), "db_1", "/Knowledge/conversations", "/Knowledge/conversations/a.md", "/Sources/evidence/a.md");
 
     assert.equal(written, false);
     assert.match(String(warnings[0]?.[0]), /failed to append wiki-generator log/);
@@ -167,7 +167,7 @@ test("legacy url ingest queue message without nonce marks request failed", async
       databaseId: "db_1",
       sourcePath: "/Sources/evidence/a/a.md",
       sourceEtag: "etag-source",
-      requestPath: "/Wiki/not-ingest.md",
+      requestPath: "/Knowledge/not-ingest.md",
       sessionNonce: "session-1"
     }).kind,
     "invalid"
@@ -188,7 +188,7 @@ test("legacy url ingest queue message without nonce marks request failed", async
       kind: "url_ingest",
       canisterId: "canister-1",
       databaseId: "db_1",
-      requestPath: "/Wiki/not-ingest.md",
+      requestPath: "/Knowledge/not-ingest.md",
       sessionNonce: "session-1"
     }).kind,
     "invalid"
@@ -270,7 +270,7 @@ test("source queue uses source run session before DeepSeek", async () => {
     ]);
     assert.equal(deepSeekCalls, 1);
     assert.equal(writtenPages.length, 2);
-    assert.equal(writtenPages[0]?.path, "/Wiki/conversations/project-notes.md");
+    assert.equal(writtenPages[0]?.path, "/Knowledge/conversations/project-notes.md");
     assert.match(writtenPages[0]?.content ?? "", /## Summary/);
     assert.ok(db.runs.some((run) => run.query.includes("INSERT INTO source_jobs") && run.query.includes("status = 'completed'")));
   } finally {

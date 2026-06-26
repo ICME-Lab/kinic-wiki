@@ -1,5 +1,5 @@
 {
-  "description": "Persist completed Codex turns to Kinic evidence sources.",
+  "description": "Persist completed Codex turns to Kinic raw sources.",
   "hooks": {
     "Stop": [
       {

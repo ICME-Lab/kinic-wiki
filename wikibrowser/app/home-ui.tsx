@@ -202,7 +202,7 @@ export function OfficialKinicWikiPanel() {
         <div className="min-w-0">
           <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Official database</p>
           <h2 className="mt-1 text-lg font-semibold text-ink">{OFFICIAL_KINIC_WIKI_DATABASE_NAME}</h2>
-          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">A canister-backed file-system wiki for agent memory: structured paths, evidence sources, links, search, and safe edits.</p>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted">A canister-backed file-system wiki for agent memory: structured paths, raw sources, links, search, and safe edits.</p>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted">Use the Chrome extension to capture ChatGPT conversations and active web pages into the same database.</p>
         </div>
         <div className="flex flex-wrap gap-2">

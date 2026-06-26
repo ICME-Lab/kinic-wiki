@@ -4,7 +4,7 @@
 
 `llm-wiki` は「IC canister 上の VFS を正本にした wiki / agent memory 基盤」。
 現行の主軸は Rust workspace 9 crate と、検証・運用・agent 向け skill 補助で構成される。
-現在の中心概念は `/Wiki/...` と `/Sources/...` を同一 VFS 上で扱う FS-first 構成と、agent が読むための task-scoped memory query。
+現在の中心概念は `/Knowledge/...` と `/Sources/...` を同一 VFS 上で扱う FS-first 構成と、agent が読むための task-scoped memory query。
 
 ## 2. 全体像
 
@@ -68,7 +68,7 @@ flowchart LR
 
 ### 5.2 `wiki_domain`
 
-- `/Sources/evidence/...`, `/Sources/sessions/...` の source path 制約を集中管理
+- `/Sources/...` と `/Sessions/...` の path 制約を集中管理
 - source node の canonical path 制約を強制
 - wiki だけが知る path 規則を保持
 
@@ -112,7 +112,7 @@ flowchart LR
 - `mkdir_node`, `glob_nodes`, `multi_edit_node`
 - `search_nodes`, `search_node_paths`
 - `read_node_context`, `incoming_links`, `outgoing_links`, `graph_links`, `graph_neighborhood`
-- `store_manifest`, `memory_recall`, `knowledge_evidence`
+- `memory_manifest`, `query_context`, `source_evidence`
 - `export_snapshot`, `fetch_updates`
 
 ### 5.6 `vfs_client`
@@ -209,7 +209,7 @@ sequenceDiagram
 
 | skill | 用途 |
 | --- | --- |
-| `kinic-wiki-ingest` | evidence source を `/Sources/evidence/...` に取り込み、review-ready まで整形 |
+| `kinic-wiki-ingest` | raw source を `/Sources/...` に取り込み、review-ready まで整形 |
 | `kinic-wiki-lint` | wiki health 点検 |
 | `kinic-wiki-query` | knowledge base query |
 

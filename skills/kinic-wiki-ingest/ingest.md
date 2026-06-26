@@ -9,19 +9,19 @@ Turn evidence source material into review-ready wiki updates under the canister-
 1. Inspect the source material and the user focus.
 2. If the source is noisy web or PDF-derived text, normalize it first.
 3. Decide whether the source should also be persisted under `/Sources/evidence/...`.
-4. Read existing wiki context with `read-node-context` by starting from `/Wiki/index.md` and the canonical role-matched notes before broad search.
-   - If `/Wiki/index.md` is missing and the workflow will create or reorganize wiki pages, create or repair it before stopping.
+4. Read existing wiki context with `read-node-context` by starting from `/Knowledge/index.md` and the canonical role-matched notes before broad search.
+   - If `/Knowledge/index.md` is missing and the workflow will create or reorganize wiki pages, create or repair it before stopping.
 5. Use `search-remote` or `search-path-remote` only when the relevant canonical notes are missing, ambiguous, or insufficient.
-   - For wiki-only inspection or edits, pass `--prefix /Wiki` or `path: "/Wiki"` unless evidence source material is explicitly needed.
+   - For wiki-only inspection or edits, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless evidence source material is explicitly needed.
 6. Choose the minimum coherent set of pages to update.
-7. Edit `/Wiki/...` directly through `kinic-vfs-cli` remote VFS commands.
+7. Edit `/Knowledge/...` directly through `kinic-vfs-cli` remote VFS commands.
    - Authenticated CLI writes default to Internet Identity via `icp identity default`.
    - Use `--allow-non-ii-identity` only when the user explicitly chooses a PEM or other non-II operator identity.
-8. When a reorganization needs explicit removal of obsolete `/Wiki/...` page groups, inspect the target first with `list-nodes --prefix <path> --recursive --json`, report the count, then use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
+8. When a reorganization needs explicit removal of obsolete `/Knowledge/...` page groups, inspect the target first with `list-nodes --prefix <path> --recursive --json`, report the count, then use `delete-tree` from the CLI rather than treating deletion as an implicit side effect.
 9. If a relevant `log.md` exists or the user asks for logging, update it for every page creation, deletion, or edit done in the workflow. Do not create `log.md` by default.
 10. When appending to `log.md`, read only the recent tail first, for example `tail -n 5`, unless a longer window is clearly needed.
 11. Append one new log line per workflow mutation. Do not rewrite or restructure older log entries.
-12. Keep `/Wiki/index.md` navigable for new page creation and deletion. Do not create folders or scope indexes by default. Run `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Use `rebuild-index` only for broad repair. Skip rebuilds for routine small edits.
+12. Keep `/Knowledge/index.md` navigable for new page creation and deletion. Do not create folders or scope indexes by default. Run `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Use `rebuild-index` only for broad repair. Skip rebuilds for routine small edits.
 13. Stop at review-ready unless the user explicitly asks for push.
 14. If the user wants an OKF bundle after the wiki structure is ready, hand off to `kinic-context-pack`; do not export as an ingest side effect.
 
@@ -29,7 +29,7 @@ Turn evidence source material into review-ready wiki updates under the canister-
 
 Use this workflow only when the user explicitly asks for scoped structure, repairing a thin benchmark import, or converting raw notes into a compounding LLM Wiki.
 
-1. Identify the scope root, for example `/Wiki/<scope>`, and list existing pages under it before writing.
+1. Identify the scope root, for example `/Knowledge/<scope>`, and list existing pages under it before writing.
 2. Confirm evidence sources live under `/Sources/evidence/...`; do not move or rewrite evidence source nodes during scope setup.
 3. Create or update only the scope-level pages the scoped structure needs:
    - `index.md`: optional scoped catalog and navigation entry point.
@@ -37,12 +37,12 @@ Use this workflow only when the user explicitly asks for scoped structure, repai
    - `schema.md`: optional scope-local conventions and maintenance rules.
    - `log.md`: optional append-only chronological record for scoped updates.
    - `topics/*.md`: optional category or topic synthesis pages that connect related source-level notes.
-4. Do not stop with a missing `/Wiki/index.md`; the root catalog is required.
+4. Do not stop with a missing `/Knowledge/index.md`; the root catalog is required.
 5. Keep any scoped `index.md` compact. Link to overview, schema, log, topic pages, and important child pages instead of embedding the full synthesis.
 6. Put corpus-wide meaning in `overview.md`, topic-level synthesis in `topics/*.md`, and source/conversation recap in each child `summary.md`.
 7. When regenerating `summary.md`, read the evidence source path and existing `events.md`, `plans.md`, `open_questions.md`, and `provenance.md` first. Write recap, outcome, important decisions, unresolved points, and source links; do not promote exact stable facts into summary.
 8. Use source path-level evidence links by default unless the user asks for turn, line, or claim-level provenance.
-9. After setup, append one `log.md` entry when a log page exists, and update `/Wiki/index.md`. Rebuild a scope index only when that scoped `index.md` is intended.
+9. After setup, append one `log.md` entry when a log page exists, and update `/Knowledge/index.md`. Rebuild a scope index only when that scoped `index.md` is intended.
 
 ## Conversation Source Setup
 
@@ -51,10 +51,10 @@ Use this workflow when turning one raw conversation source into wiki material.
 1. Confirm the evidence source lives at `/Sources/evidence/<provider>/<id>.md`; do not move or rewrite it during synthesis.
 2. Read the full evidence source and any existing wiki page that already cites the same source.
 3. Let the LLM choose a concrete, content-specific title from the conversation. Do not use the opaque `source_id` as the public page title unless it is the only meaningful identifier.
-4. Default to one flat page at `/Wiki/<llm-generated-title>.md`.
+4. Default to one flat page at `/Knowledge/<llm-generated-title>.md`.
 5. In that page, include only the sections that the source actually supports: `Summary`, `Key Facts`, `Decisions`, `Open Questions`, `Follow-ups`, and `Provenance`.
 6. Put a source path reference in `Provenance`, for example `/Sources/evidence/<provider>/<id>.md`.
-7. If this creates a new page, ensure `/Wiki/index.md` links to it before stopping. Do not create `/Wiki/conversations`, `/Wiki/conversations/index.md`, or any other folder unless the user explicitly asks for that hierarchy.
+7. If this creates a new page, ensure `/Knowledge/index.md` links to it before stopping. Do not create `/Knowledge/conversations`, `/Knowledge/conversations/index.md`, or any other folder unless the user explicitly asks for that hierarchy.
 8. Do not create fixed empty scaffolds such as `facts.md`, `events.md`, `plans.md`, `preferences.md`, `open_questions.md`, `provenance.md`, and `log.md` by default.
 9. Split into multiple flat pages only when the conversation is large, will receive continuing updates, or clearly needs role-specific retrieval paths. If splitting, state the page map before writing. Do not add folders unless the user explicitly asks for hierarchy.
 
@@ -76,7 +76,7 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 - Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, trust model, and current role mapping.
 - Runtime `facts.md` extraction policy follows [docs/STORE_API.md](../../docs/STORE_API.md). Keep skill guidance aligned with that rule, not with benchmark-specific phrasing.
 - Treat local `Wiki/` content as the human review surface.
-- Keep OKF Context Pack export separate from source ingestion; use `kinic-context-pack` after `/Wiki/...` is ready.
+- Keep OKF Context Pack export separate from source ingestion; use `kinic-context-pack` after `/Knowledge/...` is ready.
 - Prefer fewer stronger pages over many shallow stubs.
 - For conversation sources, prefer one titled flat page over a directory of shallow role files unless the user explicitly asks for hierarchy.
 - Reuse existing pages when possible instead of minting near-duplicates.
@@ -122,8 +122,8 @@ For bulk repair of existing wiki nodes without new source material, use `kinic-w
 
 - Evidence source write path: `/Sources/evidence/<provider>/<id>.md`
 - Evidence source append path: `/Sources/evidence/<provider>/<id>.md`
-- Default conversation wiki path: `/Wiki/<llm-generated-title>.md`
-- Wiki target root: `/Wiki/...`
+- Default conversation wiki path: `/Knowledge/<llm-generated-title>.md`
+- Wiki target root: `/Knowledge/...`
 - Preferred primitives:
   - Bulk writes: CLI `write-nodes --input <nodes.json>`
   - Multi-replacement single-node edit: CLI `multi-edit-node --path <path> --edits-file <edits-file> --expected-etag <etag>` where `<edits-file>` is a JSON file path such as `/tmp/edits.json`

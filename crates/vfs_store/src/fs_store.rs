@@ -14,19 +14,20 @@ use crate::sqlite::OpenFlags;
 use crate::sqlite::{Connection, OptionalExtension, Transaction, params};
 #[cfg(target_arch = "wasm32")]
 use ic_sqlite_vfs::{DbError, DbHandle};
+use sha2::{Digest, Sha256};
 use vfs_types::{
-    AppendNodeRequest, ChildNode, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodeType, GlobNodesRequest, GraphLinksRequest,
-    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, LinkEdge,
-    ListChildrenRequest, ListNodesRequest, MarketCategoryGraph, MarketCategoryGraphEdge,
-    MarketCategoryGraphNode, MarketListingPreview, MarketListingVerifiedStats,
-    MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult,
-    MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeContext, NodeContextRequest,
-    NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest, QueryContext, QueryContextRequest,
-    SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, SearchPreviewMode, SourceEvidence,
-    SourceEvidenceRef, SourceEvidenceRequest, Status, WriteNodeItem, WriteNodeRequest,
-    WriteNodeResult, WriteNodesRequest,
+    AppendNodeRequest, ChildNode, ControllerImportNodesChunkResult, ControllerVerifyDatabaseResult,
+    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit, GlobNodeType,
+    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
+    IndexSqlJsonQueryResult, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketCategoryGraph,
+    MarketCategoryGraphEdge, MarketCategoryGraphNode, MarketListingPreview,
+    MarketListingVerifiedStats, MarketPreviewExcerpt, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEdit, MultiEditNodeRequest, MultiEditNodeResult, Node,
+    NodeContext, NodeContextRequest, NodeEntry, NodeEntryKind, NodeKind, OutgoingLinksRequest,
+    QueryContext, QueryContextRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
+    SearchPreviewMode, SourceEvidence, SourceEvidenceRef, SourceEvidenceRequest, Status,
+    WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
 };
 
 use crate::{
@@ -56,6 +57,7 @@ const WIKI_ROOT_PATH: &str = "/Knowledge";
 const CONTEXT_LINK_LIMIT: u32 = 20;
 const CONTEXT_SEARCH_LIMIT: u32 = 10;
 const WRITE_NODES_BATCH_LIMIT_MAX: usize = 100;
+const IMPORT_NODES_CHUNK_LIMIT_MAX: usize = 100;
 const MARKETPLACE_PREVIEW_NODE_LIMIT: i64 = 12;
 const TOKEN_CHAR_APPROX: usize = 4;
 const SYNC_RESPONSE_BYTE_BUDGET: usize = 1_500_000;
@@ -157,15 +159,15 @@ impl FsStore {
         &self.database_path
     }
 
-    pub fn run_fs_migrations_for_database(&self, database_id: &str) -> Result<(), String> {
+    pub fn run_fs_migrations(&self) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut conn = self.open()?;
-            schema::run_fs_migrations(&mut conn, database_id)
+            schema::run_fs_migrations(&mut conn)
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.write_conn(|tx| schema::run_fs_migrations_in_tx(tx, database_id))
+            self.write_conn(schema::run_fs_migrations_in_tx)
         }
     }
 
@@ -1125,6 +1127,64 @@ impl FsStore {
         })
     }
 
+    pub fn import_nodes_chunk(
+        &self,
+        nodes: Vec<Node>,
+    ) -> Result<ControllerImportNodesChunkResult, String> {
+        validate_import_nodes_chunk(&nodes)?;
+        let imported_count = nodes.len() as u32;
+        self.write_conn(|tx| {
+            for imported in nodes {
+                let node = normalize_import_node(imported)?;
+                let existing = load_stored_node(tx, &node.path)?;
+                let revision = record_change(tx, &node)?;
+                update_path_state(tx, &node.path, revision)?;
+                let row_id = save_node(tx, existing.as_ref().map(|stored| stored.row_id), &node)?;
+                sync_node_fts(tx, existing.as_ref(), Some((row_id, &node)))?;
+                sync_node_links(tx, &node)?;
+            }
+            Ok(ControllerImportNodesChunkResult { imported_count })
+        })
+    }
+
+    pub fn verify_database(
+        &self,
+        database_id: &str,
+    ) -> Result<ControllerVerifyDatabaseResult, String> {
+        self.read_conn(|conn| {
+            let integrity_check = conn
+                .query_row("PRAGMA integrity_check", params![], |row| {
+                    crate::sqlite::row_get::<String>(row, 0)
+                })
+                .map_err(|error| error.to_string())?;
+            let node_count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM fs_nodes", params![], |row| {
+                    crate::sqlite::row_get(row, 0)
+                })
+                .map_err(|error| error.to_string())?;
+            let file_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM fs_nodes WHERE kind = 'file'",
+                    params![],
+                    |row| crate::sqlite::row_get(row, 0),
+                )
+                .map_err(|error| error.to_string())?;
+            let max_updated_at: Option<i64> = conn
+                .query_row("SELECT MAX(updated_at) FROM fs_nodes", params![], |row| {
+                    crate::sqlite::row_get(row, 0)
+                })
+                .map_err(|error| error.to_string())?;
+            Ok(ControllerVerifyDatabaseResult {
+                database_id: database_id.to_string(),
+                node_count: u64::try_from(node_count).map_err(|error| error.to_string())?,
+                file_count: u64::try_from(file_count).map_err(|error| error.to_string())?,
+                max_node_updated_at: max_updated_at.filter(|value| *value > 0),
+                logical_checksum: logical_import_checksum(conn)?,
+                integrity_check,
+            })
+        })
+    }
+
     fn read_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1221,6 +1281,47 @@ fn validate_write_nodes_count(count: usize) -> Result<(), String> {
         return Err(format!(
             "write_nodes node count must be between 1 and {WRITE_NODES_BATCH_LIMIT_MAX}"
         ));
+    }
+    Ok(())
+}
+
+fn validate_import_nodes_chunk(nodes: &[Node]) -> Result<(), String> {
+    if nodes.is_empty() || nodes.len() > IMPORT_NODES_CHUNK_LIMIT_MAX {
+        return Err(format!(
+            "import_nodes_chunk node count must be between 1 and {IMPORT_NODES_CHUNK_LIMIT_MAX}"
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    let mut previous_path: Option<String> = None;
+    for node in nodes {
+        let path = normalize_node_path(&node.path, false)?;
+        validate_import_node_fields(&path, node)?;
+        if !seen.insert(path.clone()) {
+            return Err(format!("duplicate import path: {path}"));
+        }
+        if previous_path
+            .as_ref()
+            .is_some_and(|previous| path <= *previous)
+        {
+            return Err("import nodes must be sorted by path ascending".to_string());
+        }
+        previous_path = Some(path);
+    }
+    Ok(())
+}
+
+fn normalize_import_node(mut node: Node) -> Result<Node, String> {
+    node.path = normalize_node_path(&node.path, false)?;
+    validate_import_node_fields(&node.path, &node)?;
+    Ok(node)
+}
+
+fn validate_import_node_fields(path: &str, node: &Node) -> Result<(), String> {
+    if node.kind == NodeKind::Folder && !node.content.is_empty() {
+        return Err(format!("folder import content must be empty: {path}"));
+    }
+    if node.etag.trim().is_empty() {
+        return Err(format!("import node etag is required: {path}"));
     }
     Ok(())
 }
@@ -1544,6 +1645,44 @@ fn count_nodes(conn: &Connection, kind: &str) -> Result<u64, String> {
         )
         .map_err(|error| error.to_string())?;
     u64::try_from(count).map_err(|error| error.to_string())
+}
+
+fn logical_import_checksum(conn: &Connection) -> Result<String, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT path, kind, content, created_at, updated_at, metadata_json
+             FROM fs_nodes
+             ORDER BY path ASC",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = crate::sqlite::query_map(&mut stmt, params![], |row| {
+        Ok((
+            crate::sqlite::row_get::<String>(row, 0)?,
+            crate::sqlite::row_get::<String>(row, 1)?,
+            crate::sqlite::row_get::<String>(row, 2)?,
+            crate::sqlite::row_get::<i64>(row, 3)?,
+            crate::sqlite::row_get::<i64>(row, 4)?,
+            crate::sqlite::row_get::<String>(row, 5)?,
+        ))
+    })
+    .map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    for (path, kind, content, created_at, updated_at, metadata_json) in rows {
+        update_checksum_field(&mut hasher, &path);
+        update_checksum_field(&mut hasher, &kind);
+        update_checksum_field(&mut hasher, &content);
+        update_checksum_field(&mut hasher, &created_at.to_string());
+        update_checksum_field(&mut hasher, &updated_at.to_string());
+        update_checksum_field(&mut hasher, &metadata_json);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn update_checksum_field(hasher: &mut Sha256, value: &str) {
+    hasher.update(value.len().to_string().as_bytes());
+    hasher.update(b":");
+    hasher.update(value.as_bytes());
+    hasher.update(b"\n");
 }
 
 fn load_marketplace_verified_stats(

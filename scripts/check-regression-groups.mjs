@@ -22,7 +22,7 @@ const groups = {
     ["wikibrowser/scripts/check-skill-registry.mjs", "improvement-proposals|kinic\\.skill_improvement_proposal"],
     ["wikibrowser/scripts/check-skill-registry.mjs", "skill..v1"],
     ["skill-registry-web/scripts/check-skill-registry-web.mjs", "baseEtag"],
-    ["docs/SKILL_REGISTRY.md", "/Wiki/skills/<name>/proposals/<proposal-id>/"]
+    ["docs/SKILL_REGISTRY.md", "/Skills/<name>/proposals/<proposal-id>/"]
   ],
   frontmatter_markdown: [
     ["workers/wiki-generator/tests/frontmatter.test.ts", "frontmatter parser requires a whole-line terminator"],

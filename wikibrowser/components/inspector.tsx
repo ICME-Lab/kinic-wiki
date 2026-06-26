@@ -4,7 +4,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, GitBranch, Info, Sparkles } from "lucide-react";
-import { collectLintHints, provenancePathFor, evidenceSourceLinksFor } from "@/lib/lint-hints";
+import { collectLintHints, provenancePathFor, rawSourceLinksFor } from "@/lib/lint-hints";
 import { hrefForPath } from "@/lib/paths";
 import type { ChildNode, LinkEdge, WikiNode } from "@/lib/types";
 import { InspectorCard, Meta } from "@/components/panel";
@@ -41,12 +41,12 @@ export function Inspector({
   const kind = node?.kind ?? "directory";
   const size = node ? `${new TextEncoder().encode(node.content).length}` : null;
   const hints = node ? collectLintHints(path, node.content) : [];
-  const directEvidenceSourceLinks = node ? evidenceSourceLinksFor(path, node.content) : [];
-  const expectedProvenancePath = node && directEvidenceSourceLinks.length === 0 ? provenancePathFor(path) : null;
+  const directRawSourceLinks = node ? rawSourceLinksFor(path, node.content) : [];
+  const expectedProvenancePath = node && directRawSourceLinks.length === 0 ? provenancePathFor(path) : null;
   const [provenance, setProvenance] = useState<ProvenanceState>({ path: null, links: [] });
-  const inferredEvidenceSourceLinks = provenance.path === expectedProvenancePath ? provenance.links : [];
-  const evidenceSourceLinks = directEvidenceSourceLinks.length > 0 ? directEvidenceSourceLinks : inferredEvidenceSourceLinks;
-  const loadingEvidenceSource = Boolean(expectedProvenancePath && provenance.path !== expectedProvenancePath);
+  const inferredRawSourceLinks = provenance.path === expectedProvenancePath ? provenance.links : [];
+  const rawSourceLinks = directRawSourceLinks.length > 0 ? directRawSourceLinks : inferredRawSourceLinks;
+  const loadingRawSource = Boolean(expectedProvenancePath && provenance.path !== expectedProvenancePath);
 
   useEffect(() => {
     if (!expectedProvenancePath) {
@@ -59,7 +59,7 @@ export function Inspector({
         if (!cancelled) {
           setProvenance({
             path: expectedProvenancePath,
-            links: provenanceNode ? evidenceSourceLinksFor(expectedProvenancePath, provenanceNode.content) : []
+            links: provenanceNode ? rawSourceLinksFor(expectedProvenancePath, provenanceNode.content) : []
           });
         }
       })
@@ -143,10 +143,10 @@ export function Inspector({
           <p className="text-xs text-muted">No backlinks indexed.</p>
         )}
       </InspectorCard>
-      <InspectorCard title="Evidence Source" icon={<GitBranch size={15} />}>
-        {evidenceSourceLinks.length > 0 ? (
+      <InspectorCard title="Raw Source" icon={<GitBranch size={15} />}>
+        {rawSourceLinks.length > 0 ? (
           <ul className="space-y-1">
-            {evidenceSourceLinks.map((link) => (
+            {rawSourceLinks.map((link) => (
               <li key={link} className="truncate font-mono text-xs">
                 <Link className="text-accent no-underline hover:underline" href={hrefForPath(canisterId, databaseId, link)}>
                   {link}
@@ -154,10 +154,10 @@ export function Inspector({
               </li>
             ))}
           </ul>
-        ) : loadingEvidenceSource ? (
+        ) : loadingRawSource ? (
           <p className="text-xs text-muted">Checking provenance...</p>
         ) : (
-          <p className="text-xs text-muted">No evidence source path inferred.</p>
+          <p className="text-xs text-muted">No raw source path inferred.</p>
         )}
       </InspectorCard>
     </div>

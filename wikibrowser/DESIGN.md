@@ -14,7 +14,7 @@ The product is not a database admin UI. It should feel like a lightweight knowle
 
 ## Layout
 
-- Left sidebar: collapsible file tree for `/Wiki` and `/Sources/evidence`
+- Left sidebar: collapsible file tree for `/Knowledge` and `/Sources/evidence`
 - Center: selected Markdown note rendered as readable document
 - Right: inspector showing path, etag, updated_at, backlinks, outgoing links, note role, canonicality warnings, evidence source, provenance
 - Top bar: global search, path search, full-text search, mode tabs: Browse, Search, Lint, Recent

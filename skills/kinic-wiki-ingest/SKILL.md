@@ -28,11 +28,11 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; evidence sources live under `/Sources/evidence/<provider>/<id>.md`.
+- Organized wiki nodes live under `/Knowledge/...`; evidence sources live under `/Sources/evidence/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless the workflow explicitly writes it back through VFS commands.
 - Stop at review-ready unless the user explicitly asks for push. `review-ready` means edits and any existing or requested `log.md` updates are complete, but no push or publish step has run.
 - Keep source persistence separate from wiki synthesis.
-- Hand off to `kinic-context-pack` when the user asks to export a completed `/Wiki/...` scope for AI handoff.
+- Hand off to `kinic-context-pack` when the user asks to export a completed `/Knowledge/...` scope for AI handoff.
 - For conversation sources, default to one generated wiki page rather than a fixed page scaffold.
 - Read current canonical notes before editing them.
 - Preserve settled exact fact spans in `facts.md` instead of paraphrasing or normalizing them away.
