@@ -117,9 +117,13 @@ pub(crate) fn last_insert_rowid(conn: &Connection) -> Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct ProgressHandlerGuard<'connection> {
     conn: &'connection Connection,
 }
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct ProgressHandlerGuard;
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'connection> ProgressHandlerGuard<'connection> {

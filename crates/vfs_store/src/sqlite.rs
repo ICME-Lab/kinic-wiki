@@ -102,9 +102,13 @@ where
     statement.exists(params)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct ProgressHandlerGuard<'connection> {
     conn: &'connection Connection,
 }
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct ProgressHandlerGuard;
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'connection> ProgressHandlerGuard<'connection> {
