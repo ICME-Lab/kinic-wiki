@@ -4,7 +4,7 @@
 export const WIKI_SKILL_VERSION = 1;
 
 const WIKI_RULES = [
-  "Treat /Sources/evidence as evidence storage and /Knowledge as the review surface.",
+  "Treat /Sources as evidence storage and /Knowledge as the review surface.",
   "Create one review-ready wiki page unless the source clearly requires a split.",
   "Do not paste raw page text or transcript dumps into wiki pages.",
   "Keep only claims directly supported by the source.",

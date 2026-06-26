@@ -70,11 +70,11 @@ Directory meaning:
 - `tasks/*.md`: task or plan concepts
 - `policies/*.md`: style, preference, and do-not-do concepts
 - `notes/*.md`: unclassified wiki nodes that are still normal OKF concepts
-- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/evidence/...`
+- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/...`
 
 ## Rules
 
-- Do not export from `/Sources/evidence/...` as the root.
+- Do not export from `/Sources/...` as the root.
 - Do not copy evidence source body text into `references/*.md`.
 - Do not use `references/*.md` for ordinary wiki notes.
 - Do not treat a passed `inspect` summary as verification; run `verify`.

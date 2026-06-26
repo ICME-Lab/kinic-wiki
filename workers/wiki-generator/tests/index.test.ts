@@ -57,7 +57,7 @@ test("url ingest trigger enqueues URL ingest message without background work", a
 test("url ingest trigger rejects invalid request path before background work", async () => {
   const context = recordingCtx();
   const queue = new TestQueue();
-  const response = await fetchWorker(authorizedUrlIngestRequest({ requestPath: "/Sources/evidence/1.md" }), testEnv(queue), context);
+  const response = await fetchWorker(authorizedUrlIngestRequest({ requestPath: "/Sources/1.md" }), testEnv(queue), context);
 
   assert.equal(response.status, 400);
   assert.match(await response.text(), /non-canonical ingest request path/);

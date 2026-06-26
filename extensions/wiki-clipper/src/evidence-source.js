@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/evidence-source.js
 // What: Convert captured conversations into canonical evidence source nodes.
-// Why: Evidence source is grouped by provider under /Sources/evidence/<provider>/<id>.md.
+// Why: Evidence source is grouped by provider under /Sources/<provider>/<id>.md.
 const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
 
 export function buildEvidenceSource(capture, now = new Date()) {
@@ -9,7 +9,7 @@ export function buildEvidenceSource(capture, now = new Date()) {
   }
   const provider = safeProvider(capture.provider || "conversation");
   const sourceId = sourceIdForCapture(capture, now, provider);
-  const path = `/Sources/evidence/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
+  const path = `/Sources/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
   const metadata = {
     provider: capture.provider,
     source_url: capture.url,

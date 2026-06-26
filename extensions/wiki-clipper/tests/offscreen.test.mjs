@@ -210,19 +210,18 @@ test("saveEvidenceSource writes with authenticated identity", async () => {
 
     assert.equal(result.etag, "etag-2");
     assert.equal(result.principal, "principal-1");
-    assert.deepEqual(calls.slice(0, 5), [
+    assert.deepEqual(calls.slice(0, 4), [
       ["create", { tag: "identity" }, "team-db"],
-      ["read", "team-db", "/Sources/evidence/chatgpt/abc.md"],
+      ["read", "team-db", "/Sources/chatgpt/abc.md"],
       ["mkdir", "team-db", "/Sources"],
-      ["mkdir", "team-db", "/Sources/evidence"],
-      ["mkdir", "team-db", "/Sources/evidence/chatgpt"]
+      ["mkdir", "team-db", "/Sources/chatgpt"]
     ]);
-    assert.equal(calls[5][0], "write");
-    assert.equal(calls[5][1], "team-db");
-    assert.equal(calls[5][2], "/Sources/evidence/chatgpt/abc.md");
-    assert.deepEqual(calls[5][3], ["etag-1"]);
-    assert.equal(typeof calls[5][4], "string");
-    assert.equal(result.sourceRunSessionNonce, calls[5][4]);
+    assert.equal(calls[4][0], "write");
+    assert.equal(calls[4][1], "team-db");
+    assert.equal(calls[4][2], "/Sources/chatgpt/abc.md");
+    assert.deepEqual(calls[4][3], ["etag-1"]);
+    assert.equal(typeof calls[4][4], "string");
+    assert.equal(result.sourceRunSessionNonce, calls[4][4]);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -257,14 +256,14 @@ test("webSourceExists returns false when evidence source is missing", async () =
     const result = await handleOffscreenMessage({
       target: "offscreen",
       type: "web-source-exists",
-      sourcePath: "/Sources/evidence/web/abc.md",
+      sourcePath: "/Sources/web/abc.md",
       config: config()
     });
 
-    assert.deepEqual(result, { exists: false, path: "/Sources/evidence/web/abc.md", etag: null });
+    assert.deepEqual(result, { exists: false, path: "/Sources/web/abc.md", etag: null });
     assert.deepEqual(calls, [
       ["create", { tag: "identity" }, "team-db"],
-      ["read", "team-db", "/Sources/evidence/web/abc.md"]
+      ["read", "team-db", "/Sources/web/abc.md"]
     ]);
   } finally {
     setOffscreenDepsForTest();
@@ -281,9 +280,9 @@ test("webSourceExists returns true when evidence source exists", async () => {
     })
   });
   try {
-    const result = await webSourceExists("/Sources/evidence/web/abc.md", config());
+    const result = await webSourceExists("/Sources/web/abc.md", config());
 
-    assert.deepEqual(result, { exists: true, path: "/Sources/evidence/web/abc.md", etag: "etag-source" });
+    assert.deepEqual(result, { exists: true, path: "/Sources/web/abc.md", etag: "etag-source" });
   } finally {
     setOffscreenDepsForTest();
   }
@@ -294,7 +293,7 @@ test("webSourceExists rejects unauthenticated sessions", async () => {
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
-    await assert.rejects(() => webSourceExists("/Sources/evidence/web/abc.md", config()), /UNAUTHENTICATED/);
+    await assert.rejects(() => webSourceExists("/Sources/web/abc.md", config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }
@@ -488,16 +487,16 @@ test("triggerSourceGeneration calls source run route with issued source-run sess
     }
   });
   try {
-    const result = await triggerSourceGeneration(config(), "/Sources/evidence/web/abc.md", "etag-source", "session-source");
+    const result = await triggerSourceGeneration(config(), "/Sources/web/abc.md", "etag-source", "session-source");
 
     assert.equal(result.triggered, true);
-    assert.equal(result.sourcePath, "/Sources/evidence/web/abc.md");
+    assert.equal(result.sourcePath, "/Sources/web/abc.md");
     assert.equal(result.sourceEtag, "etag-source");
     assert.equal(fetchCalls[0][0], "https://wiki.kinic.xyz/api/source/run");
     assert.deepEqual(JSON.parse(fetchCalls[0][1].body), {
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "team-db",
-      sourcePath: "/Sources/evidence/web/abc.md",
+      sourcePath: "/Sources/web/abc.md",
       sourceEtag: "etag-source",
       sessionNonce: "session-source"
     });
@@ -551,7 +550,6 @@ test("listWritableDatabases returns active writable database summaries", async (
         databaseId: "team-db",
         name: "Team Wiki",
         role: "Writer",
-        profile: "",
         status: "Active",
         logicalSizeBytes: "0",
         cyclesBalance: "20000",
@@ -568,7 +566,7 @@ test("listWritableDatabases returns active writable database summaries", async (
 
 function evidenceSource() {
   return {
-    path: "/Sources/evidence/chatgpt/abc.md",
+    path: "/Sources/chatgpt/abc.md",
     sourceId: "chatgpt-abc",
     content: "# ChatGPT",
     metadataJson: "{}"

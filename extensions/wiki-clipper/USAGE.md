@@ -78,15 +78,15 @@ Those `/backend-api/*` and `claude.ai/api/.../chat_conversations/*` endpoints ar
 Evidence sources are saved as:
 
 ```text
-/Sources/evidence/chatgpt/<conversationId>.md
-/Sources/evidence/claude/<conversationId>.md
+/Sources/chatgpt/<conversationId>.md
+/Sources/claude/<conversationId>.md
 ```
 
 ## Active Tab Capture
 
 1. Open any public `http` / `https` page.
 2. Click the extension toolbar icon.
-3. The extension captures the active tab DOM and writes `/Sources/evidence/web/<source_id>.md`.
+3. The extension captures the active tab DOM and writes `/Sources/web/<source_id>.md`.
 4. The extension asks the VFS canister to authorize a 30 minute source-run ticket for the same II principal.
 5. WikiBrowser checks the session ticket and configured canister id through `https://wiki.kinic.xyz/api/source/run`, then triggers the generator Worker.
 
@@ -96,14 +96,14 @@ Non-web pages such as `chrome://extensions` are rejected.
 
 ## Verify
 
-Confirm that `/Sources/evidence/...` is created in the selected database after successful exports.
+Confirm that `/Sources/...` is created in the selected database after successful exports.
 
 ## Generate Wiki Pages
 
 ChatGPT/Claude export only writes source evidence. Generate wiki pages from the CLI:
 
 ```bash
-cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/evidence/chatgpt/<conversationId>.md
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- generate-conversation-wiki --source-path /Sources/chatgpt/<conversationId>.md
 ```
 
 This command creates a wiki scaffold. Re-running it preserves existing `summary.md`, `facts.md`, `events.md`, `plans.md`, `preferences.md`, and `open_questions.md`. Use `--force` only when those pages should be regenerated.

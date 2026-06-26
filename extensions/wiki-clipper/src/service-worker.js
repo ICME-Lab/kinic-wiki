@@ -5,7 +5,7 @@ import { buildEvidenceSource } from "./evidence-source.js";
 import {
   DEFAULT_CANISTER_ID,
   DEFAULT_IC_HOST,
-  URL_INGEST_STATUS_KEY,
+  SOURCE_CAPTURE_STATUS_KEY as URL_INGEST_STATUS_KEY,
   normalizedHttpUrl
 } from "./url-ingest-request.js";
 import { buildWebEvidenceSource, collectWebPageSnapshot, webSourcePathForUrl } from "./web-source.js";

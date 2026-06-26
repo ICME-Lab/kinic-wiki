@@ -8,7 +8,7 @@ import { buildWikiDraftSystemPrompt } from "../src/wiki-skill.js";
 test("core wiki prompt keeps source and wiki roles separate", () => {
   const prompt = buildWikiDraftSystemPrompt();
   assert.match(prompt, /Kinic Wiki Core Skill v1/);
-  assert.match(prompt, /\/Sources\/evidence/);
+  assert.match(prompt, /\/Sources/);
   assert.match(prompt, /\/Knowledge/);
   assert.match(prompt, /Every generated item must cite/);
   assert.match(prompt, /source material's primary language/);

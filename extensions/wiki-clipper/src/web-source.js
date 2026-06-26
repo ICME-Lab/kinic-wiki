@@ -219,7 +219,7 @@ function webSourceTitle(value, finalUrl) {
 }
 
 function webSourcePathFromId(sourceId) {
-  return `/Sources/evidence/web/${sourceId.slice("web-".length)}.md`;
+  return `/Sources/web/${sourceId.slice("web-".length)}.md`;
 }
 
 function limitSourceText(text, maxChars) {

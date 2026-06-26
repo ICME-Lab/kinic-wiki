@@ -7,7 +7,7 @@ import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage
 import type { WikiDraft, WikiNode } from "../src/types.js";
 
 const source: WikiNode = {
-  path: "/Sources/evidence/a/a.md",
+  path: "/Sources/a/a.md",
   kind: "source",
   content: "raw",
   etag: "etag-1",
@@ -39,7 +39,7 @@ test("slug and markdown include generated provenance without status frontmatter"
   const markdown = renderGeneratedMarkdown(draft, source, []);
   assert.doesNotMatch(markdown, /^---\n/m);
   assert.doesNotMatch(markdown, /## Status/);
-  assert.match(markdown, /source_path: \/Sources\/evidence\/a\/a\.md/);
+  assert.match(markdown, /source_path: \/Sources\/a\/a\.md/);
   assert.match(markdown, /source_etag: etag-1/);
 });
 
@@ -114,9 +114,9 @@ test("VFS path links are escaped for Markdown destinations", () => {
   const markdown = renderGeneratedMarkdown(
     {
       ...draft,
-      key_facts: [{ text: "Fact", source_path: "/Sources/evidence/web/a]b.md" }]
+      key_facts: [{ text: "Fact", source_path: "/Sources/web/a]b.md" }]
     },
-    { ...source, path: "/Sources/evidence/web/a]b.md" },
+    { ...source, path: "/Sources/web/a]b.md" },
     [
       { path: "/Knowledge/conversations/日本語 記事).md", kind: "file", previewExcerpt: null, snippet: null },
       { path: "/Knowledge/space name.md", kind: "file", previewExcerpt: null, snippet: null },
@@ -125,8 +125,8 @@ test("VFS path links are escaped for Markdown destinations", () => {
       { path: "/Knowledge/100%.md", kind: "file", previewExcerpt: null, snippet: null }
     ]
   );
-  assert.match(markdown, /Source: \[\/Sources\/evidence\/web\/a\\\]b\.md\]\(<\/Sources\/evidence\/web\/a]b\.md>\)/);
-  assert.match(markdown, /\[source\]\(<\/Sources\/evidence\/web\/a]b\.md>\)/);
+  assert.match(markdown, /Source: \[\/Sources\/web\/a\\\]b\.md\]\(<\/Sources\/web\/a]b\.md>\)/);
+  assert.match(markdown, /\[source\]\(<\/Sources\/web\/a]b\.md>\)/);
   assert.match(markdown, /\[\/Knowledge\/conversations\/日本語 記事\)\.md\]\(<\/Knowledge\/conversations\/日本語 記事\)\.md>\)/);
   assert.match(markdown, /\[\/Knowledge\/space name\.md\]\(<\/Knowledge\/space name\.md>\)/);
   assert.match(markdown, /\[\/Knowledge\/a#b\.md\]\(<\/Knowledge\/a%23b\.md>\)/);
@@ -170,5 +170,5 @@ test("target conflict requires matching provenance", () => {
     () => ensureTargetCanBeWritten(`# Existing\n\nMention ${source.path} in body only.`, "/Knowledge/conversations/a.md", source.path),
     /without matching provenance/
   );
-  assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/evidence/b/b.md", "/Knowledge/conversations/a.md", source.path), /without matching provenance/);
+  assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/b/b.md", "/Knowledge/conversations/a.md", source.path), /without matching provenance/);
 });

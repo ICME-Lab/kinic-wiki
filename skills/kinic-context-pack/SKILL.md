@@ -28,7 +28,7 @@ Core rules:
 - Keep `index.md` and `log.md` as reserved OKF files without frontmatter.
 - Require YAML frontmatter with a non-empty `type` for every non-reserved `.md` file.
 - Treat `notes/*.md` as unclassified wiki notes.
-- Treat `references/*.md` as `/Sources/evidence/...` reference metadata only.
+- Treat `references/*.md` as `/Sources/...` reference metadata only.
 - Do not copy evidence source body text into the OKF bundle.
 - Verify a bundle before handing it to an AI.
 - Do not write from an OKF bundle back into the wiki.

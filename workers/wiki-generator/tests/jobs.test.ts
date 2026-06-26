@@ -8,7 +8,7 @@ import type { SourceJob } from "../src/types.js";
 
 const completedJob: SourceJob = {
   database_id: "db_1",
-  source_path: "/Sources/evidence/a/a.md",
+  source_path: "/Sources/a/a.md",
   source_etag: "etag-1",
   status: "completed",
   target_path: "/Knowledge/conversations/a.md",

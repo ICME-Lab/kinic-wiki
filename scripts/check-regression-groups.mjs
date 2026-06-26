@@ -12,7 +12,7 @@ const groups = {
   security_path_validation: [
     ["crates/wiki_domain/src/lib.rs", "canonical_source_path_rejects_prefix_lookalikes"],
     ["crates/vfs_canister/src/tests.rs", "fs_entrypoints_reject_noncanonical_source_paths"],
-    ["workers/wiki-generator/tests/source-path.test.ts", "/Sources/evidencefoo/alpha/alpha.md"],
+    ["workers/wiki-generator/tests/source-path.test.ts", "/Sourcesfoo/alpha/alpha.md"],
     ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "normalizedHttpUrl accepts only http and https"]
   ],
   skill_registry_schema: [
