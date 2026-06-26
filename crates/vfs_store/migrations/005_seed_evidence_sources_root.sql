@@ -1,0 +1,3 @@
+-- Where: crates/vfs_store/migrations/005_seed_evidence_sources_root.sql
+-- What: Version marker for /Sources evidence root seeding.
+-- Why: Folder rows and sync revisions need Rust-side etag and parent maintenance.

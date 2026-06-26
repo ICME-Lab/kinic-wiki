@@ -34,14 +34,15 @@ use vfs_types::{
     MarketPurchaseRequest, MarketUpdateListingRequest, MemoryRecall, MemoryRecallRequest,
     MkdirNodeRequest, MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest,
     MultiEditNodeResult, Node, NodeContext, NodeContextRequest, NodeEntry, NodeKind,
-    OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult, OpsAnswerSessionRequest,
-    OutgoingLinksRequest, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest,
-    SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest, StorageBillingBatchResult,
-    UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest, WikiMetrics,
-    WikiMetricsPoint, WriteNodeItem, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
-    WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
+    NodeMutationAck, OpsAnswerSessionCheckRequest, OpsAnswerSessionCheckResult,
+    OpsAnswerSessionRequest, OutgoingLinksRequest, SearchNodeHit, SearchNodePathsRequest,
+    SearchNodesRequest, SourceRunSessionCheckRequest, Status, StorageBillingBatchRequest,
+    StorageBillingBatchResult, UrlIngestTriggerSessionCheckRequest, UrlIngestTriggerSessionRequest,
+    WikiMetrics, WikiMetricsPoint, WriteNodeItem, WriteNodeRequest, WriteNodeResult,
+    WriteNodesRequest, WriteSourceForGenerationRequest, WriteSourceForGenerationResult,
+    kinic_base_units_per_token,
 };
-use wiki_domain::{RAW_SOURCES_PREFIX, apply_okf_metadata, validate_source_path_for_kind};
+use wiki_domain::{EVIDENCE_SOURCES_PREFIX, apply_okf_metadata, validate_source_path_for_kind};
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
 const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
@@ -3092,7 +3093,13 @@ impl VfsService {
                         &metadata_json,
                     )?);
                 }
-                store.append_node(request, now)
+                let mut result = store.append_node(request, now)?;
+                if let Some(node) =
+                    refresh_okf_metadata_for_path(store, &database_id, &result.node.path, now)?
+                {
+                    result.node = node;
+                }
+                Ok(result)
             });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -3109,7 +3116,13 @@ impl VfsService {
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.edit_node(request, now)
+                let mut result = store.edit_node(request, now)?;
+                if let Some(node) =
+                    refresh_okf_metadata_for_path(store, &database_id, &result.node.path, now)?
+                {
+                    result.node = node;
+                }
+                Ok(result)
             });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -3256,7 +3269,13 @@ impl VfsService {
         let database_id = request.database_id.clone();
         let result =
             self.with_database_store(&database_id, caller, RequiredRole::Writer, |store| {
-                store.multi_edit_node(request, now)
+                let mut result = store.multi_edit_node(request, now)?;
+                if let Some(node) =
+                    refresh_okf_metadata_for_path(store, &database_id, &result.node.path, now)?
+                {
+                    result.node = node;
+                }
+                Ok(result)
             });
         if result.is_ok() {
             let _ = self.refresh_logical_size(&database_id);
@@ -3703,6 +3722,42 @@ impl VfsService {
     }
 }
 
+fn refresh_okf_metadata_for_path(
+    store: &FsStore,
+    database_id: &str,
+    path: &str,
+    now: i64,
+) -> Result<Option<NodeMutationAck>, String> {
+    let Some(node) = store.read_node(path)? else {
+        return Ok(None);
+    };
+    if node.kind == NodeKind::Folder {
+        return Ok(None);
+    }
+    let metadata_json = apply_okf_metadata(
+        database_id,
+        &node.path,
+        &node.kind,
+        &node.content,
+        &node.metadata_json,
+    )?;
+    if metadata_json == node.metadata_json {
+        return Ok(None);
+    }
+    let write = store.write_node(
+        WriteNodeRequest {
+            database_id: database_id.to_string(),
+            path: node.path,
+            kind: node.kind,
+            content: node.content,
+            metadata_json,
+            expected_etag: Some(node.etag),
+        },
+        now,
+    )?;
+    Ok(Some(write.node))
+}
+
 fn refresh_moved_okf_metadata(
     store: &FsStore,
     database_id: &str,
@@ -3720,35 +3775,10 @@ fn refresh_moved_okf_metadata(
     }
 
     for path in paths {
-        let Some(node) = store.read_node(&path)? else {
-            continue;
-        };
-        if node.kind == NodeKind::Folder {
-            continue;
-        }
-        let metadata_json = apply_okf_metadata(
-            database_id,
-            &node.path,
-            &node.kind,
-            &node.content,
-            &node.metadata_json,
-        )?;
-        if metadata_json == node.metadata_json {
-            continue;
-        }
-        let write = store.write_node(
-            WriteNodeRequest {
-                database_id: database_id.to_string(),
-                path: node.path,
-                kind: node.kind,
-                content: node.content,
-                metadata_json,
-                expected_etag: Some(node.etag),
-            },
-            now,
-        )?;
-        if write.node.path == result.node.path {
-            result.node = write.node;
+        if let Some(node) = refresh_okf_metadata_for_path(store, database_id, &path, now)?
+            && node.path == result.node.path
+        {
+            result.node = node;
         }
     }
 
@@ -6908,7 +6938,7 @@ fn validate_source_for_generation_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_raw_source_run_path(&request.path)?;
+    validate_evidence_source_run_path(&request.path)?;
     validate_session_nonce(&request.session_nonce)
 }
 
@@ -6918,17 +6948,19 @@ fn validate_source_run_session_check_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_raw_source_run_path(&request.source_path)?;
+    validate_evidence_source_run_path(&request.source_path)?;
     if request.source_etag.trim().is_empty() {
         return Err("source_etag is required".to_string());
     }
     validate_session_nonce(&request.session_nonce)
 }
 
-fn validate_raw_source_run_path(path: &str) -> Result<(), String> {
-    if !(path == RAW_SOURCES_PREFIX || path.starts_with(&format!("{RAW_SOURCES_PREFIX}/"))) {
+fn validate_evidence_source_run_path(path: &str) -> Result<(), String> {
+    if !(path == EVIDENCE_SOURCES_PREFIX
+        || path.starts_with(&format!("{EVIDENCE_SOURCES_PREFIX}/")))
+    {
         return Err(format!(
-            "source_path must stay under {RAW_SOURCES_PREFIX}: {path}"
+            "source_path must stay under {EVIDENCE_SOURCES_PREFIX}: {path}"
         ));
     }
     validate_source_path_for_kind(path, &NodeKind::Source)
@@ -7905,7 +7937,7 @@ fn database_profile_seed_nodes(profile: DatabaseProfile) -> Vec<ProfileSeedNode>
             file_seed("/Memory/open_questions.md", "# Open Questions\n\n"),
             file_seed(
                 "/Memory/evidence.md",
-                "# Evidence\n\nLink claims to /Wiki role pages and /Sources/raw evidence.\n",
+                "# Evidence\n\nLink claims to /Wiki role pages and /Sources/evidence.\n",
             ),
         ],
         DatabaseProfile::Skill => vec![
@@ -7921,9 +7953,9 @@ fn database_profile_seed_nodes(profile: DatabaseProfile) -> Vec<ProfileSeedNode>
         DatabaseProfile::Session => vec![
             folder_seed("/Sessions"),
             folder_seed("/Sources"),
-            folder_seed("/Sources/raw"),
-            folder_seed("/Sources/raw/codex"),
-            folder_seed("/Sources/raw/claudecode"),
+            folder_seed("/Sources/evidence"),
+            folder_seed("/Sources/evidence/codex"),
+            folder_seed("/Sources/evidence/claudecode"),
         ],
     }
 }

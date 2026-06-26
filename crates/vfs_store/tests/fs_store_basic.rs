@@ -12,7 +12,7 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
     let dir = tempdir().expect("temp dir should exist");
     let store = FsStore::new(dir.path().join("wiki.sqlite3"));
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("fs migrations should succeed");
     (dir, store)
 }
@@ -211,7 +211,8 @@ fn fs_migrations_create_tables() {
             "wiki_store:002_fs_folders".to_string(),
             "wiki_store:003_wikilink_alias_links".to_string(),
             "wiki_store:004_rebuild_links_after_code_filter".to_string(),
-            "wiki_store:005_okf_metadata".to_string()
+            "wiki_store:005_seed_evidence_sources_root".to_string(),
+            "wiki_store:006_okf_metadata".to_string()
         ]
     );
 
@@ -502,12 +503,12 @@ fn status_counts_live_files_and_sources() {
             10,
         )
         .expect("file write should succeed");
-    ensure_parent_folders(&store, "/Sources/raw/source/source.md", 10);
+    ensure_parent_folders(&store, "/Sources/evidence/source/source.md", 10);
     let source = store
         .write_node(
             WriteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/evidence/source/source.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source".to_string(),
                 metadata_json: "{}".to_string(),
@@ -537,7 +538,7 @@ fn status_counts_live_files_and_sources() {
 #[test]
 fn write_nodes_creates_files_and_sources_atomically() {
     let (_dir, store) = new_store();
-    ensure_parent_folders(&store, "/Sources/raw/source/source.md", 9);
+    ensure_parent_folders(&store, "/Sources/evidence/source/source.md", 9);
 
     let results = store
         .write_nodes(
@@ -552,7 +553,7 @@ fn write_nodes_creates_files_and_sources_atomically() {
                         expected_etag: None,
                     },
                     WriteNodeItem {
-                        path: "/Sources/raw/source/source.md".to_string(),
+                        path: "/Sources/evidence/source/source.md".to_string(),
                         kind: NodeKind::Source,
                         content: "source alpha".to_string(),
                         metadata_json: "{}".to_string(),
@@ -574,7 +575,7 @@ fn write_nodes_creates_files_and_sources_atomically() {
     );
     assert!(
         store
-            .read_node("/Sources/raw/source/source.md")
+            .read_node("/Sources/evidence/source/source.md")
             .expect("read should succeed")
             .is_some()
     );
@@ -730,9 +731,9 @@ fn change_log_retains_all_recorded_revisions() {
         })
         .expect("max revision should succeed");
 
-    assert_eq!(revision_count, 265);
+    assert_eq!(revision_count, 268);
     assert_eq!(oldest_revision, 1);
-    assert_eq!(newest_revision, 265);
+    assert_eq!(newest_revision, 268);
 }
 
 #[test]
@@ -760,7 +761,7 @@ fn fs_path_state_tracks_latest_change_revision() {
             |row| row.get::<_, i64>(0),
         )
         .expect("path state should exist");
-    assert_eq!(revision, 7);
+    assert_eq!(revision, 10);
 }
 
 #[test]
@@ -969,7 +970,7 @@ fn fs_migrations_are_idempotent() {
     write_file(&store, "/Wiki/beta.md", None, 11);
 
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("rerunning migrations should be a no-op");
 
     let conn = Connection::open(store.database_path()).expect("db should open");
@@ -988,7 +989,8 @@ fn fs_migrations_are_idempotent() {
             "wiki_store:002_fs_folders".to_string(),
             "wiki_store:003_wikilink_alias_links".to_string(),
             "wiki_store:004_rebuild_links_after_code_filter".to_string(),
-            "wiki_store:005_okf_metadata".to_string()
+            "wiki_store:005_seed_evidence_sources_root".to_string(),
+            "wiki_store:006_okf_metadata".to_string()
         ]
     );
 
@@ -997,7 +999,7 @@ fn fs_migrations_are_idempotent() {
             row.get::<_, i64>(0)
         })
         .expect("path state count should succeed");
-    assert_eq!(tracked_paths, 6);
+    assert_eq!(tracked_paths, 9);
 }
 
 #[test]
@@ -1009,7 +1011,7 @@ fn fs_migrations_backfill_okf_metadata_and_sync_updates() {
             &conn,
             "/Wiki/project/facts.md",
             "file",
-            "Fact from /Sources/raw/web/source.md",
+            "Fact from /Sources/evidence/web/source.md",
             "{}",
         );
         insert_legacy_node(
@@ -1028,15 +1030,15 @@ fn fs_migrations_backfill_okf_metadata_and_sync_updates() {
         );
         insert_legacy_node(
             &conn,
-            "/Sources/raw/web/source.md",
+            "/Sources/evidence/web/source.md",
             "source",
-            "raw source body",
+            "evidence source body",
             "{}",
         );
         let revision = record_legacy_change(&conn, "/Wiki/project/facts.md");
         record_legacy_change(&conn, "/Wiki/project/plans.md");
         record_legacy_change(&conn, "/Wiki/project/preferences.md");
-        record_legacy_change(&conn, "/Sources/raw/web/source.md");
+        record_legacy_change(&conn, "/Sources/evidence/web/source.md");
         revision
     };
 
@@ -1062,7 +1064,7 @@ fn fs_migrations_backfill_okf_metadata_and_sync_updates() {
     assert!(
         facts
             .metadata_json
-            .contains("\"path\":\"/Sources/raw/web/source.md\"")
+            .contains("\"path\":\"/Sources/evidence/web/source.md\"")
     );
     assert_ne!(facts.etag, "etag-/Wiki/project/facts.md");
 
@@ -1083,7 +1085,7 @@ fn fs_migrations_backfill_okf_metadata_and_sync_updates() {
     );
 
     let reference = store
-        .read_node("/Sources/raw/web/source.md")
+        .read_node("/Sources/evidence/web/source.md")
         .expect("source read should succeed")
         .expect("source should exist");
     assert!(
@@ -1171,7 +1173,7 @@ fn fs_links_migration_backfills_existing_nodes() {
 
     let store = FsStore::new(database_path.clone());
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("fs links migration should succeed");
     let conn = Connection::open(database_path).expect("db should reopen");
     let link_count = conn
@@ -1252,7 +1254,7 @@ fn wikilink_alias_migration_rebuilds_existing_links() {
          VALUES (?1, 'file', ?2, 10, 20, 'etag-source', '{}', NULL, 'source.md')",
         params![
             "/Wiki/source.md",
-            "[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]",
+            "[[/Sources/evidence/a/a.md|opencode.ai/DESIGN.md]]",
         ],
     )
     .expect("existing node should insert");
@@ -1262,7 +1264,7 @@ fn wikilink_alias_migration_rebuilds_existing_links() {
          VALUES (?1, ?2, ?2, ?2, 'wikilink', 20)",
         params![
             "/Wiki/source.md",
-            "/Sources/raw/a/a.md|opencode.ai/DESIGN.md",
+            "/Sources/evidence/a/a.md|opencode.ai/DESIGN.md",
         ],
     )
     .expect("old link row should insert");
@@ -1281,7 +1283,7 @@ fn wikilink_alias_migration_rebuilds_existing_links() {
 
     let store = FsStore::new(database_path.clone());
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("wikilink alias migration should succeed");
 
     let outgoing = store
@@ -1292,10 +1294,10 @@ fn wikilink_alias_migration_rebuilds_existing_links() {
         })
         .expect("outgoing links should load");
     assert_eq!(outgoing.len(), 1);
-    assert_eq!(outgoing[0].target_path, "/Sources/raw/a/a.md");
+    assert_eq!(outgoing[0].target_path, "/Sources/evidence/a/a.md");
     assert_eq!(
         outgoing[0].raw_href,
-        "/Sources/raw/a/a.md|opencode.ai/DESIGN.md"
+        "/Sources/evidence/a/a.md|opencode.ai/DESIGN.md"
     );
     assert_eq!(outgoing[0].link_text, "opencode.ai/DESIGN.md");
 }
@@ -1348,7 +1350,7 @@ fn code_filter_migration_rebuilds_existing_links() {
 
     let store = FsStore::new(database_path.clone());
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("code filter migration should succeed");
 
     let outgoing = store
@@ -1373,7 +1375,7 @@ fn fs_folder_migration_promotes_empty_file_parent_to_folder() {
     drop(conn);
 
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("folder migration should promote empty parent");
 
     let folder = store
@@ -1400,13 +1402,13 @@ fn fs_okf_migration_updates_existing_file_etags_and_sync_delta() {
     let (_dir, store) = old_fs_schema_store();
     let conn = Connection::open(store.database_path()).expect("db should open");
     insert_legacy_node(&conn, "/Wiki/existing.md", "file", "existing", "{}");
-    insert_legacy_node(&conn, "/Sources/raw/source.md", "source", "raw", "{}");
+    insert_legacy_node(&conn, "/Sources/evidence/source.md", "source", "raw", "{}");
     let wiki_revision = record_legacy_change(&conn, "/Wiki/existing.md");
-    record_legacy_change(&conn, "/Sources/raw/source.md");
+    record_legacy_change(&conn, "/Sources/evidence/source.md");
     drop(conn);
 
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("OKF metadata migration should succeed");
 
     let file = store
@@ -1414,11 +1416,11 @@ fn fs_okf_migration_updates_existing_file_etags_and_sync_delta() {
         .expect("file should read")
         .expect("file should exist");
     let source = store
-        .read_node("/Sources/raw/source.md")
+        .read_node("/Sources/evidence/source.md")
         .expect("source should read")
         .expect("source should exist");
     assert_ne!(file.etag, "etag-/Wiki/existing.md");
-    assert_ne!(source.etag, "etag-/Sources/raw/source.md");
+    assert_ne!(source.etag, "etag-/Sources/evidence/source.md");
 
     let updates = store
         .fetch_updates(FetchUpdatesRequest {
@@ -1455,7 +1457,7 @@ fn fs_folder_migration_reports_promoted_folder_in_sync_delta() {
     drop(conn);
 
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("folder migration should promote empty parent");
 
     let updates = store
@@ -1489,7 +1491,7 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
     insert_legacy_node(&conn, "/Wiki/foo/bar.md", "file", "bar", "{}");
     insert_legacy_node(
         &conn,
-        "/Sources/raw/web/web.md",
+        "/Sources/evidence/web/web.md",
         "source",
         "raw",
         r#"{"source_type":"url"}"#,
@@ -1497,7 +1499,7 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
     drop(conn);
 
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("folder migration should succeed");
 
     let file = store
@@ -1507,7 +1509,7 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
     assert_eq!(file.kind, NodeKind::File);
     assert_eq!(file.content, "bar");
     let source = store
-        .read_node("/Sources/raw/web/web.md")
+        .read_node("/Sources/evidence/web/web.md")
         .expect("legacy source should read")
         .expect("legacy source should exist");
     assert_eq!(source.kind, NodeKind::Source);
@@ -1516,7 +1518,7 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
     assert!(
         source
             .metadata_json
-            .contains("\"resource\":\"kinic://db_local/Sources/raw/web/web.md\"")
+            .contains("\"resource\":\"kinic://default/Sources/evidence/web/web.md\"")
     );
 
     let children = store
@@ -1557,7 +1559,7 @@ fn fs_folder_migration_keeps_legacy_nodes_usable_with_current_etags() {
         .delete_node(
             DeleteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/web/web.md".to_string(),
+                path: "/Sources/evidence/web/web.md".to_string(),
                 expected_etag: Some(source.etag),
                 expected_folder_index_etag: None,
             },
@@ -1575,7 +1577,7 @@ fn fs_folder_migration_rejects_content_file_parent_conflict() {
     drop(conn);
 
     let error = store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect_err("non-empty parent conflict should fail migration");
     assert!(error.contains("folder path conflicts with non-empty node: /Wiki/foo"));
 }
@@ -1589,7 +1591,7 @@ fn fs_folder_migration_rejects_metadata_file_parent_conflict() {
     drop(conn);
 
     let error = store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect_err("metadata parent conflict should fail migration");
     assert!(error.contains("folder path conflicts with non-empty node: /Wiki/foo"));
 }
@@ -1605,7 +1607,7 @@ fn fs_migrations_reject_legacy_schema_history() {
     .expect("legacy version should insert");
 
     let error = store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect_err("legacy schema should be rejected");
     assert!(error.contains("legacy wiki_store schema is unsupported"));
 }
@@ -1656,7 +1658,7 @@ fn fs_migrations_reject_old_fs_schema_shape_even_with_current_version() {
     .expect("current version stamp should insert");
 
     let error = store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect_err("old 000 schema shape should be rejected");
     assert!(error.contains("legacy wiki_store schema is unsupported"));
 }
@@ -1669,7 +1671,7 @@ fn fs_migrations_reject_current_schema_missing_parent_index() {
         .expect("parent index should drop");
 
     let error = store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect_err("current schema missing parent index should be rejected");
     assert!(error.contains("legacy wiki_store schema is unsupported"));
 }
@@ -1707,7 +1709,7 @@ fn fs_migrations_reject_current_schema_missing_parent_columns() {
     }
 
     let error = store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect_err("current schema missing name column should be rejected");
     assert!(error.contains("legacy wiki_store schema is unsupported"));
 }
@@ -2307,7 +2309,7 @@ fn list_children_reports_missing_directory_paths() {
             .collect::<Vec<_>>(),
         vec!["/Memory", "/Sessions", "/Sources", "/Wiki"]
     );
-    for path in ["/Memory", "/Sessions", "/Wiki", "/Sources"] {
+    for path in ["/Memory", "/Sessions", "/Wiki"] {
         let children = store
             .list_children(ListChildrenRequest {
                 database_id: "default".to_string(),
@@ -2316,6 +2318,23 @@ fn list_children_reports_missing_directory_paths() {
             .expect("root-like directory should allow empty listing");
         assert!(children.is_empty());
     }
+    let sources_children = store
+        .list_children(ListChildrenRequest {
+            database_id: "default".to_string(),
+            path: "/Sources".to_string(),
+        })
+        .expect("sources directory should list seeded source roots");
+    assert_eq!(
+        sources_children
+            .iter()
+            .map(|child| child.path.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "/Sources/evidence",
+            "/Sources/sessions",
+            "/Sources/skill-runs"
+        ]
+    );
 }
 
 #[test]
@@ -3131,13 +3150,13 @@ fn move_node_refreshes_search_indexes_for_path_and_basename_queries() {
 #[test]
 fn move_node_allows_noncanonical_target_for_source_nodes() {
     let (_dir, store) = new_store();
-    ensure_parent_folders(&store, "/Sources/raw/source/source.md", 1_909);
-    ensure_parent_folders(&store, "/Sources/raw/renamed/wrong.md", 1_909);
+    ensure_parent_folders(&store, "/Sources/evidence/source/source.md", 1_909);
+    ensure_parent_folders(&store, "/Sources/evidence/renamed/wrong.md", 1_909);
     let created = store
         .write_node(
             WriteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/evidence/source/source.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -3151,8 +3170,8 @@ fn move_node_allows_noncanonical_target_for_source_nodes() {
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
-                from_path: "/Sources/raw/source/source.md".to_string(),
-                to_path: "/Sources/raw/renamed/wrong.md".to_string(),
+                from_path: "/Sources/evidence/source/source.md".to_string(),
+                to_path: "/Sources/evidence/renamed/wrong.md".to_string(),
                 expected_etag: Some(created.node.etag),
                 overwrite: false,
             },
@@ -3160,19 +3179,19 @@ fn move_node_allows_noncanonical_target_for_source_nodes() {
         )
         .expect("move should succeed");
 
-    assert_eq!(moved.node.path, "/Sources/raw/renamed/wrong.md");
+    assert_eq!(moved.node.path, "/Sources/evidence/renamed/wrong.md");
 }
 
 #[test]
 fn move_node_accepts_canonical_target_for_source_nodes() {
     let (_dir, store) = new_store();
-    ensure_parent_folders(&store, "/Sources/raw/source/source.md", 1_919);
+    ensure_parent_folders(&store, "/Sources/evidence/source/source.md", 1_919);
     ensure_parent_folders(&store, "/Sources/sessions/renamed/renamed.md", 1_919);
     let created = store
         .write_node(
             WriteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/evidence/source/source.md".to_string(),
                 kind: NodeKind::Source,
                 content: "source body".to_string(),
                 metadata_json: "{}".to_string(),
@@ -3186,7 +3205,7 @@ fn move_node_accepts_canonical_target_for_source_nodes() {
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
-                from_path: "/Sources/raw/source/source.md".to_string(),
+                from_path: "/Sources/evidence/source/source.md".to_string(),
                 to_path: "/Sources/sessions/renamed/renamed.md".to_string(),
                 expected_etag: Some(created.node.etag),
                 overwrite: false,
@@ -3206,7 +3225,7 @@ fn move_node_accepts_canonical_target_for_source_nodes() {
 #[test]
 fn source_nodes_allow_domain_specific_prefix_lookalike_paths() {
     let (_dir, store) = new_store();
-    for path in ["/Sources/rawfoo/foo.md", "/Sources/sessions-foo/x.md"] {
+    for path in ["/Sources/evidencefoo/foo.md", "/Sources/sessions-foo/x.md"] {
         ensure_parent_folders(&store, path, 1_929);
         let result = store
             .write_node(
@@ -3230,7 +3249,7 @@ fn source_nodes_allow_domain_specific_prefix_lookalike_paths() {
 fn source_nodes_accept_canonical_paths_under_both_roots() {
     let (_dir, store) = new_store();
     for (index, path) in [
-        "/Sources/raw/source/source.md",
+        "/Sources/evidence/source/source.md",
         "/Sources/sessions/session/session.md",
     ]
     .into_iter()

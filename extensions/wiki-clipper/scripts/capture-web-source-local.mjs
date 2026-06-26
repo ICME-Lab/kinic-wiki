@@ -5,7 +5,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
-import { buildWebRawSource, collectWebPageSnapshot } from "../src/web-source.js";
+import { buildWebEvidenceSource, collectWebPageSnapshot } from "../src/web-source.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(root, "tmp", "web-source-captures");
@@ -30,13 +30,13 @@ try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
       const snapshot = await page.evaluate(collectWebPageSnapshot);
-      const rawSource = await buildWebRawSource(snapshot);
-      const localDir = resolve(outputRoot, rawSource.sourceId);
-      const localPath = resolve(localDir, `${rawSource.sourceId}.md`);
+      const evidenceSource = await buildWebEvidenceSource(snapshot);
+      const localDir = resolve(outputRoot, evidenceSource.sourceId);
+      const localPath = resolve(localDir, `${evidenceSource.sourceId}.md`);
       await mkdir(localDir, { recursive: true });
-      await writeFile(localPath, rawSource.content, "utf8");
-      const textChars = JSON.parse(rawSource.metadataJson).text_chars;
-      const preview = rawSource.content.split("\n").slice(14, 24).join("\n").trim();
+      await writeFile(localPath, evidenceSource.content, "utf8");
+      const textChars = JSON.parse(evidenceSource.metadataJson).text_chars;
+      const preview = evidenceSource.content.split("\n").slice(14, 24).join("\n").trim();
       results.push({
         ok: true,
         url,
@@ -44,7 +44,7 @@ try {
         title: snapshot.title,
         textChars,
         localPath,
-        sourcePath: rawSource.path,
+        sourcePath: evidenceSource.path,
         preview
       });
     } catch (error) {

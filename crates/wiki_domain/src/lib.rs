@@ -12,7 +12,7 @@ pub const WIKI_ENTITIES_PREFIX: &str = "/Wiki/entities";
 pub const WIKI_CONCEPTS_PREFIX: &str = "/Wiki/concepts";
 pub const SKILL_REGISTRY_ROOT: &str = "/Wiki/skills";
 pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = SKILL_REGISTRY_ROOT;
-pub const RAW_SOURCES_PREFIX: &str = "/Sources/raw";
+pub const EVIDENCE_SOURCES_PREFIX: &str = "/Sources/evidence";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 const MAX_SOURCE_PROVIDER_LEN: usize = 32;
@@ -93,19 +93,15 @@ pub fn apply_okf_metadata(
         );
     }
     validate_optional_okf_fields(&metadata)?;
-    if !metadata.contains_key("source_refs") {
-        let refs = extract_raw_source_paths(content)
-            .into_iter()
-            .map(|source_path| {
-                let mut item = Map::new();
-                item.insert("path".to_string(), Value::String(source_path));
-                Value::Object(item)
-            })
-            .collect::<Vec<_>>();
-        metadata.insert("source_refs".to_string(), Value::Array(refs));
-    } else {
-        let _ = metadata_source_ref_paths_from_map(&metadata)?;
-    }
+    let refs = extract_evidence_source_paths(content)
+        .into_iter()
+        .map(|source_path| {
+            let mut item = Map::new();
+            item.insert("path".to_string(), Value::String(source_path));
+            Value::Object(item)
+        })
+        .collect::<Vec<_>>();
+    metadata.insert("source_refs".to_string(), Value::Array(refs));
     serialize_metadata(metadata)
 }
 
@@ -135,7 +131,7 @@ pub fn metadata_source_ref_paths(metadata_json: &str) -> Result<Option<Vec<Strin
 }
 
 pub fn infer_okf_type(path: &str, kind: &NodeKind) -> OkfType {
-    if *kind == NodeKind::Source && path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
+    if *kind == NodeKind::Source && path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX) {
         return OkfType::Reference;
     }
     let lower = path.to_ascii_lowercase();
@@ -166,7 +162,7 @@ pub fn kinic_resource(database_id: &str, path: &str) -> String {
 }
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
-    let is_source_path = path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX)
+    let is_source_path = path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX)
         || path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX)
         || path_matches_prefix_boundary(path, SKILL_RUNS_PREFIX);
     if *kind == NodeKind::Folder {
@@ -175,7 +171,7 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
     if *kind != NodeKind::Source {
         if is_source_path {
             return Err(format!(
-                "source path must use source kind under {RAW_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
+                "source path must use source kind under {EVIDENCE_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
             ));
         }
         return Ok(());
@@ -184,8 +180,8 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
 }
 
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
-    if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
-        return validate_raw_source_path(path);
+    if path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX) {
+        return validate_evidence_source_path(path);
     }
     if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
         return validate_source_path_under_prefix(path, SESSION_SOURCES_PREFIX);
@@ -194,7 +190,7 @@ pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
         return validate_skill_run_source_path(path);
     }
     Err(format!(
-        "source path must stay under {RAW_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
+        "source path must stay under {EVIDENCE_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
     ))
 }
 
@@ -290,18 +286,18 @@ fn metadata_source_ref_paths_from_map(
         let Some(path) = object.get("path").and_then(Value::as_str) else {
             return Err("source_refs items require string path".to_string());
         };
-        validate_raw_source_ref(path)?;
+        validate_evidence_source_ref(path)?;
         paths.push(path.to_string());
     }
     Ok(paths)
 }
 
-fn validate_raw_source_ref(path: &str) -> Result<(), String> {
-    if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
+fn validate_evidence_source_ref(path: &str) -> Result<(), String> {
+    if path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX) {
         Ok(())
     } else {
         Err(format!(
-            "source_refs path must stay under {RAW_SOURCES_PREFIX}: {path}"
+            "source_refs path must stay under {EVIDENCE_SOURCES_PREFIX}: {path}"
         ))
     }
 }
@@ -311,13 +307,14 @@ fn okf_managed_path(path: &str, kind: &NodeKind) -> bool {
         return false;
     }
     path_matches_prefix_boundary(path, WIKI_ROOT_PATH)
-        || (*kind == NodeKind::Source && path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX))
+        || (*kind == NodeKind::Source
+            && path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX))
 }
 
-fn extract_raw_source_paths(content: &str) -> Vec<String> {
+fn extract_evidence_source_paths(content: &str) -> Vec<String> {
     let mut paths = Vec::new();
     let mut offset = 0;
-    while let Some(relative_start) = content[offset..].find(RAW_SOURCES_PREFIX) {
+    while let Some(relative_start) = content[offset..].find(EVIDENCE_SOURCES_PREFIX) {
         let start = offset + relative_start;
         let tail = &content[start..];
         let end = tail
@@ -370,14 +367,14 @@ fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), Str
     Ok(())
 }
 
-fn validate_raw_source_path(path: &str) -> Result<(), String> {
+fn validate_evidence_source_path(path: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(&format!("{RAW_SOURCES_PREFIX}/"))
-        .ok_or_else(|| format!("source path must stay under {RAW_SOURCES_PREFIX}: {path}"))?;
+        .strip_prefix(&format!("{EVIDENCE_SOURCES_PREFIX}/"))
+        .ok_or_else(|| format!("source path must stay under {EVIDENCE_SOURCES_PREFIX}: {path}"))?;
     let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
-            "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
+            "source path must use canonical form {EVIDENCE_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
     let [provider, file_name] = segments.as_slice() else {
@@ -388,7 +385,7 @@ fn validate_raw_source_path(path: &str) -> Result<(), String> {
         || !is_safe_source_segment(file_name.trim_end_matches(".md"))
     {
         return Err(format!(
-            "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
+            "source path must use canonical form {EVIDENCE_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
     Ok(())
@@ -454,33 +451,34 @@ mod tests {
     use vfs_types::NodeKind;
 
     use super::{
-        RAW_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, normalize_wiki_remote_path,
-        validate_canonical_source_path, validate_source_path_for_kind, wiki_relative_path,
+        EVIDENCE_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, apply_okf_metadata,
+        metadata_source_ref_paths, normalize_wiki_remote_path, validate_canonical_source_path,
+        validate_source_path_for_kind, wiki_relative_path,
     };
 
     #[test]
     fn canonical_source_path_accepts_expected_shape() {
-        let path = format!("{RAW_SOURCES_PREFIX}/chatgpt/alpha.md");
+        let path = format!("{EVIDENCE_SOURCES_PREFIX}/chatgpt/alpha.md");
         assert!(validate_canonical_source_path(&path).is_ok());
     }
 
     #[test]
     fn canonical_source_path_rejects_wrong_file_name() {
-        let error = validate_canonical_source_path("/Sources/raw/alpha/beta.txt")
+        let error = validate_canonical_source_path("/Sources/evidence/alpha/beta.txt")
             .expect_err("non-canonical path should fail");
         assert!(error.contains("canonical form"));
     }
 
     #[test]
     fn canonical_source_path_rejects_old_raw_directory_ids() {
-        let error = validate_canonical_source_path("/Sources/raw/web-abc/web-abc.md")
-            .expect_err("old raw source layout should fail");
+        let error = validate_canonical_source_path("/Sources/evidence/web-abc/web-abc.md")
+            .expect_err("old evidence source layout should fail");
         assert!(error.contains("canonical form"));
     }
 
     #[test]
     fn canonical_source_path_rejects_prefix_lookalikes() {
-        let error = validate_canonical_source_path("/Sources/rawfoo/alpha.md")
+        let error = validate_canonical_source_path("/Sources/evidencefoo/alpha.md")
             .expect_err("prefix lookalike should fail");
         assert!(error.contains("source path must stay under"));
     }
@@ -491,8 +489,8 @@ mod tests {
         let long_id = "a".repeat(129);
 
         for path in [
-            format!("{RAW_SOURCES_PREFIX}/{long_provider}/ok.md"),
-            format!("{RAW_SOURCES_PREFIX}/chatgpt/{long_id}.md"),
+            format!("{EVIDENCE_SOURCES_PREFIX}/{long_provider}/ok.md"),
+            format!("{EVIDENCE_SOURCES_PREFIX}/chatgpt/{long_id}.md"),
         ] {
             let error = validate_canonical_source_path(&path)
                 .expect_err("overlong provider or id should fail");
@@ -502,8 +500,8 @@ mod tests {
 
     #[test]
     fn canonical_source_path_rejects_dotdot_inside_source_id() {
-        let error = validate_canonical_source_path("/Sources/raw/chatgpt/a..b.md")
-            .expect_err("dotdot inside raw source id should fail");
+        let error = validate_canonical_source_path("/Sources/evidence/chatgpt/a..b.md")
+            .expect_err("dotdot inside evidence source id should fail");
         assert!(error.contains("canonical form"));
     }
 
@@ -544,8 +542,8 @@ mod tests {
     #[test]
     fn canonical_source_path_rejects_empty_and_dotdot_segments() {
         for path in [
-            "/Sources/raw//chatgpt/alpha.md",
-            "/Sources/raw/chatgpt//alpha.md",
+            "/Sources/evidence//chatgpt/alpha.md",
+            "/Sources/evidence/chatgpt//alpha.md",
             "/Sources/sessions//session.md",
             "/Sources/sessions/../...md",
             "/Sources/sessions/session-1/session..1.md",
@@ -572,7 +570,7 @@ mod tests {
             "/Wikix/foo.md",
             "/Wikifoo/bar.md",
             "Wiki/foo.md",
-            "/Sources/raw/foo.md",
+            "/Sources/evidence/foo.md",
         ] {
             let error = wiki_relative_path(path).expect_err("lookalike path should fail");
             assert!(error.contains(WIKI_ROOT_PATH));
@@ -581,8 +579,59 @@ mod tests {
 
     #[test]
     fn normalize_wiki_remote_path_rejects_non_wiki_path() {
-        let error = normalize_wiki_remote_path("/Sources/raw/file.md")
+        let error = normalize_wiki_remote_path("/Sources/evidence/file.md")
             .expect_err("non-wiki path should fail");
         assert!(error.contains(WIKI_ROOT_PATH));
+    }
+
+    #[test]
+    fn okf_metadata_recomputes_existing_source_refs_from_content() {
+        let metadata = apply_okf_metadata(
+            "alpha",
+            "/Wiki/project/facts.md",
+            &NodeKind::File,
+            "Fact from /Sources/evidence/web/new.md",
+            r#"{"source_refs":[{"path":"/Sources/evidence/web/old.md"}]}"#,
+        )
+        .expect("metadata should apply");
+
+        assert_eq!(
+            metadata_source_ref_paths(&metadata).expect("source refs should parse"),
+            Some(vec!["/Sources/evidence/web/new.md".to_string()])
+        );
+        assert!(!metadata.contains("/Sources/evidence/web/old.md"));
+    }
+
+    #[test]
+    fn okf_metadata_clears_source_refs_when_content_has_none() {
+        let metadata = apply_okf_metadata(
+            "alpha",
+            "/Wiki/project/facts.md",
+            &NodeKind::File,
+            "Fact without evidence path",
+            r#"{"source_refs":[{"path":"/Sources/evidence/web/old.md"}]}"#,
+        )
+        .expect("metadata should apply");
+
+        assert_eq!(
+            metadata_source_ref_paths(&metadata).expect("source refs should parse"),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn okf_metadata_leaves_unmanaged_non_okf_metadata_unfilled() {
+        let metadata = apply_okf_metadata(
+            "alpha",
+            "/Other/project/facts.md",
+            &NodeKind::File,
+            "Fact from /Sources/evidence/web/new.md",
+            r#"{"custom":1}"#,
+        )
+        .expect("metadata should apply");
+
+        assert!(metadata.contains("\"custom\":1"));
+        assert!(!metadata.contains("okf_type"));
+        assert!(!metadata.contains("source_refs"));
     }
 }

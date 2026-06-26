@@ -14,17 +14,17 @@ pnpm dev
 Open a database with:
 
 ```text
-http://localhost:3010/<database-id>/Knowledge
+http://localhost:3010/<database-id>/Wiki
 ```
 
 The dashboard can create databases after Internet Identity login. CLI setup is still useful for scripted local setup:
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create "<database-name>")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database create --profile workspace "<database-name>")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id <canister-id> database grant "$DB_ID" 2vxsx-fae reader
 ```
 
-`database create <database-name>` creates a generated database ID and prints it on success. The Browser create dialog collects the database name and uses the shared four-store layout.
+`database create [--profile <profile>] <database-name>` creates a generated database ID and prints it on success. The Browser create dialog exposes the same profiles: `workspace`, `knowledge`, `memory`, `skill`, and `session`.
 `NEXT_PUBLIC_WIKI_IC_HOST` controls the browser-side IC agent host. Internet Identity uses the mainnet provider `https://id.ai` by default. `NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID` selects the fixed wiki canister:
 
 ```bash
@@ -50,15 +50,15 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 
 ## Scope
 
-- Browse `/Knowledge`, `/Memory`, `/Skills`, `/Sessions`, and `/Sources`
+- Browse `/Wiki` and `/Sources`
 - Create databases and manage database access
-- Edit Markdown notes when the selected node is editable
-- Create web source captures under `/Sources/web/...` from the current database browser route
+- Edit Markdown nodes under `/Wiki`
+- Create URL ingest requests under `/Sources/ingest-requests` from the current database browser route
 - Render Markdown preview and raw content
 - Search by path or full text
 - Show incoming backlinks and a lightweight graph view
 - Show lightweight lint hints
-- Inspect path, etag, update time, size, role, outgoing links, and inferred raw sources
+- Inspect path, etag, update time, size, role, outgoing links, and inferred evidence sources
 - Expose Open Graph and X link preview images
 - Share public databases on X through the Web Intent URL
 - Read canister health and Store API metadata through the hand-written Candid subset
@@ -71,19 +71,26 @@ No full lint workflow is included.
 Open a database route and select the `ingest` left-pane tab:
 
 ```text
-/<database-id>/Knowledge?tab=ingest
+/<database-id>/Wiki?tab=ingest
 ```
 
-Submitting a web page snapshot writes raw evidence to the same database:
+Select the `clipper` left-pane tab to check the current database, writer readiness, Chrome extension setup steps, and Clipper storage paths without leaving WikiBrowser:
 
 ```text
-/Sources/web/<source-id>.md
+/<database-id>/Wiki?tab=clipper
 ```
 
-Raw web evidence under `/Sources/<provider>/<id>.md` is stored as `source`.
+Submitting a URL writes one request node to the same database:
 
-When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, `/api/source/run` checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `sourcePath`, `sourceEtag`, and `sessionNonce` to the generator Worker with bearer auth. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
-The worker reads `/Sources/<provider>/<id>.md`, then generates review-ready pages under `/Knowledge/conversations`. The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so source generation can run immediately. Owners can revoke that member, but source generation will fail while the service principal lacks writer access.
+```text
+/Sources/ingest-requests/<request-id>.md
+```
+
+Ingest request nodes are regular `file` nodes. Only fetched raw web evidence under `/Sources/evidence/<provider>/<id>.md` is stored as `source`.
+
+When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, the browser asks the VFS canister to authorize a 30 minute session trigger ticket for the II caller, writes the request, then calls `/api/url-ingest/trigger`. That server route checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `requestPath`, and `sessionNonce` to the generator Worker with bearer auth. The ticket is replayable within its TTL; duplicate jobs are handled by Worker/job idempotency and rate limits. Writer access and DB cycles state are re-checked after issuance, so role revocation, suspension, or low balance can invalidate an existing ticket before its TTL. `Origin` is only a CORS allowlist, not the authorization boundary.
+The worker fetches supported `http` / `https` HTML or text URLs, writes the normalized source to `/Sources/evidence/<provider>/<id>.md`, then generates one review-ready page under `/Wiki/conversations`. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
+The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so URL ingest and page generation can run immediately. Owners can revoke that member, but URL ingest sessions will fail while the service principal lacks writer access.
 
 ## Public Access
 
@@ -132,7 +139,7 @@ pnpm dev
 Run the browser smoke against an existing file node:
 
 ```bash
-pnpm smoke -- --url http://127.0.0.1:3010/<database-id>/Knowledge/<existing-file>.md
+pnpm smoke -- --url http://127.0.0.1:3010/<database-id>/Wiki/<existing-file>.md
 ```
 
 The URL must point to a readable file node. Directory paths and missing files intentionally fail.
@@ -164,11 +171,11 @@ Covered methods:
 - `graph_links`
 - `graph_neighborhood`
 - `read_node_context`
-- `memory_manifest`
-- `query_context`
+- `store_manifest`
+- `memory_recall`
 - `query_database_sql_json`
 - `query_index_sql_json`
-- `source_evidence`
+- `knowledge_evidence`
 - `search_node_paths`
 - `search_nodes`
 
@@ -226,7 +233,7 @@ pnpm preview
 Post-deploy public smoke:
 
 ```bash
-pnpm smoke:public -- --base-url https://<deployment>.workers.dev --database-id <database-id> --path /Knowledge/<existing-file>.md
+pnpm smoke:public -- --base-url https://<deployment>.workers.dev --database-id <database-id> --path /Wiki/<existing-file>.md
 ```
 
 `--path` must point to an existing file node on the mainnet canister.

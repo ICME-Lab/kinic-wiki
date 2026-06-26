@@ -74,16 +74,18 @@ fn new_store() -> TestStore {
     let dir = tempdir().expect("tempdir should create");
     let path = dir.path().join("wiki.sqlite3");
     let store = FsStore::new(path);
-    store.run_fs_migrations().expect("fs migrations should run");
+    store
+        .run_fs_migrations_for_database("default")
+        .expect("fs migrations should run");
     TestStore { store, _dir: dir }
 }
 
 fn file_path(slot: u8) -> String {
-    format!("/Knowledge/p{slot}.md")
+    format!("/Wiki/p{slot}.md")
 }
 
 fn folder_path(slot: u8) -> String {
-    format!("/Knowledge/f{slot}")
+    format!("/Wiki/f{slot}")
 }
 
 fn ensure_wiki_folder(store: &FsStore, now: i64) {
@@ -91,7 +93,7 @@ fn ensure_wiki_folder(store: &FsStore, now: i64) {
         .mkdir_node(
             MkdirNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge".to_string(),
+                path: "/Wiki".to_string(),
             },
             now,
         )
@@ -271,13 +273,13 @@ fn assert_store_matches_model(store: &FsStore, model: &BTreeMap<String, ModelNod
     let listed = store
         .list_nodes(ListNodesRequest {
             database_id: "default".to_string(),
-            prefix: "/Knowledge".to_string(),
+            prefix: "/Wiki".to_string(),
             recursive: true,
         })
         .expect("list should succeed")
         .into_iter()
         .map(|entry| entry.path)
-        .filter(|path| path.starts_with("/Knowledge/p") || path.starts_with("/Knowledge/f"))
+        .filter(|path| path.starts_with("/Wiki/p") || path.starts_with("/Wiki/f"))
         .collect::<BTreeSet<_>>();
     let expected_paths = model.keys().cloned().collect::<BTreeSet<_>>();
     assert_eq!(listed, expected_paths);
@@ -370,7 +372,7 @@ fn path_set(store: &FsStore) -> BTreeSet<String> {
     store
         .list_nodes(ListNodesRequest {
             database_id: "default".to_string(),
-            prefix: "/Knowledge".to_string(),
+            prefix: "/Wiki".to_string(),
             recursive: true,
         })
         .expect("nodes should list")
@@ -394,8 +396,8 @@ proptest! {
         let store = &env.store;
         let left_path = file_path(left);
         let right_path = file_path(right);
-        write_generated_file(store, &left_path, "alpha [[/Knowledge/p0.md|A]] beta\n", 10);
-        write_generated_file(store, &right_path, "right [[/Knowledge/p1.md|B]]\n", 11);
+        write_generated_file(store, &left_path, "alpha [[/Wiki/p0.md|A]] beta\n", 10);
+        write_generated_file(store, &right_path, "right [[/Wiki/p1.md|B]]\n", 11);
 
         let before_left = current_content(store, &left_path);
         let before_right = current_content(store, &right_path);
@@ -406,14 +408,14 @@ proptest! {
                     WriteNodeItem {
                         path: left_path.clone(),
                         kind: NodeKind::File,
-                        content: "left batch [[/Knowledge/p2.md|C]]\n".to_string(),
+                        content: "left batch [[/Wiki/p2.md|C]]\n".to_string(),
                         metadata_json: "{}".to_string(),
                         expected_etag: etag(store, &left_path),
                     },
                     WriteNodeItem {
                         path: right_path.clone(),
                         kind: NodeKind::File,
-                        content: "right batch [[/Knowledge/p3.md|D]]\n".to_string(),
+                        content: "right batch [[/Wiki/p3.md|D]]\n".to_string(),
                         metadata_json: "{}".to_string(),
                         expected_etag: if fail_batch {
                             Some("stale-etag".to_string())
@@ -433,11 +435,11 @@ proptest! {
             batch.expect("valid batch should write");
             assert_eq!(
                 current_content(store, &left_path).as_deref(),
-                Some("left batch [[/Knowledge/p2.md|C]]\n")
+                Some("left batch [[/Wiki/p2.md|C]]\n")
             );
             assert_eq!(
                 current_content(store, &right_path).as_deref(),
-                Some("right batch [[/Knowledge/p3.md|D]]\n")
+                Some("right batch [[/Wiki/p3.md|D]]\n")
             );
         }
 
@@ -561,7 +563,7 @@ proptest! {
         )));
         assert!(targets.contains(&(
             format!("{to}/child.md"),
-            "/Knowledge/p0.md".to_string(),
+            "/Wiki/p0.md".to_string(),
             "wikilink".to_string()
         )));
     }
@@ -574,13 +576,13 @@ proptest! {
     ) {
         let env = new_store();
         let store = &env.store;
-        let path = "/Knowledge/links/source.md";
+        let path = "/Wiki/links/source.md";
         ensure_wiki_folder(store, 1);
         store
             .mkdir_node(
                 MkdirNodeRequest {
                     database_id: "default".to_string(),
-                    path: "/Knowledge/links".to_string(),
+                    path: "/Wiki/links".to_string(),
                 },
                 2,
             )
@@ -589,7 +591,7 @@ proptest! {
             concat!(
                 "[[{}|Wiki Alias]]\n",
                 "[Relative](rel{rel_target}.md?view=raw#section \"Title\")\n",
-                "[Source](/Sources/{source_target}.md#frag)\n",
+                "[Source](/Sources/evidence/{source_target}.md#frag)\n",
                 "[External](https://example.com/nope.md)\n",
                 "[Hash](#local)\n",
                 "[Root](/outside.md)\n",
@@ -618,12 +620,12 @@ proptest! {
                 "wikilink".to_string(),
             ),
             (
-                format!("/Knowledge/links/rel{rel_target}.md"),
+                format!("/Wiki/links/rel{rel_target}.md"),
                 "Relative".to_string(),
                 "markdown".to_string(),
             ),
             (
-                format!("/Sources/{source_target}.md"),
+                format!("/Sources/evidence/{source_target}.md"),
                 "Source".to_string(),
                 "markdown".to_string(),
             ),

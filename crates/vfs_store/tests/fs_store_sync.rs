@@ -11,7 +11,7 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
     let dir = tempdir().expect("temp dir should exist");
     let store = FsStore::new(dir.path().join("wiki.sqlite3"));
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("fs migrations should succeed");
     (dir, store)
 }
@@ -65,13 +65,13 @@ fn ensure_parent_folders(store: &FsStore, path: &str, now: i64) {
 #[test]
 fn snapshot_revision_is_stable_for_same_state() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    write_node(&store, "/Knowledge/beta.md", "beta", None, 11);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/beta.md", "beta", None, 11);
 
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -81,7 +81,7 @@ fn snapshot_revision_is_stable_for_same_state() {
     let second = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -95,11 +95,11 @@ fn snapshot_revision_is_stable_for_same_state() {
 #[test]
 fn fetch_updates_returns_empty_when_snapshot_matches() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     let snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -111,7 +111,7 @@ fn fetch_updates_returns_empty_when_snapshot_matches() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: snapshot.snapshot_revision.clone(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -125,12 +125,12 @@ fn fetch_updates_returns_empty_when_snapshot_matches() {
 #[test]
 fn fetch_updates_returns_delta_from_old_retained_revision() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/base.md", "base", None, 10);
-    write_node(&store, "/Knowledge/unchanged.md", "unchanged", None, 11);
+    write_node(&store, "/Wiki/base.md", "base", None, 10);
+    write_node(&store, "/Wiki/unchanged.md", "unchanged", None, 11);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -139,7 +139,7 @@ fn fetch_updates_returns_delta_from_old_retained_revision() {
         .expect("base snapshot should succeed");
 
     for now in 12..=320 {
-        let path = format!("/Knowledge/history-{now}.md");
+        let path = format!("/Wiki/history-{now}.md");
         let content = format!("revision {now}");
         write_node(&store, &path, &content, None, now);
     }
@@ -152,7 +152,7 @@ fn fetch_updates_returns_delta_from_old_retained_revision() {
             .fetch_updates(FetchUpdatesRequest {
                 database_id: "default".to_string(),
                 known_snapshot_revision: base.snapshot_revision.clone(),
-                prefix: Some("/Knowledge".to_string()),
+                prefix: Some("/Wiki".to_string()),
                 limit: 100,
                 cursor,
                 target_snapshot_revision,
@@ -170,23 +170,23 @@ fn fetch_updates_returns_delta_from_old_retained_revision() {
     assert!(
         !changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/unchanged.md")
+            .any(|node| node.path == "/Wiki/unchanged.md")
     );
     assert!(
         changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/history-270.md")
+            .any(|node| node.path == "/Wiki/history-270.md")
     );
 }
 
 #[test]
 fn fetch_updates_rejects_revision_before_available_change_log() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/base.md", "base", None, 10);
+    write_node(&store, "/Wiki/base.md", "base", None, 10);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -195,19 +195,29 @@ fn fetch_updates_rejects_revision_before_available_change_log() {
         .expect("base snapshot should succeed");
 
     for now in 11..=20 {
-        let path = format!("/Knowledge/history-{now}.md");
+        let path = format!("/Wiki/history-{now}.md");
         let content = format!("revision {now}");
         write_node(&store, &path, &content, None, now);
     }
+    let base_revision = base
+        .snapshot_revision
+        .split(':')
+        .nth(1)
+        .expect("snapshot revision should contain revision")
+        .parse::<i64>()
+        .expect("snapshot revision should parse");
     let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [12_i64])
-        .expect("manual compaction should succeed");
+    conn.execute(
+        "DELETE FROM fs_change_log WHERE revision <= ?1",
+        [base_revision + 1],
+    )
+    .expect("manual compaction should succeed");
 
     let error = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -221,14 +231,14 @@ fn fetch_updates_rejects_revision_before_available_change_log() {
 fn fetch_updates_returns_delta_from_recent_revision() {
     let (_dir, store) = new_store();
     for now in 10..=19 {
-        let path = format!("/Knowledge/seed-{now}.md");
+        let path = format!("/Wiki/seed-{now}.md");
         let content = format!("seed {now}");
         write_node(&store, &path, &content, None, now);
     }
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -236,13 +246,13 @@ fn fetch_updates_returns_delta_from_recent_revision() {
         })
         .expect("base snapshot should succeed");
 
-    write_node(&store, "/Knowledge/live.md", "live", None, 20);
+    write_node(&store, "/Wiki/live.md", "live", None, 20);
 
     let updates = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -250,18 +260,18 @@ fn fetch_updates_returns_delta_from_recent_revision() {
         .expect("updates should succeed");
 
     assert_eq!(updates.changed_nodes.len(), 1);
-    assert_eq!(updates.changed_nodes[0].path, "/Knowledge/live.md");
+    assert_eq!(updates.changed_nodes[0].path, "/Wiki/live.md");
     assert!(updates.removed_paths.is_empty());
 }
 
 #[test]
 fn fetch_updates_noop_uses_revision_scope_without_reading_state_hash() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     let snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -273,7 +283,7 @@ fn fetch_updates_noop_uses_revision_scope_without_reading_state_hash() {
     let conn = Connection::open(store.database_path()).expect("db should open");
     conn.execute(
         "UPDATE fs_nodes SET content = ?1 WHERE path = ?2",
-        ["changed without revision", "/Knowledge/alpha.md"],
+        ["changed without revision", "/Wiki/alpha.md"],
     )
     .expect("direct content change should succeed");
 
@@ -281,7 +291,7 @@ fn fetch_updates_noop_uses_revision_scope_without_reading_state_hash() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: snapshot.snapshot_revision.clone(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -303,12 +313,12 @@ fn assert_v5_snapshot_revision_without_state_hash(snapshot_revision: &str) {
 #[test]
 fn fetch_updates_returns_only_changed_nodes_since_known_snapshot() {
     let (_dir, store) = new_store();
-    let alpha = write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    let beta = write_node(&store, "/Knowledge/beta.md", "beta", None, 11);
+    let alpha = write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    let beta = write_node(&store, "/Wiki/beta.md", "beta", None, 11);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -316,19 +326,13 @@ fn fetch_updates_returns_only_changed_nodes_since_known_snapshot() {
         })
         .expect("base snapshot should succeed");
 
-    write_node(
-        &store,
-        "/Knowledge/alpha.md",
-        "alpha updated",
-        Some(&alpha),
-        12,
-    );
-    write_node(&store, "/Knowledge/gamma.md", "gamma", None, 13);
+    write_node(&store, "/Wiki/alpha.md", "alpha updated", Some(&alpha), 12);
+    write_node(&store, "/Wiki/gamma.md", "gamma", None, 13);
     store
         .delete_node(
             DeleteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge/beta.md".to_string(),
+                path: "/Wiki/beta.md".to_string(),
                 expected_etag: Some(beta),
                 expected_folder_index_etag: None,
             },
@@ -340,7 +344,7 @@ fn fetch_updates_returns_only_changed_nodes_since_known_snapshot() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -351,31 +355,28 @@ fn fetch_updates_returns_only_changed_nodes_since_known_snapshot() {
         updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/alpha.md")
+            .any(|node| node.path == "/Wiki/alpha.md")
     );
     assert!(
         updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/gamma.md")
+            .any(|node| node.path == "/Wiki/gamma.md")
     );
     assert!(
         !updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/beta.md")
+            .any(|node| node.path == "/Wiki/beta.md")
     );
-    assert_eq!(
-        updates.removed_paths,
-        vec!["/Knowledge/beta.md".to_string()]
-    );
+    assert_eq!(updates.removed_paths, vec!["/Wiki/beta.md".to_string()]);
 }
 
 #[test]
 fn fetch_updates_rejects_invalid_snapshot_revision() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    write_node(&store, "/Knowledge/beta.md", "beta", None, 11);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/beta.md", "beta", None, 11);
 
     for known_snapshot_revision in [
         "unknown".to_string(),
@@ -385,7 +386,7 @@ fn fetch_updates_rejects_invalid_snapshot_revision() {
             .fetch_updates(FetchUpdatesRequest {
                 database_id: "default".to_string(),
                 known_snapshot_revision,
-                prefix: Some("/Knowledge".to_string()),
+                prefix: Some("/Wiki".to_string()),
                 limit: 100,
                 cursor: None,
                 target_snapshot_revision: None,
@@ -398,13 +399,13 @@ fn fetch_updates_rejects_invalid_snapshot_revision() {
 #[test]
 fn fetch_updates_rejects_future_snapshot_revision() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
 
     let error = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
-            known_snapshot_revision: "v5:999999:2f4b6e6f776c65646765".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            known_snapshot_revision: "v5:999999:2f57696b69".to_string(),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -420,12 +421,12 @@ fn fetch_updates_rejects_future_snapshot_revision() {
 #[test]
 fn fetch_updates_reports_old_path_when_node_is_moved() {
     let (_dir, store) = new_store();
-    let alpha = write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    ensure_parent_folders(&store, "/Knowledge/archive/alpha.md", 10);
+    let alpha = write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    ensure_parent_folders(&store, "/Wiki/archive/alpha.md", 10);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -437,8 +438,8 @@ fn fetch_updates_reports_old_path_when_node_is_moved() {
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
-                from_path: "/Knowledge/alpha.md".to_string(),
-                to_path: "/Knowledge/archive/alpha.md".to_string(),
+                from_path: "/Wiki/alpha.md".to_string(),
+                to_path: "/Wiki/archive/alpha.md".to_string(),
                 expected_etag: Some(alpha),
                 overwrite: false,
             },
@@ -450,18 +451,15 @@ fn fetch_updates_reports_old_path_when_node_is_moved() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
         })
         .expect("updates should succeed");
     assert_eq!(updates.changed_nodes.len(), 1);
-    assert_eq!(updates.changed_nodes[0].path, "/Knowledge/archive/alpha.md");
-    assert_eq!(
-        updates.removed_paths,
-        vec!["/Knowledge/alpha.md".to_string()]
-    );
+    assert_eq!(updates.changed_nodes[0].path, "/Wiki/archive/alpha.md");
+    assert_eq!(updates.removed_paths, vec!["/Wiki/alpha.md".to_string()]);
 }
 
 #[test]
@@ -469,14 +467,14 @@ fn folder_move_updates_sync_export_search_and_links() {
     let (_dir, store) = new_store();
     write_node(
         &store,
-        "/Knowledge/project/index.md",
-        "uniquealpha [Raw](/Sources/a/a.md)",
+        "/Wiki/project/index.md",
+        "uniquealpha [Raw](/Sources/evidence/a/a.md)",
         None,
         10,
     );
     write_node(
         &store,
-        "/Knowledge/project/notes/todo.md",
+        "/Wiki/project/notes/todo.md",
         "todo uniquealpha",
         None,
         11,
@@ -485,7 +483,7 @@ fn folder_move_updates_sync_export_search_and_links() {
         .mkdir_node(
             MkdirNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge/archive".to_string(),
+                path: "/Wiki/archive".to_string(),
             },
             12,
         )
@@ -493,7 +491,7 @@ fn folder_move_updates_sync_export_search_and_links() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -501,7 +499,7 @@ fn folder_move_updates_sync_export_search_and_links() {
         })
         .expect("base snapshot should succeed");
     let folder = store
-        .read_node("/Knowledge/project")
+        .read_node("/Wiki/project")
         .expect("folder read should succeed")
         .expect("folder should exist");
 
@@ -509,8 +507,8 @@ fn folder_move_updates_sync_export_search_and_links() {
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
-                from_path: "/Knowledge/project".to_string(),
-                to_path: "/Knowledge/archive/project".to_string(),
+                from_path: "/Wiki/project".to_string(),
+                to_path: "/Wiki/archive/project".to_string(),
                 expected_etag: Some(folder.etag),
                 overwrite: false,
             },
@@ -521,7 +519,7 @@ fn folder_move_updates_sync_export_search_and_links() {
     let old_entries = store
         .list_nodes(ListNodesRequest {
             database_id: "default".to_string(),
-            prefix: "/Knowledge/project".to_string(),
+            prefix: "/Wiki/project".to_string(),
             recursive: true,
         })
         .expect("old subtree list should succeed");
@@ -529,25 +527,25 @@ fn folder_move_updates_sync_export_search_and_links() {
     let new_entries = store
         .list_nodes(ListNodesRequest {
             database_id: "default".to_string(),
-            prefix: "/Knowledge/archive/project".to_string(),
+            prefix: "/Wiki/archive/project".to_string(),
             recursive: true,
         })
         .expect("new subtree list should succeed");
     assert!(
         new_entries
             .iter()
-            .any(|entry| entry.path == "/Knowledge/archive/project/index.md")
+            .any(|entry| entry.path == "/Wiki/archive/project/index.md")
     );
     assert!(
         new_entries
             .iter()
-            .any(|entry| entry.path == "/Knowledge/archive/project/notes/todo.md")
+            .any(|entry| entry.path == "/Wiki/archive/project/notes/todo.md")
     );
 
     let snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -558,20 +556,20 @@ fn folder_move_updates_sync_export_search_and_links() {
         snapshot
             .nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/archive/project/index.md")
+            .any(|node| node.path == "/Wiki/archive/project/index.md")
     );
     assert!(
         !snapshot
             .nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/project/index.md")
+            .any(|node| node.path == "/Wiki/project/index.md")
     );
 
     let updates = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -580,48 +578,48 @@ fn folder_move_updates_sync_export_search_and_links() {
     assert!(
         updates
             .removed_paths
-            .contains(&"/Knowledge/project/index.md".to_string())
+            .contains(&"/Wiki/project/index.md".to_string())
     );
     assert!(
         updates
             .changed_nodes
             .iter()
-            .any(|node| node.path == "/Knowledge/archive/project/index.md")
+            .any(|node| node.path == "/Wiki/archive/project/index.md")
     );
 
     let hits = store
         .search_nodes(SearchNodesRequest {
             database_id: "default".to_string(),
             query_text: "uniquealpha".to_string(),
-            prefix: Some("/Knowledge/archive/project".to_string()),
+            prefix: Some("/Wiki/archive/project".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
         .expect("search should succeed");
     assert!(
         hits.iter()
-            .any(|hit| hit.path == "/Knowledge/archive/project/index.md")
+            .any(|hit| hit.path == "/Wiki/archive/project/index.md")
     );
     let outgoing = store
         .outgoing_links(OutgoingLinksRequest {
             database_id: "default".to_string(),
-            path: "/Knowledge/archive/project/index.md".to_string(),
+            path: "/Wiki/archive/project/index.md".to_string(),
             limit: 10,
         })
         .expect("outgoing links should load");
-    assert_eq!(outgoing[0].target_path, "/Sources/a/a.md");
+    assert_eq!(outgoing[0].target_path, "/Sources/evidence/a/a.md");
 }
 
 #[test]
 fn snapshot_revision_changes_when_scope_changes_without_new_writes() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    write_node(&store, "/Knowledge/nested/beta.md", "beta", None, 11);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/nested/beta.md", "beta", None, 11);
 
     let root_snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -631,7 +629,7 @@ fn snapshot_revision_changes_when_scope_changes_without_new_writes() {
     let nested_snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge/nested".to_string()),
+            prefix: Some("/Wiki/nested".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -648,13 +646,13 @@ fn snapshot_revision_changes_when_scope_changes_without_new_writes() {
 #[test]
 fn fetch_updates_rejects_prefix_change_without_new_writes() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    write_node(&store, "/Knowledge/nested/beta.md", "beta", None, 11);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/nested/beta.md", "beta", None, 11);
 
     let nested_snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge/nested".to_string()),
+            prefix: Some("/Wiki/nested".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -665,7 +663,7 @@ fn fetch_updates_rejects_prefix_change_without_new_writes() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: nested_snapshot.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -681,13 +679,13 @@ fn fetch_updates_rejects_prefix_change_without_new_writes() {
 #[test]
 fn fetch_updates_rejects_prefix_shrink_without_new_writes() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
-    write_node(&store, "/Knowledge/nested/beta.md", "beta", None, 11);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/nested/beta.md", "beta", None, 11);
 
     let root_snapshot = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -698,7 +696,7 @@ fn fetch_updates_rejects_prefix_shrink_without_new_writes() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: root_snapshot.snapshot_revision,
-            prefix: Some("/Knowledge/nested".to_string()),
+            prefix: Some("/Wiki/nested".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -714,14 +712,14 @@ fn fetch_updates_rejects_prefix_shrink_without_new_writes() {
 #[test]
 fn fetch_updates_rejects_scope_change_after_move() {
     let (_dir, store) = new_store();
-    let source = write_node(&store, "/Knowledge/a.md", "alpha", None, 10);
-    ensure_parent_folders(&store, "/Knowledge/archive/a.md", 10);
+    let source = write_node(&store, "/Wiki/a.md", "alpha", None, 10);
+    ensure_parent_folders(&store, "/Wiki/archive/a.md", 10);
     store
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
-                from_path: "/Knowledge/a.md".to_string(),
-                to_path: "/Knowledge/archive/a.md".to_string(),
+                from_path: "/Wiki/a.md".to_string(),
+                to_path: "/Wiki/archive/a.md".to_string(),
                 expected_etag: Some(source),
                 overwrite: false,
             },
@@ -732,7 +730,7 @@ fn fetch_updates_rejects_scope_change_after_move() {
     let known = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -743,7 +741,7 @@ fn fetch_updates_rejects_scope_change_after_move() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: known.snapshot_revision,
-            prefix: Some("/Knowledge/archive".to_string()),
+            prefix: Some("/Wiki/archive".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -759,12 +757,12 @@ fn fetch_updates_rejects_scope_change_after_move() {
 #[test]
 fn fetch_updates_reports_move_overwrite_of_live_target() {
     let (_dir, store) = new_store();
-    let source = write_node(&store, "/Knowledge/source.md", "source", None, 10);
-    write_node(&store, "/Knowledge/target.md", "target", None, 11);
+    let source = write_node(&store, "/Wiki/source.md", "source", None, 10);
+    write_node(&store, "/Wiki/target.md", "target", None, 11);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -776,8 +774,8 @@ fn fetch_updates_reports_move_overwrite_of_live_target() {
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
-                from_path: "/Knowledge/source.md".to_string(),
-                to_path: "/Knowledge/target.md".to_string(),
+                from_path: "/Wiki/source.md".to_string(),
+                to_path: "/Wiki/target.md".to_string(),
                 expected_etag: Some(source),
                 overwrite: true,
             },
@@ -789,7 +787,7 @@ fn fetch_updates_reports_move_overwrite_of_live_target() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -797,12 +795,9 @@ fn fetch_updates_reports_move_overwrite_of_live_target() {
         .expect("updates should succeed");
 
     assert_eq!(updates.changed_nodes.len(), 1);
-    assert_eq!(updates.changed_nodes[0].path, "/Knowledge/target.md");
+    assert_eq!(updates.changed_nodes[0].path, "/Wiki/target.md");
     assert_eq!(updates.changed_nodes[0].content, "source");
-    assert_eq!(
-        updates.removed_paths,
-        vec!["/Knowledge/source.md".to_string()]
-    );
+    assert_eq!(updates.removed_paths, vec!["/Wiki/source.md".to_string()]);
 }
 
 #[test]
@@ -811,7 +806,7 @@ fn export_snapshot_pages_nodes_by_path() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -821,7 +816,7 @@ fn export_snapshot_pages_nodes_by_path() {
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -830,14 +825,14 @@ fn export_snapshot_pages_nodes_by_path() {
         .expect("first page should succeed");
     assert_eq!(first.snapshot_session_id, None);
     assert_eq!(first.nodes.len(), 100);
-    assert_eq!(first.nodes[0].path, "/Knowledge");
-    assert_eq!(first.nodes[1].path, "/Knowledge/000.md");
-    assert_eq!(first.next_cursor, Some("/Knowledge/098.md".to_string()));
+    assert_eq!(first.nodes[0].path, "/Wiki");
+    assert_eq!(first.nodes[1].path, "/Wiki/000.md");
+    assert_eq!(first.next_cursor, Some("/Wiki/098.md".to_string()));
 
     let second = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -846,8 +841,8 @@ fn export_snapshot_pages_nodes_by_path() {
         .expect("second page should succeed");
     assert_eq!(second.snapshot_revision, first.snapshot_revision);
     assert_eq!(second.nodes.len(), 2);
-    assert_eq!(second.nodes[0].path, "/Knowledge/099.md");
-    assert_eq!(second.nodes[1].path, "/Knowledge/100.md");
+    assert_eq!(second.nodes[0].path, "/Wiki/099.md");
+    assert_eq!(second.nodes[1].path, "/Wiki/100.md");
     assert_eq!(second.next_cursor, None);
 }
 
@@ -855,13 +850,13 @@ fn export_snapshot_pages_nodes_by_path() {
 fn export_snapshot_pages_by_byte_budget() {
     let (_dir, store) = new_store();
     let content = "x".repeat(800_000);
-    write_node(&store, "/Knowledge/a.md", &content, None, 10);
-    write_node(&store, "/Knowledge/b.md", &content, None, 11);
+    write_node(&store, "/Wiki/a.md", &content, None, 10);
+    write_node(&store, "/Wiki/b.md", &content, None, 11);
 
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -870,14 +865,14 @@ fn export_snapshot_pages_by_byte_budget() {
         .expect("byte-budgeted snapshot should succeed");
 
     assert_eq!(first.nodes.len(), 2);
-    assert_eq!(first.nodes[0].path, "/Knowledge");
-    assert_eq!(first.nodes[1].path, "/Knowledge/a.md");
-    assert_eq!(first.next_cursor, Some("/Knowledge/a.md".to_string()));
+    assert_eq!(first.nodes[0].path, "/Wiki");
+    assert_eq!(first.nodes[1].path, "/Wiki/a.md");
+    assert_eq!(first.next_cursor, Some("/Wiki/a.md".to_string()));
 
     let second = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -885,7 +880,7 @@ fn export_snapshot_pages_by_byte_budget() {
         })
         .expect("second snapshot page should succeed");
     assert_eq!(second.nodes.len(), 1);
-    assert_eq!(second.nodes[0].path, "/Knowledge/b.md");
+    assert_eq!(second.nodes[0].path, "/Wiki/b.md");
     assert_eq!(second.next_cursor, None);
 }
 
@@ -893,12 +888,12 @@ fn export_snapshot_pages_by_byte_budget() {
 fn export_snapshot_rejects_single_node_over_byte_budget() {
     let (_dir, store) = new_store();
     let content = "x".repeat(1_600_000);
-    write_node(&store, "/Knowledge/huge.md", &content, None, 10);
+    write_node(&store, "/Wiki/huge.md", &content, None, 10);
 
     let error = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge/huge.md".to_string()),
+            prefix: Some("/Wiki/huge.md".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -915,7 +910,7 @@ fn export_snapshot_allows_prefix_external_change_between_pages() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -925,19 +920,25 @@ fn export_snapshot_allows_prefix_external_change_between_pages() {
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
             snapshot_session_id: None,
         })
         .expect("first page should succeed");
-    write_node(&store, "/Sources/source/outside.md", "outside", None, 500);
+    write_node(
+        &store,
+        "/Sources/evidence/source/outside.md",
+        "outside",
+        None,
+        500,
+    );
 
     let second = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -947,8 +948,8 @@ fn export_snapshot_allows_prefix_external_change_between_pages() {
 
     assert_eq!(second.snapshot_revision, first.snapshot_revision);
     assert_eq!(second.nodes.len(), 2);
-    assert_eq!(second.nodes[0].path, "/Knowledge/099.md");
-    assert_eq!(second.nodes[1].path, "/Knowledge/100.md");
+    assert_eq!(second.nodes[0].path, "/Wiki/099.md");
+    assert_eq!(second.nodes[1].path, "/Wiki/100.md");
 }
 
 #[test]
@@ -957,7 +958,7 @@ fn export_snapshot_rejects_path_created_after_snapshot_revision() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -967,19 +968,19 @@ fn export_snapshot_rejects_path_created_after_snapshot_revision() {
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
             snapshot_session_id: None,
         })
         .expect("first page should succeed");
-    write_node(&store, "/Knowledge/zzz.md", "new content", None, 500);
+    write_node(&store, "/Wiki/zzz.md", "new content", None, 500);
 
     let second = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -995,7 +996,7 @@ fn export_snapshot_rejects_deleted_path_after_snapshot_revision() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1005,7 +1006,7 @@ fn export_snapshot_rejects_deleted_path_after_snapshot_revision() {
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1013,7 +1014,7 @@ fn export_snapshot_rejects_deleted_path_after_snapshot_revision() {
         })
         .expect("first page should succeed");
     let etag = store
-        .read_node("/Knowledge/100.md")
+        .read_node("/Wiki/100.md")
         .expect("read should succeed")
         .expect("node should exist")
         .etag;
@@ -1021,7 +1022,7 @@ fn export_snapshot_rejects_deleted_path_after_snapshot_revision() {
         .delete_node(
             DeleteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge/100.md".to_string(),
+                path: "/Wiki/100.md".to_string(),
                 expected_etag: Some(etag),
                 expected_folder_index_etag: None,
             },
@@ -1032,7 +1033,7 @@ fn export_snapshot_rejects_deleted_path_after_snapshot_revision() {
     let error = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: Some(first.snapshot_revision),
@@ -1048,7 +1049,7 @@ fn export_snapshot_rejects_updated_session_path() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1058,7 +1059,7 @@ fn export_snapshot_rejects_updated_session_path() {
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1066,7 +1067,7 @@ fn export_snapshot_rejects_updated_session_path() {
         })
         .expect("first page should succeed");
     let etag = store
-        .read_node("/Knowledge/100.md")
+        .read_node("/Wiki/100.md")
         .expect("read should succeed")
         .expect("node should exist")
         .etag;
@@ -1074,7 +1075,7 @@ fn export_snapshot_rejects_updated_session_path() {
         .write_node(
             WriteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge/100.md".to_string(),
+                path: "/Wiki/100.md".to_string(),
                 kind: NodeKind::File,
                 content: "updated".to_string(),
                 metadata_json: "{}".to_string(),
@@ -1087,7 +1088,7 @@ fn export_snapshot_rejects_updated_session_path() {
     let error = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: Some(first.snapshot_revision),
@@ -1100,11 +1101,11 @@ fn export_snapshot_rejects_updated_session_path() {
 #[test]
 fn export_snapshot_rejects_snapshot_session_id() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 1,
             cursor: None,
             snapshot_revision: None,
@@ -1115,9 +1116,9 @@ fn export_snapshot_rejects_snapshot_session_id() {
     let invalid = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 1,
-            cursor: Some("/Knowledge/alpha.md".to_string()),
+            cursor: Some("/Wiki/alpha.md".to_string()),
             snapshot_revision: Some(first.snapshot_revision.clone()),
             snapshot_session_id: Some("missing".to_string()),
         })
@@ -1131,7 +1132,7 @@ fn export_snapshot_requires_snapshot_revision_when_cursor_is_set() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1140,7 +1141,7 @@ fn export_snapshot_requires_snapshot_revision_when_cursor_is_set() {
     let first = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1151,7 +1152,7 @@ fn export_snapshot_requires_snapshot_revision_when_cursor_is_set() {
     let error = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             snapshot_revision: None,
@@ -1164,14 +1165,14 @@ fn export_snapshot_requires_snapshot_revision_when_cursor_is_set() {
 #[test]
 fn export_snapshot_rejects_cursor_without_revision_even_when_snapshot_is_current() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/live.md", "live", None, 10);
+    write_node(&store, "/Wiki/live.md", "live", None, 10);
 
     let error = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
-            cursor: Some("/Knowledge/live.md".to_string()),
+            cursor: Some("/Wiki/live.md".to_string()),
             snapshot_revision: None,
             snapshot_session_id: None,
         })
@@ -1182,11 +1183,11 @@ fn export_snapshot_rejects_cursor_without_revision_even_when_snapshot_is_current
 #[test]
 fn fetch_updates_pages_changed_and_removed_paths_to_fixed_target() {
     let (_dir, store) = new_store();
-    let stale = write_node(&store, "/Knowledge/000.md", "stale", None, 0);
+    let stale = write_node(&store, "/Wiki/000.md", "stale", None, 0);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1197,7 +1198,7 @@ fn fetch_updates_pages_changed_and_removed_paths_to_fixed_target() {
         .delete_node(
             DeleteNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Knowledge/000.md".to_string(),
+                path: "/Wiki/000.md".to_string(),
                 expected_etag: Some(stale),
                 expected_folder_index_etag: None,
             },
@@ -1207,7 +1208,7 @@ fn fetch_updates_pages_changed_and_removed_paths_to_fixed_target() {
     for index in 1..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1218,22 +1219,22 @@ fn fetch_updates_pages_changed_and_removed_paths_to_fixed_target() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision.clone(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
         })
         .expect("first updates page should succeed");
     assert_eq!(first.changed_nodes.len() + first.removed_paths.len(), 100);
-    assert_eq!(first.removed_paths, vec!["/Knowledge/000.md".to_string()]);
-    assert_eq!(first.next_cursor, Some("/Knowledge/099.md".to_string()));
+    assert_eq!(first.removed_paths, vec!["/Wiki/000.md".to_string()]);
+    assert_eq!(first.next_cursor, Some("/Wiki/099.md".to_string()));
 
-    write_node(&store, "/Knowledge/zzz.md", "future", None, 200);
+    write_node(&store, "/Wiki/zzz.md", "future", None, 200);
     let second = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             target_snapshot_revision: Some(first.snapshot_revision.clone()),
@@ -1241,7 +1242,7 @@ fn fetch_updates_pages_changed_and_removed_paths_to_fixed_target() {
         .expect("second updates page should succeed");
     assert_eq!(second.snapshot_revision, first.snapshot_revision);
     assert_eq!(second.changed_nodes.len(), 1);
-    assert_eq!(second.changed_nodes[0].path, "/Knowledge/100.md");
+    assert_eq!(second.changed_nodes[0].path, "/Wiki/100.md");
     assert_eq!(second.removed_paths, Vec::<String>::new());
     assert_eq!(second.next_cursor, None);
 }
@@ -1252,7 +1253,7 @@ fn fetch_updates_pages_by_byte_budget() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1260,14 +1261,14 @@ fn fetch_updates_pages_by_byte_budget() {
         })
         .expect("base snapshot should succeed");
     let content = "x".repeat(800_000);
-    write_node(&store, "/Knowledge/a.md", &content, None, 10);
-    write_node(&store, "/Knowledge/b.md", &content, None, 11);
+    write_node(&store, "/Wiki/a.md", &content, None, 10);
+    write_node(&store, "/Wiki/b.md", &content, None, 11);
 
     let first = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision.clone(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -1275,21 +1276,21 @@ fn fetch_updates_pages_by_byte_budget() {
         .expect("byte-budgeted updates should succeed");
 
     assert_eq!(first.changed_nodes.len(), 1);
-    assert_eq!(first.changed_nodes[0].path, "/Knowledge/a.md");
-    assert_eq!(first.next_cursor, Some("/Knowledge/a.md".to_string()));
+    assert_eq!(first.changed_nodes[0].path, "/Wiki/a.md");
+    assert_eq!(first.next_cursor, Some("/Wiki/a.md".to_string()));
 
     let second = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             target_snapshot_revision: Some(first.snapshot_revision),
         })
         .expect("second byte-budgeted updates page should succeed");
     assert_eq!(second.changed_nodes.len(), 1);
-    assert_eq!(second.changed_nodes[0].path, "/Knowledge/b.md");
+    assert_eq!(second.changed_nodes[0].path, "/Wiki/b.md");
     assert_eq!(second.next_cursor, None);
 }
 
@@ -1299,7 +1300,7 @@ fn fetch_updates_rejects_single_node_over_byte_budget() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge/huge.md".to_string()),
+            prefix: Some("/Wiki/huge.md".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1307,13 +1308,13 @@ fn fetch_updates_rejects_single_node_over_byte_budget() {
         })
         .expect("base snapshot should succeed");
     let content = "x".repeat(1_600_000);
-    write_node(&store, "/Knowledge/huge.md", &content, None, 10);
+    write_node(&store, "/Wiki/huge.md", &content, None, 10);
 
     let error = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge/huge.md".to_string()),
+            prefix: Some("/Wiki/huge.md".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -1329,7 +1330,7 @@ fn fetch_updates_rejects_when_paged_target_path_changes_after_target() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1339,7 +1340,7 @@ fn fetch_updates_rejects_when_paged_target_path_changes_after_target() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1350,13 +1351,13 @@ fn fetch_updates_rejects_when_paged_target_path_changes_after_target() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision.clone(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
         })
         .expect("first page should succeed");
-    let next_path = "/Knowledge/100.md";
+    let next_path = "/Wiki/100.md";
     let etag = store
         .read_node(next_path)
         .expect("read should succeed")
@@ -1368,7 +1369,7 @@ fn fetch_updates_rejects_when_paged_target_path_changes_after_target() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             target_snapshot_revision: Some(first.snapshot_revision),
@@ -1386,7 +1387,7 @@ fn fetch_updates_allows_returned_path_to_change_after_page_boundary() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1396,7 +1397,7 @@ fn fetch_updates_allows_returned_path_to_change_after_page_boundary() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1407,13 +1408,13 @@ fn fetch_updates_allows_returned_path_to_change_after_page_boundary() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision.clone(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
         })
         .expect("first page should succeed");
-    let first_path = "/Knowledge/000.md";
+    let first_path = "/Wiki/000.md";
     let first_etag = store
         .read_node(first_path)
         .expect("read should succeed")
@@ -1425,25 +1426,25 @@ fn fetch_updates_allows_returned_path_to_change_after_page_boundary() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             target_snapshot_revision: Some(first.snapshot_revision),
         })
         .expect("second page should still succeed");
     assert_eq!(second.changed_nodes.len(), 1);
-    assert_eq!(second.changed_nodes[0].path, "/Knowledge/100.md");
+    assert_eq!(second.changed_nodes[0].path, "/Wiki/100.md");
     assert_eq!(second.next_cursor, None);
 }
 
 #[test]
 fn sync_paging_rejects_invalid_limit_and_target_revision() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/alpha.md", "alpha", None, 10);
+    write_node(&store, "/Wiki/alpha.md", "alpha", None, 10);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1454,7 +1455,7 @@ fn sync_paging_rejects_invalid_limit_and_target_revision() {
     let error = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 0,
             cursor: None,
             snapshot_revision: None,
@@ -1467,7 +1468,7 @@ fn sync_paging_rejects_invalid_limit_and_target_revision() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 101,
             cursor: None,
             target_snapshot_revision: None,
@@ -1478,8 +1479,8 @@ fn sync_paging_rejects_invalid_limit_and_target_revision() {
     let error = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
-            known_snapshot_revision: "v5:1:2f4b6e6f776c65646765".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            known_snapshot_revision: "v5:1:2f57696b69".to_string(),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: Some("v5:1:2f4f74686572".to_string()),
@@ -1497,7 +1498,7 @@ fn fetch_updates_requires_target_snapshot_revision_when_cursor_is_set() {
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1507,7 +1508,7 @@ fn fetch_updates_requires_target_snapshot_revision_when_cursor_is_set() {
     for index in 0..101 {
         write_node(
             &store,
-            &format!("/Knowledge/{index:03}.md"),
+            &format!("/Wiki/{index:03}.md"),
             "content",
             None,
             index,
@@ -1517,7 +1518,7 @@ fn fetch_updates_requires_target_snapshot_revision_when_cursor_is_set() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             target_snapshot_revision: None,
@@ -1527,8 +1528,8 @@ fn fetch_updates_requires_target_snapshot_revision_when_cursor_is_set() {
     let error = store
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
-            known_snapshot_revision: "v5:0:2f4b6e6f776c65646765".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            known_snapshot_revision: "v5:0:2f57696b69".to_string(),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: first.next_cursor,
             target_snapshot_revision: None,
@@ -1543,11 +1544,11 @@ fn fetch_updates_requires_target_snapshot_revision_when_cursor_is_set() {
 #[test]
 fn fetch_updates_rejects_cursor_without_target_even_when_snapshot_is_current() {
     let (_dir, store) = new_store();
-    write_node(&store, "/Knowledge/live.md", "live", None, 10);
+    write_node(&store, "/Wiki/live.md", "live", None, 10);
     let base = store
         .export_snapshot(ExportSnapshotRequest {
             database_id: "default".to_string(),
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
             cursor: None,
             snapshot_revision: None,
@@ -1559,9 +1560,9 @@ fn fetch_updates_rejects_cursor_without_target_even_when_snapshot_is_current() {
         .fetch_updates(FetchUpdatesRequest {
             database_id: "default".to_string(),
             known_snapshot_revision: base.snapshot_revision,
-            prefix: Some("/Knowledge".to_string()),
+            prefix: Some("/Wiki".to_string()),
             limit: 100,
-            cursor: Some("/Knowledge/live.md".to_string()),
+            cursor: Some("/Wiki/live.md".to_string()),
             target_snapshot_revision: None,
         })
         .expect_err("cursor without target should fail before noop return");

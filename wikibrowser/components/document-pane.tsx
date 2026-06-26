@@ -9,7 +9,7 @@ import { FileCode, FileText, Folder, Loader2, Route } from "lucide-react";
 import { hrefForPath, hrefForSearch } from "@/lib/paths";
 import { splitMarkdownPreviewSections } from "@/lib/markdown-sections";
 import type { ChildNode, DatabaseRole, WikiNode } from "@/lib/types";
-import { isKnowledgeSourcePath, type LoadState, type ModeTab, type PathLoadState, type ViewMode } from "@/lib/wiki-helpers";
+import type { LoadState, ModeTab, PathLoadState, ViewMode } from "@/lib/wiki-helpers";
 import { folderIndexPath, visibleChildren } from "@/lib/folder-index";
 import { ErrorBox } from "@/components/panel";
 import type { EditorSaveState } from "@/components/markdown-editor";
@@ -119,7 +119,7 @@ function DocumentHeaderPath({
     return <div className="flex h-10 w-fit min-w-0 max-w-full items-center rounded-2xl border border-line bg-white px-3 font-mono text-xs font-medium text-ink shadow-[0_4px_10px_#14142b0a]">/</div>;
   }
   return (
-    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-3 font-mono text-xs shadow-[0_4px_10px_#14142b0a]" aria-label="Current knowledge path">
+    <nav className="flex h-10 w-fit min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-2xl border border-line bg-white px-3 font-mono text-xs shadow-[0_4px_10px_#14142b0a]" aria-label="Current wiki path">
       {segments.map((segment, index) => {
         const crumbPath = `/${segments.slice(0, index + 1).join("/")}`;
         const last = index === segments.length - 1;
@@ -286,14 +286,14 @@ function NotFoundState({
     <div className="flex h-full items-center justify-center p-6">
       <section className="max-w-xl rounded-2xl border border-line bg-paper p-6 shadow-sm">
         <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted">Not found</p>
-        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">No knowledge node at this path</h3>
+        <h3 className="mt-3 text-2xl font-semibold tracking-[-0.04em] text-ink">No wiki node at this path</h3>
         <p className="mt-3 break-all font-mono text-xs text-muted">{path}</p>
         <div className="mt-5 flex flex-wrap gap-2 text-sm">
           <Link
             className="rounded-2xl bg-action px-3 py-2 font-bold text-white no-underline hover:bg-accent"
-            href={hrefForPath(canisterId, databaseId, "/Knowledge")}
+            href={hrefForPath(canisterId, databaseId, "/Wiki")}
           >
-            Open /Knowledge
+            Open /Wiki
           </Link>
           <Link
             className="rounded-lg border border-line bg-white px-3 py-2 no-underline"
@@ -407,9 +407,9 @@ function EditDocument({
   onNodeSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
-  const editable = node.kind === "file" && node.path.endsWith(".md") && !isKnowledgeSourcePath(node.path);
+  const editable = node.kind === "file" && node.path.endsWith(".md") && !node.path.startsWith("/Sources/evidence/");
   if (!editable) {
-    return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside source evidence can be edited in the browser." />;
+    return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside /Sources/evidence can be edited in the browser." />;
   }
   if (!writeIdentity) {
     return (
@@ -612,6 +612,9 @@ function FolderDocument({
   const indexNode = folderIndexNode.data ?? emptyFolderIndexNode(folder.path);
   const contentBytes = new TextEncoder().encode(indexNode.content).length;
   const isLargeContent = contentBytes > LARGE_CONTENT_BYTES;
+  if (!isWikiPath(folder.path)) {
+    return <DirectoryDocument childrenState={childrenState} canisterId={canisterId} databaseId={databaseId} parentPath={folder.path} />;
+  }
   if (view === "edit") {
     return (
       <EditDocument
@@ -763,6 +766,10 @@ function emptyFolderIndexNode(folderPath: string): WikiNode {
   };
 }
 
+function isWikiPath(path: string): boolean {
+  return path === "/Wiki" || path.startsWith("/Wiki/");
+}
+
 function HeaderBadge({ label, tone }: { label: string; tone: "blue" | "green" | "yellow" }) {
   const className =
     tone === "green"
@@ -806,7 +813,7 @@ function LoadingBlock() {
   return (
     <div className="flex h-full items-center justify-center text-muted">
       <Loader2 size={20} className="mr-2 animate-spin" />
-      Loading knowledge node
+      Loading wiki node
     </div>
   );
 }
