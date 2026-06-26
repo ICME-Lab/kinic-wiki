@@ -48,16 +48,16 @@ target/release/kinic-vfs-cli --canister-id <canister-id> database current
 Tag a release with a `v*` version:
 
 ```bash
-git tag v0.1.4
-git push origin v0.1.4
+git tag v0.1.5
+git push origin v0.1.5
 ```
 
 The `Release CLI` workflow builds and uploads:
 
-- `kinic-vfs-cli-v0.1.4-linux-x86_64.tar.gz`
-- `kinic-vfs-cli-v0.1.4-linux-x86_64.sha256`
-- `kinic-vfs-cli-v0.1.4-macos-arm64.tar.gz`
-- `kinic-vfs-cli-v0.1.4-macos-arm64.sha256`
+- `kinic-vfs-cli-v0.1.5-linux-x86_64.tar.gz`
+- `kinic-vfs-cli-v0.1.5-linux-x86_64.sha256`
+- `kinic-vfs-cli-v0.1.5-macos-arm64.tar.gz`
+- `kinic-vfs-cli-v0.1.5-macos-arm64.sha256`
 
 Each tarball contains only:
 
@@ -68,8 +68,8 @@ Each tarball contains only:
 Verify after download:
 
 ```bash
-shasum -a 256 -c kinic-vfs-cli-v0.1.4-macos-arm64.sha256
-tar -xzf kinic-vfs-cli-v0.1.4-macos-arm64.tar.gz
+shasum -a 256 -c kinic-vfs-cli-v0.1.5-macos-arm64.sha256
+tar -xzf kinic-vfs-cli-v0.1.5-macos-arm64.tar.gz
 ./kinic-vfs-cli --help
 ./kinic-vfs-cli --version
 ```

@@ -1,6 +1,6 @@
 {
   "name": "kinic-vfs-cli",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Operator CLI for Kinic VFS-backed wiki databases and Skill Registry packages.",
   "license": "MIT",
   "homepage": "https://github.com/ICME-Lab/kinic-wiki#readme",

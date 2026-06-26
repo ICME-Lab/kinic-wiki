@@ -8,18 +8,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Result, anyhow};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vfs_client::VfsApi;
 use vfs_types::{
     AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseCyclesPurchaseRequest,
     DatabaseRestoreChunkRequest, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
-    IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
-    ListNodesRequest, MarketEntitlementPage, MkdirNodeRequest, MoveNodeRequest, MultiEdit,
-    MultiEditNodeRequest, NodeContextRequest, NodeEntryKind, NodeKind, OutgoingLinksRequest,
-    SearchNodePathsRequest, SearchNodesRequest, WriteNodeItem, WriteNodeRequest, WriteNodesRequest,
-    kinic_base_units_per_token,
+    ExportSnapshotRequest, ExportSnapshotResponse, GlobNodesRequest, GraphLinksRequest,
+    GraphNeighborhoodRequest, IncomingLinksRequest, IndexSqlJsonQueryResult, KINIC_DECIMALS,
+    KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest, ListNodesRequest, MarketEntitlementPage,
+    MkdirNodeRequest, MoveNodeRequest, MultiEdit, MultiEditNodeRequest, Node, NodeContextRequest,
+    NodeEntryKind, NodeKind, OutgoingLinksRequest, SearchNodePathsRequest, SearchNodesRequest,
+    WriteNodeItem, WriteNodeRequest, WriteNodesRequest, kinic_base_units_per_token,
 };
 use wiki_domain::validate_source_path_for_kind;
 
@@ -485,6 +485,29 @@ pub async fn run_vfs_command(
                 println!("{line}");
             }
         }
+        VfsCommand::ExportSnapshot {
+            prefix,
+            limit,
+            cursor,
+            snapshot_revision,
+            all,
+            output,
+            json,
+        } => {
+            let result = export_snapshot(
+                client,
+                database_id,
+                ExportSnapshotCommandArgs {
+                    prefix,
+                    limit,
+                    cursor,
+                    snapshot_revision,
+                    all,
+                },
+            )
+            .await?;
+            write_export_snapshot_output(&result, output.as_deref(), json)?;
+        }
     }
     Ok(())
 }
@@ -501,6 +524,156 @@ fn command_requires_write_cycles_available(command: &VfsCommand) -> bool {
             | VfsCommand::MoveNode { .. }
             | VfsCommand::MultiEditNode { .. }
     )
+}
+
+struct ExportSnapshotCommandArgs {
+    prefix: Option<String>,
+    limit: u32,
+    cursor: Option<String>,
+    snapshot_revision: Option<String>,
+    all: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportSnapshotAllOutput {
+    snapshot_revision: String,
+    snapshot_session_id: Option<String>,
+    nodes: Vec<Node>,
+    next_cursor: Option<String>,
+    page_count: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum ExportSnapshotCliOutput {
+    Page(ExportSnapshotResponse),
+    All(ExportSnapshotAllOutput),
+}
+
+impl ExportSnapshotCliOutput {
+    fn snapshot_revision(&self) -> &str {
+        match self {
+            Self::Page(page) => &page.snapshot_revision,
+            Self::All(output) => &output.snapshot_revision,
+        }
+    }
+
+    fn node_count(&self) -> usize {
+        match self {
+            Self::Page(page) => page.nodes.len(),
+            Self::All(output) => output.nodes.len(),
+        }
+    }
+
+    fn next_cursor(&self) -> Option<&str> {
+        match self {
+            Self::Page(page) => page.next_cursor.as_deref(),
+            Self::All(output) => output.next_cursor.as_deref(),
+        }
+    }
+
+    fn page_count(&self) -> u32 {
+        match self {
+            Self::Page(_) => 1,
+            Self::All(output) => output.page_count,
+        }
+    }
+}
+
+async fn export_snapshot(
+    client: &impl VfsApi,
+    database_id: &str,
+    args: ExportSnapshotCommandArgs,
+) -> Result<ExportSnapshotCliOutput> {
+    if !args.all {
+        let page = client
+            .export_snapshot(ExportSnapshotRequest {
+                database_id: database_id.to_string(),
+                prefix: args.prefix,
+                limit: args.limit,
+                cursor: args.cursor,
+                snapshot_revision: args.snapshot_revision,
+                snapshot_session_id: None,
+            })
+            .await?;
+        return Ok(ExportSnapshotCliOutput::Page(page));
+    }
+
+    let mut cursor = args.cursor;
+    let mut snapshot_revision = args.snapshot_revision;
+    let mut nodes = Vec::new();
+    let mut page_count = 0_u32;
+
+    loop {
+        let page = client
+            .export_snapshot(ExportSnapshotRequest {
+                database_id: database_id.to_string(),
+                prefix: args.prefix.clone(),
+                limit: args.limit,
+                cursor: cursor.clone(),
+                snapshot_revision: snapshot_revision.clone(),
+                snapshot_session_id: None,
+            })
+            .await?;
+        page_count += 1;
+        if snapshot_revision.is_none() {
+            snapshot_revision = Some(page.snapshot_revision.clone());
+        }
+        cursor = page.next_cursor.clone();
+        nodes.extend(page.nodes);
+        if cursor.is_none() {
+            return Ok(ExportSnapshotCliOutput::All(ExportSnapshotAllOutput {
+                snapshot_revision: page.snapshot_revision,
+                snapshot_session_id: page.snapshot_session_id,
+                nodes,
+                next_cursor: None,
+                page_count,
+            }));
+        }
+    }
+}
+
+fn write_export_snapshot_output(
+    result: &ExportSnapshotCliOutput,
+    output: Option<&Path>,
+    json: bool,
+) -> Result<()> {
+    match output {
+        Some(path) => {
+            let content = format!("{}\n", serde_json::to_string_pretty(result)?);
+            fs::write(path, content)?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "path": path.display().to_string(),
+                        "snapshot_revision": result.snapshot_revision(),
+                        "node_count": result.node_count(),
+                        "next_cursor": result.next_cursor(),
+                        "page_count": result.page_count()
+                    }))?
+                );
+            } else {
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    path.display(),
+                    result.snapshot_revision(),
+                    result.node_count(),
+                    result.next_cursor().unwrap_or("")
+                );
+            }
+        }
+        None if json => {
+            println!("{}", serde_json::to_string_pretty(result)?);
+        }
+        None => {
+            println!("snapshot_revision\t{}", result.snapshot_revision());
+            println!("node_count\t{}", result.node_count());
+            println!("next_cursor\t{}", result.next_cursor().unwrap_or(""));
+            println!("page_count\t{}", result.page_count());
+        }
+    }
+    Ok(())
 }
 
 async fn require_write_cycles_available(client: &impl VfsApi, database_id: &str) -> Result<()> {
@@ -1497,6 +1670,7 @@ mod tests {
         child_lists: Mutex<Vec<ListChildrenRequest>>,
         contexts: Mutex<Vec<NodeContextRequest>>,
         neighborhoods: Mutex<Vec<GraphNeighborhoodRequest>>,
+        export_requests: Mutex<Vec<ExportSnapshotRequest>>,
         archive_begun: Mutex<Vec<String>>,
         archive_chunks: Mutex<Vec<(u64, u32)>>,
         archive_finalized: Mutex<Vec<Vec<u8>>>,
@@ -1911,9 +2085,31 @@ mod tests {
         }
         async fn export_snapshot(
             &self,
-            _request: ExportSnapshotRequest,
+            request: ExportSnapshotRequest,
         ) -> Result<ExportSnapshotResponse> {
-            unreachable!()
+            self.export_requests.lock().unwrap().push(request.clone());
+            let start = match request.cursor.as_deref() {
+                Some(cursor) => self
+                    .nodes
+                    .iter()
+                    .position(|node| node.path == cursor)
+                    .map_or(0, |index| index + 1),
+                None => 0,
+            };
+            let limit = usize::try_from(request.limit.max(1)).expect("u32 should fit usize");
+            let end = (start + limit).min(self.nodes.len());
+            let nodes = self.nodes[start..end].to_vec();
+            let next_cursor = if end < self.nodes.len() {
+                nodes.last().map(|node| node.path.clone())
+            } else {
+                None
+            };
+            Ok(ExportSnapshotResponse {
+                snapshot_revision: "v5:7:2f57696b69".to_string(),
+                snapshot_session_id: None,
+                nodes,
+                next_cursor,
+            })
         }
         async fn fetch_updates(
             &self,
@@ -2811,6 +3007,58 @@ mod tests {
             )]
         );
         assert!(client.write_cycle_checks.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn export_snapshot_all_writes_output_and_reuses_snapshot_revision() {
+        let dir = tempdir().expect("temp dir should exist");
+        let output = dir.path().join("snapshot.json");
+        let client = MockClient {
+            nodes: vec![
+                node("/Wiki/a.md", NodeKind::File, "etag-a"),
+                node("/Wiki/b.md", NodeKind::File, "etag-b"),
+            ],
+            ..Default::default()
+        };
+
+        run_vfs_command(
+            &client,
+            &test_connection(),
+            VfsCommand::ExportSnapshot {
+                prefix: Some("/Wiki".to_string()),
+                limit: 1,
+                cursor: None,
+                snapshot_revision: None,
+                all: true,
+                output: Some(output.clone()),
+                json: true,
+            },
+        )
+        .await
+        .expect("export snapshot should succeed");
+
+        let content = std::fs::read_to_string(&output).expect("snapshot output should read");
+        let value: serde_json::Value =
+            serde_json::from_str(&content).expect("snapshot output should be JSON");
+        assert_eq!(value["snapshot_revision"], "v5:7:2f57696b69");
+        assert_eq!(
+            value["nodes"]
+                .as_array()
+                .expect("nodes should be array")
+                .len(),
+            2
+        );
+        assert_eq!(value["page_count"], 2);
+
+        let requests = client.export_requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].prefix.as_deref(), Some("/Wiki"));
+        assert_eq!(requests[0].snapshot_revision, None);
+        assert_eq!(requests[1].cursor.as_deref(), Some("/Wiki/a.md"));
+        assert_eq!(
+            requests[1].snapshot_revision.as_deref(),
+            Some("v5:7:2f57696b69")
+        );
     }
 
     #[test]

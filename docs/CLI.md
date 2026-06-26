@@ -214,6 +214,23 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- context-pack inspect ./okf --j
 `verify` and `inspect` read only the local OKF bundle and do not require `--database-id` or a canister connection.
 Pass `--overwrite` to `export` when replacing existing markdown files.
 
+## Snapshot Export
+
+`export-snapshot` reads VFS nodes from the selected database through `export_snapshot`.
+It uses the same read access as `read-node`.
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+  export-snapshot --prefix /Wiki --limit 100 --json
+
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --database-id <database-id> \
+  export-snapshot --prefix /Wiki --all --output ./snapshot.json --json
+```
+
+Single-page output includes `snapshot_revision`, `nodes`, `next_cursor`, and `snapshot_session_id`.
+When `next_cursor` is present, pass both `--cursor <next_cursor>` and `--snapshot-revision <snapshot_revision>` to read the next page.
+`--all` follows pages with the first page's snapshot revision and writes one combined JSON object when `--output` is set.
+
 ## Database SQL
 
 `query-sql` runs one read-only `SELECT` query against the selected wiki DB through `query_database_sql_json`. It uses the same read access as `read-node`, so direct readers, marketplace-entitled buyers, and anonymous callers for public-readable DBs can query only the DB they can already read.

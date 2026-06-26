@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 use vfs_client::VfsApi;
 use vfs_types::{ListNodesRequest, Node, NodeEntryKind, NodeKind};
 use wiki_domain::{
-    EVIDENCE_SOURCES_PREFIX, OkfType, WIKI_ROOT_PATH, metadata_expires_at, metadata_okf_type,
-    metadata_resource, metadata_source_ref_paths, metadata_trust_level,
+    EVIDENCE_SOURCES_PREFIX, OkfType, WIKI_ROOT_PATH, extract_evidence_source_paths,
+    metadata_expires_at, metadata_okf_type, metadata_resource, metadata_source_ref_paths,
+    metadata_trust_level,
 };
 
 const OKF_VERSION: &str = "0.1";
@@ -649,29 +650,6 @@ fn collect_source_refs(nodes: &[BucketedNode]) -> Result<BTreeSet<String>> {
     Ok(refs)
 }
 
-fn extract_evidence_source_paths(content: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    let mut offset = 0;
-    while let Some(relative_start) = content[offset..].find(EVIDENCE_SOURCES_PREFIX) {
-        let start = offset + relative_start;
-        let tail = &content[start..];
-        let end = tail
-            .char_indices()
-            .find_map(|(index, ch)| source_path_terminator(ch).then_some(index))
-            .unwrap_or(tail.len());
-        let candidate = tail[..end].trim_end_matches(['.', ',', ';', ':']);
-        if !candidate.is_empty() {
-            paths.push(candidate.to_string());
-        }
-        offset = start + end;
-    }
-    paths
-}
-
-fn source_path_terminator(ch: char) -> bool {
-    ch.is_whitespace() || matches!(ch, ')' | ']' | '"' | '\'' | '<' | '>' | '`')
-}
-
 fn bucket_for_node(node: &Node) -> Result<OkfBucket> {
     if let Some(okf_type) = metadata_okf_type(&node.metadata_json)
         .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", node.path))?
@@ -1008,7 +986,7 @@ mod tests {
             test_node(
                 "/Wiki/projects/acme/facts.md",
                 NodeKind::File,
-                "Fact from /Sources/evidence/web/source.md\n",
+                "Fact from /Sources/evidence/web/source.md and not /Sources/evidencefoo/source.md or /Sources/evidence/web/source.txt\n",
                 "wiki-etag",
             ),
         );
@@ -1051,6 +1029,16 @@ mod tests {
         assert!(reference.contains("type: Reference"));
         assert!(reference.contains("source-etag"));
         assert!(!reference.contains("raw secret transcript"));
+        assert!(
+            !out.path()
+                .join("references/sources-evidencefoo-source.md")
+                .exists()
+        );
+        assert!(
+            !out.path()
+                .join("references/sources-evidence-web-source.txt.md")
+                .exists()
+        );
         assert!(
             !fs::read_to_string(out.path().join(INDEX_FILE))
                 .expect("index")
@@ -1272,7 +1260,7 @@ mod tests {
     #[test]
     fn source_path_extraction_stops_at_markdown_delimiters() {
         let paths = extract_evidence_source_paths(
-            "See [/Sources/evidence/web/source.md](/Sources/evidence/web/source.md), then `/Sources/evidence/a/b.md`.",
+            "See [/Sources/evidence/web/source.md](/Sources/evidence/web/source.md), then `/Sources/evidence/a/b.md`. Ignore /Sources/evidencefoo/source.md and /Sources/evidence/web/source.txt.",
         );
         assert_eq!(
             paths,

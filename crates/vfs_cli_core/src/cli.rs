@@ -270,6 +270,23 @@ pub enum VfsCommand {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Export a paged snapshot of nodes from the selected database")]
+    ExportSnapshot {
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        snapshot_revision: Option<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

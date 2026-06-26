@@ -293,13 +293,8 @@ fn metadata_source_ref_paths_from_map(
 }
 
 fn validate_evidence_source_ref(path: &str) -> Result<(), String> {
-    if path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX) {
-        Ok(())
-    } else {
-        Err(format!(
-            "source_refs path must stay under {EVIDENCE_SOURCES_PREFIX}: {path}"
-        ))
-    }
+    validate_evidence_source_path(path)
+        .map_err(|_| format!("source_refs path must use canonical evidence source path: {path}"))
 }
 
 fn okf_managed_path(path: &str, kind: &NodeKind) -> bool {
@@ -311,7 +306,7 @@ fn okf_managed_path(path: &str, kind: &NodeKind) -> bool {
             && path_matches_prefix_boundary(path, EVIDENCE_SOURCES_PREFIX))
 }
 
-fn extract_evidence_source_paths(content: &str) -> Vec<String> {
+pub fn extract_evidence_source_paths(content: &str) -> Vec<String> {
     let mut paths = Vec::new();
     let mut offset = 0;
     while let Some(relative_start) = content[offset..].find(EVIDENCE_SOURCES_PREFIX) {
@@ -322,7 +317,7 @@ fn extract_evidence_source_paths(content: &str) -> Vec<String> {
             .find_map(|(index, ch)| source_path_terminator(ch).then_some(index))
             .unwrap_or(tail.len());
         let candidate = tail[..end].trim_end_matches(['.', ',', ';', ':']);
-        if !candidate.is_empty() {
+        if validate_evidence_source_path(candidate).is_ok() {
             paths.push(candidate.to_string());
         }
         offset = start + end;
@@ -452,8 +447,8 @@ mod tests {
 
     use super::{
         EVIDENCE_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, apply_okf_metadata,
-        metadata_source_ref_paths, normalize_wiki_remote_path, validate_canonical_source_path,
-        validate_source_path_for_kind, wiki_relative_path,
+        extract_evidence_source_paths, metadata_source_ref_paths, normalize_wiki_remote_path,
+        validate_canonical_source_path, validate_source_path_for_kind, wiki_relative_path,
     };
 
     #[test]
@@ -617,6 +612,43 @@ mod tests {
             metadata_source_ref_paths(&metadata).expect("source refs should parse"),
             Some(Vec::new())
         );
+    }
+
+    #[test]
+    fn evidence_source_extraction_keeps_only_canonical_paths() {
+        let paths = extract_evidence_source_paths(
+            "/Sources/evidence/web/source.md /Sources/evidencefoo/source.md /Sources/evidence/web/source.txt /Sources/evidence/web/a..b.md",
+        );
+
+        assert_eq!(paths, vec!["/Sources/evidence/web/source.md"]);
+    }
+
+    #[test]
+    fn okf_metadata_drops_noncanonical_extracted_source_refs() {
+        let metadata = apply_okf_metadata(
+            "alpha",
+            "/Wiki/project/facts.md",
+            &NodeKind::File,
+            "Fact from /Sources/evidence/web/source.md and /Sources/evidencefoo/source.md",
+            "{}",
+        )
+        .expect("metadata should apply");
+
+        assert_eq!(
+            metadata_source_ref_paths(&metadata).expect("source refs should parse"),
+            Some(vec!["/Sources/evidence/web/source.md".to_string()])
+        );
+        assert!(!metadata.contains("/Sources/evidencefoo/source.md"));
+    }
+
+    #[test]
+    fn okf_metadata_rejects_noncanonical_manual_source_refs() {
+        let error = metadata_source_ref_paths(
+            r#"{"source_refs":[{"path":"/Sources/evidence/web/source.txt"}]}"#,
+        )
+        .expect_err("noncanonical source_refs should fail");
+
+        assert!(error.contains("canonical evidence source path"));
     }
 
     #[test]

@@ -346,6 +346,23 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    #[command(about = "Export a paged snapshot of nodes from the selected database")]
+    ExportSnapshot {
+        #[arg(long)]
+        prefix: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: u32,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long)]
+        snapshot_revision: Option<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
     #[command(about = "Show target canister and database access status")]
     Status {
         #[arg(long)]
@@ -755,6 +772,7 @@ impl Command {
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
             | Self::QuerySql { .. }
+            | Self::ExportSnapshot { .. }
             | Self::Status { .. }
             | Self::ContextPack {
                 command:
@@ -786,6 +804,7 @@ impl Command {
             | Self::SearchRemote { .. }
             | Self::SearchPathRemote { .. }
             | Self::QuerySql { .. }
+            | Self::ExportSnapshot { .. }
             | Self::Status { .. } => true,
             Self::Database { .. }
             | Self::Market { .. }
@@ -1035,6 +1054,23 @@ impl Command {
             Self::QuerySql { sql, limit, json } => Some(VfsCommand::QuerySql {
                 sql: sql.clone(),
                 limit: *limit,
+                json: *json,
+            }),
+            Self::ExportSnapshot {
+                prefix,
+                limit,
+                cursor,
+                snapshot_revision,
+                all,
+                output,
+                json,
+            } => Some(VfsCommand::ExportSnapshot {
+                prefix: prefix.clone(),
+                limit: *limit,
+                cursor: cursor.clone(),
+                snapshot_revision: snapshot_revision.clone(),
+                all: *all,
+                output: output.clone(),
                 json: *json,
             }),
             _ => None,
@@ -1369,6 +1405,68 @@ mod tests {
     }
 
     #[test]
+    fn main_cli_parses_export_snapshot_command() {
+        let cli = Cli::parse_from([
+            "kinic-vfs-cli",
+            "export-snapshot",
+            "--prefix",
+            "/Wiki",
+            "--limit",
+            "50",
+            "--cursor",
+            "/Wiki/a.md",
+            "--snapshot-revision",
+            "v5:7:2f57696b69",
+            "--all",
+            "--output",
+            "snapshot.json",
+            "--json",
+        ]);
+        let Command::ExportSnapshot {
+            prefix,
+            limit,
+            cursor,
+            snapshot_revision,
+            all,
+            output,
+            json,
+        } = &cli.command
+        else {
+            panic!("expected export-snapshot command");
+        };
+        assert_eq!(prefix.as_deref(), Some("/Wiki"));
+        assert_eq!(*limit, 50);
+        assert_eq!(cursor.as_deref(), Some("/Wiki/a.md"));
+        assert_eq!(snapshot_revision.as_deref(), Some("v5:7:2f57696b69"));
+        assert!(*all);
+        assert_eq!(
+            output.as_ref().expect("output").to_string_lossy(),
+            "snapshot.json"
+        );
+        assert!(*json);
+
+        let Some(VfsCommand::ExportSnapshot {
+            prefix,
+            limit,
+            cursor,
+            snapshot_revision,
+            all,
+            output,
+            json,
+        }) = cli.command.as_vfs_command()
+        else {
+            panic!("expected VFS export-snapshot command");
+        };
+        assert_eq!(prefix.as_deref(), Some("/Wiki"));
+        assert_eq!(limit, 50);
+        assert_eq!(cursor.as_deref(), Some("/Wiki/a.md"));
+        assert_eq!(snapshot_revision.as_deref(), Some("v5:7:2f57696b69"));
+        assert!(all);
+        assert_eq!(output.expect("output").to_string_lossy(), "snapshot.json");
+        assert!(json);
+    }
+
+    #[test]
     fn main_cli_parses_context_pack_commands() {
         let export = Cli::parse_from([
             "kinic-vfs-cli",
@@ -1435,6 +1533,11 @@ mod tests {
         ]);
         assert!(!query_sql.command.requires_identity());
         assert!(query_sql.command.probes_anonymous_database_read());
+
+        let export_snapshot =
+            Cli::parse_from(["kinic-vfs-cli", "export-snapshot", "--all", "--json"]);
+        assert!(!export_snapshot.command.requires_identity());
+        assert!(export_snapshot.command.probes_anonymous_database_read());
 
         let status = Cli::parse_from(["kinic-vfs-cli", "status"]);
         assert!(!status.command.requires_identity());
