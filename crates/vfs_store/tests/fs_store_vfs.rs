@@ -13,7 +13,7 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
     let dir = tempdir().expect("temp dir should exist");
     let store = FsStore::new(dir.path().join("wiki.sqlite3"));
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("fs migrations should succeed");
     (dir, store)
 }
@@ -145,12 +145,12 @@ fn file_and_source_parents_cannot_contain_children() {
         .expect_err("write below file should fail");
     assert_eq!(file_child_error, "parent path is not a folder: /Wiki/file");
 
-    ensure_parent_folders(&store, "/Sources/raw/source/source.md", 12);
+    ensure_parent_folders(&store, "/Sources/evidence/source/source.md", 12);
     store
         .append_node(
             AppendNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/evidence/source/source.md".to_string(),
                 content: "source parent".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -164,21 +164,21 @@ fn file_and_source_parents_cannot_contain_children() {
         .mkdir_node(
             MkdirNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/source/source.md/child".to_string(),
+                path: "/Sources/evidence/source/source.md/child".to_string(),
             },
             14,
         )
         .expect_err("mkdir below source should fail");
     assert_eq!(
         mkdir_error,
-        "parent path is not a folder: /Sources/raw/source/source.md"
+        "parent path is not a folder: /Sources/evidence/source/source.md"
     );
     let move_error = store
         .move_node(
             MoveNodeRequest {
                 database_id: "default".to_string(),
                 from_path: "/Wiki/file".to_string(),
-                to_path: "/Sources/raw/source/source.md/file".to_string(),
+                to_path: "/Sources/evidence/source/source.md/file".to_string(),
                 expected_etag: Some(file_parent.node.etag),
                 overwrite: false,
             },
@@ -187,7 +187,7 @@ fn file_and_source_parents_cannot_contain_children() {
         .expect_err("move below source should fail");
     assert_eq!(
         move_error,
-        "parent path is not a folder: /Sources/raw/source/source.md"
+        "parent path is not a folder: /Sources/evidence/source/source.md"
     );
 }
 
@@ -263,13 +263,13 @@ fn append_node_creates_updates_and_checks_etag() {
 #[test]
 fn append_node_preserves_existing_kind_and_metadata() {
     let (_dir, store) = new_store();
-    ensure_parent_folders(&store, "/Sources/raw/log/log.md", 9);
+    ensure_parent_folders(&store, "/Sources/evidence/log/log.md", 9);
 
     let created = store
         .append_node(
             AppendNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/log/log.md".to_string(),
+                path: "/Sources/evidence/log/log.md".to_string(),
                 content: "alpha".to_string(),
                 expected_etag: None,
                 separator: None,
@@ -284,7 +284,7 @@ fn append_node_preserves_existing_kind_and_metadata() {
         .append_node(
             AppendNodeRequest {
                 database_id: "default".to_string(),
-                path: "/Sources/raw/log/log.md".to_string(),
+                path: "/Sources/evidence/log/log.md".to_string(),
                 content: "beta".to_string(),
                 expected_etag: Some(created.node.etag),
                 separator: Some("\n".to_string()),
@@ -296,7 +296,7 @@ fn append_node_preserves_existing_kind_and_metadata() {
         .expect("append update should succeed");
 
     let current = store
-        .read_node("/Sources/raw/log/log.md")
+        .read_node("/Sources/evidence/log/log.md")
         .expect("read should succeed")
         .expect("node should exist");
     assert_eq!(current.kind, NodeKind::Source);
@@ -645,22 +645,22 @@ fn memory_queries_return_context_and_scope_evidence() {
         ),
         (
             "/Wiki/scope/overview.md",
-            "# Overview\n\nalpha synthesis [Raw](/Sources/raw/a/a.md)",
+            "# Overview\n\nalpha synthesis [Raw](/Sources/evidence/a/a.md)",
             11,
         ),
         ("/Wiki/scope/schema.md", "# Schema\n\nread-only", 12),
         (
             "/Wiki/scope/provenance.md",
-            "# Provenance\n\n[Raw](/Sources/raw/a/a.md)",
+            "# Provenance\n\n[Raw](/Sources/evidence/a/a.md)",
             13,
         ),
         (
             "/Wiki/scope/alpha.md",
-            "# Alpha\n\nbeam full reset detail [Raw](/Sources/raw/a/a.md)",
+            "# Alpha\n\nbeam full reset detail [Raw](/Sources/evidence/a/a.md)",
             14,
         ),
         ("/Wiki/scope/topics/foo.md", "# Foo\n\ntopic detail", 15),
-        ("/Sources/raw/a/a.md", "raw source", 16),
+        ("/Sources/evidence/a/a.md", "evidence source", 16),
     ] {
         ensure_parent_folders(&store, path, now - 1);
         store
@@ -707,7 +707,7 @@ fn memory_queries_return_context_and_scope_evidence() {
         evidence
             .refs
             .iter()
-            .any(|item| item.source_path == "/Sources/raw/a/a.md")
+            .any(|item| item.source_path == "/Sources/evidence/a/a.md")
     }));
 
     let evidence = store
@@ -721,13 +721,13 @@ fn memory_queries_return_context_and_scope_evidence() {
         evidence
             .refs
             .iter()
-            .any(|item| item.source_path == "/Sources/raw/a/a.md")
+            .any(|item| item.source_path == "/Sources/evidence/a/a.md")
     );
     let raw_ref = evidence
         .refs
         .iter()
-        .find(|item| item.source_path == "/Sources/raw/a/a.md")
-        .expect("raw source ref should exist");
+        .find(|item| item.source_path == "/Sources/evidence/a/a.md")
+        .expect("evidence source ref should exist");
     assert!(raw_ref.source_etag.is_some());
     assert!(raw_ref.source_updated_at.is_some());
     assert!(raw_ref.source_content_hash.is_some());
@@ -739,7 +739,8 @@ fn memory_queries_return_context_and_scope_evidence() {
         })
         .expect("topic evidence should load");
     assert!(topic_evidence.refs.iter().any(|item| {
-        item.via_path == "/Wiki/scope/provenance.md" && item.source_path == "/Sources/raw/a/a.md"
+        item.via_path == "/Wiki/scope/provenance.md"
+            && item.source_path == "/Sources/evidence/a/a.md"
     }));
 
     let small_context = store
@@ -1056,7 +1057,7 @@ fn mkdir_node_creates_folder_node() {
             row.get::<_, i64>(0)
         })
         .expect("count should succeed");
-    assert_eq!(count, 5);
+    assert_eq!(count, 8);
 
     let list = store
         .list_nodes(ListNodesRequest {

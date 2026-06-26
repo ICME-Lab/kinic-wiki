@@ -1,11 +1,11 @@
 // Where: extensions/wiki-clipper/src/web-source.js
-// What: Build canonical raw source nodes from active-page DOM text snapshots.
+// What: Build canonical evidence source nodes from active-page DOM text snapshots.
 // Why: Web page capture should save source evidence before queueing generation.
 import { normalizedHttpUrl } from "./url-ingest-request.js";
 
 const MAX_WEB_SOURCE_CHARS = 300_000;
 
-export async function buildWebRawSource(snapshot, now = new Date()) {
+export async function buildWebEvidenceSource(snapshot, now = new Date()) {
   const finalUrl = normalizedHttpUrl(snapshot?.url);
   const sourceId = await webSourceId(finalUrl);
   const text = String(snapshot?.text || "").trim();
@@ -17,7 +17,7 @@ export async function buildWebRawSource(snapshot, now = new Date()) {
   const capturedAt = now.toISOString();
   const content = [
     "---",
-    "kind: kinic.raw_web_source",
+    "kind: kinic.evidence_web_source",
     "schema_version: 1",
     `url: ${JSON.stringify(finalUrl)}`,
     `final_url: ${JSON.stringify(finalUrl)}`,
@@ -219,7 +219,7 @@ function webSourceTitle(value, finalUrl) {
 }
 
 function webSourcePathFromId(sourceId) {
-  return `/Sources/raw/web/${sourceId.slice("web-".length)}.md`;
+  return `/Sources/evidence/web/${sourceId.slice("web-".length)}.md`;
 }
 
 function limitSourceText(text, maxChars) {

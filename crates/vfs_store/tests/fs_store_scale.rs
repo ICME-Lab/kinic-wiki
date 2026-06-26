@@ -12,7 +12,7 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
     let dir = tempdir().expect("temp dir should exist");
     let store = FsStore::new(dir.path().join("wiki.sqlite3"));
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("fs migrations should succeed");
     (dir, store)
 }

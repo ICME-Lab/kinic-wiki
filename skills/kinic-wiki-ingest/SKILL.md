@@ -1,6 +1,6 @@
 ---
 name: kinic-wiki-ingest
-description: Kinic Wiki workflow skill for ingesting raw source material into the current canister-backed wiki workflow.
+description: Kinic Wiki workflow skill for ingesting evidence source material into the current canister-backed wiki workflow.
 ---
 
 # Kinic Wiki Ingest
@@ -8,12 +8,12 @@ description: Kinic Wiki workflow skill for ingesting raw source material into th
 Use this skill when the user wants to:
 
 - ingest local markdown, notes, docs, or folders into the wiki
-- normalize raw source material before wiki synthesis
-- persist selected source material under `/Sources/raw/...`
+- normalize evidence source material before wiki synthesis
+- persist selected source material under `/Sources/evidence/...`
 - update existing wiki pages from new evidence
 - repair existing wiki pages only when the edit is part of source intake; otherwise use `kinic-wiki-edit`
 - initialize or repair an explicit LLM Wiki scope when the user asks for scoped structure
-- generate conversation wiki pages from raw sources, preferring one review-ready page unless the source clearly needs a split
+- generate conversation wiki pages from evidence sources, preferring one review-ready page unless the source clearly needs a split
 - create review-ready wiki pages without pushing immediately
 
 Do not use this skill for:
@@ -28,7 +28,7 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<provider>/<id>.md`.
+- Organized wiki nodes live under `/Wiki/...`; evidence sources live under `/Sources/evidence/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless the workflow explicitly writes it back through VFS commands.
 - Stop at review-ready unless the user explicitly asks for push. `review-ready` means edits and any existing or requested `log.md` updates are complete, but no push or publish step has run.
 - Keep source persistence separate from wiki synthesis.

@@ -161,12 +161,12 @@ async fn request_for_source(
     };
     let Some(frontmatter) = parse_frontmatter(&source.content)? else {
         return Ok(SourceLookup::Skipped(format!(
-            "{source_path}: missing raw web source frontmatter"
+            "{source_path}: missing evidence web source frontmatter"
         )));
     };
-    if frontmatter.kind.as_deref() != Some("kinic.raw_web_source") {
+    if frontmatter.kind.as_deref() != Some("kinic.evidence_web_source") {
         return Ok(SourceLookup::Skipped(format!(
-            "{source_path}: not kinic.raw_web_source"
+            "{source_path}: not kinic.evidence_web_source"
         )));
     }
     let entries = client
@@ -607,7 +607,10 @@ mod tests {
             plan.paths
                 .contains(&"/Sources/ingest-requests/r1.md".to_string())
         );
-        assert!(plan.paths.contains(&"/Sources/raw/web/1.md".to_string()));
+        assert!(
+            plan.paths
+                .contains(&"/Sources/evidence/web/1.md".to_string())
+        );
         assert!(
             plan.paths
                 .contains(&"/Wiki/conversations/web-1".to_string())
@@ -652,7 +655,7 @@ mod tests {
         MatchedRequest {
             path: "/Sources/ingest-requests/r1.md".to_string(),
             url: "https://example.com/page".to_string(),
-            source_path: Some("/Sources/raw/web/1.md".to_string()),
+            source_path: Some("/Sources/evidence/web/1.md".to_string()),
             target_path: target_path.map(ToString::to_string),
             status: Some("completed".to_string()),
         }

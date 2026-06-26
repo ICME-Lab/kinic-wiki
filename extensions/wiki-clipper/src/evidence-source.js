@@ -1,15 +1,15 @@
-// Where: extensions/wiki-clipper/src/raw-source.js
-// What: Convert captured conversations into canonical raw source nodes.
-// Why: Raw source evidence is grouped by provider under /Sources/raw/<provider>/<id>.md.
+// Where: extensions/wiki-clipper/src/evidence-source.js
+// What: Convert captured conversations into canonical evidence source nodes.
+// Why: Evidence source is grouped by provider under /Sources/evidence/<provider>/<id>.md.
 const MAX_CONVERSATION_SOURCE_CHARS = 300_000;
 
-export function buildRawSource(capture, now = new Date()) {
+export function buildEvidenceSource(capture, now = new Date()) {
   if (!capture.messages || capture.messages.length === 0) {
     throw new Error("no conversation messages found");
   }
   const provider = safeProvider(capture.provider || "conversation");
   const sourceId = sourceIdForCapture(capture, now, provider);
-  const path = `/Sources/raw/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
+  const path = `/Sources/evidence/${provider}/${sourceFileStemForCapture(capture, sourceId)}.md`;
   const metadata = {
     provider: capture.provider,
     source_url: capture.url,
@@ -66,7 +66,7 @@ function conversationIdFromUrl(value) {
 
 function rawMarkdown(capture, sourceText) {
   const lines = [
-    "# Raw Conversation Source",
+    "# Evidence Conversation Source",
     "",
     "## Metadata",
     "",

@@ -91,7 +91,7 @@ export function inferNoteRole(path: string): string {
   if (name === "schema.md") return "schema";
   if (name === "provenance.md") return "provenance";
   if (path.includes("/topics/") && path.endsWith(".md")) return "topics";
-  if (path === "/Sources/raw" || path.startsWith("/Sources/raw/")) return "raw_source";
+  if (path === "/Sources/evidence" || path.startsWith("/Sources/evidence/")) return "evidence_source";
   if (path.endsWith(".md")) return "markdown_note";
   return "directory";
 }

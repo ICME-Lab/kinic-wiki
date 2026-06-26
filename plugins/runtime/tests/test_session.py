@@ -43,7 +43,7 @@ class SessionCaptureTests(unittest.TestCase):
             transcript,
             "2024-05-01T00:00:00.123Z",
         )
-        self.assertEqual(source.path, f"/Sources/raw/claudecode/{expected_source_id}.md")
+        self.assertEqual(source.path, f"/Sources/evidence/claudecode/{expected_source_id}.md")
         self.assertEqual(source.metadata["message_count"], 3)
         self.assertTrue(source.metadata["redacted"])
         self.assertIn("[REDACTED]", source.content)
@@ -214,7 +214,7 @@ class SessionCaptureTests(unittest.TestCase):
             transcript,
             "2024-05-01T00:00:00.123Z",
         )
-        self.assertEqual(source.path, f"/Sources/raw/claudecode/{expected_source_id}.md")
+        self.assertEqual(source.path, f"/Sources/evidence/claudecode/{expected_source_id}.md")
         for leaked in [
             "abc123456789012345",
             "meta-secret-value-123",
@@ -701,7 +701,7 @@ class SessionCaptureTests(unittest.TestCase):
             old_pending.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/old.md",
+                        "path": "/Sources/evidence/claudecode/old.md",
                         "content": "# Old\n",
                         "metadata_json": "{}",
                     }
@@ -729,13 +729,13 @@ class SessionCaptureTests(unittest.TestCase):
 
             paths = [json.loads(line) for line in calls.read_text().splitlines()]
             expected_current = (
-                "/Sources/raw/claudecode/"
+                "/Sources/evidence/claudecode/"
                 + session.source_id_for_session("session-current", transcript, "1970-01-01T00:00:01.000Z")
                 + ".md"
             )
             self.assertTrue(result["recorded"])
             self.assertEqual(paths[0], expected_current)
-            self.assertEqual(paths[1], "/Sources/raw/claudecode/old.md")
+            self.assertEqual(paths[1], "/Sources/evidence/claudecode/old.md")
             self.assertFalse(old_pending.exists())
 
     def test_record_session_skips_old_pending_flush_when_current_write_fails(self) -> None:
@@ -770,7 +770,7 @@ class SessionCaptureTests(unittest.TestCase):
             old_pending.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/old.md",
+                        "path": "/Sources/evidence/claudecode/old.md",
                         "content": "# Old\n",
                         "metadata_json": "{}",
                     }
@@ -924,7 +924,7 @@ class SessionCaptureTests(unittest.TestCase):
             transcript,
             "2024-05-01T00:00:00.123Z",
         )
-        self.assertEqual(source.path, f"/Sources/raw/codex/{expected_source_id}.md")
+        self.assertEqual(source.path, f"/Sources/evidence/codex/{expected_source_id}.md")
         self.assertEqual(source.metadata["provider"], "codex")
         self.assertTrue(source.metadata["redacted"])
         self.assertIn("# Raw Codex Session", source.content)
@@ -989,7 +989,7 @@ class SessionCaptureTests(unittest.TestCase):
             pending.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/session.md",
+                        "path": "/Sources/evidence/claudecode/session.md",
                         "content": "# Session\n",
                         "metadata_json": "{}",
                     }
@@ -1026,7 +1026,7 @@ class SessionCaptureTests(unittest.TestCase):
             good.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/good.md",
+                        "path": "/Sources/evidence/claudecode/good.md",
                         "content": "# Good\n",
                         "metadata_json": "{}",
                     }
@@ -1045,7 +1045,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(good.exists())
             self.assertFalse(invalid.exists())
             self.assertTrue((pending_dir / "1-bad.json.invalid").is_file())
-            self.assertIn("/Sources/raw/claudecode/good.md", calls.read_text())
+            self.assertIn("/Sources/evidence/claudecode/good.md", calls.read_text())
 
     def test_flush_pending_keeps_failed_write_for_retry_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1056,7 +1056,7 @@ class SessionCaptureTests(unittest.TestCase):
             failed.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/fail.md",
+                        "path": "/Sources/evidence/claudecode/fail.md",
                         "content": "# Fail\n",
                         "metadata_json": "{}",
                     }
@@ -1066,7 +1066,7 @@ class SessionCaptureTests(unittest.TestCase):
             good.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/good.md",
+                        "path": "/Sources/evidence/claudecode/good.md",
                         "content": "# Good\n",
                         "metadata_json": "{}",
                     }
@@ -1077,7 +1077,7 @@ class SessionCaptureTests(unittest.TestCase):
             fake_cli.write_text(
                 "#!/usr/bin/env bash\n"
                 "for arg in \"$@\"; do\n"
-                "  if [ \"$arg\" = \"/Sources/raw/claudecode/fail.md\" ]; then exit 7; fi\n"
+                "  if [ \"$arg\" = \"/Sources/evidence/claudecode/fail.md\" ]; then exit 7; fi\n"
                 "done\n"
                 f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n"
             )
@@ -1091,7 +1091,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(good.exists())
             self.assertTrue(failed.is_file())
             self.assertFalse((pending_dir / "1-fail.json.failed").exists())
-            self.assertIn("/Sources/raw/claudecode/good.md", calls.read_text())
+            self.assertIn("/Sources/evidence/claudecode/good.md", calls.read_text())
 
             fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
             result = session.flush_pending_report(str(fake_cli), pending_dir)
@@ -1109,7 +1109,7 @@ class SessionCaptureTests(unittest.TestCase):
             unlink_fail.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/unlink-fail.md",
+                        "path": "/Sources/evidence/claudecode/unlink-fail.md",
                         "content": "# Unlink fail\n",
                         "metadata_json": "{}",
                     }
@@ -1119,7 +1119,7 @@ class SessionCaptureTests(unittest.TestCase):
             good.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/raw/claudecode/good.md",
+                        "path": "/Sources/evidence/claudecode/good.md",
                         "content": "# Good\n",
                         "metadata_json": "{}",
                     }
@@ -1146,8 +1146,8 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(unlink_fail.exists())
             self.assertTrue((pending_dir / "1-unlink-fail.json.failed").is_file())
             calls_text = calls.read_text()
-            self.assertIn("/Sources/raw/claudecode/unlink-fail.md", calls_text)
-            self.assertIn("/Sources/raw/claudecode/good.md", calls_text)
+            self.assertIn("/Sources/evidence/claudecode/unlink-fail.md", calls_text)
+            self.assertIn("/Sources/evidence/claudecode/good.md", calls_text)
 
 
 if __name__ == "__main__":

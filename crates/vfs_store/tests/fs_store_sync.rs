@@ -11,7 +11,7 @@ fn new_store() -> (tempfile::TempDir, FsStore) {
     let dir = tempdir().expect("temp dir should exist");
     let store = FsStore::new(dir.path().join("wiki.sqlite3"));
     store
-        .run_fs_migrations()
+        .run_fs_migrations_for_database("default")
         .expect("fs migrations should succeed");
     (dir, store)
 }
@@ -199,9 +199,19 @@ fn fetch_updates_rejects_revision_before_available_change_log() {
         let content = format!("revision {now}");
         write_node(&store, &path, &content, None, now);
     }
+    let base_revision = base
+        .snapshot_revision
+        .split(':')
+        .nth(1)
+        .expect("snapshot revision should contain revision")
+        .parse::<i64>()
+        .expect("snapshot revision should parse");
     let conn = Connection::open(store.database_path()).expect("db should open");
-    conn.execute("DELETE FROM fs_change_log WHERE revision < ?1", [7_i64])
-        .expect("manual compaction should succeed");
+    conn.execute(
+        "DELETE FROM fs_change_log WHERE revision <= ?1",
+        [base_revision + 1],
+    )
+    .expect("manual compaction should succeed");
 
     let error = store
         .fetch_updates(FetchUpdatesRequest {
@@ -458,7 +468,7 @@ fn folder_move_updates_sync_export_search_and_links() {
     write_node(
         &store,
         "/Wiki/project/index.md",
-        "uniquealpha [Raw](/Sources/raw/a/a.md)",
+        "uniquealpha [Raw](/Sources/evidence/a/a.md)",
         None,
         10,
     );
@@ -597,7 +607,7 @@ fn folder_move_updates_sync_export_search_and_links() {
             limit: 10,
         })
         .expect("outgoing links should load");
-    assert_eq!(outgoing[0].target_path, "/Sources/raw/a/a.md");
+    assert_eq!(outgoing[0].target_path, "/Sources/evidence/a/a.md");
 }
 
 #[test]
@@ -919,7 +929,7 @@ fn export_snapshot_allows_prefix_external_change_between_pages() {
         .expect("first page should succeed");
     write_node(
         &store,
-        "/Sources/raw/source/outside.md",
+        "/Sources/evidence/source/outside.md",
         "outside",
         None,
         500,

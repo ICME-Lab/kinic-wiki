@@ -1692,7 +1692,7 @@ mod tests {
             "kinic-vfs-cli",
             "write-node",
             "--path",
-            "/Sources/raw/source/source.md",
+            "/Sources/evidence/source/source.md",
             "--kind",
             "source",
             "--input",

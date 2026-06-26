@@ -48,8 +48,8 @@ const companionSurfaces = [
   },
   {
     title: "Capture tools",
-    body: "Save ChatGPT/Claude conversations as raw sources and queue active web pages as URL ingest requests. The extension requires Internet Identity writer access; use the CLI to turn raw chats into organized /Wiki pages.",
-    details: ["Web pages -> /Sources/ingest-requests/...", "AI chats -> /Sources/raw/..."],
+    body: "Save ChatGPT/Claude conversations as evidence sources and queue active web pages as URL ingest requests. The extension requires Internet Identity writer access; use the CLI to turn raw chats into organized /Wiki pages.",
+    details: ["Web pages -> /Sources/ingest-requests/...", "AI chats -> /Sources/evidence/..."],
     href: "https://chromewebstore.google.com/detail/moebdnadaffhlddnhifmmdoecifhcbdi",
     label: "Chrome Extension",
     icon: Wrench
@@ -206,7 +206,7 @@ export default function HomePage() {
                 <h3 className="text-xl font-semibold text-ink">Memory shape</h3>
               </div>
               <p className="mt-3 text-sm leading-6 text-muted">
-                Structured notes live under <code>/Wiki/...</code>. Raw evidence lives under <code>/Sources/raw/...</code>. Agents can search, follow paths and links, and update named knowledge nodes.
+                Structured notes live under <code>/Wiki/...</code>. Raw evidence lives under <code>/Sources/evidence/...</code>. Agents can search, follow paths and links, and update named knowledge nodes.
               </p>
             </article>
             <article className="rounded-2xl bg-paper p-6">

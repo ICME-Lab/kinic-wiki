@@ -1,3 +1,3 @@
--- Where: crates/vfs_store/migrations/005_okf_metadata.sql
+-- Where: crates/vfs_store/migrations/006_okf_metadata.sql
 -- What: Version marker for OKF metadata backfill.
 -- Why: Backfill needs Rust JSON handling so etags and sync revisions remain consistent.

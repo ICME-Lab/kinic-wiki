@@ -68,7 +68,7 @@ flowchart LR
 
 ### 5.2 `wiki_domain`
 
-- `/Sources/raw/...`, `/Sources/sessions/...` の source path 制約を集中管理
+- `/Sources/evidence/...`, `/Sources/sessions/...` の source path 制約を集中管理
 - source node の canonical path 制約を強制
 - wiki だけが知る path 規則を保持
 
@@ -209,7 +209,7 @@ sequenceDiagram
 
 | skill | 用途 |
 | --- | --- |
-| `kinic-wiki-ingest` | raw source を `/Sources/raw/...` に取り込み、review-ready まで整形 |
+| `kinic-wiki-ingest` | evidence source を `/Sources/evidence/...` に取り込み、review-ready まで整形 |
 | `kinic-wiki-lint` | wiki health 点検 |
 | `kinic-wiki-query` | knowledge base query |
 

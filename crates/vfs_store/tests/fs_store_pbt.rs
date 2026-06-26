@@ -74,7 +74,9 @@ fn new_store() -> TestStore {
     let dir = tempdir().expect("tempdir should create");
     let path = dir.path().join("wiki.sqlite3");
     let store = FsStore::new(path);
-    store.run_fs_migrations().expect("fs migrations should run");
+    store
+        .run_fs_migrations_for_database("default")
+        .expect("fs migrations should run");
     TestStore { store, _dir: dir }
 }
 
@@ -589,7 +591,7 @@ proptest! {
             concat!(
                 "[[{}|Wiki Alias]]\n",
                 "[Relative](rel{rel_target}.md?view=raw#section \"Title\")\n",
-                "[Source](/Sources/raw/{source_target}.md#frag)\n",
+                "[Source](/Sources/evidence/{source_target}.md#frag)\n",
                 "[External](https://example.com/nope.md)\n",
                 "[Hash](#local)\n",
                 "[Root](/outside.md)\n",
@@ -623,7 +625,7 @@ proptest! {
                 "markdown".to_string(),
             ),
             (
-                format!("/Sources/raw/{source_target}.md"),
+                format!("/Sources/evidence/{source_target}.md"),
                 "Source".to_string(),
                 "markdown".to_string(),
             ),

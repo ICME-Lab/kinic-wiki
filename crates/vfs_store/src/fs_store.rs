@@ -154,10 +154,6 @@ impl FsStore {
         &self.database_path
     }
 
-    pub fn run_fs_migrations(&self) -> Result<(), String> {
-        self.run_fs_migrations_for_database("db_local")
-    }
-
     pub fn run_fs_migrations_for_database(&self, database_id: &str) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {

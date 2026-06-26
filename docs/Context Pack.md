@@ -42,7 +42,7 @@ Concept files:
 - `tasks/*.md`: `okf_type: Task`.
 - `policies/*.md`: `okf_type: Policy`.
 - `notes/*.md`: `okf_type: Note`.
-- `references/*.md`: `okf_type: Reference`, without raw source body text.
+- `references/*.md`: `okf_type: Reference`, without evidence source body text.
 
 If node metadata omits `okf_type`, export falls back to the existing path role inference. Normal writes and migrations populate `okf_type`, so path inference is only a safety net for incomplete manual metadata.
 
@@ -56,7 +56,7 @@ Canonical node metadata uses these JSON keys:
 
 - `okf_type`: `Fact`, `Task`, `Decision`, `Policy`, `Note`, or `Reference`.
 - `resource`: `kinic://<database_id><path>`.
-- `source_refs`: array of `{ "path": "/Sources/raw/..." }` objects.
+- `source_refs`: derived array of `{ "path": "/Sources/evidence/..." }` objects, recomputed from wiki node body links.
 - `trust_level`: trust label, defaulting to `unreviewed`.
 - `expires_at`: optional RFC3339 expiry.
 
@@ -94,14 +94,14 @@ Reference concepts add `kinic.source_path`:
 ---
 type: Reference
 title: source
-resource: kinic://db_alpha/Sources/raw/web/source.md
+resource: kinic://db_alpha/Sources/evidence/web/source.md
 tags:
 - kinic
 - reference
 kinic:
   database_id: db_alpha
   root: /Wiki/projects/acme
-  source_path: /Sources/raw/web/source.md
+  source_path: /Sources/evidence/web/source.md
   etag: v4h:...
   content_hash: sha256:...
   expires_at: 2026-09-22T00:00:00Z
@@ -109,15 +109,15 @@ kinic:
 
 # Reference
 
-Raw source content is not copied into this OKF bundle.
+Evidence source content is not copied into this OKF bundle.
 ```
 
 ## Canonicality Rules
 
 - `/Wiki/...` is the organized knowledge layer.
-- `/Sources/raw/...` is the canonical raw evidence layer.
+- `/Sources/evidence/...` is the canonical source evidence layer.
 - Prefer reviewed role-page concepts over unreviewed working-note concepts for trusted agent handoff.
-- Raw source body text is not copied into `references/*.md`.
+- Evidence source body text is not copied into `references/*.md`.
 - `index.md` and `log.md` are OKF reserved files and must not carry frontmatter.
 - Unknown frontmatter keys are allowed.
 - Expired `kinic.expires_at` makes a concept invalid for trusted agent use.
@@ -155,7 +155,7 @@ Pass `--overwrite` to replace existing markdown files in the output directory.
 - non-reference concepts with `kinic.content_hash` match the exported Markdown body
 - `index.md` and `log.md` do not use frontmatter
 - `kinic.expires_at` is in the future when present
-- `references/*.md` uses `kinic.source_path` under `/Sources/raw/...`
+- `references/*.md` uses `kinic.source_path` under `/Sources/evidence/...`
 
 `context-pack inspect --json` reports:
 

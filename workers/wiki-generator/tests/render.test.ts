@@ -7,7 +7,7 @@ import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage
 import type { WikiDraft, WikiNode } from "../src/types.js";
 
 const source: WikiNode = {
-  path: "/Sources/raw/a/a.md",
+  path: "/Sources/evidence/a/a.md",
   kind: "source",
   content: "raw",
   etag: "etag-1",
@@ -39,7 +39,7 @@ test("slug and markdown include generated provenance without status frontmatter"
   const markdown = renderGeneratedMarkdown(draft, source, []);
   assert.doesNotMatch(markdown, /^---\n/m);
   assert.doesNotMatch(markdown, /## Status/);
-  assert.match(markdown, /source_path: \/Sources\/raw\/a\/a\.md/);
+  assert.match(markdown, /source_path: \/Sources\/evidence\/a\/a\.md/);
   assert.match(markdown, /source_etag: etag-1/);
 });
 
@@ -114,9 +114,9 @@ test("VFS path links are escaped for Markdown destinations", () => {
   const markdown = renderGeneratedMarkdown(
     {
       ...draft,
-      key_facts: [{ text: "Fact", source_path: "/Sources/raw/web/a]b.md" }]
+      key_facts: [{ text: "Fact", source_path: "/Sources/evidence/web/a]b.md" }]
     },
-    { ...source, path: "/Sources/raw/web/a]b.md" },
+    { ...source, path: "/Sources/evidence/web/a]b.md" },
     [
       { path: "/Wiki/conversations/日本語 記事).md", kind: "file", previewExcerpt: null, snippet: null },
       { path: "/Wiki/space name.md", kind: "file", previewExcerpt: null, snippet: null },
@@ -125,8 +125,8 @@ test("VFS path links are escaped for Markdown destinations", () => {
       { path: "/Wiki/100%.md", kind: "file", previewExcerpt: null, snippet: null }
     ]
   );
-  assert.match(markdown, /Source: \[\/Sources\/raw\/web\/a\\\]b\.md\]\(<\/Sources\/raw\/web\/a]b\.md>\)/);
-  assert.match(markdown, /\[source\]\(<\/Sources\/raw\/web\/a]b\.md>\)/);
+  assert.match(markdown, /Source: \[\/Sources\/evidence\/web\/a\\\]b\.md\]\(<\/Sources\/evidence\/web\/a]b\.md>\)/);
+  assert.match(markdown, /\[source\]\(<\/Sources\/evidence\/web\/a]b\.md>\)/);
   assert.match(markdown, /\[\/Wiki\/conversations\/日本語 記事\)\.md\]\(<\/Wiki\/conversations\/日本語 記事\)\.md>\)/);
   assert.match(markdown, /\[\/Wiki\/space name\.md\]\(<\/Wiki\/space name\.md>\)/);
   assert.match(markdown, /\[\/Wiki\/a#b\.md\]\(<\/Wiki\/a%23b\.md>\)/);
@@ -170,5 +170,5 @@ test("target conflict requires matching provenance", () => {
     () => ensureTargetCanBeWritten(`# Existing\n\nMention ${source.path} in body only.`, "/Wiki/conversations/a.md", source.path),
     /without matching provenance/
   );
-  assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/raw/b/b.md", "/Wiki/conversations/a.md", source.path), /without matching provenance/);
+  assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/evidence/b/b.md", "/Wiki/conversations/a.md", source.path), /without matching provenance/);
 });

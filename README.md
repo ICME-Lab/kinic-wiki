@@ -7,7 +7,7 @@ It stores durable wiki nodes in an Internet Computer canister and exposes them t
 
 Vector databases are useful for retrieving nearby text fragments from large corpora. Agent memory has a different shape. Agents need stable places for current decisions, source evidence, open questions, operating procedures, and relationships between notes.
 
-Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Wiki/...`; raw evidence lives under `/Sources/raw/...`. Wiki nodes store OKF concept metadata in `metadata_json` while keeping the Markdown body human-readable. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
+Kinic Wiki uses a canister-backed file system as that store layer. Organized knowledge lives under `/Wiki/...`; source evidence lives under `/Sources/evidence/...`. Wiki nodes store OKF concept metadata in `metadata_json` while keeping the Markdown body human-readable. Agents can search it, follow paths and links, and update notes with `etag` guarded writes.
 
 For many medium-sized agent workflows, structured file-system search is often more useful than embedding-only retrieval. A result is not just a similar chunk; it is a named, linked, updateable knowledge node.
 
@@ -25,7 +25,7 @@ For many medium-sized agent workflows, structured file-system search is often mo
 - `memory`: short facts, preferences, and active context recalled through `memory_recall`.
 - `knowledge`: long-term notes under `/Wiki/...`, connected by wiki links and source evidence.
 - `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`, with manifests, status, proposals, and run evidence.
-- `session`: agent conversation audit sources under `/Sources/raw/...`; resumable summaries are a later workflow.
+- `session`: agent conversation audit sources under `/Sources/evidence/...`; resumable summaries are a later workflow.
 
 Context Pack is not a fifth store. It is an OKF handoff artifact generated from node metadata and Markdown bodies.
 Curator is not a store. It is a future maintenance workflow for skill and knowledge stale/archive/promote decisions.

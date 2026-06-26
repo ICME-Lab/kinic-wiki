@@ -1933,7 +1933,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/evidence/source/source.md".to_string(),
                 kind: NodeKindArg::Source,
                 input,
                 metadata_json: "{}".to_string(),
@@ -1957,7 +1957,7 @@ mod tests {
             &client,
             &test_connection(),
             VfsCommand::WriteNode {
-                path: "/Sources/raw/source/source.md".to_string(),
+                path: "/Sources/evidence/source/source.md".to_string(),
                 kind: NodeKindArg::Source,
                 input,
                 metadata_json: "{}".to_string(),
@@ -2097,7 +2097,7 @@ mod tests {
             &input,
             r#"[
   {"path": "/Wiki/a.md", "kind": "file", "content": "alpha"},
-  {"path": "/Sources/raw/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
+  {"path": "/Sources/evidence/source/source.md", "kind": "source", "content": "source", "metadata_json": "{\"url\":\"https://example.com\"}", "expected_etag": "etag-source"}
 ]"#,
         )
         .expect("input should write");

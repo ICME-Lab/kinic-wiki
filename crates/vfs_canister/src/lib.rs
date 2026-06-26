@@ -405,13 +405,13 @@ fn store_manifest_roots(profile: DatabaseProfile) -> Vec<StoreRoot> {
             store_root("/Wiki", "knowledge"),
             store_root("/Wiki/skills", "skill"),
             store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "knowledge_evidence"),
+            store_root("/Sources/evidence", "knowledge_evidence"),
         ],
         DatabaseProfile::Knowledge => vec![store_root("/Wiki", "knowledge")],
         DatabaseProfile::Memory => vec![
             store_root("/Memory", "memory"),
             store_root("/Wiki", "knowledge"),
-            store_root("/Sources/raw", "knowledge_evidence"),
+            store_root("/Sources/evidence", "knowledge_evidence"),
         ],
         DatabaseProfile::Skill => vec![
             store_root("/Wiki/skills", "skill"),
@@ -419,7 +419,7 @@ fn store_manifest_roots(profile: DatabaseProfile) -> Vec<StoreRoot> {
         ],
         DatabaseProfile::Session => vec![
             store_root("/Sessions", "session"),
-            store_root("/Sources/raw", "session_audit_sources"),
+            store_root("/Sources/evidence", "session_audit_sources"),
         ],
     }
 }

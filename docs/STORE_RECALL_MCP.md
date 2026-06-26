@@ -52,7 +52,7 @@ MCP client
   -> existing Rust client or Store API
   -> Kinic Wiki canister
   -> canister-backed VFS
-  -> /Wiki and /Sources/raw nodes
+  -> /Wiki and /Sources/evidence nodes
 ```
 
 `kinic.memory_recall` should map to the same semantics as `memory_recall`.
@@ -60,7 +60,7 @@ MCP client
 `kinic.store_manifest` should expose discovery data and must not be treated as content evidence.
 
 `kinic.get_context_pack` can generate a pack-shaped result directly from current wiki nodes.
-It must not copy raw source transcripts into the returned pack.
+It must not copy evidence source transcripts into the returned pack.
 It should include source references, etags, expiration, and context hash metadata for stale-context checks.
 
 ## Security and Trust Rules

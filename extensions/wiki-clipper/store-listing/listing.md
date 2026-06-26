@@ -11,7 +11,7 @@ Kinic Wiki Clipper sends the current page URL or selected ChatGPT/Claude convers
 Core features:
 
 - Queue the active web page URL for Kinic Wiki ingest.
-- Export recent ChatGPT and Claude conversations as raw source files.
+- Export recent ChatGPT and Claude conversations as evidence source files.
 - Authenticate with Internet Identity before writing.
 - Select or explicitly create a writable Kinic Wiki database from extension settings.
 

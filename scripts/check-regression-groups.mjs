@@ -12,7 +12,7 @@ const groups = {
   security_path_validation: [
     ["crates/wiki_domain/src/lib.rs", "canonical_source_path_rejects_prefix_lookalikes"],
     ["crates/vfs_canister/src/tests.rs", "fs_entrypoints_reject_noncanonical_source_paths"],
-    ["workers/wiki-generator/tests/source-path.test.ts", "/Sources/rawfoo/alpha/alpha.md"],
+    ["workers/wiki-generator/tests/source-path.test.ts", "/Sources/evidencefoo/alpha/alpha.md"],
     ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "safeIngestRequestId rejects non-canonical path segments"]
   ],
   skill_registry_schema: [
@@ -42,8 +42,8 @@ const groups = {
     ["workers/wiki-generator/tests/openai.test.ts", "non-JSON DeepSeek failures before parsing"]
   ],
   extension_capture: [
-    ["extensions/wiki-clipper/tests/raw-source.test.mjs", "truncates long conversation ids to a canonical source filename"],
-    ["extensions/wiki-clipper/tests/raw-source.test.mjs", "removes dotdot from conversation source filenames"],
+    ["extensions/wiki-clipper/tests/evidence-source.test.mjs", "truncates long conversation ids to a canonical source filename"],
+    ["extensions/wiki-clipper/tests/evidence-source.test.mjs", "removes dotdot from conversation source filenames"],
     ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "safeIngestRequestId"],
     ["wikibrowser/lib/url-ingest.ts", "safeIngestRequestId(Date.now(), crypto.randomUUID())"]
   ],

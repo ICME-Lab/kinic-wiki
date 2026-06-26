@@ -41,7 +41,7 @@ export function HelpPanel() {
           <HelpItem
             icon={<FileText aria-hidden size={17} />}
             title="Sources and ingest"
-            body="Sources holds raw evidence and ingest requests. Generated wiki pages should be reviewed before relying on them."
+            body="Sources holds source evidence and ingest requests. Generated wiki pages should be reviewed before relying on them."
           />
           <HelpItem
             icon={<LockKeyhole aria-hidden size={17} />}

@@ -1,6 +1,6 @@
 // Where: extensions/wiki-clipper/src/conversation-limits.js
 // What: Shared capture-size guard for provider conversation exports.
-// Why: Oversized provider conversations should not consume CPU before raw-source truncation.
+// Why: Oversized provider conversations should not consume CPU before evidence-source truncation.
 export const MAX_CAPTURE_TEXT_CHARS = 320_000;
 
 export function appendLimitedMessage(messages, state, role, content, maxChars = MAX_CAPTURE_TEXT_CHARS) {

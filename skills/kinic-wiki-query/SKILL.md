@@ -24,7 +24,7 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; raw sources live under `/Sources/raw/<provider>/<id>.md`.
+- Organized wiki nodes live under `/Wiki/...`; evidence sources live under `/Sources/evidence/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Use `kinic-vfs-cli` first for `wiki.kinic.xyz` URLs. Do not start from Web HTML parsing.
 - Never run destructive or write commands.

@@ -11,7 +11,7 @@ Use [`AGENT_TOOL_CALLING.md`](AGENT_TOOL_CALLING.md) when the caller needs OpenA
 - `memory`: short facts, preferences, and active context. `memory_recall` assembles task-scoped context from canonical role pages, search hits, links, and optional evidence.
 - `knowledge`: long-term notes under `/Wiki/...`. Wiki links form the knowledge mesh; `knowledge_evidence` resolves source references for a known node.
 - `skill`: reusable `SKILL.md` packages under `/Wiki/skills/...`. The Skill Registry CLI owns package upsert, discovery, run evidence, proposal, and status workflows.
-- `session`: agent conversation audit sources under `/Sources/raw/...`. Current capture stores sanitized raw session sources; resumable summaries are outside v1.
+- `session`: agent conversation audit sources under `/Sources/evidence/...`. Current capture stores sanitized session sources; resumable summaries are outside v1.
 
 Context Pack is an export artifact generated from OKF concept metadata and Markdown bodies. It is not a store.
 Curator is a future maintenance workflow for skill and knowledge; it is not part of Store API v1.
@@ -21,10 +21,10 @@ Curator is a future maintenance workflow for skill and knowledge; it is not part
 Kinic store trust follows this lifecycle:
 
 ```text
-/Sources/raw/... -> human review -> role page -> memory_recall
+/Sources/evidence/... -> human review -> role page -> memory_recall
 ```
 
-- `/Sources/raw/...` is canonical raw evidence.
+- `/Sources/evidence/...` is canonical source evidence.
 - `/Wiki/...` is organized knowledge stored as OKF concepts in VFS nodes, but not automatically canonical.
 - Working notes can help review, but they are not a separate canonical lifecycle state.
 - Role pages are the memory recall layer when their claims are backed by source evidence or human review.
@@ -37,7 +37,7 @@ Role-page responsibilities:
 - `plans.md`: future or pending items, next actions, temporary constraints, and active operational policies.
 - `preferences.md`: preferences, decision criteria, and durable choices.
 - `open_questions.md`: unresolved items, conflicts, and evidence gaps.
-- `provenance.md`: raw source ids, source paths, import metadata, and review trace.
+- `provenance.md`: evidence source ids, source paths, import metadata, and review trace.
 - `summary.md`, `overview.md`, and `topics/*.md`: synthesis and orientation, not final evidence for exact claims.
 
 Do not place future, pending, unresolved, chronology-only, or recap content in `facts.md`.

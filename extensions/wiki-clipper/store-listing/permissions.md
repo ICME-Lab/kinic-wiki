@@ -10,7 +10,7 @@ Reads the URL and title of the active tab only after the user clicks the extensi
 
 ## scripting
 
-Captures the visible active page content only after the user clicks the extension action. This is required to create a raw source snapshot for wiki ingest and does not run on pages without user action.
+Captures the visible active page content only after the user clicks the extension action. This is required to create a evidence source snapshot for wiki ingest and does not run on pages without user action.
 
 ## offscreen
 
@@ -26,5 +26,5 @@ Adds an extension settings shortcut.
 - `https://id.ai/*`: authenticates with Internet Identity.
 - `https://chatgpt.com/*` and `https://chat.openai.com/*`: shows the ChatGPT export UI and reads conversations only when the user starts export.
 - `https://claude.ai/*`: shows the Claude export UI and reads conversations only when the user starts export.
-- `https://icp0.io/*`: writes raw sources and ingest requests to the Kinic Wiki canister.
+- `https://icp0.io/*`: writes evidence sources and ingest requests to the Kinic Wiki canister.
 - `https://xis3j-paaaa-aaaai-axumq-cai.icp0.io/*`: fixed derivation origin for Internet Identity.

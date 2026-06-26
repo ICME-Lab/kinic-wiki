@@ -8,7 +8,7 @@ import {
   handleOffscreenMessage,
   listWritableDatabases,
   queueUrlIngest,
-  saveRawSource,
+  saveEvidenceSource,
   setOffscreenDepsForTest,
   triggerSourceGeneration,
   webSourceExists
@@ -177,7 +177,7 @@ test("queueUrlIngest reuses session nonce inside ttl", async () => {
   }
 });
 
-test("saveRawSource writes with authenticated identity", async () => {
+test("saveEvidenceSource writes with authenticated identity", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -206,20 +206,20 @@ test("saveRawSource writes with authenticated identity", async () => {
     }
   });
   try {
-    const result = await saveRawSource(rawSource(), config());
+    const result = await saveEvidenceSource(evidenceSource(), config());
 
     assert.equal(result.etag, "etag-2");
     assert.equal(result.principal, "principal-1");
     assert.deepEqual(calls.slice(0, 5), [
       ["create", { tag: "identity" }, "team-db"],
-      ["read", "team-db", "/Sources/raw/chatgpt/abc.md"],
+      ["read", "team-db", "/Sources/evidence/chatgpt/abc.md"],
       ["mkdir", "team-db", "/Sources"],
-      ["mkdir", "team-db", "/Sources/raw"],
-      ["mkdir", "team-db", "/Sources/raw/chatgpt"]
+      ["mkdir", "team-db", "/Sources/evidence"],
+      ["mkdir", "team-db", "/Sources/evidence/chatgpt"]
     ]);
     assert.equal(calls[5][0], "write");
     assert.equal(calls[5][1], "team-db");
-    assert.equal(calls[5][2], "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[5][2], "/Sources/evidence/chatgpt/abc.md");
     assert.deepEqual(calls[5][3], ["etag-1"]);
     assert.equal(typeof calls[5][4], "string");
     assert.equal(result.sourceRunSessionNonce, calls[5][4]);
@@ -228,18 +228,18 @@ test("saveRawSource writes with authenticated identity", async () => {
   }
 });
 
-test("saveRawSource rejects unauthenticated sessions", async () => {
+test("saveEvidenceSource rejects unauthenticated sessions", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
-    await assert.rejects(() => saveRawSource(rawSource(), config()), /UNAUTHENTICATED/);
+    await assert.rejects(() => saveEvidenceSource(evidenceSource(), config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }
 });
 
-test("webSourceExists returns false when raw source is missing", async () => {
+test("webSourceExists returns false when evidence source is missing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -257,21 +257,21 @@ test("webSourceExists returns false when raw source is missing", async () => {
     const result = await handleOffscreenMessage({
       target: "offscreen",
       type: "web-source-exists",
-      sourcePath: "/Sources/raw/web/abc.md",
+      sourcePath: "/Sources/evidence/web/abc.md",
       config: config()
     });
 
-    assert.deepEqual(result, { exists: false, path: "/Sources/raw/web/abc.md", etag: null });
+    assert.deepEqual(result, { exists: false, path: "/Sources/evidence/web/abc.md", etag: null });
     assert.deepEqual(calls, [
       ["create", { tag: "identity" }, "team-db"],
-      ["read", "team-db", "/Sources/raw/web/abc.md"]
+      ["read", "team-db", "/Sources/evidence/web/abc.md"]
     ]);
   } finally {
     setOffscreenDepsForTest();
   }
 });
 
-test("webSourceExists returns true when raw source exists", async () => {
+test("webSourceExists returns true when evidence source exists", async () => {
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
     createVfsActor: async () => ({
@@ -281,9 +281,9 @@ test("webSourceExists returns true when raw source exists", async () => {
     })
   });
   try {
-    const result = await webSourceExists("/Sources/raw/web/abc.md", config());
+    const result = await webSourceExists("/Sources/evidence/web/abc.md", config());
 
-    assert.deepEqual(result, { exists: true, path: "/Sources/raw/web/abc.md", etag: "etag-source" });
+    assert.deepEqual(result, { exists: true, path: "/Sources/evidence/web/abc.md", etag: "etag-source" });
   } finally {
     setOffscreenDepsForTest();
   }
@@ -294,13 +294,13 @@ test("webSourceExists rejects unauthenticated sessions", async () => {
     authSnapshot: async () => ({ isAuthenticated: false, identity: null, principal: null })
   });
   try {
-    await assert.rejects(() => webSourceExists("/Sources/raw/web/abc.md", config()), /UNAUTHENTICATED/);
+    await assert.rejects(() => webSourceExists("/Sources/evidence/web/abc.md", config()), /UNAUTHENTICATED/);
   } finally {
     setOffscreenDepsForTest();
   }
 });
 
-test("saveRawSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
+test("saveEvidenceSource reloads auth client once before writing after a stale unauthenticated snapshot", async () => {
   const calls = [];
   let snapshotCalls = 0;
   setOffscreenDepsForTest({
@@ -335,7 +335,7 @@ test("saveRawSource reloads auth client once before writing after a stale unauth
     }
   });
   try {
-    const result = await saveRawSource(rawSource(), config());
+    const result = await saveEvidenceSource(evidenceSource(), config());
 
     assert.equal(result.principal, "principal-2");
     assert.equal(result.etag, "etag-after-reset");
@@ -450,7 +450,7 @@ test("reset-auth-client message clears cached trigger sessions", async () => {
   }
 });
 
-test("saveRawSource rejects suspended cycles before writing", async () => {
+test("saveEvidenceSource rejects suspended cycles before writing", async () => {
   const calls = [];
   setOffscreenDepsForTest({
     authSnapshot: async () => ({ isAuthenticated: true, identity: { tag: "identity" }, principal: "principal-1" }),
@@ -471,7 +471,7 @@ test("saveRawSource rejects suspended cycles before writing", async () => {
     })
   });
   try {
-    await assert.rejects(() => saveRawSource(rawSource(), config()), /cycles are suspended/);
+    await assert.rejects(() => saveEvidenceSource(evidenceSource(), config()), /cycles are suspended/);
 
     assert.deepEqual(calls, []);
   } finally {
@@ -488,16 +488,16 @@ test("triggerSourceGeneration calls source run route with issued source-run sess
     }
   });
   try {
-    const result = await triggerSourceGeneration(config(), "/Sources/raw/web/abc.md", "etag-source", "session-source");
+    const result = await triggerSourceGeneration(config(), "/Sources/evidence/web/abc.md", "etag-source", "session-source");
 
     assert.equal(result.triggered, true);
-    assert.equal(result.sourcePath, "/Sources/raw/web/abc.md");
+    assert.equal(result.sourcePath, "/Sources/evidence/web/abc.md");
     assert.equal(result.sourceEtag, "etag-source");
     assert.equal(fetchCalls[0][0], "https://wiki.kinic.xyz/api/source/run");
     assert.deepEqual(JSON.parse(fetchCalls[0][1].body), {
       canisterId: "xis3j-paaaa-aaaai-axumq-cai",
       databaseId: "team-db",
-      sourcePath: "/Sources/raw/web/abc.md",
+      sourcePath: "/Sources/evidence/web/abc.md",
       sourceEtag: "etag-source",
       sessionNonce: "session-source"
     });
@@ -551,6 +551,7 @@ test("listWritableDatabases returns active writable database summaries", async (
         databaseId: "team-db",
         name: "Team Wiki",
         role: "Writer",
+        profile: "",
         status: "Active",
         logicalSizeBytes: "0",
         cyclesBalance: "20000",
@@ -565,9 +566,9 @@ test("listWritableDatabases returns active writable database summaries", async (
   }
 });
 
-function rawSource() {
+function evidenceSource() {
   return {
-    path: "/Sources/raw/chatgpt/abc.md",
+    path: "/Sources/evidence/chatgpt/abc.md",
     sourceId: "chatgpt-abc",
     content: "# ChatGPT",
     metadataJson: "{}"

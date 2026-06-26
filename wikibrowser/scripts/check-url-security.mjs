@@ -47,7 +47,7 @@ await withEnv(
     assert.equal(storePreflight.headers.get("access-control-allow-origin"), "chrome-extension://moebdnadaffhlddnhifmmdoecifhcbdi");
 
     const invalidPath = await triggerRouteModule.POST(
-      triggerRequest("https://kinic.xyz", { requestPath: "/Sources/raw/1.md" })
+      triggerRequest("https://kinic.xyz", { requestPath: "/Sources/evidence/1.md" })
     );
     assert.equal(invalidPath.status, 400);
 
@@ -108,17 +108,17 @@ await withEnv(
     triggerRouteModule.setUrlIngestTriggerDepsForTest();
 
     const invalidSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/web-abc/web-abc.md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/evidence/web-abc/web-abc.md" })
     );
     assert.equal(invalidSourcePath.status, 400);
 
     const traversalSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/../...md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/evidence/../...md" })
     );
     assert.equal(traversalSourcePath.status, 400);
 
     const dotdotSourcePath = await sourceRunRouteModule.POST(
-      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/raw/web/a..b.md" })
+      sourceRunRequest("https://kinic.xyz", { sourcePath: "/Sources/evidence/web/a..b.md" })
     );
     assert.equal(dotdotSourcePath.status, 400);
 
@@ -153,7 +153,7 @@ await withEnv(
         assert.equal(canisterId, "aaaaa-aa");
         assert.deepEqual(input, {
           databaseId: "db_1",
-          sourcePath: "/Sources/raw/web/abc.md",
+          sourcePath: "/Sources/evidence/web/abc.md",
           sourceEtag: "etag-source",
           sessionNonce: "session-1"
         });
@@ -165,7 +165,7 @@ await withEnv(
       assert.equal(init?.method, "POST");
       assert.deepEqual(JSON.parse(init?.body), {
         databaseId: "db_1",
-        sourcePath: "/Sources/raw/web/abc.md",
+        sourcePath: "/Sources/evidence/web/abc.md",
         sourceEtag: "etag-source",
         sessionNonce: "session-1",
         dryRun: false
@@ -365,7 +365,7 @@ function sourceRunRequest(origin, overrides = {}) {
     body: JSON.stringify({
       canisterId: "aaaaa-aa",
       databaseId: "db_1",
-      sourcePath: "/Sources/raw/web/abc.md",
+      sourcePath: "/Sources/evidence/web/abc.md",
       sourceEtag: "etag-source",
       sessionNonce: "session-1",
       ...overrides

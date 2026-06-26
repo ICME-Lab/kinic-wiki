@@ -10,7 +10,7 @@ Use this skill when the user wants to:
 - export a `/Wiki/...` scope as an OKF v0.1 markdown bundle
 - verify or inspect a local OKF Context Pack bundle
 - prepare portable context for another AI client or agent
-- confirm that raw source body text is not copied into the bundle
+- confirm that evidence source body text is not copied into the bundle
 
 Do not use this skill for:
 
@@ -28,8 +28,8 @@ Core rules:
 - Keep `index.md` and `log.md` as reserved OKF files without frontmatter.
 - Require YAML frontmatter with a non-empty `type` for every non-reserved `.md` file.
 - Treat `notes/*.md` as unclassified wiki notes.
-- Treat `references/*.md` as `/Sources/raw/...` reference metadata only.
-- Do not copy raw source body text into the OKF bundle.
+- Treat `references/*.md` as `/Sources/evidence/...` reference metadata only.
+- Do not copy evidence source body text into the OKF bundle.
 - Verify a bundle before handing it to an AI.
 - Do not write from an OKF bundle back into the wiki.
 

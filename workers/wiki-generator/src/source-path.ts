@@ -1,5 +1,5 @@
 // Where: workers/wiki-generator/src/source-path.ts
-// What: Canonical raw source path validation.
+// What: Canonical evidence source path validation.
 // Why: The worker must mirror canister source path rules before queueing work.
 export function validateCanonicalSourcePath(path: string, prefix: string): void {
   const boundary = `${prefix}/`;

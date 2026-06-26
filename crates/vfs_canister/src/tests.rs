@@ -2183,7 +2183,7 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
             expected_etag: None,
         })
         .expect("wiki node should write");
-        for path in ["/Sources", "/Sources/raw", "/Sources/raw/test"] {
+        for path in ["/Sources", "/Sources/evidence", "/Sources/evidence/test"] {
             mkdir_node(MkdirNodeRequest {
                 database_id: database_id.clone(),
                 path: path.to_string(),
@@ -2192,7 +2192,7 @@ fn marketplace_listing_detail_includes_wiki_node_character_counts() {
         }
         write_node(WriteNodeRequest {
             database_id: database_id.clone(),
-            path: "/Sources/raw/test/source.md".to_string(),
+            path: "/Sources/evidence/test/source.md".to_string(),
             kind: NodeKind::Source,
             content: "source text should not appear in marketplace node sizes".to_string(),
             metadata_json: "{}".to_string(),
@@ -2908,7 +2908,7 @@ fn store_entrypoints_return_four_store_contract() {
         manifest
             .roots
             .iter()
-            .any(|root| root.path == "/Sources/raw" && root.kind == "knowledge_evidence")
+            .any(|root| root.path == "/Sources/evidence" && root.kind == "knowledge_evidence")
     );
     assert!(
         manifest
@@ -2927,14 +2927,14 @@ fn store_entrypoints_return_four_store_contract() {
         ("/Wiki/scope/index.md", "# Index\n\n[Overview](overview.md)"),
         (
             "/Wiki/scope/overview.md",
-            "# Overview\n\nbeam memory [Raw](/Sources/raw/a/a.md)",
+            "# Overview\n\nbeam memory [Raw](/Sources/evidence/a/a.md)",
         ),
         ("/Wiki/scope/schema.md", "# Schema\n\nread-only"),
         (
             "/Wiki/scope/provenance.md",
-            "# Provenance\n\n[Raw](/Sources/raw/a/a.md)",
+            "# Provenance\n\n[Raw](/Sources/evidence/a/a.md)",
         ),
-        ("/Sources/raw/a/a.md", "raw source"),
+        ("/Sources/evidence/a/a.md", "evidence source"),
     ] {
         ensure_parent_folders(path);
         write_node(WriteNodeRequest {
@@ -2979,12 +2979,12 @@ fn store_entrypoints_return_four_store_contract() {
         evidence
             .refs
             .iter()
-            .any(|item| item.source_path == "/Sources/raw/a/a.md")
+            .any(|item| item.source_path == "/Sources/evidence/a/a.md")
     );
     let source_ref = evidence
         .refs
         .iter()
-        .find(|item| item.source_path == "/Sources/raw/a/a.md")
+        .find(|item| item.source_path == "/Sources/evidence/a/a.md")
         .expect("source evidence ref should exist");
     assert!(source_ref.source_etag.is_some());
     assert!(source_ref.source_updated_at.is_some());
@@ -3006,7 +3006,7 @@ fn fs_entrypoints_cover_crud_search_and_sync() {
     assert!(created.created);
 
     ensure_parent_folders("/Wiki/nested/bar.md");
-    ensure_parent_folders("/Sources/raw/source/source.md");
+    ensure_parent_folders("/Sources/evidence/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Wiki/nested/bar.md".to_string(),
@@ -3152,7 +3152,7 @@ fn fs_entrypoints_cover_backlink_queries() {
     install_test_service();
     ensure_parent_folders("/Wiki/topic/source.md");
 
-    ensure_parent_folders("/Sources/raw/source/source.md");
+    ensure_parent_folders("/Sources/evidence/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
         path: "/Wiki/topic/source.md".to_string(),
@@ -3273,7 +3273,7 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
 
     let write_error = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/source.md".to_string(),
+        path: "/Sources/evidence/source.md".to_string(),
         kind: NodeKind::Source,
         content: "source".to_string(),
         metadata_json: "{}".to_string(),
@@ -3282,10 +3282,10 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     .expect_err("noncanonical source write should fail");
     assert!(write_error.contains("source path must"));
 
-    ensure_parent_folders("/Sources/raw/source/source.md");
+    ensure_parent_folders("/Sources/evidence/source/source.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/source/source.md".to_string(),
+        path: "/Sources/evidence/source/source.md".to_string(),
         kind: NodeKind::Source,
         content: "source".to_string(),
         metadata_json: "{}".to_string(),
@@ -3305,10 +3305,10 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     .expect_err("noncanonical source append should fail");
     assert!(append_error.contains("source path must"));
 
-    ensure_parent_folders("/Sources/raw/keep/keep.md");
+    ensure_parent_folders("/Sources/evidence/keep/keep.md");
     let created = write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/keep/keep.md".to_string(),
+        path: "/Sources/evidence/keep/keep.md".to_string(),
         kind: NodeKind::Source,
         content: "keep".to_string(),
         metadata_json: "{}".to_string(),
@@ -3316,11 +3316,11 @@ fn fs_entrypoints_reject_noncanonical_source_paths() {
     })
     .expect("canonical source write should succeed");
 
-    ensure_parent_folders("/Sources/raw/renamed-/wrong.md");
+    ensure_parent_folders("/Sources/evidence/renamed-/wrong.md");
     let move_error = move_node(MoveNodeRequest {
         database_id: "default".to_string(),
-        from_path: "/Sources/raw/keep/keep.md".to_string(),
-        to_path: "/Sources/raw/renamed-/wrong.md".to_string(),
+        from_path: "/Sources/evidence/keep/keep.md".to_string(),
+        to_path: "/Sources/evidence/renamed-/wrong.md".to_string(),
         expected_etag: Some(created.node.etag),
         overwrite: false,
     })
@@ -3517,15 +3517,16 @@ fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
         database_id: "default".to_string(),
         path: "/Wiki/archive-smoke.md".to_string(),
         kind: NodeKind::File,
-        content: "# Archive Smoke\n\nalpha body [raw](/Sources/raw/smoke/smoke.md)".to_string(),
+        content: "# Archive Smoke\n\nalpha body [raw](/Sources/evidence/smoke/smoke.md)"
+            .to_string(),
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
     .expect("wiki write should succeed");
-    ensure_parent_folders("/Sources/raw/smoke/smoke.md");
+    ensure_parent_folders("/Sources/evidence/smoke/smoke.md");
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/smoke/smoke.md".to_string(),
+        path: "/Sources/evidence/smoke/smoke.md".to_string(),
         kind: NodeKind::Source,
         content: "raw alpha body".to_string(),
         metadata_json: "{}".to_string(),
@@ -3539,7 +3540,7 @@ fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
         limit: 10,
     })
     .expect("outgoing should load");
-    assert_eq!(outgoing[0].target_path, "/Sources/raw/smoke/smoke.md");
+    assert_eq!(outgoing[0].target_path, "/Sources/evidence/smoke/smoke.md");
 
     let archive = begin_database_archive("default".to_string()).expect("archive should begin");
     assert!(archive.size_bytes > 0);
@@ -3576,11 +3577,11 @@ fn database_archive_entrypoints_export_bytes_and_block_normal_reads() {
 #[test]
 fn database_archive_restore_entrypoints_restore_search_and_links() {
     install_test_service();
-    ensure_parent_folders("/Sources/raw/archive/archive.md");
+    ensure_parent_folders("/Sources/evidence/archive/archive.md");
 
     write_node(WriteNodeRequest {
         database_id: "default".to_string(),
-        path: "/Sources/raw/archive/archive.md".to_string(),
+        path: "/Sources/evidence/archive/archive.md".to_string(),
         kind: NodeKind::Source,
         content: "raw archive restore evidence".to_string(),
         metadata_json: "{}".to_string(),
@@ -3591,8 +3592,9 @@ fn database_archive_restore_entrypoints_restore_search_and_links() {
         database_id: "default".to_string(),
         path: "/Wiki/archive-restore.md".to_string(),
         kind: NodeKind::File,
-        content: "# Archive Restore\n\nalpha restore search [raw](/Sources/raw/archive/archive.md)"
-            .to_string(),
+        content:
+            "# Archive Restore\n\nalpha restore search [raw](/Sources/evidence/archive/archive.md)"
+                .to_string(),
         metadata_json: "{}".to_string(),
         expected_etag: None,
     })
@@ -3666,7 +3668,7 @@ fn database_archive_restore_entrypoints_restore_search_and_links() {
     assert!(
         links
             .iter()
-            .any(|edge| edge.target_path == "/Sources/raw/archive/archive.md")
+            .any(|edge| edge.target_path == "/Sources/evidence/archive/archive.md")
     );
 
     let info = list_databases()

@@ -58,7 +58,7 @@ Query Q&A rate limiting uses a Cloudflare KV minute bucket. KV is not an atomic 
 - Search by path or full text
 - Show incoming backlinks and a lightweight graph view
 - Show lightweight lint hints
-- Inspect path, etag, update time, size, role, outgoing links, and inferred raw sources
+- Inspect path, etag, update time, size, role, outgoing links, and inferred evidence sources
 - Expose Open Graph and X link preview images
 - Share public databases on X through the Web Intent URL
 - Read canister health and Store API metadata through the hand-written Candid subset
@@ -86,10 +86,10 @@ Submitting a URL writes one request node to the same database:
 /Sources/ingest-requests/<request-id>.md
 ```
 
-Ingest request nodes are regular `file` nodes. Only fetched raw web evidence under `/Sources/raw/<provider>/<id>.md` is stored as `source`.
+Ingest request nodes are regular `file` nodes. Only fetched raw web evidence under `/Sources/evidence/<provider>/<id>.md` is stored as `source`.
 
 When `KINIC_WIKI_GENERATOR_URL` and the `KINIC_WIKI_WORKER_TOKEN` secret are set, the browser asks the VFS canister to authorize a 30 minute session trigger ticket for the II caller, writes the request, then calls `/api/url-ingest/trigger`. That server route checks the canister session ticket and configured canister id before forwarding `canisterId`, `databaseId`, `requestPath`, and `sessionNonce` to the generator Worker with bearer auth. The ticket is replayable within its TTL; duplicate jobs are handled by Worker/job idempotency and rate limits. Writer access and DB cycles state are re-checked after issuance, so role revocation, suspension, or low balance can invalidate an existing ticket before its TTL. `Origin` is only a CORS allowlist, not the authorization boundary.
-The worker fetches supported `http` / `https` HTML or text URLs, writes the normalized source to `/Sources/raw/<provider>/<id>.md`, then generates one review-ready page under `/Wiki/conversations`. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
+The worker fetches supported `http` / `https` HTML or text URLs, writes the normalized source to `/Sources/evidence/<provider>/<id>.md`, then generates one review-ready page under `/Wiki/conversations`. Source run tickets are replayable within their TTL so `/api/source/run` can be retried after temporary Worker failures; duplicate source runs are handled by Worker/job idempotency.
 The generator Worker principal must have writer access to the target database. New databases include the default LLM writer service principal as a `writer` member so URL ingest and page generation can run immediately. Owners can revoke that member, but URL ingest sessions will fail while the service principal lacks writer access.
 
 ## Public Access

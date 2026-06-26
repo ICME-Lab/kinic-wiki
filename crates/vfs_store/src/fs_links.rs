@@ -672,14 +672,14 @@ mod tests {
     #[test]
     fn wikilink_parser_splits_alias_from_target_path() {
         let edges = edges_for(
-            "[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]] [[relative.md|]] [[note.md|A|B]]",
+            "[[/Sources/evidence/a/a.md|opencode.ai/DESIGN.md]] [[relative.md|]] [[note.md|A|B]]",
         );
 
         assert_eq!(edges.len(), 3);
-        assert_eq!(edges[0].target_path, "/Sources/raw/a/a.md");
+        assert_eq!(edges[0].target_path, "/Sources/evidence/a/a.md");
         assert_eq!(
             edges[0].raw_href,
-            "/Sources/raw/a/a.md|opencode.ai/DESIGN.md"
+            "/Sources/evidence/a/a.md|opencode.ai/DESIGN.md"
         );
         assert_eq!(edges[0].link_text, "opencode.ai/DESIGN.md");
         assert_eq!(edges[1].target_path, "/Wiki/topic/relative.md");

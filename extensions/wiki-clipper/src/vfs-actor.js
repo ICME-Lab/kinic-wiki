@@ -1,5 +1,5 @@
 // Where: extensions/wiki-clipper/src/vfs-actor.js
-// What: Minimal write-capable VFS actor for raw source persistence.
+// What: Minimal write-capable VFS actor for evidence source persistence.
 // Why: The wiki browser client is read-only; capture needs source writes plus trigger session APIs.
 export async function createVfsActor({ canisterId, host, identity }) {
   const [{ Actor, HttpAgent }, { Principal }] = await Promise.all([

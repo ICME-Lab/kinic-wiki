@@ -417,7 +417,7 @@ type RawQueryAnswerSessionCheckResult = {
   principal: string;
 };
 
-type RawSourceRunSessionCheckRequest = {
+type CandidSourceRunSessionCheckRequest = {
   database_id: string;
   source_path: string;
   source_etag: string;
@@ -470,7 +470,7 @@ type VfsActor = {
   authorize_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionRequest) => Promise<{ Ok: null } | { Err: string }>;
   canister_health: () => Promise<RawCanisterHealth>;
   check_ops_answer_session: (request: RawQueryAnswerSessionCheckRequest) => Promise<{ Ok: RawQueryAnswerSessionCheckResult } | { Err: string }>;
-  check_source_run_session: (request: RawSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
+  check_source_run_session: (request: CandidSourceRunSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_url_ingest_trigger_session: (request: RawUrlIngestTriggerSessionCheckRequest) => Promise<{ Ok: null } | { Err: string }>;
   check_database_write_cycles: (databaseId: string) => Promise<{ Ok: null } | { Err: string }>;
   create_database: (request: { name: string; profile: Variant }) => Promise<{ Ok: RawCreateDatabaseResult } | { Err: string }>;
@@ -1110,7 +1110,7 @@ export async function checkQueryAnswerSession(canisterId: string, request: Query
 export async function checkSourceRunSession(canisterId: string, request: SourceRunSessionCheckRequest): Promise<void> {
   return callVfs(async () => {
     const actor = await createVfsActor(canisterId);
-    const result = await actor.check_source_run_session(rawSourceRunSessionCheckRequest(request));
+    const result = await actor.check_source_run_session(candidSourceRunSessionCheckRequest(request));
     if ("Err" in result) {
       throwCanisterError(result.Err);
     }
@@ -1757,7 +1757,7 @@ function rawQueryAnswerSessionCheckRequest(request: QueryAnswerSessionCheckReque
   };
 }
 
-function rawSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest): RawSourceRunSessionCheckRequest {
+function candidSourceRunSessionCheckRequest(request: SourceRunSessionCheckRequest): CandidSourceRunSessionCheckRequest {
   return {
     database_id: request.databaseId,
     source_path: request.sourcePath,

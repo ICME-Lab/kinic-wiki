@@ -1,5 +1,5 @@
 """Where: plugins/runtime/kinic_agent_runtime/session.py
-What: Persist agent session transcripts as Kinic raw source nodes.
+What: Persist agent session transcripts as Kinic evidence source nodes.
 Why: Agent conversations should be retained as source evidence without blocking session exit.
 """
 
@@ -213,7 +213,7 @@ def build_source(
     }
     content = source_content_with_cap(metadata, redacted_transcript, max_chars)
     return SourcePayload(
-        path=f"/Sources/raw/{source_provider}/{source_id}.md",
+        path=f"/Sources/evidence/{source_provider}/{source_id}.md",
         content=content,
         metadata=metadata,
     )

@@ -1,14 +1,14 @@
 // Where: extensions/wiki-clipper/src/service-worker.js
 // What: MV3 background workflow for canister persistence.
 // Why: Content scripts fetch AI conversation data while the worker owns canister writes.
-import { buildRawSource } from "./raw-source.js";
+import { buildEvidenceSource } from "./evidence-source.js";
 import {
   DEFAULT_CANISTER_ID,
   DEFAULT_IC_HOST,
   URL_INGEST_STATUS_KEY,
   normalizedHttpUrl
 } from "./url-ingest-request.js";
-import { buildWebRawSource, collectWebPageSnapshot, webSourcePathForUrl } from "./web-source.js";
+import { buildWebEvidenceSource, collectWebPageSnapshot, webSourcePathForUrl } from "./web-source.js";
 
 const DEFAULT_CONFIG = {
   canisterId: DEFAULT_CANISTER_ID,
@@ -32,11 +32,11 @@ const PROVIDERS = {
 const ALLOWED_MESSAGE_ROLES = new Set(["user", "assistant", "system"]);
 const MAX_MESSAGE_COUNT = 500;
 const MAX_MESSAGE_CONTENT_CHARS = 200_000;
-const MAX_RAW_SOURCE_CHARS = 1_500_000;
+const MAX_EVIDENCE_SOURCE_CHARS = 1_500_000;
 const SETTINGS_OPEN_THROTTLE_MS = 2_000;
 const SETTINGS_MENU_ID = "kinic-wiki-clipper-settings";
 const CREATE_WIKI_MENU_ID = "kinic-wiki-clipper-create-wiki";
-const SAVE_RAW_MENU_ID = "kinic-wiki-clipper-save-raw";
+const SAVE_EVIDENCE_MENU_ID = "kinic-wiki-clipper-save-evidence";
 const URL_INGEST_IN_FLIGHT_KEY = "kinic-url-ingest-in-flight-v1";
 const URL_INGEST_IN_FLIGHT_TTL_MS = 2 * 60 * 1000;
 let offscreenBridge = defaultOffscreenBridge;
@@ -168,12 +168,12 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
       await deps.setBadge("BUSY", "#5f6368", tabId);
       return { ok: false, error: status.message };
     }
-    const rawSource = await deps.captureTabSource(tab, url);
+    const evidenceSource = await deps.captureTabSource(tab, url);
     await deps.ensureOffscreen();
     const saveResponse = await deps.sendOffscreen({
       target: "offscreen",
-      type: "save-raw-source",
-      rawSource,
+      type: "save-evidence-source",
+      evidenceSource,
       config
     });
     if (!saveResponse?.ok) {
@@ -208,7 +208,7 @@ export async function handleActionClick(tab, deps = defaultActionDeps(), options
     const status = sourceCaptureStatus(result);
     await deps.writeStatus(status);
     if (result.generationSkipped) {
-      await deps.setBadge("RAW", "#5f6368", tabId);
+      await deps.setBadge("SRC", "#5f6368", tabId);
       return { ok: true, result };
     }
     if (!result.generationQueued) {
@@ -241,13 +241,13 @@ async function saveSource(capture, overrideConfig, sender) {
   if (!config.databaseId) {
     throw new Error("database id is required");
   }
-  const raw = buildRawSource(capture);
+  const raw = buildEvidenceSource(capture);
   let result;
   try {
     result = await offscreenBridge({
       target: "offscreen",
-      type: "save-raw-source",
-      rawSource: raw,
+      type: "save-evidence-source",
+      evidenceSource: raw,
       config
     });
   } catch (error) {
@@ -257,7 +257,7 @@ async function saveSource(capture, overrideConfig, sender) {
     throw error;
   }
   if (!result?.ok) {
-    const message = result?.error || "raw source save failed";
+    const message = result?.error || "evidence source save failed";
     if (shouldOpenSettingsForError(message)) {
       await openSettingsOnce();
     }
@@ -391,7 +391,7 @@ function sourceCaptureStatus(result) {
       url: result?.url || "",
       title: result?.title || "",
       sourcePath: result?.sourcePath || "",
-      message: "Raw source saved.",
+      message: "Evidence source saved.",
       updatedAt: new Date().toISOString()
     };
   }
@@ -484,7 +484,7 @@ async function captureTabSource(tab, url) {
     func: collectWebPageSnapshot
   });
   const snapshot = results?.[0]?.result;
-  return buildWebRawSource({ ...snapshot, url });
+  return buildWebEvidenceSource({ ...snapshot, url });
 }
 
 async function refreshCurrentTabBadge() {
@@ -533,7 +533,7 @@ async function refreshTabBadge(tab, deps = defaultActionDeps()) {
 async function createSettingsContextMenu() {
   if (!globalThis.chrome?.contextMenus) return;
   if (typeof chrome.contextMenus.remove === "function") {
-    await Promise.all([CREATE_WIKI_MENU_ID, SAVE_RAW_MENU_ID, SETTINGS_MENU_ID].map((id) => chrome.contextMenus.remove(id).catch(() => {})));
+    await Promise.all([CREATE_WIKI_MENU_ID, SAVE_EVIDENCE_MENU_ID, SETTINGS_MENU_ID].map((id) => chrome.contextMenus.remove(id).catch(() => {})));
   }
   chrome.contextMenus.create({
     id: CREATE_WIKI_MENU_ID,
@@ -541,8 +541,8 @@ async function createSettingsContextMenu() {
     contexts: ["action"]
   });
   chrome.contextMenus.create({
-    id: SAVE_RAW_MENU_ID,
-    title: "Save raw",
+    id: SAVE_EVIDENCE_MENU_ID,
+    title: "Save evidence",
     contexts: ["action"]
   });
   chrome.contextMenus.create({
@@ -565,7 +565,7 @@ async function handleContextMenuClick(info, tab) {
     await handleActionClick(tab);
     return;
   }
-  if (info?.menuItemId === SAVE_RAW_MENU_ID) {
+  if (info?.menuItemId === SAVE_EVIDENCE_MENU_ID) {
     await handleActionClick(tab, defaultActionDeps(), { queueGeneration: false });
   }
 }
@@ -634,8 +634,8 @@ export function validateSaveSource(capture, sender) {
       throw new Error(`capture message content must not exceed ${MAX_MESSAGE_CONTENT_CHARS} characters`);
     }
   }
-  if (estimatedRawSourceSize(capture) > MAX_RAW_SOURCE_CHARS) {
-    throw new Error(`capture raw source must not exceed ${MAX_RAW_SOURCE_CHARS} characters`);
+  if (estimatedEvidenceSourceSize(capture) > MAX_EVIDENCE_SOURCE_CHARS) {
+    throw new Error(`capture evidence source must not exceed ${MAX_EVIDENCE_SOURCE_CHARS} characters`);
   }
 }
 
@@ -665,7 +665,7 @@ function isIsoDateTime(value) {
   return Number.isFinite(timestamp);
 }
 
-function estimatedRawSourceSize(capture) {
+function estimatedEvidenceSourceSize(capture) {
   return (
     String(capture.provider || "").length +
     String(capture.url || "").length +

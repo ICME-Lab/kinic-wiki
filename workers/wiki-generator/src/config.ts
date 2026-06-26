@@ -6,7 +6,7 @@ import type { RuntimeEnv } from "./env.js";
 
 const DEFAULT_MODEL = "deepseek-v4-flash";
 const DEFAULT_TARGET_ROOT = "/Wiki/conversations";
-const DEFAULT_SOURCE_PREFIX = "/Sources/raw";
+const DEFAULT_SOURCE_PREFIX = "/Sources/evidence";
 const DEFAULT_CONTEXT_PREFIX = "/Wiki";
 const DEFAULT_MAX_RAW_CHARS = 120_000;
 const DEFAULT_MAX_FETCHED_BYTES = 5_000_000;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 
-const { collectLintHints, provenancePathFor, rawSourceLinksFor } = await importTs("../lib/lint-hints.ts");
+const { collectLintHints, provenancePathFor, evidenceSourceLinksFor } = await importTs("../lib/lint-hints.ts");
 const { normalizeSearchHit } = await importTs("../lib/search-normalizer.ts");
 const { readBrowserNodeCache } = await importTs("../lib/browser-node-cache.ts");
 const { sortChildNodes } = await importTs("../lib/child-sort.ts");
@@ -173,7 +173,7 @@ assert.match(documentPaneSource, /navigator\.clipboard\.writeText/);
 assert.match(documentPaneSource, /node\.data\?\.kind === "folder"/);
 assert.match(documentPaneSource, /FolderIndexSection/);
 assert.match(documentPaneSource, /emptyFolderIndexNode/);
-assert.match(documentPaneSource, /node\.kind === "file" && node\.path\.endsWith\("\.md"\) && !node\.path\.startsWith\("\/Sources\/raw\/"\)/);
+assert.match(documentPaneSource, /node\.kind === "file" && node\.path\.endsWith\("\.md"\) && !node\.path\.startsWith\("\/Sources\/evidence\/"\)/);
 assert.doesNotMatch(documentPaneSource, /readMode/);
 assert.doesNotMatch(documentPaneSource, /Authenticated mode required/);
 assert.doesNotMatch(documentPaneSource, /Use authenticated mode/);
@@ -218,12 +218,12 @@ assert.equal(codeHints[0].title, "Code note lacks decision context");
 assert.equal(codeHints[0].preview, "- Implementation: `crates/vfs_store/src/fs_store.rs`");
 
 assert.deepEqual(
-  rawSourceLinksFor("/Wiki/demo/provenance.md", "- Raw: /Sources/raw/demo/source.md\n- Raw: /Sources/raw/demo/source.md"),
-  ["/Sources/raw/demo/source.md"]
+  evidenceSourceLinksFor("/Wiki/demo/provenance.md", "- Raw: /Sources/evidence/demo/source.md\n- Raw: /Sources/evidence/demo/source.md"),
+  ["/Sources/evidence/demo/source.md"]
 );
 assert.deepEqual(
-  rawSourceLinksFor("/Sources/raw/demo/source.md", "# Raw"),
-  ["/Sources/raw/demo/source.md"]
+  evidenceSourceLinksFor("/Sources/evidence/demo/source.md", "# Raw"),
+  ["/Sources/evidence/demo/source.md"]
 );
 
 assert.deepEqual(parseSearchOptions(new URLSearchParams("")), {
@@ -417,8 +417,8 @@ assert.equal(
   "https://twitter.com/intent/tweet?text=Kinic+Wiki%3A+Research+DB&url=https%3A%2F%2Fwiki.kinic.xyz%2Fdb%2Falpha%2520db%2FWiki"
 );
 assert.equal(
-  renderWikilinksAsMarkdown("[[/Sources/raw/a/a.md|opencode.ai/DESIGN.md]]"),
-  "[opencode.ai/DESIGN.md](</Sources/raw/a/a.md>)"
+  renderWikilinksAsMarkdown("[[/Sources/evidence/a/a.md|opencode.ai/DESIGN.md]]"),
+  "[opencode.ai/DESIGN.md](</Sources/evidence/a/a.md>)"
 );
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md]]"), "[notes/alpha.md](<notes/alpha.md>)");
 assert.equal(renderWikilinksAsMarkdown("[[notes/alpha.md|]]"), "[notes/alpha.md](<notes/alpha.md>)");
@@ -463,8 +463,8 @@ assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wiki/
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Sources/foo.md#top"), "/db/db-1/Sources/foo.md#top");
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/Wikipedia/foo.md"), null);
 assert.equal(hrefForMarkdownLink("aaaaa-aa", "db-1", "/Wiki/current.md", "/SourcesBackup/foo.md"), null);
-assert.equal(inferNoteRole("/Sources/raw/web/abc.md"), "raw_source");
-assert.equal(inferNoteRole("/Sources/rawfoo/abc.md"), "markdown_note");
+assert.equal(inferNoteRole("/Sources/evidence/web/abc.md"), "evidence_source");
+assert.equal(inferNoteRole("/Sources/evidencefoo/abc.md"), "markdown_note");
 
 const cachedNodeContext = {
   node: {
@@ -519,10 +519,10 @@ function child(path, name, kind, hasChildren = kind === "directory") {
 
 async function importTs(relativePath) {
   const sourcePath = new URL(relativePath, import.meta.url);
-  const rawSource = readFileSync(sourcePath, "utf8");
+  const evidenceSource = readFileSync(sourcePath, "utf8");
   const source = relativePath === "../lib/paths.ts"
-    ? `${readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8")}\n${rawSource.replace('import { databaseRouteBase } from "./share-links";', "")}`
-    : rawSource;
+    ? `${readFileSync(new URL("../lib/share-links.ts", import.meta.url), "utf8")}\n${evidenceSource.replace('import { databaseRouteBase } from "./share-links";', "")}`
+    : evidenceSource;
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,

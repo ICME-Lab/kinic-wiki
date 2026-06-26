@@ -15,14 +15,14 @@ test("manual source run queues the validated source etag", async () => {
 
   const response = await runManual(testEnv(queue), {
     databaseId: "db_1",
-    sourcePath: "/Sources/raw/web/abc.md",
+    sourcePath: "/Sources/evidence/web/abc.md",
     sourceEtag: "etag-authorized",
     sessionNonce: "session-1",
     dryRun: false
   }, { vfs });
 
   assert.equal(response.status, 202);
-  assert.deepEqual(await response.json(), { queued: true, sourcePath: "/Sources/raw/web/abc.md", sourceEtag: "etag-authorized" });
+  assert.deepEqual(await response.json(), { queued: true, sourcePath: "/Sources/evidence/web/abc.md", sourceEtag: "etag-authorized" });
   assert.equal(queue.messages.length, 1);
   const message = queue.messages[0];
   if (message?.kind !== "source") throw new Error("source queue message expected");
@@ -37,7 +37,7 @@ test("manual source run rejects etag mismatch without queueing", async () => {
 
   const response = await runManual(testEnv(queue), {
     databaseId: "db_1",
-    sourcePath: "/Sources/raw/web/abc.md",
+    sourcePath: "/Sources/evidence/web/abc.md",
     sourceEtag: "etag-authorized",
     dryRun: false
   }, { vfs });
@@ -68,7 +68,7 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
                 none: "なし"
               },
               summary: "日本語の要約",
-              key_facts: [{ text: "本文は日本語で保持する。", source_path: "/Sources/raw/web/abc123.md" }],
+              key_facts: [{ text: "本文は日本語で保持する。", source_path: "/Sources/evidence/web/abc123.md" }],
               decisions: [],
               open_questions: [],
               follow_ups: []
@@ -82,13 +82,13 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
     const vfs = new TestVfsClient();
     vfs.existingSource = {
       ...sourceNode("etag-current"),
-      path: "/Sources/raw/web/abc123.md",
+      path: "/Sources/evidence/web/abc123.md",
       content: "# 日本語記事\n\nこれは日本語の記事です。"
     };
 
     const response = await runManual(testEnv(queue), {
       databaseId: "db_1",
-      sourcePath: "/Sources/raw/web/abc123.md",
+      sourcePath: "/Sources/evidence/web/abc123.md",
       sourceEtag: "etag-current",
       dryRun: true
     }, { vfs });
@@ -103,15 +103,15 @@ test("manual dry run uses Japanese target path for Japanese generated slug", asy
 });
 
 test("manual source run input requires source etag", () => {
-  assert.equal(parseManualRunInput({ databaseId: "db_1", sourcePath: "/Sources/raw/web/abc.md" }), "sourceEtag is required");
+  assert.equal(parseManualRunInput({ databaseId: "db_1", sourcePath: "/Sources/evidence/web/abc.md" }), "sourceEtag is required");
   assert.deepEqual(parseManualRunInput({
     databaseId: "db_1",
-    sourcePath: "/Sources/raw/web/abc.md",
+    sourcePath: "/Sources/evidence/web/abc.md",
     sourceEtag: "etag-source",
     sessionNonce: "session-1"
   }), {
     databaseId: "db_1",
-    sourcePath: "/Sources/raw/web/abc.md",
+    sourcePath: "/Sources/evidence/web/abc.md",
     sourceEtag: "etag-source",
     sessionNonce: "session-1",
     dryRun: false
@@ -125,7 +125,7 @@ test("worker log append failure is non-fatal", async () => {
     warnings.push(args);
   };
   try {
-    const written = await bestEffortAppendWorkerLog(failingLogVfs(), "db_1", "/Wiki/conversations", "/Wiki/conversations/a.md", "/Sources/raw/a.md");
+    const written = await bestEffortAppendWorkerLog(failingLogVfs(), "db_1", "/Wiki/conversations", "/Wiki/conversations/a.md", "/Sources/evidence/a.md");
 
     assert.equal(written, false);
     assert.match(String(warnings[0]?.[0]), /failed to append wiki-generator log/);
@@ -165,7 +165,7 @@ test("legacy url ingest queue message without nonce marks request failed", async
     parseQueueMessageEnvelope({
       kind: "source",
       databaseId: "db_1",
-      sourcePath: "/Sources/raw/a/a.md",
+      sourcePath: "/Sources/evidence/a/a.md",
       sourceEtag: "etag-source",
       requestPath: "/Wiki/not-ingest.md",
       sessionNonce: "session-1"
@@ -176,7 +176,7 @@ test("legacy url ingest queue message without nonce marks request failed", async
     parseQueueMessageEnvelope({
       kind: "source",
       databaseId: "db_1",
-      sourcePath: "/Sources/raw/a/a.md",
+      sourcePath: "/Sources/evidence/a/a.md",
       sourceEtag: "etag-source",
       requestPath: "/Sources/ingest-requests/../bad.md",
       sessionNonce: "session-1"
@@ -214,7 +214,7 @@ test("source queue write cycles check failure does not call DeepSeek", async () 
   try {
     await processSourceQueueMessageForTest(
       testEnv(new TestQueue()),
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/evidence/a/a.md", sourceEtag: "etag-source" },
       { config: workerConfig(), vfs: sourceVfs({ failWriteCycles: true }) }
     );
 
@@ -235,12 +235,12 @@ test("source queue source run session check failure does not call DeepSeek", asy
   try {
     await processSourceQueueMessageForTest(
       testEnv(new TestQueue()),
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/evidence/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
       { config: workerConfig(), vfs: sourceVfs({ failSourceRunSession: true, sourceSessionChecks }) }
     );
 
     assert.deepEqual(sourceSessionChecks, [
-      { databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
+      { databaseId: "db_1", sourcePath: "/Sources/evidence/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
     ]);
     assert.equal(deepSeekCalls, 0);
   } finally {
@@ -261,12 +261,12 @@ test("source queue uses source run session before DeepSeek", async () => {
   try {
     await processSourceQueueMessageForTest(
       { ...testEnv(new TestQueue()), DB: db },
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/evidence/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" },
       { config: workerConfig(), vfs: sourceVfs({ sourceSessionChecks, writtenPages }) }
     );
 
     assert.deepEqual(sourceSessionChecks, [
-      { databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
+      { databaseId: "db_1", sourcePath: "/Sources/evidence/a/a.md", sourceEtag: "etag-source", sessionNonce: "session-1" }
     ]);
     assert.equal(deepSeekCalls, 1);
     assert.equal(writtenPages.length, 2);
@@ -292,7 +292,7 @@ test("request-bound source queue without session nonce fails before DeepSeek", a
       {
         kind: "source",
         databaseId: "db_1",
-        sourcePath: "/Sources/raw/a/a.md",
+        sourcePath: "/Sources/evidence/a/a.md",
         sourceEtag: "etag-source",
         requestPath: "/Sources/ingest-requests/1.md"
       },
@@ -322,7 +322,7 @@ test("request-bound source queue retries when gate failure cannot be recorded", 
         {
           kind: "source",
           databaseId: "db_1",
-          sourcePath: "/Sources/raw/a/a.md",
+          sourcePath: "/Sources/evidence/a/a.md",
           sourceEtag: "etag-source",
           requestPath: "/Sources/ingest-requests/1.md"
         },
@@ -347,7 +347,7 @@ test("failed status write after DeepSeek is non-retry", async () => {
   try {
     await processSourceQueueMessageForTest(
       { ...testEnv(new TestQueue()), DB: new FailingD1AfterFirstRun() },
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/a.md", sourceEtag: "etag-source" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/evidence/a/a.md", sourceEtag: "etag-source" },
       { config: workerConfig(), vfs: sourceVfs({ failDraftWrite: true }) }
     );
 
@@ -368,7 +368,7 @@ test("missing queued source is recorded as failed", async () => {
   try {
     await processSourceQueueMessageForTest(
       { ...testEnv(new TestQueue()), DB: db },
-      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/raw/a/missing.md", sourceEtag: "etag-source" },
+      { kind: "source", databaseId: "db_1", sourcePath: "/Sources/evidence/a/missing.md", sourceEtag: "etag-source" },
       { config: workerConfig(), vfs: sourceVfs() }
     );
 
@@ -430,7 +430,7 @@ function sourceVfs(
     },
     checkUrlIngestTriggerSession: async (): Promise<void> => {},
     readNode: async (_databaseId: string, path: string): Promise<WikiNode | null> => {
-      if (path === "/Sources/raw/a/a.md") {
+      if (path === "/Sources/evidence/a/a.md") {
         return {
           path,
           kind: "source",
@@ -474,7 +474,7 @@ function draftJson(): string {
       none: "None"
     },
     summary: "Short summary",
-    key_facts: [{ text: "Fact", source_path: "/Sources/raw/a/a.md" }],
+    key_facts: [{ text: "Fact", source_path: "/Sources/evidence/a/a.md" }],
     decisions: [],
     open_questions: [],
     follow_ups: []
@@ -494,7 +494,7 @@ function ingestRequestNode(): WikiNode {
       'requested_by: "aaaaa-aa"',
       'requested_at: "2026-05-12T00:00:00.000Z"',
       'claimed_at: "2026-05-12T00:00:01.000Z"',
-      'source_path: "/Sources/raw/a/a.md"',
+      'source_path: "/Sources/evidence/a/a.md"',
       "target_path: null",
       "finished_at: null",
       "error: null",
@@ -574,9 +574,9 @@ class FailingD1Statement implements D1PreparedStatement {
 
 function sourceNode(etag: string): WikiNode {
   return {
-    path: "/Sources/raw/web/abc.md",
+    path: "/Sources/evidence/web/abc.md",
     kind: "source",
-    content: "raw source",
+    content: "evidence source",
     etag,
     metadataJson: "{}"
   };

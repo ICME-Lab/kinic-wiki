@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use vfs_client::VfsApi;
 use vfs_types::{ListNodesRequest, Node, NodeEntryKind, NodeKind};
 use wiki_domain::{
-    OkfType, RAW_SOURCES_PREFIX, WIKI_ROOT_PATH, metadata_expires_at, metadata_okf_type,
+    EVIDENCE_SOURCES_PREFIX, OkfType, WIKI_ROOT_PATH, metadata_expires_at, metadata_okf_type,
     metadata_resource, metadata_source_ref_paths, metadata_trust_level,
 };
 
@@ -327,9 +327,10 @@ pub fn verify_okf_bundle_dir(path: &Path) -> Result<OkfVerifyResult> {
             }
             if is_reference {
                 match &kinic.source_path {
-                    Some(source_path) if path_under_prefix(source_path, RAW_SOURCES_PREFIX) => {}
+                    Some(source_path)
+                        if path_under_prefix(source_path, EVIDENCE_SOURCES_PREFIX) => {}
                     Some(source_path) => errors.push(format!(
-                        "{}: kinic.source_path is outside {RAW_SOURCES_PREFIX}: {source_path}",
+                        "{}: kinic.source_path is outside {EVIDENCE_SOURCES_PREFIX}: {source_path}",
                         relative.display()
                     )),
                     None => errors.push(format!(
@@ -522,7 +523,10 @@ fn build_okf_concepts(
             frontmatter: OkfFrontmatter {
                 concept_type: "Reference".to_string(),
                 title: Some(title_from_path(&source.path)),
-                description: Some(format!("Kinic raw source reference for {}", source.path)),
+                description: Some(format!(
+                    "Kinic evidence source reference for {}",
+                    source.path
+                )),
                 resource: Some(resource),
                 tags: vec!["kinic".to_string(), "reference".to_string()],
                 timestamp: Some(metadata.generated_at.to_string()),
@@ -624,7 +628,7 @@ fn render_log(root: &str, generated_at: &str) -> String {
 
 fn reference_body(source: &Node) -> String {
     format!(
-        "# Reference\n\n- source_path: `{}`\n- etag: `{}`\n- content_hash: `{}`\n- metadata_json: `{}`\n\nRaw source content is not copied into this OKF bundle.\n",
+        "# Reference\n\n- source_path: `{}`\n- etag: `{}`\n- content_hash: `{}`\n- metadata_json: `{}`\n\nEvidence source content is not copied into this OKF bundle.\n",
         source.path,
         source.etag,
         sha256_hex(source.content.as_bytes()),
@@ -637,7 +641,7 @@ fn collect_source_refs(nodes: &[BucketedNode]) -> Result<BTreeSet<String>> {
     for item in nodes {
         let source_paths = metadata_source_ref_paths(&item.node.metadata_json)
             .map_err(|error| anyhow!("{}: invalid OKF metadata: {error}", item.node.path))?
-            .unwrap_or_else(|| extract_raw_source_paths(&item.node.content));
+            .unwrap_or_else(|| extract_evidence_source_paths(&item.node.content));
         for source_path in source_paths {
             refs.insert(source_path);
         }
@@ -645,10 +649,10 @@ fn collect_source_refs(nodes: &[BucketedNode]) -> Result<BTreeSet<String>> {
     Ok(refs)
 }
 
-fn extract_raw_source_paths(content: &str) -> Vec<String> {
+fn extract_evidence_source_paths(content: &str) -> Vec<String> {
     let mut paths = Vec::new();
     let mut offset = 0;
-    while let Some(relative_start) = content[offset..].find(RAW_SOURCES_PREFIX) {
+    while let Some(relative_start) = content[offset..].find(EVIDENCE_SOURCES_PREFIX) {
         let start = offset + relative_start;
         let tail = &content[start..];
         let end = tail
@@ -996,7 +1000,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn export_writes_okf_concepts_without_raw_source_text() {
+    async fn export_writes_okf_concepts_without_evidence_source_text() {
         let out = tempdir().expect("tempdir");
         let mut client = MockClient::default();
         client.nodes.insert(
@@ -1004,14 +1008,14 @@ mod tests {
             test_node(
                 "/Wiki/projects/acme/facts.md",
                 NodeKind::File,
-                "Fact from /Sources/raw/web/source.md\n",
+                "Fact from /Sources/evidence/web/source.md\n",
                 "wiki-etag",
             ),
         );
         client.nodes.insert(
-            "/Sources/raw/web/source.md".to_string(),
+            "/Sources/evidence/web/source.md".to_string(),
             test_node(
-                "/Sources/raw/web/source.md",
+                "/Sources/evidence/web/source.md",
                 NodeKind::Source,
                 "raw secret transcript",
                 "source-etag",
@@ -1040,9 +1044,10 @@ mod tests {
             fs::read_to_string(out.path().join("facts/wiki-projects-acme-facts.md")).expect("fact");
         assert!(fact.starts_with("---\n"));
         assert!(fact.contains("type: Fact"));
-        assert!(fact.contains("Fact from /Sources/raw/web/source.md"));
-        let reference = fs::read_to_string(out.path().join("references/sources-raw-web-source.md"))
-            .expect("reference");
+        assert!(fact.contains("Fact from /Sources/evidence/web/source.md"));
+        let reference =
+            fs::read_to_string(out.path().join("references/sources-evidence-web-source.md"))
+                .expect("reference");
         assert!(reference.contains("type: Reference"));
         assert!(reference.contains("source-etag"));
         assert!(!reference.contains("raw secret transcript"));
@@ -1074,21 +1079,21 @@ mod tests {
         client.nodes.insert(
             "/Wiki/projects/acme/facts.md".to_string(),
             Node {
-                metadata_json: r#"{"okf_type":"Decision","resource":"kinic://alpha/custom","trust_level":"reviewed","expires_at":"2999-02-01T00:00:00Z","source_refs":[{"path":"/Sources/raw/web/source-b.md"}]}"#.to_string(),
+                metadata_json: r#"{"okf_type":"Decision","resource":"kinic://alpha/custom","trust_level":"reviewed","expires_at":"2999-02-01T00:00:00Z","source_refs":[{"path":"/Sources/evidence/web/source-b.md"}]}"#.to_string(),
                 ..test_node(
                     "/Wiki/projects/acme/facts.md",
                     NodeKind::File,
-                    "Fact path but decision metadata from /Sources/raw/web/source-a.md\n",
+                    "Fact path but decision metadata from /Sources/evidence/web/source-a.md\n",
                     "wiki-etag",
                 )
             },
         );
         client.nodes.insert(
-            "/Sources/raw/web/source-b.md".to_string(),
+            "/Sources/evidence/web/source-b.md".to_string(),
             test_node(
-                "/Sources/raw/web/source-b.md",
+                "/Sources/evidence/web/source-b.md",
                 NodeKind::Source,
-                "raw source b",
+                "evidence source b",
                 "source-b-etag",
             ),
         );
@@ -1122,13 +1127,15 @@ mod tests {
                 .join("facts/wiki-projects-acme-facts.md")
                 .exists()
         );
-        let reference =
-            fs::read_to_string(out.path().join("references/sources-raw-web-source-b.md"))
-                .expect("reference b");
+        let reference = fs::read_to_string(
+            out.path()
+                .join("references/sources-evidence-web-source-b.md"),
+        )
+        .expect("reference b");
         assert!(reference.contains("source-b-etag"));
         assert!(
             !out.path()
-                .join("references/sources-raw-web-source-a.md")
+                .join("references/sources-evidence-web-source-a.md")
                 .exists()
         );
     }
@@ -1250,7 +1257,7 @@ mod tests {
         fs::create_dir_all(dir.path().join("references")).expect("refs");
         fs::write(
             dir.path().join("references/source.md"),
-            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  source_path: /Sources/raw/web/source.md\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n",
+            "---\ntype: Reference\nkinic:\n  database_id: alpha\n  root: /Wiki/projects/acme\n  source_path: /Sources/evidence/web/source.md\n  expires_at: 2999-01-01T00:00:00Z\n---\n\n# Reference\n",
         )
         .expect("write");
 
@@ -1264,15 +1271,15 @@ mod tests {
 
     #[test]
     fn source_path_extraction_stops_at_markdown_delimiters() {
-        let paths = extract_raw_source_paths(
-            "See [/Sources/raw/web/source.md](/Sources/raw/web/source.md), then `/Sources/raw/a/b.md`.",
+        let paths = extract_evidence_source_paths(
+            "See [/Sources/evidence/web/source.md](/Sources/evidence/web/source.md), then `/Sources/evidence/a/b.md`.",
         );
         assert_eq!(
             paths,
             vec![
-                "/Sources/raw/web/source.md",
-                "/Sources/raw/web/source.md",
-                "/Sources/raw/a/b.md"
+                "/Sources/evidence/web/source.md",
+                "/Sources/evidence/web/source.md",
+                "/Sources/evidence/a/b.md"
             ]
         );
     }

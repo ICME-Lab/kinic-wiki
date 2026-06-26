@@ -407,9 +407,9 @@ function EditDocument({
   onNodeSaved?: () => Promise<WikiNode>;
   onEditStateChange?: (state: DocumentEditState) => void;
 }) {
-  const editable = node.kind === "file" && node.path.endsWith(".md") && !node.path.startsWith("/Sources/raw/");
+  const editable = node.kind === "file" && node.path.endsWith(".md") && !node.path.startsWith("/Sources/evidence/");
   if (!editable) {
-    return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside /Sources/raw can be edited in the browser." />;
+    return <EditorUnavailable title="Read-only node" message="Only existing Markdown file nodes outside /Sources/evidence can be edited in the browser." />;
   }
   if (!writeIdentity) {
     return (

@@ -15,7 +15,7 @@ Kinic Wiki Clipper saves user-selected web page URLs and ChatGPT/Claude conversa
 
 ## Data use
 
-The extension uses this data only to create raw source files or URL ingest requests in the selected Kinic Wiki database.
+The extension uses this data only to create evidence source files or URL ingest requests in the selected Kinic Wiki database.
 
 ## Data sharing
 

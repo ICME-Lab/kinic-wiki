@@ -2,7 +2,7 @@
 
 ## Goal
 
-Export a selected `/Wiki/...` scope into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied raw source bodies.
+Export a selected `/Wiki/...` scope into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied evidence source bodies.
 
 ## Workflow
 
@@ -70,12 +70,12 @@ Directory meaning:
 - `tasks/*.md`: task or plan concepts
 - `policies/*.md`: style, preference, and do-not-do concepts
 - `notes/*.md`: unclassified wiki nodes that are still normal OKF concepts
-- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/raw/...`
+- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/evidence/...`
 
 ## Rules
 
-- Do not export from `/Sources/raw/...` as the root.
-- Do not copy raw source body text into `references/*.md`.
+- Do not export from `/Sources/evidence/...` as the root.
+- Do not copy evidence source body text into `references/*.md`.
 - Do not use `references/*.md` for ordinary wiki notes.
 - Do not treat a passed `inspect` summary as verification; run `verify`.
 - Do not use this skill to mutate the wiki.
