@@ -315,36 +315,36 @@ mod tests {
     #[test]
     fn flat_paths_are_stable() {
         assert_eq!(
-            file_path("/Wiki/bench", DirectoryShape::Flat, 12),
-            "/Wiki/bench/node-000012.md"
+            file_path("/Knowledge/bench", DirectoryShape::Flat, 12),
+            "/Knowledge/bench/node-000012.md"
         );
         assert_eq!(
-            same_dir_renamed_path("/Wiki/bench", DirectoryShape::Flat, 12),
-            "/Wiki/bench/node-000012.renamed.md"
+            same_dir_renamed_path("/Knowledge/bench", DirectoryShape::Flat, 12),
+            "/Knowledge/bench/node-000012.renamed.md"
         );
         assert_eq!(
-            cross_dir_renamed_path("/Wiki/bench", DirectoryShape::Flat, 12),
-            "/Wiki/bench/moved/node-000012.md"
+            cross_dir_renamed_path("/Knowledge/bench", DirectoryShape::Flat, 12),
+            "/Knowledge/bench/moved/node-000012.md"
         );
         assert_eq!(
-            list_prefix("/Wiki/bench", DirectoryShape::Flat),
-            "/Wiki/bench"
+            list_prefix("/Knowledge/bench", DirectoryShape::Flat),
+            "/Knowledge/bench"
         );
     }
 
     #[test]
     fn fanout_paths_are_stable() {
         assert_eq!(
-            file_path("/Wiki/bench", DirectoryShape::Fanout100x100, 12_345),
-            "/Wiki/bench/l1-01/l2-23/node-45-012345.md"
+            file_path("/Knowledge/bench", DirectoryShape::Fanout100x100, 12_345),
+            "/Knowledge/bench/l1-01/l2-23/node-45-012345.md"
         );
         assert_eq!(
-            same_dir_renamed_path("/Wiki/bench", DirectoryShape::Fanout100x100, 12_345),
-            "/Wiki/bench/l1-01/l2-23/node-45-012345.renamed.md"
+            same_dir_renamed_path("/Knowledge/bench", DirectoryShape::Fanout100x100, 12_345),
+            "/Knowledge/bench/l1-01/l2-23/node-45-012345.renamed.md"
         );
         assert_eq!(
-            list_prefix("/Wiki/bench", DirectoryShape::Fanout100x100),
-            "/Wiki/bench/l1-00/l2-00"
+            list_prefix("/Knowledge/bench", DirectoryShape::Fanout100x100),
+            "/Knowledge/bench/l1-00/l2-00"
         );
     }
 

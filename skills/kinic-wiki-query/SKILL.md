@@ -17,14 +17,14 @@ Do not use this skill for:
 - first-pass source ingestion
 - health-only wiki inspection
 - routine page creation or repair
-- editing, deleting, redacting, or mutating wiki nodes; use `kinic-wiki-edit`
+- editing, deleting, redacting, or mutating knowledge nodes; use `kinic-wiki-edit`
 - portable AI handoff or OKF Context Pack export; use `kinic-context-pack`
 - skill store package lifecycle work; use `kinic-skill-registry`
 
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; evidence sources live under `/Sources/evidence/<provider>/<id>.md`.
+- Organized knowledge nodes live under `/Knowledge/...`; raw sources live under `/Sources/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless a workflow explicitly writes it back through VFS commands.
 - Use `kinic-vfs-cli` first for `wiki.kinic.xyz` URLs. Do not start from Web HTML parsing.
 - Never run destructive or write commands.

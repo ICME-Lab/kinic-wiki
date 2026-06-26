@@ -4,15 +4,13 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { BookOpen, CheckCircle2, ExternalLink, PlayCircle, ShieldCheck, XCircle } from "lucide-react";
 import { hrefForPath } from "@/lib/paths";
-import type { CatalogSkill, CatalogSummary, SkillProposal } from "@/lib/skill-registry-catalog";
+import type { CatalogSkill, CatalogSummary } from "@/lib/skill-registry-catalog";
 import type { RunOutcome, SkillStatus } from "@/lib/skill-registry-operations";
-import type { ProposalDiffPreview } from "@/lib/skill-registry-diff";
 
 export type SkillActionState = {
   busy: boolean;
   error: string | null;
   message: string | null;
-  preview: ProposalDiffPreview | null;
   statusReason: string;
   runTask: string;
   runOutcome: RunOutcome;
@@ -28,9 +26,6 @@ export type SkillActionHandlers = {
   setRunNotes: (value: string) => void;
   updateStatus: (status: SkillStatus) => void;
   recordRun: () => void;
-  approveProposal: (proposal: SkillProposal) => void;
-  previewProposal: (proposal: SkillProposal) => void;
-  applyProposal: (proposal: SkillProposal) => void;
 };
 
 export function SummaryStrip({ summary }: { summary: CatalogSummary }) {
@@ -131,7 +126,6 @@ function OperationsPanel({ skill, authenticated, writable, action, handlers }: {
         </div>
         <RunSummary skill={skill} />
       </div>
-      <ProposalList skill={skill} authenticated={authenticated} writable={writable} busy={action.busy} preview={action.preview ?? null} onApprove={handlers.approveProposal} onPreview={handlers.previewProposal} onApply={handlers.applyProposal} />
       <EventList skill={skill} />
       {action.message ? <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-900">{action.message}</p> : null}
       {action.error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">{action.error}</p> : null}
@@ -156,55 +150,6 @@ export function RunSummary({ skill }: { skill: CatalogSkill }) {
       {skill.recentRuns.length > 0 ? skill.recentRuns.map((run) => <p key={run.path} className="mt-1 truncate">task {run.taskOutcome} / agent {run.agentOutcome} · {run.task || run.path}</p>) : <p className="mt-1">No recorded runs.</p>}
     </div>
   );
-}
-
-export function ProposalList({
-  skill,
-  authenticated,
-  writable,
-  busy,
-  preview,
-  onApprove,
-  onPreview,
-  onApply
-}: {
-  skill: CatalogSkill;
-  authenticated: boolean;
-  writable: boolean;
-  busy: boolean;
-  preview: ProposalDiffPreview | null;
-  onApprove: (proposal: SkillProposal) => void;
-  onPreview: (proposal: SkillProposal) => void;
-  onApply: (proposal: SkillProposal) => void;
-}) {
-  if (skill.proposals.length === 0) return <p className="rounded-lg border border-line bg-white px-3 py-2 text-xs text-muted">No evolution proposals.</p>;
-  return (
-    <div className="rounded-lg border border-line bg-white p-3">
-      <p className="text-xs uppercase tracking-[0.12em] text-muted">Evolution Proposals</p>
-      {skill.proposals.slice(0, 4).map((proposal) => (
-        <div key={proposal.proposalRoot} className="mt-3 grid gap-2 text-xs">
-          <div className="flex items-center justify-between gap-3">
-            <span className="min-w-0 truncate text-ink">{proposal.title}</span>
-            <span className="rounded border border-line px-2 py-1 text-muted">{proposal.status}</span>
-          </div>
-          {proposal.sourceRuns.length > 0 ? <p className="truncate text-muted">runs: {proposal.sourceRuns.join(", ")}</p> : null}
-          {proposal.baseEtag ? <p className="truncate font-mono text-muted">base_etag: {proposal.baseEtag}</p> : null}
-          <pre className="max-h-28 overflow-auto rounded border border-line bg-paper p-2 text-[11px] text-muted">{proposal.candidatePreview}</pre>
-          <pre className="max-h-28 overflow-auto rounded border border-line bg-paper p-2 text-[11px] text-muted">{proposal.metricsPreview}</pre>
-          <div className="flex flex-wrap gap-2">
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || proposal.status !== "proposed"} type="button" onClick={() => onApprove(proposal)}>Mark reviewed</button>
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposalCanApply(proposal)} type="button" onClick={() => onPreview(proposal)}>Preview apply</button>
-            <button className="rounded border border-line px-2 py-1 text-muted disabled:opacity-50" disabled={!authenticated || !writable || busy || !proposalCanApply(proposal) || preview?.proposalPath !== proposal.proposalRoot} type="button" onClick={() => onApply(proposal)}>Apply</button>
-          </div>
-          {preview?.proposalPath === proposal.proposalRoot ? <p className="text-muted">Preview: {preview.targetPath} +{preview.additions} -{preview.removals}</p> : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function proposalCanApply(proposal: SkillProposal): boolean {
-  return proposal.status === "proposed" || proposal.status === "reviewed";
 }
 
 function EventList({ skill }: { skill: CatalogSkill }) {
@@ -255,7 +200,7 @@ export function EmptyState() {
   return (
     <section className="rounded-lg border border-line bg-paper p-6 text-sm text-muted">
       <h2 className="text-base font-semibold text-ink">No Skill Packages</h2>
-      <p className="mt-2">No packages found under /Wiki/skills.</p>
+      <p className="mt-2">No packages found under /Skills.</p>
       <p className="mt-2">
         Open <span className="font-medium text-ink">Add Or Update Package</span> to import from GitHub or paste a package.
       </p>

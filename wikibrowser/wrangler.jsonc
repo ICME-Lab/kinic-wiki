@@ -13,6 +13,12 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "r2_buckets": [
+    {
+      "binding": "LINK_PREVIEW_IMAGES",
+      "bucket_name": "kinic-wiki-link-preview-images"
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "QUERY_ANSWER_RATE_LIMIT",

@@ -7,7 +7,7 @@ import { ensureTargetCanBeWritten, renderGeneratedMarkdown, slugForGeneratedPage
 import type { WikiDraft, WikiNode } from "../src/types.js";
 
 const source: WikiNode = {
-  path: "/Sources/evidence/a/a.md",
+  path: "/Sources/a/a.md",
   kind: "source",
   content: "raw",
   etag: "etag-1",
@@ -39,7 +39,7 @@ test("slug and markdown include generated provenance without status frontmatter"
   const markdown = renderGeneratedMarkdown(draft, source, []);
   assert.doesNotMatch(markdown, /^---\n/m);
   assert.doesNotMatch(markdown, /## Status/);
-  assert.match(markdown, /source_path: \/Sources\/evidence\/a\/a\.md/);
+  assert.match(markdown, /source_path: \/Sources\/a\/a\.md/);
   assert.match(markdown, /source_etag: etag-1/);
 });
 
@@ -114,24 +114,24 @@ test("VFS path links are escaped for Markdown destinations", () => {
   const markdown = renderGeneratedMarkdown(
     {
       ...draft,
-      key_facts: [{ text: "Fact", source_path: "/Sources/evidence/web/a]b.md" }]
+      key_facts: [{ text: "Fact", source_path: "/Sources/web/a]b.md" }]
     },
-    { ...source, path: "/Sources/evidence/web/a]b.md" },
+    { ...source, path: "/Sources/web/a]b.md" },
     [
-      { path: "/Wiki/conversations/日本語 記事).md", kind: "file", previewExcerpt: null, snippet: null },
-      { path: "/Wiki/space name.md", kind: "file", previewExcerpt: null, snippet: null },
-      { path: "/Wiki/a#b.md", kind: "file", previewExcerpt: null, snippet: null },
-      { path: "/Wiki/a?b.md", kind: "file", previewExcerpt: null, snippet: null },
-      { path: "/Wiki/100%.md", kind: "file", previewExcerpt: null, snippet: null }
+      { path: "/Knowledge/conversations/日本語 記事).md", kind: "file", previewExcerpt: null, snippet: null },
+      { path: "/Knowledge/space name.md", kind: "file", previewExcerpt: null, snippet: null },
+      { path: "/Knowledge/a#b.md", kind: "file", previewExcerpt: null, snippet: null },
+      { path: "/Knowledge/a?b.md", kind: "file", previewExcerpt: null, snippet: null },
+      { path: "/Knowledge/100%.md", kind: "file", previewExcerpt: null, snippet: null }
     ]
   );
-  assert.match(markdown, /Source: \[\/Sources\/evidence\/web\/a\\\]b\.md\]\(<\/Sources\/evidence\/web\/a]b\.md>\)/);
-  assert.match(markdown, /\[source\]\(<\/Sources\/evidence\/web\/a]b\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/conversations\/日本語 記事\)\.md\]\(<\/Wiki\/conversations\/日本語 記事\)\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/space name\.md\]\(<\/Wiki\/space name\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/a#b\.md\]\(<\/Wiki\/a%23b\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/a\?b\.md\]\(<\/Wiki\/a%3Fb\.md>\)/);
-  assert.match(markdown, /\[\/Wiki\/100%\.md\]\(<\/Wiki\/100%25\.md>\)/);
+  assert.match(markdown, /Source: \[\/Sources\/web\/a\\\]b\.md\]\(<\/Sources\/web\/a]b\.md>\)/);
+  assert.match(markdown, /\[source\]\(<\/Sources\/web\/a]b\.md>\)/);
+  assert.match(markdown, /\[\/Knowledge\/conversations\/日本語 記事\)\.md\]\(<\/Knowledge\/conversations\/日本語 記事\)\.md>\)/);
+  assert.match(markdown, /\[\/Knowledge\/space name\.md\]\(<\/Knowledge\/space name\.md>\)/);
+  assert.match(markdown, /\[\/Knowledge\/a#b\.md\]\(<\/Knowledge\/a%23b\.md>\)/);
+  assert.match(markdown, /\[\/Knowledge\/a\?b\.md\]\(<\/Knowledge\/a%3Fb\.md>\)/);
+  assert.match(markdown, /\[\/Knowledge\/100%\.md\]\(<\/Knowledge\/100%25\.md>\)/);
 });
 
 test("draft-provided labels are rendered without worker language detection", () => {
@@ -153,7 +153,7 @@ test("draft-provided labels are rendered without worker language detection", () 
       key_facts: [{ text: "本文は日本語で保持する。", source_path: source.path }]
     },
     { ...source, content: "# Source\n\nThe source language is not inspected by the renderer." },
-    [{ path: "/Wiki/context.md", kind: "file", previewExcerpt: "関連", snippet: "" }]
+    [{ path: "/Knowledge/context.md", kind: "file", previewExcerpt: "関連", snippet: "" }]
   );
   assert.match(markdown, /## 概要/);
   assert.match(markdown, /## 主要事実/);
@@ -164,11 +164,11 @@ test("draft-provided labels are rendered without worker language detection", () 
 });
 
 test("target conflict requires matching provenance", () => {
-  assert.doesNotThrow(() => ensureTargetCanBeWritten(null, "/Wiki/conversations/a.md", source.path));
-  assert.doesNotThrow(() => ensureTargetCanBeWritten(`- source_path: ${source.path}`, "/Wiki/conversations/a.md", source.path));
+  assert.doesNotThrow(() => ensureTargetCanBeWritten(null, "/Knowledge/conversations/a.md", source.path));
+  assert.doesNotThrow(() => ensureTargetCanBeWritten(`- source_path: ${source.path}`, "/Knowledge/conversations/a.md", source.path));
   assert.throws(
-    () => ensureTargetCanBeWritten(`# Existing\n\nMention ${source.path} in body only.`, "/Wiki/conversations/a.md", source.path),
+    () => ensureTargetCanBeWritten(`# Existing\n\nMention ${source.path} in body only.`, "/Knowledge/conversations/a.md", source.path),
     /without matching provenance/
   );
-  assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/evidence/b/b.md", "/Wiki/conversations/a.md", source.path), /without matching provenance/);
+  assert.throws(() => ensureTargetCanBeWritten("source_path: /Sources/b/b.md", "/Knowledge/conversations/a.md", source.path), /without matching provenance/);
 });

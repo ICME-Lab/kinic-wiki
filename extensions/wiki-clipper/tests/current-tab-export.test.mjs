@@ -246,7 +246,7 @@ test("exportTarget saves immediately after fetching a valid conversation", async
     { canisterId: "canister", host: "http://127.0.0.1:8001" },
     async (message) => {
       calls.push(["save", message.capture.conversationTitle]);
-      return { result: { path: "/Sources/evidence/chatgpt/abc.md", created: true, generationQueued: true, generationError: null } };
+      return { result: { path: "/Sources/chatgpt/abc.md", created: true, generationQueued: true, generationError: null } };
     },
     chatGptFetch(async (url) => {
       calls.push(["fetch", target.id]);
@@ -269,7 +269,7 @@ test("exportTarget treats saved source with failed generation queue as partial e
     { canisterId: "canister", host: "http://127.0.0.1:8001" },
     async () => ({
       result: {
-        path: "/Sources/evidence/chatgpt/abc.md",
+        path: "/Sources/chatgpt/abc.md",
         created: true,
         generationQueued: false,
         generationError: "worker trigger failed: HTTP 502"
@@ -280,7 +280,7 @@ test("exportTarget treats saved source with failed generation queue as partial e
 
   assert.equal(event.ok, false);
   assert.equal(event.sourceSaved, true);
-  assert.equal(event.path, "/Sources/evidence/chatgpt/abc.md");
+  assert.equal(event.path, "/Sources/chatgpt/abc.md");
   assert.equal(event.generationQueued, false);
   assert.equal(event.generationError, "worker trigger failed: HTTP 502");
 
@@ -290,7 +290,7 @@ test("exportTarget treats saved source with failed generation queue as partial e
   );
   assert.deepEqual(state.progress, { total: 1, done: 1, ok: 0, failed: 1 });
   assert.equal(state.logs[0].kind, "error");
-  assert.match(state.logs[0].message, /Source saved: \/Sources\/evidence\/chatgpt\/abc\.md/);
+  assert.match(state.logs[0].message, /Source saved: \/Sources\/chatgpt\/abc\.md/);
   assert.match(state.logs[0].message, /worker trigger failed: HTTP 502/);
 });
 
@@ -521,7 +521,7 @@ test("validateSaveSource rejects wrong provider and malformed messages", () => {
         { ...VALID_CAPTURE, messages: Array.from({ length: 500 }, () => ({ role: "user", content: "x".repeat(3_000) })) },
         VALID_SENDER
       ),
-    /evidence source must not exceed/
+    /raw source must not exceed/
   );
 });
 
@@ -572,17 +572,17 @@ test("handleMessage does not overwrite cancelled export state with stale progres
   }
 });
 
-test("save-source delegates evidence source write with database_id", async () => {
+test("save-source delegates raw source write with database_id", async () => {
   const restore = installChromeStorage(memoryStorage(), memoryStorage());
   const calls = [];
   setOffscreenBridgeForTest(async (message) => {
     calls.push(message);
-    if (message.type === "save-evidence-source") {
+    if (message.type === "save-raw-source") {
       return {
         ok: true,
         result: {
-          path: message.evidenceSource.path,
-          sourceId: message.evidenceSource.sourceId,
+          path: message.rawSource.path,
+          sourceId: message.rawSource.sourceId,
           created: false,
           etag: "etag-2",
           sourceRunSessionNonce: "session-source"
@@ -606,11 +606,11 @@ test("save-source delegates evidence source write with database_id", async () =>
     );
 
     assert.equal(response.ok, true);
-    assert.equal(calls[0].type, "save-evidence-source");
+    assert.equal(calls[0].type, "save-raw-source");
     assert.equal(calls[0].config.databaseId, "team_wiki");
-    assert.equal(calls[0].evidenceSource.path, "/Sources/evidence/chatgpt/abc.md");
+    assert.equal(calls[0].rawSource.path, "/Sources/chatgpt/abc.md");
     assert.equal(calls[1].type, "trigger-source-generation");
-    assert.equal(calls[1].sourcePath, "/Sources/evidence/chatgpt/abc.md");
+    assert.equal(calls[1].sourcePath, "/Sources/chatgpt/abc.md");
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
     assert.equal(calls.length, 2);

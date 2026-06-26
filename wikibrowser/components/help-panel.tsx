@@ -26,7 +26,7 @@ export function HelpPanel() {
           <HelpItem
             icon={<BookOpen aria-hidden size={17} />}
             title="Browse"
-            body="Use Explorer for /Wiki and /Sources, breadcrumbs for parent folders, and Preview, Raw, or Edit for the active note."
+            body="Use Explorer for store roots, breadcrumbs for parent folders, and Preview, Raw, or Edit for the active note."
           />
           <HelpItem
             icon={<GitBranch aria-hidden size={17} />}
@@ -41,7 +41,7 @@ export function HelpPanel() {
           <HelpItem
             icon={<FileText aria-hidden size={17} />}
             title="Sources and ingest"
-            body="Sources holds source evidence and ingest requests. Generated wiki pages should be reviewed before relying on them."
+            body="Sources holds raw evidence and ingest requests. Open evidence from provenance links or search when inspection is needed."
           />
           <HelpItem
             icon={<LockKeyhole aria-hidden size={17} />}

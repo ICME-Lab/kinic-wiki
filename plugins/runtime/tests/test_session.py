@@ -4,10 +4,17 @@ Why: SessionEnd hooks must retain evidence without leaking obvious secrets.
 """
 
 import json
+import os
+import stat
 import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+import sys
+
+
+RUNTIME_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RUNTIME_ROOT))
 
 from kinic_agent_runtime import session
 
@@ -43,7 +50,7 @@ class SessionCaptureTests(unittest.TestCase):
             transcript,
             "2024-05-01T00:00:00.123Z",
         )
-        self.assertEqual(source.path, f"/Sources/evidence/claudecode/{expected_source_id}.md")
+        self.assertEqual(source.path, f"/Sources/sessions/claudecode/{expected_source_id}.md")
         self.assertEqual(source.metadata["message_count"], 3)
         self.assertTrue(source.metadata["redacted"])
         self.assertIn("[REDACTED]", source.content)
@@ -110,6 +117,54 @@ class SessionCaptureTests(unittest.TestCase):
 
                 self.assertTrue(changed)
                 self.assertEqual(redacted[key], session.REDACTED)
+
+    def test_build_source_redacts_common_raw_secret_shapes(self) -> None:
+        # GitHub push protection rejects committed Slack token-shaped fixtures.
+        # Keep coverage by assembling the exact raw shape only at test runtime.
+        slack_token = "".join(
+            [
+                "xo",
+                "xb",
+                "-",
+                "123456789012",
+                "-",
+                "123456789012",
+                "-",
+                "abcdefghijklmnopqrstuv",
+            ]
+        )
+        secrets = [
+            "AKIAIOSFODNN7EXAMPLE",
+            "ASIAIOSFODNN7EXAMPLE",
+            "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+            "github_pat_abcdefghijklmnopqrstuvwxyz_1234567890",
+            slack_token,
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nopenssh-private\n-----END OPENSSH PRIVATE KEY-----",
+            "-----BEGIN PRIVATE KEY-----\npem-private\n-----END PRIVATE KEY-----",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            transcript = Path(tmp) / "session.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": "\n".join(secrets),
+                        },
+                    }
+                )
+            )
+            hook = session.HookInput("session-raw-secrets", transcript, "/repo", "exit")
+
+            source = session.build_source(hook)
+
+        self.assertTrue(source.metadata["redacted"])
+        for leaked in secrets:
+            self.assertNotIn(leaked, source.content)
+        self.assertNotIn("openssh-private", source.content)
+        self.assertNotIn("pem-private", source.content)
+        self.assertIn(session.REDACTED, source.content)
 
     def test_redacts_dot_separated_api_key_in_raw_text(self) -> None:
         redacted_text, changed = session.redact('api.key=short-secret\n{"api.key": "json-secret"}')
@@ -192,6 +247,28 @@ class SessionCaptureTests(unittest.TestCase):
         self.assertIn('"access_token": "[REDACTED]"', source.content)
         self.assertIn('"client_secret": "[REDACTED]"', source.content)
 
+    def test_save_pending_uses_owner_only_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            pending_dir = Path(tmp) / "pending"
+            pending_dir.mkdir(mode=0o755)
+            pending_dir.chmod(0o755)
+            source = session.SourcePayload(
+                "/Sources/sessions/claudecode/session.md",
+                "# Session\n",
+                {"provider": "claude-code"},
+            )
+            old_umask = os.umask(0o022)
+            try:
+                pending = session.save_pending(pending_dir, source, now_ms=1)
+            finally:
+                os.umask(old_umask)
+            payload = json.loads(pending.read_text())
+
+            self.assertEqual(stat.S_IMODE(pending_dir.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(pending.stat().st_mode), 0o600)
+            self.assertEqual(payload["path"], "/Sources/sessions/claudecode/session.md")
+            self.assertEqual(payload["content"], "# Session\n")
+
     def test_build_source_redacts_hook_metadata_before_saving(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -214,7 +291,7 @@ class SessionCaptureTests(unittest.TestCase):
             transcript,
             "2024-05-01T00:00:00.123Z",
         )
-        self.assertEqual(source.path, f"/Sources/evidence/claudecode/{expected_source_id}.md")
+        self.assertEqual(source.path, f"/Sources/sessions/claudecode/{expected_source_id}.md")
         for leaked in [
             "abc123456789012345",
             "meta-secret-value-123",
@@ -701,7 +778,7 @@ class SessionCaptureTests(unittest.TestCase):
             old_pending.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/old.md",
+                        "path": "/Sources/sessions/claudecode/old.md",
                         "content": "# Old\n",
                         "metadata_json": "{}",
                     }
@@ -729,13 +806,93 @@ class SessionCaptureTests(unittest.TestCase):
 
             paths = [json.loads(line) for line in calls.read_text().splitlines()]
             expected_current = (
-                "/Sources/evidence/claudecode/"
+                "/Sources/sessions/claudecode/"
                 + session.source_id_for_session("session-current", transcript, "1970-01-01T00:00:01.000Z")
                 + ".md"
             )
             self.assertTrue(result["recorded"])
-            self.assertEqual(paths[0], expected_current)
-            self.assertEqual(paths[1], "/Sources/evidence/claudecode/old.md")
+            self.assertEqual(
+                paths,
+                [
+                    "/Sources/sessions",
+                    "/Sources/sessions/claudecode",
+                    expected_current,
+                    "/Sources/sessions",
+                    "/Sources/sessions/claudecode",
+                    "/Sources/sessions/claudecode/old.md",
+                ],
+            )
+            self.assertFalse(old_pending.exists())
+
+    def test_record_session_reports_success_when_current_pending_cleanup_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_dir = root / "pending"
+            pending_dir.mkdir()
+            old_pending = pending_dir / "1-old.json"
+            old_pending.write_text(
+                json.dumps(
+                    {
+                        "path": "/Sources/sessions/claudecode/old.md",
+                        "content": "# Old\n",
+                        "metadata_json": "{}",
+                    }
+                )
+            )
+            transcript = root / "session.jsonl"
+            transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "hello"}}))
+            current_source_id = session.source_id_for_session(
+                "session-current",
+                transcript,
+                "1970-01-01T00:00:01.000Z",
+            )
+            current_pending = pending_dir / f"1000-{current_source_id}.json"
+            current_recorded = pending_dir / f"{current_pending.name}.recorded"
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.jsonl"
+            fake_cli.write_text(
+                "#!/usr/bin/env bash\n"
+                "python3 - \"$@\" <<'PY'\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                "path = args[args.index('--path') + 1]\n"
+                f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
+                "PY\n"
+            )
+            fake_cli.chmod(0o755)
+            hook = json.dumps(
+                {"session_id": "session-current", "transcript_path": str(transcript), "cwd": "/repo", "reason": "exit"}
+            )
+            original_unlink = Path.unlink
+
+            def unlink_with_current_failure(path: Path, *args: object, **kwargs: object) -> None:
+                if path == current_pending:
+                    raise OSError("current pending cleanup failed")
+                original_unlink(path, *args, **kwargs)
+
+            with mock.patch.object(Path, "unlink", unlink_with_current_failure):
+                result = session.record_session(hook, str(fake_cli), pending_dir, now_ms=1000)
+
+            paths = [json.loads(line) for line in calls.read_text().splitlines()]
+
+            self.assertTrue(result["recorded"])
+            self.assertIn("current pending cleanup failed", result["cleanup_error"])
+            self.assertEqual(result["flushed_pending"], 1)
+            self.assertEqual(result["failed_pending"], 0)
+            self.assertEqual(result["invalid_pending"], 0)
+            self.assertEqual(
+                paths,
+                [
+                    "/Sources/sessions",
+                    "/Sources/sessions/claudecode",
+                    f"/Sources/sessions/claudecode/{current_source_id}.md",
+                    "/Sources/sessions",
+                    "/Sources/sessions/claudecode",
+                    "/Sources/sessions/claudecode/old.md",
+                ],
+            )
+            self.assertFalse(current_pending.exists())
+            self.assertTrue(current_recorded.is_file())
             self.assertFalse(old_pending.exists())
 
     def test_record_session_skips_old_pending_flush_when_current_write_fails(self) -> None:
@@ -770,7 +927,7 @@ class SessionCaptureTests(unittest.TestCase):
             old_pending.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/old.md",
+                        "path": "/Sources/sessions/claudecode/old.md",
                         "content": "# Old\n",
                         "metadata_json": "{}",
                     }
@@ -787,8 +944,8 @@ class SessionCaptureTests(unittest.TestCase):
                 "args = sys.argv[1:]\n"
                 "path = args[args.index('--path') + 1]\n"
                 f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
+                "if args[0] == 'write-node': sys.exit(7)\n"
                 "PY\n"
-                "exit 7\n"
             )
             fake_cli.chmod(0o755)
             hook = json.dumps({"session_id": "session-1", "transcript_path": str(transcript), "cwd": "/repo", "reason": "exit"})
@@ -797,7 +954,8 @@ class SessionCaptureTests(unittest.TestCase):
 
             paths = [json.loads(line) for line in calls.read_text().splitlines()]
             self.assertFalse(result["recorded"])
-            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[:2], ["/Sources/sessions", "/Sources/sessions/claudecode"])
+            self.assertEqual(len(paths), 3)
             self.assertTrue(old_pending.is_file())
             self.assertEqual(result["flushed_pending"], 0)
             self.assertEqual(result["failed_pending"], 0)
@@ -924,7 +1082,7 @@ class SessionCaptureTests(unittest.TestCase):
             transcript,
             "2024-05-01T00:00:00.123Z",
         )
-        self.assertEqual(source.path, f"/Sources/evidence/codex/{expected_source_id}.md")
+        self.assertEqual(source.path, f"/Sources/sessions/codex/{expected_source_id}.md")
         self.assertEqual(source.metadata["provider"], "codex")
         self.assertTrue(source.metadata["redacted"])
         self.assertIn("# Raw Codex Session", source.content)
@@ -973,6 +1131,57 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertEqual(pending_payload["path"].split("/")[3], "codex")
             self.assertNotIn("abc123456789012345", pending_payload["content"])
 
+    def test_record_codex_session_creates_codex_parent_folders_before_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            transcript = root / "codex.jsonl"
+            transcript.write_text(
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {"type": "user_message", "message": "hello"},
+                    }
+                )
+            )
+            fake_cli = root / "kinic-vfs-cli"
+            calls = root / "calls.jsonl"
+            fake_cli.write_text(
+                "#!/usr/bin/env bash\n"
+                "python3 - \"$@\" <<'PY'\n"
+                "import json, sys\n"
+                "args = sys.argv[1:]\n"
+                "path = args[args.index('--path') + 1]\n"
+                f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(path) + '\\n')\n"
+                "PY\n"
+            )
+            fake_cli.chmod(0o755)
+            hook = json.dumps(
+                {
+                    "session_id": "codex-session",
+                    "transcript_path": str(transcript),
+                    "cwd": "/repo",
+                    "hook_event_name": "Stop",
+                }
+            )
+
+            result = session.record_codex_session(hook, str(fake_cli), root / "pending", now_ms=1000)
+
+            expected_source_id = session.source_id_for_session(
+                "codex-session",
+                transcript,
+                "1970-01-01T00:00:01.000Z",
+            )
+            paths = [json.loads(line) for line in calls.read_text().splitlines()]
+            self.assertTrue(result["recorded"])
+            self.assertEqual(
+                paths,
+                [
+                    "/Sources/sessions",
+                    "/Sources/sessions/codex",
+                    f"/Sources/sessions/codex/{expected_source_id}.md",
+                ],
+            )
+
     def test_runtime_cli_repo_root_points_to_checkout_root(self) -> None:
         from kinic_agent_runtime import cli as runtime_cli
 
@@ -989,7 +1198,7 @@ class SessionCaptureTests(unittest.TestCase):
             pending.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/session.md",
+                        "path": "/Sources/sessions/claudecode/session.md",
                         "content": "# Session\n",
                         "metadata_json": "{}",
                     }
@@ -1001,7 +1210,10 @@ class SessionCaptureTests(unittest.TestCase):
                 "#!/usr/bin/env bash\n"
                 "python3 - \"$@\" <<'PY'\n"
                 "import json, sys\n"
-                f"open({str(calls)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+                "args = sys.argv[1:]\n"
+                "path = args[args.index('--path') + 1]\n"
+                "record = {'command': args[0], 'path': path, 'args': args}\n"
+                f"with open({str(calls)!r}, 'a') as handle: handle.write(json.dumps(record) + '\\n')\n"
                 "PY\n"
             )
             fake_cli.chmod(0o755)
@@ -1010,7 +1222,16 @@ class SessionCaptureTests(unittest.TestCase):
 
             self.assertEqual(len(flushed), 1)
             self.assertFalse(pending.exists())
-            argv = json.loads(calls.read_text())
+            records = [json.loads(line) for line in calls.read_text().splitlines()]
+            self.assertEqual(
+                [(record["command"], record["path"]) for record in records],
+                [
+                    ("mkdir-node", "/Sources/sessions"),
+                    ("mkdir-node", "/Sources/sessions/claudecode"),
+                    ("write-node", "/Sources/sessions/claudecode/session.md"),
+                ],
+            )
+            argv = records[-1]["args"]
             self.assertIn("write-node", argv)
             self.assertIn("--kind", argv)
             self.assertIn("source", argv)
@@ -1026,7 +1247,7 @@ class SessionCaptureTests(unittest.TestCase):
             good.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/good.md",
+                        "path": "/Sources/sessions/claudecode/good.md",
                         "content": "# Good\n",
                         "metadata_json": "{}",
                     }
@@ -1045,7 +1266,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(good.exists())
             self.assertFalse(invalid.exists())
             self.assertTrue((pending_dir / "1-bad.json.invalid").is_file())
-            self.assertIn("/Sources/evidence/claudecode/good.md", calls.read_text())
+            self.assertIn("/Sources/sessions/claudecode/good.md", calls.read_text())
 
     def test_flush_pending_keeps_failed_write_for_retry_and_continues(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1056,7 +1277,7 @@ class SessionCaptureTests(unittest.TestCase):
             failed.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/fail.md",
+                        "path": "/Sources/sessions/claudecode/fail.md",
                         "content": "# Fail\n",
                         "metadata_json": "{}",
                     }
@@ -1066,7 +1287,7 @@ class SessionCaptureTests(unittest.TestCase):
             good.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/good.md",
+                        "path": "/Sources/sessions/claudecode/good.md",
                         "content": "# Good\n",
                         "metadata_json": "{}",
                     }
@@ -1077,7 +1298,7 @@ class SessionCaptureTests(unittest.TestCase):
             fake_cli.write_text(
                 "#!/usr/bin/env bash\n"
                 "for arg in \"$@\"; do\n"
-                "  if [ \"$arg\" = \"/Sources/evidence/claudecode/fail.md\" ]; then exit 7; fi\n"
+                "  if [ \"$arg\" = \"/Sources/sessions/claudecode/fail.md\" ]; then exit 7; fi\n"
                 "done\n"
                 f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n"
             )
@@ -1091,7 +1312,7 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(good.exists())
             self.assertTrue(failed.is_file())
             self.assertFalse((pending_dir / "1-fail.json.failed").exists())
-            self.assertIn("/Sources/evidence/claudecode/good.md", calls.read_text())
+            self.assertIn("/Sources/sessions/claudecode/good.md", calls.read_text())
 
             fake_cli.write_text("#!/usr/bin/env bash\n" f"printf '%s\\n' \"$@\" >> {str(calls)!r}\n")
             result = session.flush_pending_report(str(fake_cli), pending_dir)
@@ -1109,7 +1330,7 @@ class SessionCaptureTests(unittest.TestCase):
             unlink_fail.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/unlink-fail.md",
+                        "path": "/Sources/sessions/claudecode/unlink-fail.md",
                         "content": "# Unlink fail\n",
                         "metadata_json": "{}",
                     }
@@ -1119,7 +1340,7 @@ class SessionCaptureTests(unittest.TestCase):
             good.write_text(
                 json.dumps(
                     {
-                        "path": "/Sources/evidence/claudecode/good.md",
+                        "path": "/Sources/sessions/claudecode/good.md",
                         "content": "# Good\n",
                         "metadata_json": "{}",
                     }
@@ -1146,8 +1367,8 @@ class SessionCaptureTests(unittest.TestCase):
             self.assertFalse(unlink_fail.exists())
             self.assertTrue((pending_dir / "1-unlink-fail.json.failed").is_file())
             calls_text = calls.read_text()
-            self.assertIn("/Sources/evidence/claudecode/unlink-fail.md", calls_text)
-            self.assertIn("/Sources/evidence/claudecode/good.md", calls_text)
+            self.assertIn("/Sources/sessions/claudecode/unlink-fail.md", calls_text)
+            self.assertIn("/Sources/sessions/claudecode/good.md", calls_text)
 
 
 if __name__ == "__main__":

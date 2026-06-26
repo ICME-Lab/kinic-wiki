@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn auto_public_read_falls_back_to_anonymous_when_membership_check_is_unavailable() {
         let command = Command::ReadNode {
-            path: "/Wiki/index.md".to_string(),
+            path: "/Knowledge/index.md".to_string(),
             metadata_only: false,
             fields: None,
             json: false,
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn auto_public_read_uses_identity_when_identity_is_database_member() {
         let command = Command::ReadNode {
-            path: "/Wiki/index.md".to_string(),
+            path: "/Knowledge/index.md".to_string(),
             metadata_only: false,
             fields: None,
             json: false,
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn auto_private_read_requires_identity_when_anonymous_cannot_read() {
         let command = Command::ReadNode {
-            path: "/Wiki/index.md".to_string(),
+            path: "/Knowledge/index.md".to_string(),
             metadata_only: false,
             fields: None,
             json: false,
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn mutating_commands_require_identity() {
         let command = Command::WriteNode {
-            path: "/Wiki/index.md".to_string(),
+            path: "/Knowledge/index.md".to_string(),
             kind: crate::cli::NodeKindArg::File,
             input: "index.md".into(),
             metadata_json: "{}".to_string(),

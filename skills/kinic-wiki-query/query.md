@@ -14,7 +14,7 @@ Search and read Kinic Wiki VFS databases through `kinic-vfs-cli`. Use this workf
 4. Start with `status --json` to confirm target and access.
 5. Search content with `search-remote` first. `search-nodes` is an alias, but `search-remote` is the public command name shown in help.
 6. If content search misses, search paths with `search-path-remote`.
-7. If path search misses, list `/Wiki` with `list-nodes --prefix /Wiki --recursive --json`.
+7. If path search misses, list `/Knowledge` with `list-nodes --prefix /Knowledge --recursive --json`.
 8. Read likely candidates with `read-node --path <path> --json` before answering.
 9. If the user requests durable write-back, stop query work and use `kinic-wiki-edit` or `kinic-wiki-ingest`.
 
@@ -44,7 +44,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- \
   --canister-id xis3j-paaaa-aaaai-axumq-cai \
   --database-id <database_id> \
   --identity-mode anonymous \
-  search-remote "<query>" --prefix /Wiki --top-k 10 --json
+  search-remote "<query>" --prefix /Knowledge --top-k 10 --json
 ```
 
 Path search:
@@ -54,7 +54,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- \
   --canister-id xis3j-paaaa-aaaai-axumq-cai \
   --database-id <database_id> \
   --identity-mode anonymous \
-  search-path-remote "<query>" --prefix /Wiki --top-k 20 --json
+  search-path-remote "<query>" --prefix /Knowledge --top-k 20 --json
 ```
 
 Inventory fallback:
@@ -64,7 +64,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- \
   --canister-id xis3j-paaaa-aaaai-axumq-cai \
   --database-id <database_id> \
   --identity-mode anonymous \
-  list-nodes --prefix /Wiki --recursive --json
+  list-nodes --prefix /Knowledge --recursive --json
 ```
 
 Candidate read:
@@ -107,11 +107,11 @@ If no candidate remains after content search, path search, and inventory fallbac
 - Internet Identity or non-II identity rejection on read-only work: retry with `--allow-non-ii-identity` only when the user wants the selected local `icp-cli` identity used.
 - `invalid memory id`: stop using Kinic Memory MCP. Use Kinic Wiki VFS CLI with `--database-id`.
 - HTML contains `Loading search...`: this is client-side rendering. Stop HTML parsing and use CLI.
-- Empty content search: do not stop. Run `search-path-remote`, then `list-nodes --prefix /Wiki --recursive --json`, then read likely paths.
+- Empty content search: do not stop. Run `search-path-remote`, then `list-nodes --prefix /Knowledge --recursive --json`, then read likely paths.
 
 ## Repo Contract
 
 - Preferred query primitives:
   - CLI commands: `status`, `search-remote`, `search-path-remote`, `list-nodes`, `read-node`, `read-node-context`
-  - Use `list-nodes --prefix /Wiki --recursive --json` for inventory fallback.
+  - Use `list-nodes --prefix /Knowledge --recursive --json` for inventory fallback.
   - Use `read-node --json` before final answers.

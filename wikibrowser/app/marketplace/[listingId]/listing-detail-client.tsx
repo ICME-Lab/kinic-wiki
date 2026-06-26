@@ -168,7 +168,7 @@ export function ListingDetailClient({ canisterId, listingId }: ListingDetailClie
                   {purchaseState === "success" ? (
                     <Link
                       className="inline-flex min-h-11 w-full items-center justify-center whitespace-nowrap rounded-lg border border-line px-3 py-2 text-sm font-semibold text-accent no-underline hover:border-accent"
-                      href={hrefForPath(canisterId, listing.databaseId, "/Wiki")}
+                      href={hrefForPath(canisterId, listing.databaseId, "/Knowledge")}
                     >
                       Open database
                     </Link>

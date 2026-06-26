@@ -25,7 +25,7 @@ Create and link a database.
 If the database already exists and you have access, start from `database link <database-id>`.
 
 ```bash
-DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database create --profile skill "Team skills")"
+DB_ID="$(cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database create "Team skills")"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- --canister-id "$CANISTER_ID" database link "$DB_ID"
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- database current
 ```
@@ -41,6 +41,7 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill upsert \
 
 `skill upsert` uploads the package.
 `--prune` removes stale package files already in the DB but no longer present in the source package.
+When the skill already exists, `upsert` snapshots the previous `SKILL.md` and `manifest.md` under `/Skills/<id>/versions/...` before replacing current files.
 
 Find and inspect it:
 
@@ -65,6 +66,19 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill set-status legal-review 
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill inspect legal-review
 ```
 
+List snapshots and run evidence:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill history legal-review --json
+```
+
+Rollback uses one `versions` id from `skill history`.
+It snapshots the current skill before restoring the selected snapshot:
+
+```bash
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill rollback legal-review <snapshot-id>
+```
+
 Automated evidence can also be recorded without manual schema prompts:
 
 ```bash
@@ -72,14 +86,11 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- skill record-run legal-review 
   --evidence-json ./run-evidence.json
 ```
 
-Set up Hermes once, then run evolution from inside Hermes:
+Set up Hermes once, then keep the local skill projection fresh:
 
 ```bash
 cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- hermes setup
-```
-
-```text
-/kinic_evolve_job
+cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- hermes pull
 ```
 
 ## Troubleshooting
@@ -88,11 +99,10 @@ cargo run -p kinic-vfs-cli --bin kinic-vfs-cli -- hermes setup
 - Permission denied: ask a database owner to grant `reader` for find/inspect or `writer` for upsert/record-run/set-status.
 - Invalid manifest: check the required fields in [`SKILL_REGISTRY.md`](SKILL_REGISTRY.md).
 - Missing skill in search: rerun `skill find <query> --include-deprecated` if auditing old skills.
-- Stale Hermes projection after browser apply: run `kinic-vfs-cli hermes pull`.
+- Stale Hermes projection after skill update: run `kinic-vfs-cli hermes pull`.
 - Hermes projection check: run `kinic-vfs-cli hermes status`.
 - Pending Hermes evidence: run `kinic-vfs-cli hermes flush-pending`.
 - Shadow correction files: run `kinic-vfs-cli hermes shadows`.
-- Evolution job debugging: run `kinic-vfs-cli skill evolve-jobs create-ready` and `kinic-vfs-cli skill evolve-jobs list --status queued --json`.
 
 ## Demo Script
 

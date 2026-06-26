@@ -12,17 +12,17 @@ const groups = {
   security_path_validation: [
     ["crates/wiki_domain/src/lib.rs", "canonical_source_path_rejects_prefix_lookalikes"],
     ["crates/vfs_canister/src/tests.rs", "fs_entrypoints_reject_noncanonical_source_paths"],
-    ["workers/wiki-generator/tests/source-path.test.ts", "/Sources/evidencefoo/alpha/alpha.md"],
-    ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "safeIngestRequestId rejects non-canonical path segments"]
+    ["workers/wiki-generator/tests/source-path.test.ts", "/Sourcesfoo/alpha/alpha.md"],
+    ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "normalizedHttpUrl accepts only http and https"]
   ],
   skill_registry_schema: [
-    ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_approve_proposal_rejects_wrong_path_and_frontmatter"],
+    ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_upsert_snapshots_existing_skill_before_update"],
     ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_upsert_rejects_noncanonical_skill_ids_before_writing"],
     ["crates/vfs_cli_app/src/skill_registry_tests.rs", "skill_set_status_removes_stale_status_metadata"],
-    ["wikibrowser/scripts/check-skill-registry.mjs", "improvement-proposals|kinic\\.skill_improvement_proposal"],
+    ["wikibrowser/scripts/check-skill-registry.mjs", "parseProposalRoot|\\/proposals"],
     ["wikibrowser/scripts/check-skill-registry.mjs", "skill..v1"],
-    ["skill-registry-web/scripts/check-skill-registry-web.mjs", "baseEtag"],
-    ["docs/SKILL_REGISTRY.md", "/Wiki/skills/<name>/proposals/<proposal-id>/"]
+    ["skill-registry-web/scripts/check-skill-registry-web.mjs", "skill-evolution-jobs|\\/proposals"],
+    ["docs/SKILL_REGISTRY.md", "/Skills/<id>/versions/<snapshot-id>/SKILL.md"]
   ],
   frontmatter_markdown: [
     ["workers/wiki-generator/tests/frontmatter.test.ts", "frontmatter parser requires a whole-line terminator"],
@@ -42,9 +42,9 @@ const groups = {
     ["workers/wiki-generator/tests/openai.test.ts", "non-JSON DeepSeek failures before parsing"]
   ],
   extension_capture: [
-    ["extensions/wiki-clipper/tests/evidence-source.test.mjs", "truncates long conversation ids to a canonical source filename"],
-    ["extensions/wiki-clipper/tests/evidence-source.test.mjs", "removes dotdot from conversation source filenames"],
-    ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "safeIngestRequestId"],
+    ["extensions/wiki-clipper/tests/raw-source.test.mjs", "truncates long conversation ids to a canonical source filename"],
+    ["extensions/wiki-clipper/tests/raw-source.test.mjs", "removes dotdot from conversation source filenames"],
+    ["extensions/wiki-clipper/tests/url-ingest-request.test.mjs", "normalizedHttpUrl"],
     ["wikibrowser/lib/url-ingest.ts", "safeIngestRequestId(Date.now(), crypto.randomUUID())"]
   ],
   canister_ci_filter: [

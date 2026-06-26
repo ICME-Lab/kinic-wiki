@@ -1,12 +1,12 @@
 // Where: extensions/wiki-clipper/tests/web-source.test.mjs
 // What: Unit tests for active-page DOM source rendering.
-// Why: Web captures must save canonical evidence sources before generation is queued.
+// Why: Web captures must save canonical raw sources before generation is queued.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildWebEvidenceSource, collectWebPageSnapshot, webSourcePathForUrl } from "../src/web-source.js";
+import { buildWebRawSource, collectWebPageSnapshot, webSourcePathForUrl } from "../src/web-source.js";
 
-test("buildWebEvidenceSource emits canonical browser DOM source", async () => {
-  const raw = await buildWebEvidenceSource(
+test("buildWebRawSource emits canonical browser DOM source", async () => {
+  const raw = await buildWebRawSource(
     {
       url: "https://example.com/post#section",
       title: "Example Post",
@@ -15,10 +15,10 @@ test("buildWebEvidenceSource emits canonical browser DOM source", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.match(raw.path, /^\/Sources\/evidence\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(raw.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
   assert.equal(raw.path.split("/").at(-2), "web");
   assert.equal(raw.sourceId, `web-${raw.path.split("/").at(-1)?.replace(".md", "")}`);
-  assert.match(raw.content, /kind: kinic\.evidence_web_source/);
+  assert.match(raw.content, /kind: kinic\.raw_web_source/);
   assert.match(raw.content, /schema_version: 1/);
   assert.match(raw.content, /capture_method: browser_dom/);
   assert.match(raw.content, /url: "https:\/\/example\.com\/post"/);
@@ -42,8 +42,8 @@ test("buildWebEvidenceSource emits canonical browser DOM source", async () => {
   });
 });
 
-test("buildWebEvidenceSource path does not depend on title", async () => {
-  const first = await buildWebEvidenceSource(
+test("buildWebRawSource path does not depend on title", async () => {
+  const first = await buildWebRawSource(
     {
       url: "https://example.com/post",
       title: ' 日本語 / Path: *Bad? "Title" <x> | end. ',
@@ -52,7 +52,7 @@ test("buildWebEvidenceSource path does not depend on title", async () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  const second = await buildWebEvidenceSource(
+  const second = await buildWebRawSource(
     {
       url: "https://example.com/post",
       title: "",
@@ -62,7 +62,7 @@ test("buildWebEvidenceSource path does not depend on title", async () => {
   );
 
   assert.equal(first.path, second.path);
-  assert.match(first.path, /^\/Sources\/evidence\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(first.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
 });
 
 test("webSourcePathForUrl ignores hash fragments", async () => {
@@ -72,9 +72,9 @@ test("webSourcePathForUrl ignores hash fragments", async () => {
   );
 });
 
-test("buildWebEvidenceSource truncates oversized browser DOM text", async () => {
+test("buildWebRawSource truncates oversized browser DOM text", async () => {
   const text = `${"a".repeat(300_000)}   \nSHOULD_NOT_BE_SAVED`;
-  const raw = await buildWebEvidenceSource(
+  const raw = await buildWebRawSource(
     {
       url: "https://example.com/large",
       title: "Large Page",
@@ -101,9 +101,9 @@ test("buildWebEvidenceSource truncates oversized browser DOM text", async () => 
   });
 });
 
-test("buildWebEvidenceSource rejects empty page text", async () => {
+test("buildWebRawSource rejects empty page text", async () => {
   await assert.rejects(
-    () => buildWebEvidenceSource({ url: "https://example.com/", title: "Empty", text: "  " }),
+    () => buildWebRawSource({ url: "https://example.com/", title: "Empty", text: "  " }),
     /page text is empty/
   );
 });

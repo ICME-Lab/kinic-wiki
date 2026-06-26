@@ -7,13 +7,13 @@ use tempfile::tempdir;
 use vfs_cli::connection::ResolvedConnection;
 use vfs_client::VfsApi;
 use vfs_types::{
-    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseProfile, DatabaseRole,
-    DatabaseStatus, DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest,
-    EditNodeResult, ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest,
-    FetchUpdatesResponse, GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest,
-    MkdirNodeResult, MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult,
-    Node, NodeEntry, NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest,
-    SearchNodesRequest, Status, WriteNodeRequest, WriteNodeResult,
+    AppendNodeRequest, CyclesBillingConfig, CyclesTopUpConfig, DatabaseRole, DatabaseStatus,
+    DatabaseSummary, DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult,
+    ExportSnapshotRequest, ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse,
+    GlobNodeHit, GlobNodesRequest, ListNodesRequest, MkdirNodeRequest, MkdirNodeResult,
+    MoveNodeRequest, MoveNodeResult, MultiEditNodeRequest, MultiEditNodeResult, Node, NodeEntry,
+    NodeKind, NodeMutationAck, SearchNodeHit, SearchNodePathsRequest, SearchNodesRequest, Status,
+    WriteNodeRequest, WriteNodeResult,
 };
 
 #[derive(Default)]
@@ -84,7 +84,6 @@ impl VfsApi for MockClient {
         Ok(vec![DatabaseSummary {
             database_id: "default".to_string(),
             name: "Default".to_string(),
-            profile: DatabaseProfile::Workspace,
             status: DatabaseStatus::Active,
             role: DatabaseRole::Owner,
             logical_size_bytes: 0,
@@ -303,8 +302,8 @@ async fn write_node_accepts_canonical_source_paths_only() {
     let client = MockClient::default();
 
     for path in [
-        "/Sources/evidence/foo/source.md",
-        "/Sources/sessions/bar/bar.md",
+        "/Sources/foo/source.md",
+        "/Sources/sessions/claudecode/session-1.md",
     ] {
         run_command(
             &client,
@@ -344,11 +343,13 @@ async fn write_node_rejects_non_canonical_source_paths() {
     let client = MockClient::default();
 
     for path in [
-        "/Sources/evidence-foo/a/a.md",
-        "/Sources/evidence/x/y/y.md",
-        "/Sources/evidence/x/x.txt",
-        "/Sources/evidence/x-/y.md",
-        "/Sources/evidence/x/",
+        "/Sources-foo/a/a.md",
+        "/Sources/x/y/y.md",
+        "/Sources/x/x.txt",
+        "/Sources/x-/y.md",
+        "/Sources/x/",
+        "/Sources/raw/source.md",
+        "/Sources/ingest-requests/source.md",
     ] {
         let error = run_command(
             &client,
@@ -385,7 +386,7 @@ async fn write_node_rejects_non_canonical_source_paths() {
 async fn move_node_rejects_non_canonical_source_target() {
     let client = MockClient {
         nodes: vec![Node {
-            path: "/Sources/evidence/web/abc.md".to_string(),
+            path: "/Sources/web/abc.md".to_string(),
             kind: NodeKind::Source,
             content: "source".to_string(),
             created_at: 1,
@@ -408,8 +409,8 @@ async fn move_node_rejects_non_canonical_source_target() {
                 allow_non_ii_identity: false,
             },
             command: Command::MoveNode {
-                from_path: "/Sources/evidence/web/abc.md".to_string(),
-                to_path: "/Sources/evidence/web/wrong.txt".to_string(),
+                from_path: "/Sources/web/abc.md".to_string(),
+                to_path: "/Sources/web/wrong.txt".to_string(),
                 expected_etag: Some("etag-source".to_string()),
                 overwrite: false,
                 json: false,
@@ -429,7 +430,7 @@ async fn delete_node_autofills_folder_index_etag() {
     let client = MockClient {
         nodes: vec![
             Node {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 kind: NodeKind::Folder,
                 content: String::new(),
                 created_at: 1,
@@ -438,7 +439,7 @@ async fn delete_node_autofills_folder_index_etag() {
                 metadata_json: "{}".to_string(),
             },
             Node {
-                path: "/Wiki/topic/index.md".to_string(),
+                path: "/Knowledge/topic/index.md".to_string(),
                 kind: NodeKind::File,
                 content: "# Topic".to_string(),
                 created_at: 1,
@@ -462,7 +463,7 @@ async fn delete_node_autofills_folder_index_etag() {
                 allow_non_ii_identity: false,
             },
             command: Command::DeleteNode {
-                path: "/Wiki/topic".to_string(),
+                path: "/Knowledge/topic".to_string(),
                 expected_etag: Some("etag-folder".to_string()),
                 expected_folder_index_etag: None,
                 json: true,
@@ -475,7 +476,7 @@ async fn delete_node_autofills_folder_index_etag() {
 
     let deletes = client.deletes.lock().expect("deletes should lock");
     assert_eq!(deletes.len(), 1);
-    assert_eq!(deletes[0].path, "/Wiki/topic");
+    assert_eq!(deletes[0].path, "/Knowledge/topic");
     assert_eq!(deletes[0].expected_etag.as_deref(), Some("etag-folder"));
     assert_eq!(
         deletes[0].expected_folder_index_etag.as_deref(),
@@ -538,7 +539,7 @@ async fn purge_url_ingest_requires_force_for_wide_target_delete() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
                 force_target_prefix: None,
                 json: true,
@@ -574,9 +575,9 @@ async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags()
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
-                force_target_prefix: Some("/Wiki/conversations/web-1".to_string()),
+                force_target_prefix: Some("/Knowledge/conversations/web-1".to_string()),
                 json: true,
             },
         },
@@ -591,17 +592,20 @@ async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags()
         .map(|request| (request.path.as_str(), request.expected_etag.as_deref()))
         .collect::<Vec<_>>();
     assert!(deleted.contains(&("/Sources/ingest-requests/r1.md", Some("etag-request"))));
-    assert!(deleted.contains(&("/Sources/evidence/web/1.md", Some("etag-source"))));
-    assert!(deleted.contains(&("/Wiki/conversations/web-1/facts.md", Some("etag-facts"))));
-    assert!(deleted.contains(&("/Wiki/conversations/web-1", Some("etag-folder"))));
+    assert!(deleted.contains(&("/Sources/web/1.md", Some("etag-source"))));
+    assert!(deleted.contains(&(
+        "/Knowledge/conversations/web-1/facts.md",
+        Some("etag-facts")
+    )));
+    assert!(deleted.contains(&("/Knowledge/conversations/web-1", Some("etag-folder"))));
     assert!(
         !deleted
             .iter()
-            .any(|(path, _)| *path == "/Wiki/conversations/web-1/index.md")
+            .any(|(path, _)| *path == "/Knowledge/conversations/web-1/index.md")
     );
     let folder_delete = deletes
         .iter()
-        .find(|request| request.path == "/Wiki/conversations/web-1")
+        .find(|request| request.path == "/Knowledge/conversations/web-1")
         .expect("folder delete should dispatch");
     assert_eq!(
         folder_delete.expected_folder_index_etag.as_deref(),
@@ -612,10 +616,10 @@ async fn purge_url_ingest_deletes_request_source_and_generated_tree_with_etags()
 #[tokio::test]
 async fn purge_url_ingest_deletes_index_only_folder_with_folder_index_etag() {
     let mut nodes = url_ingest_nodes();
-    nodes.retain(|node| node.path != "/Wiki/conversations/web-1/facts.md");
+    nodes.retain(|node| node.path != "/Knowledge/conversations/web-1/facts.md");
     let index = nodes
         .iter_mut()
-        .find(|node| node.path == "/Wiki/conversations/web-1/index.md")
+        .find(|node| node.path == "/Knowledge/conversations/web-1/index.md")
         .expect("index node should exist");
     index.etag = "etag-index-only".to_string();
     let client = MockClient {
@@ -636,9 +640,9 @@ async fn purge_url_ingest_deletes_index_only_folder_with_folder_index_etag() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
-                force_target_prefix: Some("/Wiki/conversations/web-1".to_string()),
+                force_target_prefix: Some("/Knowledge/conversations/web-1".to_string()),
                 json: true,
             },
         },
@@ -651,11 +655,11 @@ async fn purge_url_ingest_deletes_index_only_folder_with_folder_index_etag() {
     assert!(
         !deletes
             .iter()
-            .any(|request| request.path == "/Wiki/conversations/web-1/index.md")
+            .any(|request| request.path == "/Knowledge/conversations/web-1/index.md")
     );
     let folder_delete = deletes
         .iter()
-        .find(|request| request.path == "/Wiki/conversations/web-1")
+        .find(|request| request.path == "/Knowledge/conversations/web-1")
         .expect("folder delete should dispatch");
     assert_eq!(
         folder_delete.expected_folder_index_etag.as_deref(),
@@ -668,11 +672,11 @@ async fn purge_url_ingest_rejects_unsafe_target_paths() {
     for target_path in [
         "",
         "/",
-        "/Wiki",
+        "/Knowledge",
         "/Sources",
-        "/Wiki/conversations",
-        "/Wiki/sources/web-1",
-        "/Wiki/conversations-web-1",
+        "/Knowledge/conversations",
+        "/Knowledge/sources/web-1",
+        "/Knowledge/conversations-web-1",
     ] {
         let client = MockClient {
             nodes: url_ingest_nodes_with_target(target_path),
@@ -717,7 +721,7 @@ async fn purge_url_ingest_rejects_unsafe_target_paths() {
 async fn purge_url_ingest_rejects_prefix_bleed_from_list_nodes() {
     let mut nodes = url_ingest_nodes();
     nodes.push(Node {
-        path: "/Wiki/conversations/web-1-copy/secret.md".to_string(),
+        path: "/Knowledge/conversations/web-1-copy/secret.md".to_string(),
         kind: NodeKind::File,
         content: "# Secret".to_string(),
         created_at: 1,
@@ -802,8 +806,8 @@ async fn purge_url_ingest_rejects_noncanonical_request_source_path() {
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
-        "source_path: /Sources/evidence/../evil.md",
-        "target_path: /Wiki/conversations/web-1",
+        "source_path: /Sources/../evil.md",
+        "target_path: /Knowledge/conversations/web-1",
         "---",
         "",
     ]
@@ -844,7 +848,7 @@ async fn purge_url_ingest_rejects_noncanonical_request_source_path() {
 async fn purge_url_ingest_returns_error_when_delete_fails() {
     let client = MockClient {
         nodes: url_ingest_nodes(),
-        delete_fail_paths: HashSet::from(["/Sources/evidence/web/1.md".to_string()]),
+        delete_fail_paths: HashSet::from(["/Sources/web/1.md".to_string()]),
         ..Default::default()
     };
 
@@ -861,9 +865,9 @@ async fn purge_url_ingest_returns_error_when_delete_fails() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
-                force_target_prefix: Some("/Wiki/conversations/web-1".to_string()),
+                force_target_prefix: Some("/Knowledge/conversations/web-1".to_string()),
                 json: true,
             },
         },
@@ -885,7 +889,7 @@ async fn purge_url_ingest_returns_error_when_delete_fails() {
 async fn purge_url_ingest_source_path_rejects_non_source_nodes() {
     let client = MockClient {
         nodes: vec![Node {
-            path: "/Wiki/foo.md".to_string(),
+            path: "/Knowledge/foo.md".to_string(),
             kind: NodeKind::File,
             content: "# Foo".to_string(),
             created_at: 1,
@@ -909,7 +913,7 @@ async fn purge_url_ingest_source_path_rejects_non_source_nodes() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Wiki/foo.md".to_string()),
+                source_path: Some("/Knowledge/foo.md".to_string()),
                 yes: true,
                 force_target_prefix: None,
                 json: true,
@@ -930,11 +934,11 @@ async fn purge_url_ingest_source_path_rejects_non_source_nodes() {
 async fn purge_url_ingest_source_path_requires_matching_request() {
     let client = MockClient {
         nodes: vec![Node {
-            path: "/Sources/evidence/web/2.md".to_string(),
+            path: "/Sources/web/2.md".to_string(),
             kind: NodeKind::Source,
             content: [
                 "---",
-                "kind: kinic.evidence_web_source",
+                "kind: kinic.raw_web_source",
                 "schema_version: 1",
                 "---",
                 "",
@@ -961,7 +965,7 @@ async fn purge_url_ingest_source_path_requires_matching_request() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/2.md".to_string()),
+                source_path: Some("/Sources/web/2.md".to_string()),
                 yes: true,
                 force_target_prefix: None,
                 json: true,
@@ -970,7 +974,7 @@ async fn purge_url_ingest_source_path_requires_matching_request() {
         &test_connection(),
     )
     .await
-    .expect("orphan evidence source purge should report safely");
+    .expect("orphan raw source purge should report safely");
 
     let deletes = client.deletes.lock().expect("deletes should lock");
     assert!(deletes.is_empty());
@@ -985,7 +989,7 @@ async fn purge_url_ingest_source_path_requires_request_source_path() {
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
-        "target_path: /Wiki/conversations/web-1",
+        "target_path: /Knowledge/conversations/web-1",
         "---",
         "",
     ]
@@ -1008,7 +1012,7 @@ async fn purge_url_ingest_source_path_requires_request_source_path() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
                 force_target_prefix: None,
                 json: true,
@@ -1032,8 +1036,8 @@ async fn purge_url_ingest_source_path_requires_matching_request_source_path() {
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
-        "source_path: /Sources/evidence/other/other.md",
-        "target_path: /Wiki/conversations/web-1",
+        "source_path: /Sources/other/other.md",
+        "target_path: /Knowledge/conversations/web-1",
         "---",
         "",
     ]
@@ -1056,7 +1060,7 @@ async fn purge_url_ingest_source_path_requires_matching_request_source_path() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
                 force_target_prefix: None,
                 json: true,
@@ -1091,9 +1095,9 @@ async fn purge_url_ingest_source_path_uses_request_side_source_path() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
-                force_target_prefix: Some("/Wiki/conversations/web-1".to_string()),
+                force_target_prefix: Some("/Knowledge/conversations/web-1".to_string()),
                 json: true,
             },
         },
@@ -1111,21 +1115,21 @@ async fn purge_url_ingest_source_path_uses_request_side_source_path() {
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Sources/evidence/web/1.md")
+            .any(|request| request.path == "/Sources/web/1.md")
     );
     assert!(
         !deletes
             .iter()
-            .any(|request| request.path == "/Wiki/conversations/web-1/index.md")
+            .any(|request| request.path == "/Knowledge/conversations/web-1/index.md")
     );
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Wiki/conversations/web-1/facts.md")
+            .any(|request| request.path == "/Knowledge/conversations/web-1/facts.md")
     );
     let folder_delete = deletes
         .iter()
-        .find(|request| request.path == "/Wiki/conversations/web-1")
+        .find(|request| request.path == "/Knowledge/conversations/web-1")
         .expect("folder delete should dispatch");
     assert_eq!(
         folder_delete.expected_folder_index_etag.as_deref(),
@@ -1145,8 +1149,8 @@ async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
             "schema_version: 1",
             "status: completed",
             "url: https://example.com/page",
-            "source_path: /Sources/evidence/web/1.md",
-            "target_path: /Wiki/conversations/web-1-copy",
+            "source_path: /Sources/web/1.md",
+            "target_path: /Knowledge/conversations/web-1-copy",
             "---",
             "",
         ]
@@ -1174,9 +1178,9 @@ async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
             },
             command: Command::PurgeUrlIngest {
                 url: None,
-                source_path: Some("/Sources/evidence/web/1.md".to_string()),
+                source_path: Some("/Sources/web/1.md".to_string()),
                 yes: true,
-                force_target_prefix: Some("/Wiki/conversations/web-1".to_string()),
+                force_target_prefix: Some("/Knowledge/conversations/web-1".to_string()),
                 json: true,
             },
         },
@@ -1199,7 +1203,7 @@ async fn purge_url_ingest_source_path_deletes_all_matching_requests() {
     assert!(
         deletes
             .iter()
-            .any(|request| request.path == "/Sources/evidence/web/1.md")
+            .any(|request| request.path == "/Sources/web/1.md")
     );
 }
 
@@ -1214,8 +1218,8 @@ fn url_ingest_nodes() -> Vec<Node> {
                 "schema_version: 1",
                 "status: completed",
                 "url: https://example.com/page",
-                "source_path: /Sources/evidence/web/1.md",
-                "target_path: /Wiki/conversations/web-1",
+                "source_path: /Sources/web/1.md",
+                "target_path: /Knowledge/conversations/web-1",
                 "---",
                 "",
             ]
@@ -1226,11 +1230,11 @@ fn url_ingest_nodes() -> Vec<Node> {
             metadata_json: "{}".to_string(),
         },
         Node {
-            path: "/Sources/evidence/web/1.md".to_string(),
+            path: "/Sources/web/1.md".to_string(),
             kind: NodeKind::Source,
             content: [
                 "---",
-                "kind: kinic.evidence_web_source",
+                "kind: kinic.raw_web_source",
                 "schema_version: 1",
                 "---",
                 "",
@@ -1242,7 +1246,7 @@ fn url_ingest_nodes() -> Vec<Node> {
             metadata_json: "{}".to_string(),
         },
         Node {
-            path: "/Wiki/conversations/web-1".to_string(),
+            path: "/Knowledge/conversations/web-1".to_string(),
             kind: NodeKind::Folder,
             content: "".to_string(),
             created_at: 1,
@@ -1251,7 +1255,7 @@ fn url_ingest_nodes() -> Vec<Node> {
             metadata_json: "{}".to_string(),
         },
         Node {
-            path: "/Wiki/conversations/web-1/index.md".to_string(),
+            path: "/Knowledge/conversations/web-1/index.md".to_string(),
             kind: NodeKind::File,
             content: "# Index".to_string(),
             created_at: 1,
@@ -1260,7 +1264,7 @@ fn url_ingest_nodes() -> Vec<Node> {
             metadata_json: "{}".to_string(),
         },
         Node {
-            path: "/Wiki/conversations/web-1/facts.md".to_string(),
+            path: "/Knowledge/conversations/web-1/facts.md".to_string(),
             kind: NodeKind::File,
             content: "# Facts".to_string(),
             created_at: 1,
@@ -1279,7 +1283,7 @@ fn url_ingest_nodes_with_target(target_path: &str) -> Vec<Node> {
         "schema_version: 1",
         "status: completed",
         "url: https://example.com/page",
-        "source_path: /Sources/evidence/web/1.md",
+        "source_path: /Sources/web/1.md",
         &format!(
             "target_path: {}",
             serde_json::to_string(target_path).expect("target should encode")

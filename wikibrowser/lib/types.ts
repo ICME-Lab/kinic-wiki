@@ -111,14 +111,12 @@ export type CanisterHealth = {
 };
 
 export type DatabaseRole = "reader" | "writer" | "owner";
-export type DatabaseProfile = "workspace" | "memory" | "knowledge" | "skill" | "session";
 export type DatabaseStatus = "pending" | "active" | "restoring" | "archiving" | "archived" | "deleted";
 
 export type DatabaseSummary = {
   databaseId: string;
   name: string;
   role: DatabaseRole;
-  profile: DatabaseProfile;
   status: DatabaseStatus;
   logicalSizeBytes: string;
   cyclesBalance: string;
@@ -371,7 +369,7 @@ export type NodeContext = {
   outgoingLinks: LinkEdge[];
 };
 
-export type KnowledgeEvidenceRef = {
+export type SourceEvidenceRef = {
   sourcePath: string;
   viaPath: string;
   rawHref: string;
@@ -381,18 +379,18 @@ export type KnowledgeEvidenceRef = {
   sourceContentHash: string | null;
 };
 
-export type KnowledgeEvidence = {
+export type SourceEvidence = {
   nodePath: string;
-  refs: KnowledgeEvidenceRef[];
+  refs: SourceEvidenceRef[];
 };
 
-export type MemoryRecall = {
+export type QueryContext = {
   namespace: string;
   task: string;
   searchHits: SearchNodeHit[];
   nodes: NodeContext[];
   graphLinks: LinkEdge[];
-  evidence: KnowledgeEvidence[];
+  evidence: SourceEvidence[];
   truncated: boolean;
 };
 

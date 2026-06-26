@@ -1,11 +1,9 @@
 // Where: crates/vfs_cli_app/src/hermes.rs
 // What: Local Hermes setup, status, pending replay, and projection sync.
-// Why: Hermes owns skill evolution LLM calls while Kinic owns registry state.
+// Why: Hermes owns local projection while Kinic owns registry state.
 use crate::cli::HermesCommand;
 use crate::plugin_payload::{HERMES_PLUGIN_FILES, RUNTIME_FILES, replace_dir_with_payload};
-use crate::skill_registry::{
-    SkillRunEvidenceInput, create_ready_evolution_jobs, export_skill, record_skill_run_evidence,
-};
+use crate::skill_registry::{SkillRunEvidenceInput, export_skill, record_skill_run_evidence};
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use serde_json::json;
@@ -16,9 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use vfs_client::VfsApi;
 use vfs_types::{ListNodesRequest, NodeEntryKind};
 
-const PRIVATE_SKILL_ROOT: &str = "/Wiki/skills";
-const JOB_ROOT: &str = "/Wiki/skill-evolution-jobs";
-
+const PRIVATE_SKILL_ROOT: &str = "/Skills";
 #[derive(Debug, Clone)]
 struct HermesPaths {
     kinic_home: PathBuf,
@@ -47,7 +43,7 @@ pub(crate) struct ProjectionSync {
 pub fn run_hermes_local_status(json_output: bool) -> Result<()> {
     let paths = HermesPaths::resolve()?;
     let local = local_status(&paths)?;
-    print_result(json!({ "local": local, "jobs": null }), json_output)
+    print_result(json!({ "local": local }), json_output)
 }
 
 pub async fn run_hermes_command(
@@ -119,12 +115,8 @@ async fn hermes_status(
 ) -> Result<serde_json::Value> {
     let paths = HermesPaths::resolve()?;
     let local = local_status(&paths)?;
-    let jobs = if let Some(database_id) = database_id {
-        Some(job_counts(client, database_id).await?)
-    } else {
-        None
-    };
-    Ok(json!({ "local": local, "jobs": jobs }))
+    let _ = (client, database_id);
+    Ok(json!({ "local": local }))
 }
 
 async fn flush_pending_runs(client: &impl VfsApi, database_id: &str) -> Result<serde_json::Value> {
@@ -171,12 +163,7 @@ async fn flush_pending_runs(client: &impl VfsApi, database_id: &str) -> Result<s
             }
         }
     }
-    let evolution_jobs = if flushed.is_empty() {
-        None
-    } else {
-        Some(create_ready_evolution_jobs(client, database_id, 5, 24).await?)
-    };
-    Ok(json!({ "flushed": flushed, "failed": failed, "evolution_jobs": evolution_jobs }))
+    Ok(json!({ "flushed": flushed, "failed": failed }))
 }
 
 fn hermes_shadows() -> Result<serde_json::Value> {
@@ -488,7 +475,6 @@ fn write_setup_config(paths: &HermesPaths, database_id: &str) -> Result<()> {
         "database_id": database_id,
         "plugin_dir": paths.plugin_dir,
         "projection_dir": paths.projection_dir,
-        "hermes_command": "/kinic_evolve_job",
     }))?;
     fs::write(&paths.setup_config, content)
         .with_context(|| format!("failed to write {}", paths.setup_config.display()))?;
@@ -507,45 +493,6 @@ fn local_status(paths: &HermesPaths) -> Result<HermesLocalStatus> {
         projected_skills: projected_skill_count(&paths.projection_dir)?,
         pending_runs: pending_json_files(&paths.pending_dir)?.len(),
     })
-}
-
-async fn job_counts(client: &impl VfsApi, database_id: &str) -> Result<serde_json::Value> {
-    let mut queued = 0;
-    let mut running = 0;
-    let mut done = 0;
-    let mut conflict = 0;
-    let mut failed = 0;
-    for entry in client
-        .list_nodes(ListNodesRequest {
-            database_id: database_id.to_string(),
-            prefix: JOB_ROOT.to_string(),
-            recursive: true,
-        })
-        .await?
-    {
-        if entry.kind != NodeEntryKind::File {
-            continue;
-        }
-        let Some(node) = client.read_node(database_id, &entry.path).await? else {
-            continue;
-        };
-        match frontmatter_scalar(&node.content, "status").as_deref() {
-            Some("queued") => queued += 1,
-            Some("running") => running += 1,
-            Some("done") => done += 1,
-            Some("conflict") => conflict += 1,
-            Some("failed") => failed += 1,
-            _ => {}
-        }
-    }
-    Ok(json!({
-        "queued": queued,
-        "running": running,
-        "done": done,
-        "conflict": conflict,
-        "failed": failed,
-        "active": queued + running,
-    }))
 }
 
 impl HermesPaths {
@@ -761,14 +708,11 @@ mod tests {
     #[test]
     fn only_direct_manifest_paths_select_skill_id() {
         assert_eq!(
-            skill_id_from_manifest_path("/Wiki/skills", "/Wiki/skills/legal-review/manifest.md"),
+            skill_id_from_manifest_path("/Skills", "/Skills/legal-review/manifest.md"),
             Some("legal-review".to_string())
         );
         assert_eq!(
-            skill_id_from_manifest_path(
-                "/Wiki/skills",
-                "/Wiki/skills/legal-review/versions/v1/manifest.md"
-            ),
+            skill_id_from_manifest_path("/Skills", "/Skills/legal-review/versions/v1/manifest.md"),
             None
         );
     }
@@ -816,7 +760,7 @@ mod tests {
         assert!(
             paths
                 .plugin_dir
-                .join("kinic_agent_runtime/evolve.py")
+                .join("kinic_agent_runtime/evidence.py")
                 .is_file()
         );
         assert!(!paths.plugin_dir.join("agent-runtime").exists());

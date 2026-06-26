@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use vfs_client::{CanisterVfsClient, VfsApi};
 use vfs_types::{
-    DatabaseCyclesPurchaseRequest, DatabaseProfile, DatabaseRestoreChunkRequest, DatabaseStatus,
-    MkdirNodeRequest, NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode,
-    WriteNodeRequest, kinic_base_units_per_token,
+    DatabaseCyclesPurchaseRequest, DatabaseRestoreChunkRequest, DatabaseStatus, MkdirNodeRequest,
+    NodeKind, OutgoingLinksRequest, SearchNodesRequest, SearchPreviewMode, WriteNodeRequest,
+    kinic_base_units_per_token,
 };
 
-const PRIMARY_SOURCE_PATH: &str = "/Sources/evidence/smoke/smoke.md";
-const PRIMARY_WIKI_PATH: &str = "/Wiki/smoke.md";
+const PRIMARY_SOURCE_PATH: &str = "/Sources/smoke/smoke.md";
+const PRIMARY_WIKI_PATH: &str = "/Knowledge/smoke.md";
 const PRIMARY_CONTENT_MARKER: &str = "alpha canister smoke";
 const PRIMARY_QUERY: &str = "alpha canister";
 const CJK_CONTENT_MARKER: &str = "検索精度改善";
@@ -116,9 +116,12 @@ fn parse_args() -> Result<SmokeArgs> {
     })
 }
 
-async fn assert_store_manifest(client: &CanisterVfsClient, database_id: &str) -> Result<()> {
-    let manifest = client.store_manifest(database_id).await?;
-    if manifest.recommended_entrypoint != "memory_recall" {
+async fn assert_memory_manifest(client: &CanisterVfsClient, database_id: &str) -> Result<()> {
+    let manifest = client.memory_manifest(database_id).await?;
+    if manifest.write_policy != "stores_read_only" {
+        return Err(anyhow!("unexpected store manifest write policy"));
+    }
+    if manifest.recommended_entrypoint != "query_context" {
         return Err(anyhow!("unexpected store manifest entrypoint"));
     }
     Ok(())
@@ -130,17 +133,14 @@ async fn run_create_restore_smoke(
     chunk_size: u32,
     cycle_purchase_e8s: u64,
 ) -> Result<SmokeState> {
-    let database_id = client
-        .create_database("Archive smoke", DatabaseProfile::Workspace)
-        .await?
-        .database_id;
-    assert_store_manifest(client, &database_id).await?;
+    let database_id = client.create_database("Archive smoke").await?.database_id;
     let isolation_database_id = client
-        .create_database("Archive smoke isolation", DatabaseProfile::Workspace)
+        .create_database("Archive smoke isolation")
         .await?
         .database_id;
     activate_smoke_database(client, &database_id, cycle_purchase_e8s).await?;
     activate_smoke_database(client, &isolation_database_id, cycle_purchase_e8s).await?;
+    assert_memory_manifest(client, &database_id).await?;
     ensure_parent_folders(client, &database_id, PRIMARY_SOURCE_PATH).await?;
     ensure_parent_folders(client, &isolation_database_id, PRIMARY_SOURCE_PATH).await?;
     client
@@ -358,7 +358,7 @@ async fn assert_primary_database_restored(
         .search_nodes(SearchNodesRequest {
             database_id: state.database_id.clone(),
             query_text: state.query_text.clone(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -371,7 +371,7 @@ async fn assert_primary_database_restored(
         .search_nodes(SearchNodesRequest {
             database_id: state.database_id.clone(),
             query_text: state.cjk_query_text.clone(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -431,7 +431,7 @@ async fn assert_database_isolation(
         .search_nodes(SearchNodesRequest {
             database_id: database_id.to_string(),
             query_text: ISOLATION_CONTENT_MARKER.to_string(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -444,7 +444,7 @@ async fn assert_database_isolation(
         .search_nodes(SearchNodesRequest {
             database_id: isolation_database_id.to_string(),
             query_text: PRIMARY_QUERY.to_string(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })

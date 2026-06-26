@@ -22,9 +22,9 @@ export function workerConfig(): WorkerConfig {
     canisterId: "xis3j-paaaa-aaaai-axumq-cai",
     icHost: "https://icp0.io",
     model: "deepseek-v4-flash",
-    targetRoot: "/Wiki/conversations",
-    sourcePrefix: "/Sources/evidence",
-    contextPrefix: "/Wiki",
+    targetRoot: "/Knowledge/conversations",
+    sourcePrefix: "/Sources",
+    contextPrefix: "/",
     maxRawChars: 120_000,
     maxFetchedBytes: 5_000_000,
     maxSourceChars: 300_000,
@@ -40,9 +40,9 @@ export function testEnv(queue: TestQueue): RuntimeEnv {
     KINIC_WIKI_CANISTER_ID: "xis3j-paaaa-aaaai-axumq-cai",
     KINIC_WIKI_IC_HOST: "https://icp0.io",
     KINIC_WIKI_WORKER_MODEL: "deepseek-v4-flash",
-    KINIC_WIKI_WORKER_TARGET_ROOT: "/Wiki/conversations",
-    KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources/evidence",
-    KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/Wiki",
+    KINIC_WIKI_WORKER_TARGET_ROOT: "/Knowledge/conversations",
+    KINIC_WIKI_WORKER_SOURCE_PREFIX: "/Sources",
+    KINIC_WIKI_WORKER_CONTEXT_PREFIX: "/",
     DEEPSEEK_API_KEY: "deepseek-key",
     KINIC_WIKI_WORKER_TOKEN: "worker-token",
     KINIC_WIKI_WORKER_IDENTITY_PEM: "identity-pem"
@@ -92,13 +92,14 @@ export class TestVfsClient implements VfsClient {
   }
 
   async readNode(_databaseId: string, path: string): Promise<WikiNode | null> {
-    if (path.startsWith("/Sources/evidence/")) {
-      if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
-      else this.sourceReadsBeforeWrite += 1;
-      return this.existingSource;
+    if (path.startsWith("/Sources/ingest-requests/")) {
+      this.requestReads += 1;
+      return this.requestNode;
     }
-    this.requestReads += 1;
-    return this.requestNode;
+    if (!path.startsWith("/Sources/")) return null;
+    if (this.sourceWrites > 0) this.sourceReadsAfterWrite += 1;
+    else this.sourceReadsBeforeWrite += 1;
+    return this.existingSource;
   }
 
   async writeNode(request: WriteNodeRequest): Promise<WriteNodeAck> {
@@ -183,13 +184,13 @@ class TestD1Statement implements D1PreparedStatement {
 
 function completedJobFromQueue(values: D1Value[]): unknown {
   const sourcePath = values[1];
-  if (sourcePath !== "/Sources/evidence/existing/existing.md") return null;
+  if (sourcePath !== "/Sources/existing/existing.md") return null;
   return {
     database_id: values[0],
     source_path: sourcePath,
     source_etag: "etag-existing-source",
     status: "completed",
-    target_path: "/Wiki/conversations/a.md",
+    target_path: "/Knowledge/conversations/a.md",
     attempts: 1,
     last_error: null,
     updated_at: "2026-05-12T00:00:00.000Z"

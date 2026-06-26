@@ -8,9 +8,9 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 
 1. Decide whether the inspection target is local, remote, or both.
 2. For local structure checks, inspect the relevant Markdown files directly. `kinic-vfs-cli` no longer provides local mirror lint.
-3. For remote checks, read `/Wiki/index.md` first with `read-node-context`, then inspect directly linked or role-matched notes before broad search.
+3. For remote checks, read `/Knowledge/index.md` first with `read-node-context`, then inspect directly linked or role-matched notes before broad search.
 4. Use `search-remote`, `search-path-remote`, `list-nodes`, `glob-nodes`, and link commands only to confirm or expand findings after direct note inspection.
-   - For wiki-only inspection, pass `--prefix /Wiki` or `path: "/Wiki"` unless evidence source material is explicitly in scope.
+   - For wiki-only inspection, pass `--prefix /Knowledge` or `path: "/Knowledge"` unless raw source material is explicitly in scope.
 5. Group findings into:
    - duplication
    - isolation
@@ -27,8 +27,8 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 ## Working Rules
 
 - Current repo-local note roles live in [docs/STORE_API.md](../../docs/STORE_API.md). Use it for concrete note names, role mapping, and trust model.
-- When `/Wiki/index.md` is stale, recommend a focused root catalog edit first. Recommend `rebuild-index` only for broad repair.
-- Treat `/Wiki/index.md` as the only required catalog. Do not flag missing `<scope>/index.md`, `overview.md`, `schema.md`, `log.md`, or `topics/*.md` unless the user explicitly requested that scoped structure.
+- When `/Knowledge/index.md` is stale, recommend a focused root catalog edit first. Recommend `rebuild-index` only for broad repair.
+- Treat `/Knowledge/index.md` as the only required catalog. Do not flag missing `<scope>/index.md`, `overview.md`, `schema.md`, `log.md`, or `topics/*.md` unless the user explicitly requested that scoped structure.
 - Flag folders, scoped indexes, and scaffold pages that were created without a clear user request or retrieval need.
 - Recommend `rebuild-scope-index --scope <scope>` only when the user explicitly wants a scope landing page. Do not require rebuilds for routine small edits.
 - Keep local lint separate from remote content review.
@@ -42,7 +42,7 @@ Inspect local and remote wiki health, report concrete findings, and propose the 
 - Flag future / pending lines inside `facts.md`.
 - Flag recap prose inside `facts.md`.
 - Flag normalized or paraphrased `facts.md` values when the settled source span is materially more exact, for example `1/13` instead of `4/52`, `color` instead of `colour`, or shortened money/date formats.
-- Flag long code blocks, long diffs, generated docs, or schema dumps copied into wiki notes.
+- Flag long code blocks, long diffs, generated docs, or schema dumps copied into knowledge notes.
 - Flag implementation snippets inside `facts.md`; code notes should point to repo source paths and record decisions, not copy code bodies.
 - Flag `summary.md` pages that are mostly README or generated-doc copies instead of recap.
 - Flag code notes that list file paths but omit the decision, rationale, verification, or follow-up that makes the note useful.
@@ -69,7 +69,7 @@ Optionally include:
 
 - candidate page merges
 - candidate missing links
-- recommendation to repair `/Wiki/index.md`, usually by focused edit; use `rebuild-index` only for broad repair
+- recommendation to repair `/Knowledge/index.md`, usually by focused edit; use `rebuild-index` only for broad repair
 - candidate canonicality repairs such as:
   - move exact settled values into the canonical fact note
   - move current value into `facts.md`

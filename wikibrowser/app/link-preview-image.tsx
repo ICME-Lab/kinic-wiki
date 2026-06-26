@@ -20,7 +20,7 @@ export async function renderLinkPreviewImage(input: LinkPreviewImageInput = {}) 
   const accent = input.accent ?? "Canister database dashboard";
   const title = input.title ?? "Browse, search, edit, and manage wiki databases.";
   const description = input.description ?? "A focused browser and operator UI for Kinic Wiki canisters.";
-  const tags = input.tags ?? ["/Wiki", "/Sources", "Access", "Query"];
+  const tags = input.tags ?? ["/Knowledge", "/Sources", "Access", "Query"];
   return new ImageResponse(
     (
       <div

@@ -1,12 +1,12 @@
-// Where: extensions/wiki-clipper/tests/evidence-source.test.mjs
-// What: Unit tests for evidence source rendering.
+// Where: extensions/wiki-clipper/tests/raw-source.test.mjs
+// What: Unit tests for raw source rendering.
 // Why: Canister source writes must use canonical paths and stable markdown.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildEvidenceSource } from "../src/evidence-source.js";
+import { buildRawSource } from "../src/raw-source.js";
 
-test("buildEvidenceSource emits canonical source path and metadata", () => {
-  const raw = buildEvidenceSource(
+test("buildRawSource emits canonical source path and metadata", () => {
+  const raw = buildRawSource(
     {
       provider: "chatgpt",
       conversationTitle: "Project Chat",
@@ -20,8 +20,8 @@ test("buildEvidenceSource emits canonical source path and metadata", () => {
     new Date("2026-05-01T00:00:00.000Z")
   );
 
-  assert.equal(raw.path, "/Sources/evidence/chatgpt/abc.md");
-  assert.match(raw.content, /# Evidence Conversation Source/);
+  assert.equal(raw.path, "/Sources/chatgpt/abc.md");
+  assert.match(raw.content, /# Raw Conversation Source/);
   assert.match(raw.content, /- message_count: 2/);
   assert.match(raw.content, /- truncated: false/);
   assert.match(raw.content, /- original_chars: 73/);
@@ -36,15 +36,15 @@ test("buildEvidenceSource emits canonical source path and metadata", () => {
   assert.equal(metadata.saved_chars, 73);
 });
 
-test("buildEvidenceSource keeps the same path for the same ChatGPT conversation", () => {
-  const first = buildEvidenceSource({
+test("buildRawSource keeps the same path for the same ChatGPT conversation", () => {
+  const first = buildRawSource({
     provider: "chatgpt",
     conversationTitle: "Project Chat",
     url: "https://chatgpt.com/c/stable-id",
     capturedAt: "2026-05-01T00:00:00.000Z",
     messages: [{ role: "user", content: "Hello" }]
   });
-  const second = buildEvidenceSource({
+  const second = buildRawSource({
     provider: "chatgpt",
     conversationTitle: "Project Chat",
     url: "https://chatgpt.com/c/stable-id",
@@ -55,8 +55,8 @@ test("buildEvidenceSource keeps the same path for the same ChatGPT conversation"
   assert.equal(first.path, second.path);
 });
 
-test("buildEvidenceSource keeps a stable path for Claude conversations", () => {
-  const raw = buildEvidenceSource({
+test("buildRawSource keeps a stable path for Claude conversations", () => {
+  const raw = buildRawSource({
     provider: "claude",
     conversationTitle: "Claude Project",
     url: "https://claude.ai/chat/claude-abc",
@@ -64,13 +64,25 @@ test("buildEvidenceSource keeps a stable path for Claude conversations", () => {
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/evidence/claude/claude-abc.md");
+  assert.equal(raw.path, "/Sources/claude/claude-abc.md");
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, "claude-abc");
 });
 
-test("buildEvidenceSource truncates long conversation ids to a canonical source filename", () => {
+test("buildRawSource falls back from reserved providers", () => {
+  const raw = buildRawSource({
+    provider: "raw",
+    conversationTitle: "Reserved Provider",
+    url: "https://example.com/c/reserved",
+    capturedAt: "2026-05-01T00:00:00.000Z",
+    messages: [{ role: "user", content: "Hello" }]
+  });
+
+  assert.match(raw.path, /^\/Sources\/conversation\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
+});
+
+test("buildRawSource truncates long conversation ids to a canonical source filename", () => {
   const longId = `conversation-${"a".repeat(220)}`;
-  const raw = buildEvidenceSource({
+  const raw = buildRawSource({
     provider: "chatgpt",
     conversationTitle: "Long ID",
     url: `https://chatgpt.com/c/${longId}`,
@@ -79,13 +91,13 @@ test("buildEvidenceSource truncates long conversation ids to a canonical source 
   });
   const fileName = raw.path.split("/").at(-1);
 
-  assert.match(raw.path, /^\/Sources\/evidence\/chatgpt\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
+  assert.match(raw.path, /^\/Sources\/chatgpt\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.md$/);
   assert.equal(fileName.length <= 131, true);
   assert.equal(JSON.parse(raw.metadataJson).conversation_id, longId);
 });
 
-test("buildEvidenceSource removes dotdot from conversation source filenames", () => {
-  const raw = buildEvidenceSource({
+test("buildRawSource removes dotdot from conversation source filenames", () => {
+  const raw = buildRawSource({
     provider: "chatgpt",
     conversationTitle: "Dotdot",
     url: "https://chatgpt.com/c/a..b",
@@ -93,13 +105,13 @@ test("buildEvidenceSource removes dotdot from conversation source filenames", ()
     messages: [{ role: "user", content: "Hello" }]
   });
 
-  assert.equal(raw.path, "/Sources/evidence/chatgpt/a-b.md");
+  assert.equal(raw.path, "/Sources/chatgpt/a-b.md");
 });
 
-test("buildEvidenceSource rejects empty captures", () => {
+test("buildRawSource rejects empty captures", () => {
   assert.throws(
     () =>
-      buildEvidenceSource({
+      buildRawSource({
         provider: "chatgpt",
         conversationTitle: "Empty",
         url: "https://chatgpt.com/c/empty",
@@ -110,8 +122,8 @@ test("buildEvidenceSource rejects empty captures", () => {
   );
 });
 
-test("buildEvidenceSource escapes one-line markdown metadata values", () => {
-  const raw = buildEvidenceSource({
+test("buildRawSource escapes one-line markdown metadata values", () => {
+  const raw = buildRawSource({
     provider: "chatgpt",
     conversationTitle: "Title\n- message_count: 999 [link](https://evil.test)",
     url: "https://chatgpt.com/c/abc?x=[link](https://evil.test)",
@@ -126,8 +138,8 @@ test("buildEvidenceSource escapes one-line markdown metadata values", () => {
   assert.doesNotMatch(raw.content, /\n- conversation_title: Title\n- message_count: 999/);
 });
 
-test("buildEvidenceSource truncates oversized conversation source text", () => {
-  const raw = buildEvidenceSource({
+test("buildRawSource truncates oversized conversation source text", () => {
+  const raw = buildRawSource({
     provider: "chatgpt",
     conversationTitle: "Large",
     url: "https://chatgpt.com/c/large",

@@ -1,6 +1,6 @@
 ---
 name: kinic-wiki-ingest
-description: Kinic Wiki workflow skill for ingesting evidence source material into the current canister-backed wiki workflow.
+description: Kinic Wiki workflow skill for ingesting raw source material into the current canister-backed wiki workflow.
 ---
 
 # Kinic Wiki Ingest
@@ -8,18 +8,18 @@ description: Kinic Wiki workflow skill for ingesting evidence source material in
 Use this skill when the user wants to:
 
 - ingest local markdown, notes, docs, or folders into the wiki
-- normalize evidence source material before wiki synthesis
-- persist selected source material under `/Sources/evidence/...`
-- update existing wiki pages from new evidence
-- repair existing wiki pages only when the edit is part of source intake; otherwise use `kinic-wiki-edit`
+- normalize raw source material before wiki synthesis
+- persist selected source material under `/Sources/...`
+- update existing knowledge pages from new evidence
+- repair existing knowledge pages only when the edit is part of source intake; otherwise use `kinic-wiki-edit`
 - initialize or repair an explicit LLM Wiki scope when the user asks for scoped structure
-- generate conversation wiki pages from evidence sources, preferring one review-ready page unless the source clearly needs a split
-- create review-ready wiki pages without pushing immediately
+- generate conversation knowledge pages from raw sources, preferring one review-ready page unless the source clearly needs a split
+- create review-ready knowledge pages without pushing immediately
 
 Do not use this skill for:
 
 - ad hoc question answering without source intake
-- health-only review of an existing wiki
+- health-only review of existing knowledge
 - hidden publish or push workflows
 - OKF Context Pack export after wiki structure exists; use `kinic-context-pack`
 - skill store package lifecycle work; use `kinic-skill-registry`
@@ -28,12 +28,12 @@ Do not use this skill for:
 Core rules:
 
 - Treat the canister wiki as the source of truth.
-- Organized wiki nodes live under `/Wiki/...`; evidence sources live under `/Sources/evidence/<provider>/<id>.md`.
+- Organized knowledge nodes live under `/Knowledge/...`; raw sources live under `/Sources/<provider>/<id>.md`.
 - Treat local Markdown as review or drafting aid unless the workflow explicitly writes it back through VFS commands.
 - Stop at review-ready unless the user explicitly asks for push. `review-ready` means edits and any existing or requested `log.md` updates are complete, but no push or publish step has run.
 - Keep source persistence separate from wiki synthesis.
-- Hand off to `kinic-context-pack` when the user asks to export a completed `/Wiki/...` scope for AI handoff.
-- For conversation sources, default to one generated wiki page rather than a fixed page scaffold.
+- Hand off to `kinic-context-pack` when the user asks to export a completed `/Knowledge/...` scope for AI handoff.
+- For conversation sources, default to one generated knowledge page rather than a fixed page scaffold.
 - Read current canonical notes before editing them.
 - Preserve settled exact fact spans in `facts.md` instead of paraphrasing or normalizing them away.
 - Do not rewrite exact values such as dates, money, fractions, spellings, product names, or role labels when a settled source span already exists.
