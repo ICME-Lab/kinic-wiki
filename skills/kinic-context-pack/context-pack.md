@@ -2,11 +2,11 @@
 
 ## Goal
 
-Export task-scoped `/Wiki/...` context into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied raw source bodies.
+Export task-scoped `/Knowledge/...` context into an OKF v0.1 markdown bundle that another AI can read, then verify that the bundle is structurally valid and does not contain copied referenced store bodies.
 
 ## Workflow
 
-1. Identify the `database_id`, task, and `/Wiki/...` namespace to query.
+1. Identify the `database_id`, task, and `/Knowledge/...` namespace to query.
 2. Export the task-scoped context with `context-pack export`.
 3. Verify the output directory with `context-pack verify`.
 4. Inspect the bundle with `context-pack inspect` when a summary or JSON handoff record is useful.
@@ -19,7 +19,7 @@ Export:
 ```bash
 kinic-vfs-cli --database-id <db> context-pack export \
   --task "review auth token refresh design" \
-  --namespace /Wiki/projects/acme \
+  --namespace /Knowledge/projects/acme \
   --out ./okf \
   --expires-at 2026-09-22T00:00:00Z \
   --trust-level team-approved \
@@ -69,19 +69,19 @@ Concept files:
 
 Directory meaning:
 
-- `facts/*.md`: settled fact concepts from fact-like wiki nodes
+- `facts/*.md`: settled fact concepts from fact-like knowledge nodes
 - `decisions/*.md`: decision concepts
 - `tasks/*.md`: task or plan concepts
 - `policies/*.md`: style, preference, and do-not-do concepts
-- `notes/*.md`: unclassified wiki nodes that are still normal OKF concepts
-- `references/*.md`: source reference concepts only; `kinic.source_path` must point under `/Sources/raw/...`, with `kinic.etag` and `kinic.content_hash`
+- `notes/*.md`: unclassified knowledge nodes that are still normal OKF concepts
+- `references/*.md`: store reference concepts only; `kinic.store` and `kinic.store_path` must identify a supported Kinic store path, with `kinic.etag` and `kinic.content_hash`
 
 ## Rules
 
-- Do not export from `/Sources/raw/...` as the namespace.
-- Do not copy raw source body text into `references/*.md`.
+- Do not export from `/Sources/...` as the namespace.
+- Do not copy referenced store body text into `references/*.md`.
 - Do not hand off a bundle with `truncated: true` unless the recipient explicitly accepts incomplete context.
-- Do not use `references/*.md` for ordinary wiki notes.
+- Do not use `references/*.md` for ordinary knowledge notes.
 - Do not treat a passed `inspect` summary as verification; run `verify`.
 - Do not use this skill to mutate the wiki.
 - If `verify` reports an expired `kinic.expires_at`, re-export from the source wiki instead of extending the local bundle by hand.
@@ -91,7 +91,7 @@ Directory meaning:
 For handoff, include:
 
 - bundle path
-- exported task and wiki namespace
+- exported task and knowledge namespace
 - verification result
 - inspect summary when requested
 - any verification failure that blocks AI handoff

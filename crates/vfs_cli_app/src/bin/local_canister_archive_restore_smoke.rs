@@ -13,8 +13,8 @@ use vfs_types::{
     kinic_base_units_per_token,
 };
 
-const PRIMARY_SOURCE_PATH: &str = "/Sources/raw/smoke/smoke.md";
-const PRIMARY_WIKI_PATH: &str = "/Wiki/smoke.md";
+const PRIMARY_SOURCE_PATH: &str = "/Sources/smoke/smoke.md";
+const PRIMARY_WIKI_PATH: &str = "/Knowledge/smoke.md";
 const PRIMARY_CONTENT_MARKER: &str = "alpha canister smoke";
 const PRIMARY_QUERY: &str = "alpha canister";
 const CJK_CONTENT_MARKER: &str = "検索精度改善";
@@ -67,7 +67,6 @@ async fn main() -> Result<()> {
     let identity = vfs_cli_app::identity::load_default_identity(&canister_id, true).await?;
     let client =
         CanisterVfsClient::new_with_boxed_identity(&replica_host, &canister_id, identity).await?;
-    assert_memory_manifest(&client).await?;
     if let Some(path) = args.verify_state {
         let state = read_state(&path)?;
         verify_smoke_state(&client, &state).await?;
@@ -117,10 +116,13 @@ fn parse_args() -> Result<SmokeArgs> {
     })
 }
 
-async fn assert_memory_manifest(client: &CanisterVfsClient) -> Result<()> {
-    let manifest = client.memory_manifest().await?;
+async fn assert_memory_manifest(client: &CanisterVfsClient, database_id: &str) -> Result<()> {
+    let manifest = client.memory_manifest(database_id).await?;
+    if manifest.write_policy != "stores_read_only" {
+        return Err(anyhow!("unexpected store manifest write policy"));
+    }
     if manifest.recommended_entrypoint != "query_context" {
-        return Err(anyhow!("unexpected memory manifest entrypoint"));
+        return Err(anyhow!("unexpected store manifest entrypoint"));
     }
     Ok(())
 }
@@ -138,6 +140,7 @@ async fn run_create_restore_smoke(
         .database_id;
     activate_smoke_database(client, &database_id, cycle_purchase_e8s).await?;
     activate_smoke_database(client, &isolation_database_id, cycle_purchase_e8s).await?;
+    assert_memory_manifest(client, &database_id).await?;
     ensure_parent_folders(client, &database_id, PRIMARY_SOURCE_PATH).await?;
     ensure_parent_folders(client, &isolation_database_id, PRIMARY_SOURCE_PATH).await?;
     client
@@ -355,7 +358,7 @@ async fn assert_primary_database_restored(
         .search_nodes(SearchNodesRequest {
             database_id: state.database_id.clone(),
             query_text: state.query_text.clone(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -368,7 +371,7 @@ async fn assert_primary_database_restored(
         .search_nodes(SearchNodesRequest {
             database_id: state.database_id.clone(),
             query_text: state.cjk_query_text.clone(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -428,7 +431,7 @@ async fn assert_database_isolation(
         .search_nodes(SearchNodesRequest {
             database_id: database_id.to_string(),
             query_text: ISOLATION_CONTENT_MARKER.to_string(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })
@@ -441,7 +444,7 @@ async fn assert_database_isolation(
         .search_nodes(SearchNodesRequest {
             database_id: isolation_database_id.to_string(),
             query_text: PRIMARY_QUERY.to_string(),
-            prefix: Some("/Wiki".to_string()),
+            prefix: Some("/Knowledge".to_string()),
             top_k: 10,
             preview_mode: Some(SearchPreviewMode::None),
         })

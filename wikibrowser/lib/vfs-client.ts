@@ -1240,7 +1240,7 @@ export async function queryContext(
   task: string,
   budgetTokens: number,
   identity?: Identity,
-  namespace = "/Wiki"
+  namespace?: string
 ): Promise<QueryContext> {
   return callVfs(async () => {
     const actor = await createReadActor(canisterId, identity);
@@ -1248,7 +1248,7 @@ export async function queryContext(
       database_id: databaseId,
       task,
       entities: [],
-      namespace: [namespace],
+      namespace: namespace ? [namespace] : [],
       budget_tokens: budgetTokens,
       include_evidence: false,
       depth: 1
@@ -1675,6 +1675,8 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
   }
   return "reader";
 }
+
+
 
 function databaseRoleVariant(role: DatabaseRole): Variant {
   if (role === "owner") {

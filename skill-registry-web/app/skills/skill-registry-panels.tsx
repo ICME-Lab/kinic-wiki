@@ -3,11 +3,11 @@
 import type { ReactNode } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { MemberTable } from "@/app/dashboard/member-table";
-import { ProposalList, RunSummary, type SkillActionHandlers, type SkillActionState } from "@/app/skills/skill-registry-ui";
-import type { CatalogSkill, EvolutionJob, StatusFilter } from "@/lib/skill-registry-catalog";
+import { RunSummary } from "@/app/skills/skill-registry-ui";
+import type { CatalogSkill, StatusFilter } from "@/lib/skill-registry-catalog";
 import type { DatabaseMember } from "@/lib/types";
 
-export type DashboardTab = "overview" | "detail" | "runs" | "proposals" | "jobs" | "permissions";
+export type DashboardTab = "overview" | "detail" | "runs" | "permissions";
 
 export function SkillRegistryHeader({
   databaseId,
@@ -55,8 +55,8 @@ export function SkillRegistryHeader({
 
 export function SkillRegistryTabs({ activeTab, onChange }: { activeTab: DashboardTab; onChange: (tab: DashboardTab) => void }) {
   return (
-    <nav className="grid grid-cols-2 gap-2 rounded-lg border border-line bg-paper p-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
-      {(["overview", "detail", "runs", "proposals", "jobs", "permissions"] as const).map((tab) => (
+    <nav className="grid grid-cols-2 gap-2 rounded-lg border border-line bg-paper p-2 text-sm sm:grid-cols-4">
+      {(["overview", "detail", "runs", "permissions"] as const).map((tab) => (
         <button key={tab} className={`rounded-md px-2 py-2 capitalize ${activeTab === tab ? "bg-accent text-white" : "bg-white text-ink"}`} type="button" onClick={() => onChange(tab)}>
           {tab.replace("-", " ")}
         </button>
@@ -108,21 +108,11 @@ export function SkillDetailPanel({
   skill,
   onSelect,
   focus = "detail",
-  authenticated = false,
-  writable = false,
-  busy = false,
-  preview = null,
-  handlers
 }: {
   skills: CatalogSkill[];
   skill: CatalogSkill;
   onSelect: (id: string) => void;
-  focus?: "detail" | "runs" | "proposals";
-  authenticated?: boolean;
-  writable?: boolean;
-  busy?: boolean;
-  preview?: SkillActionState["preview"];
-  handlers?: SkillActionHandlers;
+  focus?: "detail" | "runs";
 }) {
   return (
     <section className="rounded-lg border border-line bg-paper p-4">
@@ -146,31 +136,6 @@ export function SkillDetailPanel({
         </div>
       ) : null}
       {focus === "runs" ? <RunSummary skill={skill} /> : null}
-      {focus === "proposals" && handlers ? <ProposalList skill={skill} authenticated={authenticated} writable={writable} busy={busy} preview={preview} onApprove={handlers.approveProposal} onPreview={handlers.previewProposal} onApply={handlers.applyProposal} /> : null}
-    </section>
-  );
-}
-
-export function EvolutionJobsPanel({ jobs, pendingJobs, conflictJobs }: { jobs: EvolutionJob[]; pendingJobs: number; conflictJobs: number }) {
-  return (
-    <section className="rounded-lg border border-line bg-paper p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-ink">Evolution Jobs</h2>
-        <p className="text-sm text-muted">active {pendingJobs} / conflicts {conflictJobs}</p>
-      </div>
-      <div className="mt-4 grid gap-2">
-        {jobs.length > 0 ? jobs.map((job) => (
-          <div key={job.path} className="rounded border border-line bg-white p-3 text-xs">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-mono text-ink">{job.jobId}</span>
-              <span className="rounded border border-line px-2 py-1 text-muted">{job.status}</span>
-            </div>
-            <p className="mt-1 text-muted">skill: {job.skillId}</p>
-            {job.proposalId ? <p className="mt-1 text-muted">proposal: {job.proposalId}</p> : null}
-            {job.error ? <p className="mt-1 text-red-700">{job.error}</p> : null}
-          </div>
-        )) : <p className="text-sm text-muted">No evolution jobs.</p>}
-      </div>
     </section>
   );
 }

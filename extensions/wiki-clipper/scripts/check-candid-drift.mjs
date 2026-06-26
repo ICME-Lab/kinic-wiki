@@ -53,17 +53,6 @@ const expectedTypes = {
       metadata_json: "text"
     }
   },
-  WriteNodeRequest: {
-    kind: "record",
-    fields: {
-      database_id: "text",
-      path: "text",
-      kind: "NodeKind",
-      content: "text",
-      metadata_json: "text",
-      expected_etag: "opt text"
-    }
-  },
   WriteSourceForGenerationRequest: {
     kind: "record",
     fields: {
@@ -77,19 +66,16 @@ const expectedTypes = {
   },
   MkdirNodeRequest: { kind: "record", fields: { database_id: "text", path: "text" } },
   MkdirNodeResult: { kind: "record", fields: { path: "text", created: "bool" } },
-  UrlIngestTriggerSessionRequest: { kind: "record", fields: { database_id: "text", session_nonce: "text" } },
   NodeMutationAck: { kind: "record", fields: { updated_at: "int64", etag: "text", kind: "NodeKind", path: "text" } },
   WriteNodeResult: { kind: "record", fields: { created: "bool", node: "NodeMutationAck" } },
   WriteSourceForGenerationResult: { kind: "record", fields: { write: "WriteNodeResult", session_nonce: "text" } }
 };
 const expectedMethods = {
-  authorize_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionRequest"], output: "ResultUnit", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
   list_databases: { input: [], output: "ResultDatabases", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   read_node: { input: ["text", "text"], output: "ResultNode", mode: "query" },
-  write_node: { input: ["WriteNodeRequest"], output: "ResultWriteNode", mode: "update" },
   write_source_for_generation: { input: ["WriteSourceForGenerationRequest"], output: "ResultWriteSourceForGeneration", mode: "update" }
 };
 
@@ -196,9 +182,9 @@ function normalizeDidResult(value) {
   if (normalized === "Result_10") return "ResultCyclesBillingConfig";
   if (normalized === "Result_5") return "ResultCreateDatabase";
   if (normalized === "Result_17") return "ResultDatabases";
-  if (normalized === "Result_28") return "ResultMkdirNode";
-  if (normalized === "Result_34") return "ResultNode";
-  if (normalized === "Result_42") return "ResultWriteSourceForGeneration";
+  if (normalized === "Result_29") return "ResultMkdirNode";
+  if (normalized === "Result_35") return "ResultNode";
+  if (normalized === "Result_43") return "ResultWriteSourceForGeneration";
   if (normalized === "Result") return "ResultWriteNode";
   return normalized;
 }

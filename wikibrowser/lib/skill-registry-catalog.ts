@@ -4,7 +4,7 @@ import type { ChildNode } from "@/lib/types";
 import { listChildren, readNode } from "@/lib/vfs-client";
 
 const REGISTRY_ROOTS = [
-  { label: "Team", path: "/Wiki/skills", catalog: "private" }
+  { label: "Team", path: "/Skills", catalog: "private" }
 ] as const;
 const MANIFEST_READ_CONCURRENCY = 8;
 
@@ -18,7 +18,6 @@ export type CatalogSkill = {
   manifest: SkillManifest;
   missingFiles: string[];
   recentRuns: SkillRunEvidence[];
-  proposals: SkillProposal[];
   runSummary: SkillRunSummary;
   trust: SkillRunSummary;
   events: SkillEvent[];
@@ -31,24 +30,6 @@ export type SkillRunEvidence = {
   agent: string;
   recordedAt: string;
 };
-
-export type SkillProposal = {
-  proposalRoot: string;
-  candidatePath: string;
-  metricsPath: string;
-  statusPath: string;
-  id: string;
-  title: string;
-  status: ProposalStatus;
-  createdAt: string;
-  sourceRuns: string[];
-  candidatePreview: string;
-  baseEtag: string;
-  appliedAt: string;
-  metricsPreview: string;
-};
-
-export type ProposalStatus = "proposed" | "reviewed" | "auto_applied" | "gate_failed" | "conflict";
 
 export type SkillEvent = {
   path: string;
@@ -97,7 +78,6 @@ export async function loadSkillCatalog(canisterId: string, databaseId: string, i
       manifest,
       missingFiles: [],
       recentRuns: [],
-      proposals: [],
       runSummary: trust,
       trust,
       events: []

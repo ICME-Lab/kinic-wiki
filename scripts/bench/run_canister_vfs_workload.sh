@@ -304,7 +304,7 @@ node -e '
   before_file="${RESULT_DIR}/${scenario}.before_cycles.txt"
   after_file="${RESULT_DIR}/${scenario}.after_cycles.txt"
   stderr_file="${RESULT_DIR}/${scenario}.stderr.txt"
-  prefix="/Wiki/bench/deployed/${RUN_TIMESTAMP}/workload/${scenario}"
+  prefix="/Knowledge/bench/deployed/${RUN_TIMESTAMP}/workload/${scenario}"
   cli_operation="${operation//_/-}"
   bench_log "canister workload ${scenario}"
   if [[ "${measurement_mode}" == "isolated_single_op" ]]; then

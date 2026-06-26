@@ -14,18 +14,18 @@ const FIXTURES = [
   {
     name: "Market Seed: AI Research",
     title: "AI Research Notes",
-    description: "Curated wiki notes for model evaluation, retrieval, and prompt ops.",
+    description: "Curated knowledge notes for model evaluation, retrieval, and prompt ops.",
     tags: ["ai", "research", "popular"],
     priceE8s: "25_000_000",
     summary: "Compact research notes with linked evidence and excerpts.",
     excerpt: "Model evaluation notes with retrieval examples",
     nodes: [
       {
-        path: "/Wiki/AI Research.md",
-        content: "# AI Research\n\nModel evaluation notes with retrieval examples and [pricing context](/Wiki/Pricing.md)."
+        path: "/Knowledge/AI Research.md",
+        content: "# AI Research\n\nModel evaluation notes with retrieval examples and [pricing context](/Knowledge/Pricing.md)."
       },
       {
-        path: "/Wiki/Pricing.md",
+        path: "/Knowledge/Pricing.md",
         content: "# Pricing\n\nLow price marketplace fixture for decimal max-price checks."
       }
     ]
@@ -40,11 +40,11 @@ const FIXTURES = [
     excerpt: "Operational launch checklist with buyer onboarding",
     nodes: [
       {
-        path: "/Wiki/Launch Checklist.md",
-        content: "# Launch Checklist\n\nOperational launch checklist with buyer onboarding and [risk review](/Wiki/Risk Review.md)."
+        path: "/Knowledge/Launch Checklist.md",
+        content: "# Launch Checklist\n\nOperational launch checklist with buyer onboarding and [risk review](/Knowledge/Risk Review.md)."
       },
       {
-        path: "/Wiki/Risk Review.md",
+        path: "/Knowledge/Risk Review.md",
         content: "# Risk Review\n\nRecent listing fixture for sort and filter checks."
       }
     ]
@@ -59,11 +59,11 @@ const FIXTURES = [
     excerpt: "Graph-oriented wiki seed with category edges",
     nodes: [
       {
-        path: "/Wiki/Graph Template.md",
-        content: "# Graph Template\n\nGraph-oriented wiki seed with category edges and [sample nodes](/Wiki/Sample Nodes.md)."
+        path: "/Knowledge/Graph Template.md",
+        content: "# Graph Template\n\nGraph-oriented wiki seed with category edges and [sample nodes](/Knowledge/Sample Nodes.md)."
       },
       {
-        path: "/Wiki/Sample Nodes.md",
+        path: "/Knowledge/Sample Nodes.md",
         content: "# Sample Nodes\n\nExcerpt fixture for listing detail density checks."
       }
     ]
@@ -80,10 +80,13 @@ const payoutPrincipal = options.payoutPrincipal ?? readCurrentPrincipal();
 approveCyclesAllowance(ledgerCanister);
 
 for (const fixture of FIXTURES) {
-  const created = callOk("create_database", candidRecord({ name: candidText(fixture.name) }));
+  const created = callOk(
+    "create_database",
+    candidRecord({ name: candidText(fixture.name) })
+  );
   const databaseId = extractTextField(created, "database_id");
   fundDatabase(databaseId);
-  callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Wiki") }));
+  callOk("mkdir_node", candidRecord({ database_id: candidText(databaseId), path: candidText("/Knowledge") }));
   writeNodes(databaseId, fixture);
   const listing = callOk(
     "market_create_listing",

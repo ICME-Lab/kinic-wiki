@@ -10,7 +10,7 @@ import {
   handleMessage,
   refreshTabBadgeForTest,
   resetSettingsOpenThrottleForTest,
-  resetUrlIngestInFlightForTest,
+  resetSourceCaptureInFlightForTest,
   setOffscreenBridgeForTest
 } from "../src/service-worker.js";
 
@@ -49,9 +49,9 @@ test("save-source delegates raw source writes to offscreen", async () => {
     assert.equal(calls[0].type, "save-raw-source");
     assert.equal(calls[0].target, "offscreen");
     assert.equal(calls[0].config.databaseId, "team-db");
-    assert.equal(calls[0].rawSource.path, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[0].rawSource.path, "/Sources/chatgpt/abc.md");
     assert.equal(calls[1].type, "trigger-source-generation");
-    assert.equal(calls[1].sourcePath, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(calls[1].sourcePath, "/Sources/chatgpt/abc.md");
     assert.equal(calls[1].sourceEtag, "etag-2");
     assert.equal(calls[1].sessionNonce, "session-source");
     assert.equal(calls.length, 2);
@@ -95,7 +95,7 @@ test("save-source keeps raw source result when generation queue fails", async ()
     );
 
     assert.equal(response.ok, true);
-    assert.equal(response.result.path, "/Sources/raw/chatgpt/abc.md");
+    assert.equal(response.result.path, "/Sources/chatgpt/abc.md");
     assert.equal(response.result.etag, "etag-1");
     assert.equal(response.result.created, true);
     assert.equal(response.result.generationQueued, false);
@@ -408,13 +408,13 @@ test("action click saves browser source then queues generation", async () => {
   assert.equal(messages[0].type, "web-source-exists");
   assert.equal(messages[0].config.databaseId, "team-db");
   assert.equal(messages[1].type, "save-raw-source");
-  assert.equal(messages[1].rawSource.path, "/Sources/raw/web/abc.md");
+  assert.equal(messages[1].rawSource.path, "/Sources/web/abc.md");
   assert.equal(messages[1].config.databaseId, "team-db");
   assert.equal(messages[2].type, "trigger-source-generation");
-  assert.equal(messages[2].sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(messages[2].sourcePath, "/Sources/web/abc.md");
   assert.equal(messages[2].sourceEtag, "etag-source");
   assert.equal(messages[2].sessionNonce, "session-source");
-  assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
   assert.equal(response.result.generationQueued, true);
   assert.deepEqual(badges, [
     { text: "...", tabId: 3 },
@@ -451,7 +451,7 @@ test("action click refreshes existing browser source for only the current tab", 
   assert.equal(response.result.sourceEtag, "etag-refreshed");
   assert.equal(response.result.generationQueued, true);
   const lookupPath = calls.find((call) => call[0] === "lookup")?.[1];
-  assert.match(String(lookupPath), /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+  assert.match(String(lookupPath), /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
   assert.deepEqual(calls, [
     ["badge", "...", 7],
     ["lookup", lookupPath],
@@ -481,7 +481,7 @@ test("action click keeps source result when generation trigger fails", async () 
     })
   );
   assert.equal(response.ok, true);
-  assert.equal(response.result.sourcePath, "/Sources/raw/web/abc.md");
+  assert.equal(response.result.sourcePath, "/Sources/web/abc.md");
   assert.equal(response.result.generationQueued, false);
   assert.deepEqual(calls, [
     ["badge", "..."],
@@ -490,7 +490,7 @@ test("action click keeps source result when generation trigger fails", async () 
   ]);
 });
 
-test("context menu opens settings without starting URL ingest", async () => {
+test("context menu opens settings without starting source capture", async () => {
   const createdMenus = [];
   let optionsOpened = 0;
   const restore = installChromeForContextMenu(createdMenus, () => {
@@ -501,7 +501,7 @@ test("context menu opens settings without starting URL ingest", async () => {
     await handleContextMenuClickForTest({ menuItemId: "kinic-wiki-clipper-settings" });
 
     assert.deepEqual(createdMenus, [
-      { id: "kinic-wiki-clipper-create-wiki", title: "Create Kinic wiki page", contexts: ["action"] },
+      { id: "kinic-wiki-clipper-create-wiki", title: "Create knowledge page", contexts: ["action"] },
       { id: "kinic-wiki-clipper-save-raw", title: "Save raw", contexts: ["action"] },
       { id: "kinic-wiki-clipper-settings", title: "Settings", contexts: ["action"] }
     ]);
@@ -547,7 +547,7 @@ test("action click can save browser source without queueing generation", async (
 });
 
 test("context menu raw save skips generation trigger", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const restore = installChromeForAction();
   try {
     const response = await handleContextMenuClickForTest(
@@ -561,13 +561,13 @@ test("context menu raw save skips generation trigger", async () => {
     assert.equal(restore.messages[1].type, "save-raw-source");
     assert.ok(restore.badges.some((badge) => badge.text === "RAW"));
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
-test("action click rejects duplicate in-flight URL ingest", async () => {
-  resetUrlIngestInFlightForTest();
+test("action click rejects duplicate in-flight source capture", async () => {
+  resetSourceCaptureInFlightForTest();
   const deferred = createDeferred();
   let saveCalls = 0;
   const restore = installChromeForAction({
@@ -589,13 +589,13 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
     assert.equal(restore.messages.length, 3);
     assert.ok(restore.badges.some((badge) => badge.text === "BUSY"));
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/raw/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
 
@@ -603,13 +603,13 @@ test("action click rejects duplicate in-flight URL ingest", async () => {
     assert.equal(retry.ok, true);
     assert.equal(restore.messages.length, 7);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click reserves URL before delayed session storage read", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   const storageRead = createDeferred();
   let getCalls = 0;
@@ -640,19 +640,19 @@ test("action click reserves URL before delayed session storage read", async () =
 
     const duplicate = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(duplicate.ok, false);
-    assert.equal(duplicate.error, "URL ingest is already running for this page.");
+    assert.equal(duplicate.error, "Source capture is already running for this page.");
 
     storageRead.resolve();
     assert.equal((await first).ok, true);
     assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click rolls back URL reservation when session storage write fails", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   let failSet = true;
   const sessionArea = {
@@ -687,13 +687,13 @@ test("action click rolls back URL reservation when session storage write fails",
     assert.equal(retry.ok, true);
     assert.equal(restore.messages.filter((message) => message.type === "save-raw-source").length, 1);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click allows a different URL while another URL is in flight", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const deferred = createDeferred();
   let saveCalls = 0;
   const restore = installChromeForAction({
@@ -716,44 +716,44 @@ test("action click allows a different URL while another URL is in flight", async
     const second = await handleActionClick({ id: 2, url: "https://example.com/b", title: "B" });
     assert.equal(second.ok, true);
     assert.equal(restore.messages.length, 5);
-    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
-    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/raw\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[1].rawSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
+    assert.match(restore.messages[3].rawSource.path, /^\/Sources\/web\/[a-f0-9]{16}\.md$/);
     assert.notEqual(restore.messages[1].rawSource.path, restore.messages[3].rawSource.path);
 
     deferred.resolve({
       ok: true,
-      result: { path: "/Sources/raw/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
+      result: { path: "/Sources/web/abc.md", created: true, etag: "etag-source", sourceRunSessionNonce: "session-source" }
     });
     assert.equal((await first).ok, true);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
 
 test("action click honors session in-flight TTL", async () => {
-  resetUrlIngestInFlightForTest();
+  resetSourceCaptureInFlightForTest();
   const sessionStorage = memoryStorage();
   sessionStorage.setItem(
-    "kinic-url-ingest-in-flight-v1",
+    "kinic-source-capture-in-flight-v1",
     JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() + 120_000 })
   );
   const restore = installChromeForAction({ sessionStorage });
   try {
     const busy = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(busy.ok, false);
-    assert.equal(busy.error, "URL ingest is already running for this page.");
+    assert.equal(busy.error, "Source capture is already running for this page.");
     assert.equal(restore.messages.length, 1);
 
     sessionStorage.setItem(
-      "kinic-url-ingest-in-flight-v1",
+      "kinic-source-capture-in-flight-v1",
       JSON.stringify({ key: "team-db:https://example.com/", expiresAt: Date.now() - 1 })
     );
     const response = await handleActionClick({ id: 1, url: "https://example.com/", title: "Example" });
     assert.equal(response.ok, true);
     assert.equal(restore.messages.length, 4);
   } finally {
-    resetUrlIngestInFlightForTest();
+    resetSourceCaptureInFlightForTest();
     restore();
   }
 });
@@ -795,7 +795,7 @@ test("tab badge refresh clears missing sources and unsupported pages", async () 
     actionDeps({
       findWebSource: async () => {
         calls.push(["unexpected lookup"]);
-        return { exists: true, path: "/Sources/raw/web/nope.md", etag: "etag" };
+        return { exists: true, path: "/Sources/web/nope.md", etag: "etag" };
       },
       setBadge: async (text, _color, tabId) => calls.push(["badge", text, tabId])
     })
@@ -1107,8 +1107,8 @@ function actionDeps(overrides = {}) {
     writeStatus: async () => {},
     setBadge: async () => {},
     openSettings: async () => {},
-    reserveUrlIngest: async () => true,
-    releaseUrlIngest: async () => {},
+    reserveSourceCapture: async () => true,
+    releaseSourceCapture: async () => {},
     captureTabSource: async () => rawWebSource(),
     ...overrides
   };
@@ -1116,7 +1116,7 @@ function actionDeps(overrides = {}) {
 
 function rawWebSource() {
   return {
-    path: "/Sources/raw/web/abc.md",
+    path: "/Sources/web/abc.md",
     sourceId: "web-abc",
     content: "# Example",
     metadataJson: "{}"

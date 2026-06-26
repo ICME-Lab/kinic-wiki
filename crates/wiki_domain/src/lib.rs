@@ -1,23 +1,24 @@
 // Where: crates/wiki_domain/src/lib.rs
 // What: Wiki-specific path validation layered on top of the reusable VFS.
-// Why: `/Wiki` and `/Sources/...` semantics must stay centralized outside the generic VFS crates.
+// Why: `/Knowledge` and `/Sources/...` semantics must stay centralized outside the generic VFS crates.
 use vfs_types::NodeKind;
 
-pub const WIKI_ROOT_PATH: &str = "/Wiki";
-pub const WIKI_INDEX_PATH: &str = "/Wiki/index.md";
-pub const WIKI_SOURCES_PREFIX: &str = "/Wiki/sources";
-pub const WIKI_ENTITIES_PREFIX: &str = "/Wiki/entities";
-pub const WIKI_CONCEPTS_PREFIX: &str = "/Wiki/concepts";
-pub const SKILL_REGISTRY_ROOT: &str = "/Wiki/skills";
+pub const WIKI_ROOT_PATH: &str = "/Knowledge";
+pub const WIKI_INDEX_PATH: &str = "/Knowledge/index.md";
+pub const WIKI_SOURCES_PREFIX: &str = "/Knowledge/sources";
+pub const WIKI_ENTITIES_PREFIX: &str = "/Knowledge/entities";
+pub const WIKI_CONCEPTS_PREFIX: &str = "/Knowledge/concepts";
+pub const SKILL_REGISTRY_ROOT: &str = "/Skills";
 pub const PUBLIC_SKILL_REGISTRY_ROOT: &str = SKILL_REGISTRY_ROOT;
-pub const RAW_SOURCES_PREFIX: &str = "/Sources/raw";
+pub const KNOWLEDGE_SOURCES_PREFIX: &str = "/Sources";
 pub const SESSION_SOURCES_PREFIX: &str = "/Sources/sessions";
 pub const SKILL_RUNS_PREFIX: &str = "/Sources/skill-runs";
 const MAX_SOURCE_PROVIDER_LEN: usize = 32;
 const MAX_SOURCE_ID_LEN: usize = 128;
+const RESERVED_SOURCE_PROVIDERS: &[&str] = &["raw", "sessions", "skill-runs", "ingest-requests"];
 
 pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), String> {
-    let is_source_path = path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX)
+    let is_source_path = is_knowledge_source_path_candidate(path)
         || path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX)
         || path_matches_prefix_boundary(path, SKILL_RUNS_PREFIX);
     if *kind == NodeKind::Folder {
@@ -26,7 +27,7 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
     if *kind != NodeKind::Source {
         if is_source_path {
             return Err(format!(
-                "source path must use source kind under {RAW_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
+                "source path must use source kind under {KNOWLEDGE_SOURCES_PREFIX}/<provider>, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
             ));
         }
         return Ok(());
@@ -35,17 +36,17 @@ pub fn validate_source_path_for_kind(path: &str, kind: &NodeKind) -> Result<(), 
 }
 
 pub fn validate_canonical_source_path(path: &str) -> Result<(), String> {
-    if path_matches_prefix_boundary(path, RAW_SOURCES_PREFIX) {
-        return validate_raw_source_path(path);
-    }
     if path_matches_prefix_boundary(path, SESSION_SOURCES_PREFIX) {
-        return validate_source_path_under_prefix(path, SESSION_SOURCES_PREFIX);
+        return validate_session_source_path(path);
     }
     if path_matches_prefix_boundary(path, SKILL_RUNS_PREFIX) {
         return validate_skill_run_source_path(path);
     }
+    if path_matches_prefix_boundary(path, KNOWLEDGE_SOURCES_PREFIX) {
+        return validate_knowledge_source_path(path);
+    }
     Err(format!(
-        "source path must stay under {RAW_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
+        "source path must stay under {KNOWLEDGE_SOURCES_PREFIX}, {SESSION_SOURCES_PREFIX}, or {SKILL_RUNS_PREFIX}: {path}"
     ))
 }
 
@@ -81,54 +82,65 @@ fn path_matches_prefix_boundary(path: &str, prefix: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
-fn validate_source_path_under_prefix(path: &str, prefix: &str) -> Result<(), String> {
+fn validate_session_source_path(path: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(&format!("{prefix}/"))
-        .ok_or_else(|| format!("source path must stay under {prefix}: {path}"))?;
+        .strip_prefix(&format!("{SESSION_SOURCES_PREFIX}/"))
+        .ok_or_else(|| format!("source path must stay under {SESSION_SOURCES_PREFIX}: {path}"))?;
     let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
-            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+            "source path must use canonical form {SESSION_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
-    let [directory_name, file_name] = segments.as_slice() else {
+    let [provider, file_name] = segments.as_slice() else {
         unreachable!();
     };
-    let Some(file_stem) = file_name.strip_suffix(".md") else {
+    let Some(source_id) = file_name.strip_suffix(".md") else {
         return Err(format!(
-            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+            "source path must use canonical form {SESSION_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     };
-    if !is_safe_source_segment(directory_name) || file_stem != *directory_name {
+    if !is_safe_provider_segment(provider) || !is_safe_source_segment(source_id) {
         return Err(format!(
-            "source path must use canonical form {prefix}/<id>/<id>.md: {path}"
+            "source path must use canonical form {SESSION_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
     Ok(())
 }
 
-fn validate_raw_source_path(path: &str) -> Result<(), String> {
+pub fn validate_knowledge_source_path(path: &str) -> Result<(), String> {
     let relative = path
-        .strip_prefix(&format!("{RAW_SOURCES_PREFIX}/"))
-        .ok_or_else(|| format!("source path must stay under {RAW_SOURCES_PREFIX}: {path}"))?;
+        .strip_prefix(&format!("{KNOWLEDGE_SOURCES_PREFIX}/"))
+        .ok_or_else(|| format!("source path must stay under {KNOWLEDGE_SOURCES_PREFIX}: {path}"))?;
     let segments = relative.split('/').collect::<Vec<_>>();
     if segments.len() != 2 {
         return Err(format!(
-            "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
+            "source path must use canonical form {KNOWLEDGE_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
     let [provider, file_name] = segments.as_slice() else {
         unreachable!();
     };
     if !is_safe_provider_segment(provider)
+        || RESERVED_SOURCE_PROVIDERS.contains(provider)
         || !file_name.ends_with(".md")
         || !is_safe_source_segment(file_name.trim_end_matches(".md"))
     {
         return Err(format!(
-            "source path must use canonical form {RAW_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
+            "source path must use canonical form {KNOWLEDGE_SOURCES_PREFIX}/<provider>/<id>.md: {path}"
         ));
     }
     Ok(())
+}
+
+fn is_knowledge_source_path_candidate(path: &str) -> bool {
+    let Some(relative) = path.strip_prefix(&format!("{KNOWLEDGE_SOURCES_PREFIX}/")) else {
+        return false;
+    };
+    let Some(provider) = relative.split('/').next() else {
+        return false;
+    };
+    !matches!(provider, "sessions" | "skill-runs" | "ingest-requests")
 }
 
 fn is_safe_source_segment(value: &str) -> bool {
@@ -148,12 +160,10 @@ fn is_safe_provider_segment(value: &str) -> bool {
     if value.len() > MAX_SOURCE_PROVIDER_LEN {
         return false;
     }
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    first.is_ascii_lowercase()
-        && chars.all(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit())
 }
 
 fn is_source_segment_char(value: char) -> bool {
@@ -191,33 +201,35 @@ mod tests {
     use vfs_types::NodeKind;
 
     use super::{
-        RAW_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, normalize_wiki_remote_path,
-        validate_canonical_source_path, validate_source_path_for_kind, wiki_relative_path,
+        KNOWLEDGE_SOURCES_PREFIX, SKILL_RUNS_PREFIX, WIKI_ROOT_PATH, normalize_wiki_remote_path,
+        validate_canonical_source_path, validate_knowledge_source_path,
+        validate_source_path_for_kind, wiki_relative_path,
     };
 
     #[test]
     fn canonical_source_path_accepts_expected_shape() {
-        let path = format!("{RAW_SOURCES_PREFIX}/chatgpt/alpha.md");
+        let path = format!("{KNOWLEDGE_SOURCES_PREFIX}/chatgpt/alpha.md");
         assert!(validate_canonical_source_path(&path).is_ok());
+        assert!(validate_canonical_source_path("/Sources/123/alpha.md").is_ok());
     }
 
     #[test]
     fn canonical_source_path_rejects_wrong_file_name() {
-        let error = validate_canonical_source_path("/Sources/raw/alpha/beta.txt")
+        let error = validate_canonical_source_path("/Sources/chatgpt/beta.txt")
             .expect_err("non-canonical path should fail");
         assert!(error.contains("canonical form"));
     }
 
     #[test]
-    fn canonical_source_path_rejects_old_raw_directory_ids() {
-        let error = validate_canonical_source_path("/Sources/raw/web-abc/web-abc.md")
-            .expect_err("old raw source layout should fail");
+    fn canonical_source_path_rejects_old_raw_root() {
+        let error = validate_canonical_source_path("/Sources/raw/web-abc.md")
+            .expect_err("old raw source root should fail");
         assert!(error.contains("canonical form"));
     }
 
     #[test]
     fn canonical_source_path_rejects_prefix_lookalikes() {
-        let error = validate_canonical_source_path("/Sources/rawfoo/alpha.md")
+        let error = validate_canonical_source_path("/SourcesBackup/alpha.md")
             .expect_err("prefix lookalike should fail");
         assert!(error.contains("source path must stay under"));
     }
@@ -228,8 +240,8 @@ mod tests {
         let long_id = "a".repeat(129);
 
         for path in [
-            format!("{RAW_SOURCES_PREFIX}/{long_provider}/ok.md"),
-            format!("{RAW_SOURCES_PREFIX}/chatgpt/{long_id}.md"),
+            format!("{KNOWLEDGE_SOURCES_PREFIX}/{long_provider}/ok.md"),
+            format!("{KNOWLEDGE_SOURCES_PREFIX}/chatgpt/{long_id}.md"),
         ] {
             let error = validate_canonical_source_path(&path)
                 .expect_err("overlong provider or id should fail");
@@ -239,9 +251,21 @@ mod tests {
 
     #[test]
     fn canonical_source_path_rejects_dotdot_inside_source_id() {
-        let error = validate_canonical_source_path("/Sources/raw/chatgpt/a..b.md")
+        let error = validate_canonical_source_path("/Sources/chatgpt/a..b.md")
             .expect_err("dotdot inside raw source id should fail");
         assert!(error.contains("canonical form"));
+    }
+
+    #[test]
+    fn canonical_source_path_rejects_reserved_knowledge_providers() {
+        for path in [
+            "/Sources/raw/alpha.md",
+            "/Sources/sessions/alpha.md",
+            "/Sources/skill-runs/alpha.md",
+            "/Sources/ingest-requests/alpha.md",
+        ] {
+            assert!(validate_knowledge_source_path(path).is_err(), "{path}");
+        }
     }
 
     #[test]
@@ -252,7 +276,18 @@ mod tests {
 
     #[test]
     fn canonical_source_path_accepts_sessions() {
-        assert!(validate_canonical_source_path("/Sources/sessions/session-1/session-1.md").is_ok());
+        assert!(
+            validate_canonical_source_path("/Sources/sessions/claudecode/session-1.md").is_ok()
+        );
+        assert!(validate_canonical_source_path("/Sources/sessions/codex/run_123.md").is_ok());
+        assert!(validate_canonical_source_path("/Sources/sessions/raw/a.md").is_ok());
+    }
+
+    #[test]
+    fn canonical_source_path_rejects_old_session_shape() {
+        let error = validate_canonical_source_path("/Sources/sessions/session-1/session-1.md")
+            .expect_err("old session source shape should fail");
+        assert!(error.contains("canonical form"));
     }
 
     #[test]
@@ -281,11 +316,12 @@ mod tests {
     #[test]
     fn canonical_source_path_rejects_empty_and_dotdot_segments() {
         for path in [
-            "/Sources/raw//chatgpt/alpha.md",
-            "/Sources/raw/chatgpt//alpha.md",
+            "/Sources//chatgpt/alpha.md",
+            "/Sources/chatgpt//alpha.md",
             "/Sources/sessions//session.md",
             "/Sources/sessions/../...md",
-            "/Sources/sessions/session-1/session..1.md",
+            "/Sources/sessions/claude/a..b.md",
+            "/Sources/sessions/claude/a.txt",
         ] {
             assert!(validate_canonical_source_path(path).is_err(), "{path}");
         }
@@ -294,7 +330,7 @@ mod tests {
     #[test]
     fn wiki_relative_path_strips_wiki_root() {
         assert_eq!(
-            wiki_relative_path("/Wiki/nested/file.md").expect("path should strip"),
+            wiki_relative_path("/Knowledge/nested/file.md").expect("path should strip"),
             "nested/file.md"
         );
         assert_eq!(
@@ -309,7 +345,7 @@ mod tests {
             "/Wikix/foo.md",
             "/Wikifoo/bar.md",
             "Wiki/foo.md",
-            "/Sources/raw/foo.md",
+            "/Sources/chatgpt/foo.md",
         ] {
             let error = wiki_relative_path(path).expect_err("lookalike path should fail");
             assert!(error.contains(WIKI_ROOT_PATH));
@@ -318,7 +354,7 @@ mod tests {
 
     #[test]
     fn normalize_wiki_remote_path_rejects_non_wiki_path() {
-        let error = normalize_wiki_remote_path("/Sources/raw/file.md")
+        let error = normalize_wiki_remote_path("/Sources/chatgpt/file.md")
             .expect_err("non-wiki path should fail");
         assert!(error.contains(WIKI_ROOT_PATH));
     }

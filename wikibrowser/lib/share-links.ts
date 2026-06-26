@@ -12,7 +12,7 @@ export function isRoutableDatabaseId(databaseId: string): boolean {
 
 export function publicDatabasePath(databaseId: string): string {
   assertPublicDatabaseId(databaseId);
-  return `${databaseRouteBase(databaseId)}/Wiki`;
+  return `${databaseRouteBase(databaseId)}/Knowledge`;
 }
 
 export function databaseRouteBase(databaseId: string): string {

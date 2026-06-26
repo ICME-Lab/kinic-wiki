@@ -4,7 +4,6 @@
 
 import { Plus, X } from "lucide-react";
 import type { FormEvent } from "react";
-
 export function CreateDatabaseDialog({
   createDisabled,
   createLabel,

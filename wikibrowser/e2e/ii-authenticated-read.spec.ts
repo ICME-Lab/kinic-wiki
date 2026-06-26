@@ -9,7 +9,7 @@ import {
 
 const CANISTER_ID = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
 const II_PROVIDER_URL = process.env.NEXT_PUBLIC_II_PROVIDER_URL ?? "http://id.ai.localhost:8011";
-const E2E_PATH = "/Wiki/e2e.md";
+const E2E_PATH = "/Knowledge/e2e.md";
 const E2E_TITLE = "E2E Private Note";
 const E2E_TOKEN = `e2e-private-token-${Date.now()}`;
 

@@ -293,7 +293,7 @@ export const expectedTypes = {
   CreateDatabaseRequest: { kind: "record", fields: { name: "text" } },
   CreateDatabaseResult: { kind: "record", fields: { name: "text", database_id: "text" } },
   RenameDatabaseRequest: { kind: "record", fields: { name: "text", database_id: "text" } },
-  DeleteDatabaseRequest: { kind: "record", fields: { database_id: "text" } },
+  DatabaseIdRequest: { kind: "record", fields: { database_id: "text" } },
   DatabaseMember: {
     kind: "record",
     fields: {
@@ -455,6 +455,8 @@ export const expectedTypes = {
       api_version: "text",
       budget_unit: "text",
       capabilities: "vec MemoryCapability",
+      enabled_stores: "vec text",
+      entry_roots: "vec MemoryRoot",
       max_depth: "nat32",
       max_query_limit: "nat32",
       recommended_entrypoint: "text",
@@ -570,6 +572,7 @@ export const expectedTypes = {
     kind: "variant",
     cases: { Ok: "StorageBillingBatchResult", Err: "text" }
   },
+  ResultMemoryManifest: { kind: "variant", cases: { Ok: "MemoryManifest", Err: "text" } },
   ResultSourceEvidence: { kind: "variant", cases: { Ok: "SourceEvidence", Err: "text" } },
   ResultOpsAnswerSessionCheck: {
     kind: "variant",
@@ -656,7 +659,6 @@ export const expectedTypes = {
 
 export const didTypeAliases = {
   OpsAnswerSessionCheckRequest: "OpsAnswerSessionRequest",
-  RenameDatabaseRequest: "CreateDatabaseResult",
   UrlIngestTriggerSessionRequest: "OpsAnswerSessionRequest",
   ResultCyclesTopUpCheck: "Result_3",
   ResultOpsAnswerSessionCheck: "Result_4",
@@ -678,21 +680,22 @@ export const didTypeAliases = {
   ResultMarketOrderPage: "Result_25",
   ResultMarketPurchasePreview: "Result_26",
   ResultMarketOrder: "Result_27",
-  ResultMkdirNode: "Result_28",
-  ResultMoveNode: "Result_29",
-  ResultCyclesPurchase: "Result_30",
-  ResultQueryContext: "Result_31",
-  ResultIndexSqlJsonQuery: "Result_32",
-  ResultNode: "Result_34",
-  ResultNodeContext: "Result_35",
-  ResultSearch: "Result_36",
-  ResultStorageBillingBatch: "Result_37",
-  ResultSourceEvidence: "Result_38",
+  ResultMemoryManifest: "Result_28",
+  ResultMkdirNode: "Result_29",
+  ResultMoveNode: "Result_30",
+  ResultCyclesPurchase: "Result_31",
+  ResultQueryContext: "Result_32",
+  ResultIndexSqlJsonQuery: "Result_33",
+  ResultNode: "Result_35",
+  ResultNodeContext: "Result_36",
+  ResultSearch: "Result_37",
+  ResultStorageBillingBatch: "Result_38",
+  ResultSourceEvidence: "Result_39",
   ResultUnit: "Result_1",
   ResultWriteNode: "Result",
-  ResultWriteSourceForGeneration: "Result_42",
-  ResultWikiMetrics: "Result_39",
-  ResultWikiMetricsSeries: "Result_40"
+  ResultWriteSourceForGeneration: "Result_43",
+  ResultWikiMetrics: "Result_40",
+  ResultWikiMetricsSeries: "Result_41"
 };
 
 export const expectedMethods = {
@@ -705,7 +708,7 @@ export const expectedMethods = {
   check_source_run_session: { input: ["SourceRunSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   check_url_ingest_trigger_session: { input: ["UrlIngestTriggerSessionCheckRequest"], output: "ResultUnit", mode: "query" },
   create_database: { input: ["CreateDatabaseRequest"], output: "ResultCreateDatabase", mode: "update" },
-  delete_database: { input: ["DeleteDatabaseRequest"], output: "ResultUnit", mode: "update" },
+  delete_database: { input: ["DatabaseIdRequest"], output: "ResultUnit", mode: "update" },
   delete_node: { input: ["DeleteNodeRequest"], output: "ResultDeleteNode", mode: "update" },
   get_cycles_billing_config: { input: [], output: "ResultCyclesBillingConfig", mode: "query" },
   grant_database_access: { input: ["text", "text", "DatabaseRole"], output: "ResultUnit", mode: "update" },
@@ -734,7 +737,7 @@ export const expectedMethods = {
   market_publish_listing: { input: ["text"], output: "ResultMarketListing", mode: "update" },
   market_purchase_access: { input: ["MarketPurchaseRequest"], output: "ResultMarketOrder", mode: "update" },
   market_update_listing: { input: ["MarketUpdateListingRequest"], output: "ResultMarketListing", mode: "update" },
-  memory_manifest: { input: [], output: "MemoryManifest", mode: "query" },
+  memory_manifest: { input: ["DatabaseIdRequest"], output: "ResultMemoryManifest", mode: "query" },
   mkdir_node: { input: ["MkdirNodeRequest"], output: "ResultMkdirNode", mode: "update" },
   move_node: { input: ["MoveNodeRequest"], output: "ResultMoveNode", mode: "update" },
   outgoing_links: { input: ["OutgoingLinksRequest"], output: "ResultLinks", mode: "query" },

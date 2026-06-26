@@ -56,7 +56,7 @@ KINIC cycles uses one internal DB-scoped balance:
 
 - DB cycles balance: KINIC pulled from the external ledger directly into a reserved DB
 
-DB creation uses `create_database(display_name)`. It creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
+DB creation uses `create_database(CreateDatabaseRequest { name })`. It creates a generated `database_id`, owner membership, and a zero DB cycles balance without allocating a stable-memory mount ID. The DB remains `pending` and cycles-suspended until its first successful cycle purchase activates the mounted SQLite DB.
 
 External ledger calls are used for DB cycles purchase and App KINIC balance movement:
 
@@ -101,7 +101,7 @@ Upgrade compatibility:
 
 Normal operator flow:
 
-1. Owner creates a pending DB with `create_database(display_name)`.
+1. Owner creates a pending DB with `create_database(CreateDatabaseRequest { name })`.
 2. Payer approves the VFS canister on the KINIC ICRC-2 ledger for the payment amount plus ledger transfer fee. Browser approve uses the current allowance as `expected_allowance` and expires after 30 minutes. The approve transaction fee is paid separately by the wallet.
 3. Payer calls `purchase_database_cycles` with the payment amount. If the DB is pending, the canister starts the ledger transfer first, then allocates and migrates the DB mount only after the ledger transfer succeeds. The DB becomes active when mount migration and balance cycle both complete.
 4. Successful DB updates consume DB cycles balance.

@@ -1,6 +1,6 @@
 export function pathFromSegments(segments: string[]): string {
   if (segments.length === 0) {
-    return "/Wiki";
+    return "/Knowledge";
   }
   return `/${segments.join("/")}`;
 }
@@ -90,9 +90,9 @@ export function hrefForDatabaseSwitch(
     return hrefForSearch(canisterId, databaseId, state.query, state.searchKind, state.readMode);
   }
   if (state.isGraphPage) {
-    return hrefForGraph(canisterId, databaseId, "/Wiki", state.graphDepth, state.readMode);
+    return hrefForGraph(canisterId, databaseId, "/Knowledge", state.graphDepth, state.readMode);
   }
-  return hrefForPath(canisterId, databaseId, "/Wiki", undefined, undefined, undefined, undefined, state.readMode);
+  return hrefForPath(canisterId, databaseId, "/Knowledge", undefined, undefined, undefined, undefined, state.readMode);
 }
 
 export function hrefForMarkdownLink(canisterId: string, databaseId: string, currentPath: string, href: string | undefined, readMode?: string | null): string | null {
@@ -126,7 +126,7 @@ export function parentPath(path: string): string | null {
 }
 
 function resolveRelativeWikiPath(currentPath: string, href: string): string {
-  const base = parentPath(currentPath) ?? "/Wiki";
+  const base = parentPath(currentPath) ?? "/Knowledge";
   const parts = [...base.split("/"), ...href.split("/")].filter(Boolean);
   const resolved: string[] = [];
   for (const part of parts) {
@@ -147,7 +147,7 @@ function isExternalHref(href: string): boolean {
 }
 
 function isInternalWikiPath(path: string): boolean {
-  return path === "/Wiki" || path.startsWith("/Wiki/") || path === "/Sources" || path.startsWith("/Sources/");
+  return path === "/Knowledge" || path.startsWith("/Knowledge/") || path === "/Sources" || path.startsWith("/Sources/");
 }
 
 function appendMarkdownSuffix(baseHref: string, target: MarkdownHrefTarget, readMode?: string | null): string {

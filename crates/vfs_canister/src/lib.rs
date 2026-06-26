@@ -44,9 +44,9 @@ use vfs_types::{
     AppendNodeRequest, CanisterHealth, CanonicalRole, ChildNode, CreateDatabaseRequest,
     CreateDatabaseResult, CyclesBillingConfig, CyclesBillingConfigUpdate, CyclesPurchaseResult,
     DatabaseArchiveChunk, DatabaseArchiveInfo, DatabaseCycleEntryPage,
-    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseMember,
-    DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteDatabaseRequest,
-    DeleteNodeRequest, DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
+    DatabaseCyclesPendingPurchase, DatabaseCyclesPurchaseRequest, DatabaseIdRequest,
+    DatabaseMember, DatabaseRestoreChunkRequest, DatabaseRole, DatabaseSummary, DeleteNodeRequest,
+    DeleteNodeResult, EditNodeRequest, EditNodeResult, ExportSnapshotRequest,
     ExportSnapshotResponse, FetchUpdatesRequest, FetchUpdatesResponse, GlobNodeHit,
     GlobNodesRequest, GraphLinksRequest, GraphNeighborhoodRequest, IncomingLinksRequest,
     IndexSqlJsonQueryResult, KINIC_DECIMALS, KINIC_LEDGER_FEE_E8S, LinkEdge, ListChildrenRequest,
@@ -350,27 +350,45 @@ fn canister_health() -> CanisterHealth {
 }
 
 #[query]
-fn memory_manifest() -> MemoryManifest {
-    MemoryManifest {
-        api_version: "agent-memory-v1".to_string(),
-        purpose: "Canister-backed long-term wiki memory for agents".to_string(),
+fn memory_manifest(request: DatabaseIdRequest) -> Result<MemoryManifest, String> {
+    with_service(|service| service.status(&request.database_id, &caller_text()))?;
+    Ok(MemoryManifest {
+        api_version: "kinic-stores-v1".to_string(),
+        purpose: "Canister-backed memory, knowledge, skill, and session stores for agents"
+            .to_string(),
+        enabled_stores: ["memory", "knowledge", "skill", "session"]
+            .iter()
+            .map(|store| (*store).to_string())
+            .collect(),
         roots: vec![
-            MemoryRoot {
-                path: "/Wiki".to_string(),
-                kind: "wiki".to_string(),
-            },
-            MemoryRoot {
-                path: "/Sources".to_string(),
-                kind: "raw_sources".to_string(),
-            },
+            store_root("/Memory", "memory"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
+            store_root("/Sessions", "session"),
+            store_root("/Sources", "source_evidence"),
+            store_root("/Sources/sessions", "session_evidence"),
+            store_root("/Sources/skill-runs", "skill_run_evidence"),
         ],
-        capabilities: memory_capabilities(),
+        entry_roots: vec![
+            store_root("/Memory", "memory"),
+            store_root("/Knowledge", "knowledge"),
+            store_root("/Skills", "skill"),
+            store_root("/Sessions", "session"),
+        ],
+        capabilities: store_capabilities(),
         canonical_roles: canonical_roles(),
-        write_policy: "agent_memory_read_only".to_string(),
+        write_policy: "stores_read_only".to_string(),
         recommended_entrypoint: "query_context".to_string(),
         max_depth: 2,
         max_query_limit: 100,
         budget_unit: "approx_chars_from_tokens".to_string(),
+    })
+}
+
+fn store_root(path: &str, kind: &str) -> MemoryRoot {
+    MemoryRoot {
+        path: path.to_string(),
+        kind: kind.to_string(),
     }
 }
 
@@ -1037,7 +1055,7 @@ fn update_cycles_billing_config(update: CyclesBillingConfigUpdate) -> Result<(),
 }
 
 #[update]
-fn delete_database(request: DeleteDatabaseRequest) -> Result<(), String> {
+fn delete_database(request: DatabaseIdRequest) -> Result<(), String> {
     let database_id = request.database_id.clone();
     with_role_unmetered_update(
         "delete_database",
@@ -2226,16 +2244,19 @@ where
     })
 }
 
-fn memory_capabilities() -> Vec<MemoryCapability> {
+fn store_capabilities() -> Vec<MemoryCapability> {
     [
         (
-            "query_context",
-            "Primary agent-memory entrypoint for task-scoped context bundles",
-        ),
-        ("source_evidence", "Read source-path evidence for one node"),
-        (
             "memory_manifest",
-            "Discover memory API shape, limits, and policy",
+            "Discover the four-store API shape, limits, and policy",
+        ),
+        (
+            "query_context",
+            "Primary memory-store entrypoint for task-scoped recall",
+        ),
+        (
+            "source_evidence",
+            "Read source-path evidence for one knowledge node",
         ),
         (
             "read_node_context",

@@ -1,6 +1,6 @@
 # Kinic Skill Registry Web
 
-Skill Registry dashboard for skill status, run evidence, proposals, jobs, and permissions.
+Skill Registry dashboard for skill status, snapshots, run evidence, and permissions.
 This app is an independent verification and operations surface. The public product route is WikiBrowser's `/skills/<database-id>`.
 
 ## Local

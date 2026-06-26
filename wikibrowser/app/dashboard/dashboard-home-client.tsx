@@ -4,7 +4,7 @@ import type { Identity } from "@icp-sdk/core/agent";
 import type { AuthClient } from "@icp-sdk/auth/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAppSession } from "../app-session-provider";
 import { CreateDatabaseDialog } from "../create-database-dialog";
 import { DatabaseBody, StatusPanel } from "../home-ui";
@@ -13,6 +13,7 @@ import { KINIC_LEDGER_FEE_E8S } from "@/lib/cycles";
 import { parseKinicAmountE8sInput } from "@/lib/cycles-url";
 import { KinicAfterApproveError, purchaseCyclesWithWallet } from "@/lib/kinic-wallet";
 import { formatTokenAmountFromE8s } from "@/lib/kinic-amount";
+import { hrefForPath } from "@/lib/paths";
 import type { CyclesBillingConfig, DatabaseSummary } from "@/lib/types";
 import { createDatabaseAuthenticated, getCyclesBillingConfig, listDatabasesAuthenticated, listDatabasesPublic, marketListEntitlements } from "@/lib/vfs-client";
 import type { DatabaseRow } from "../home-ui";
@@ -24,6 +25,7 @@ const CREATE_DATABASE_PURCHASE_KINIC = "1";
 
 export function DashboardHomeClient() {
   const canisterId = process.env.NEXT_PUBLIC_KINIC_WIKI_CANISTER_ID ?? "";
+  const router = useRouter();
   const searchParams = useSearchParams();
   const refreshSeqRef = useRef(0);
   const {
@@ -159,6 +161,7 @@ export function DashboardHomeClient() {
       );
       await refreshWalletBalance(wallet);
       await refreshDatabases(authClient);
+      router.push(hrefForPath(canisterId, result.database_id, "/Knowledge"));
     } catch (cause) {
       if (createdDatabaseId) {
         await refreshDatabases(authClient);
@@ -256,6 +259,7 @@ export function DashboardHomeClient() {
     </AdminContent>
   );
 }
+
 
 function mergeDatabaseRows(memberDatabases: DatabaseSummary[], publicDatabases: DatabaseSummary[]): DatabaseRow[] {
   const publicIds = new Set(publicDatabases.map((database) => database.databaseId));

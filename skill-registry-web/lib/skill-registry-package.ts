@@ -12,7 +12,7 @@ export type SkillPackageInput = {
   files: SkillPackageFile[];
 };
 
-const PRIVATE_ROOT = "/Wiki/skills";
+const PRIVATE_ROOT = "/Skills";
 
 export async function upsertSkillPackage(canisterId: string, databaseId: string, identity: Identity, input: SkillPackageInput): Promise<string[]> {
   const skillId = cleanSkillId(input.id);

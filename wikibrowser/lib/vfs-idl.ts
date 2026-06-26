@@ -228,7 +228,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const CreateDatabaseRequest = idl.Record({ name: idl.Text });
   const CreateDatabaseResult = idl.Record({ name: idl.Text, database_id: idl.Text });
   const RenameDatabaseRequest = idl.Record({ name: idl.Text, database_id: idl.Text });
-  const DeleteDatabaseRequest = idl.Record({ database_id: idl.Text });
+  const DatabaseIdRequest = idl.Record({ database_id: idl.Text });
   const DatabaseMember = idl.Record({
     principal: idl.Text,
     role: DatabaseRole,
@@ -296,6 +296,8 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     api_version: idl.Text,
     budget_unit: idl.Text,
     capabilities: idl.Vec(MemoryCapability),
+    enabled_stores: idl.Vec(idl.Text),
+    entry_roots: idl.Vec(MemoryRoot),
     max_depth: idl.Nat32,
     max_query_limit: idl.Nat32,
     recommended_entrypoint: idl.Text,
@@ -436,6 +438,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
   const ResultWikiMetricsSeries = idl.Variant({ Ok: idl.Vec(WikiMetricsPoint), Err: idl.Text });
   const ResultSourceEvidence = idl.Variant({ Ok: SourceEvidence, Err: idl.Text });
   const ResultStorageBillingBatch = idl.Variant({ Ok: StorageBillingBatchResult, Err: idl.Text });
+  const ResultMemoryManifest = idl.Variant({ Ok: MemoryManifest, Err: idl.Text });
   const ResultCyclesTopUpCheck = idl.Variant({ Ok: CyclesTopUpCheckResult, Err: idl.Text });
   const ResultCreateDatabase = idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text });
   const ResultCyclesBillingConfig = idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text });
@@ -477,7 +480,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     check_source_run_session: idl.Func([SourceRunSessionCheckRequest], [ResultUnit], ["query"]),
     check_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionCheckRequest], [ResultUnit], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [ResultCreateDatabase], []),
-    delete_database: idl.Func([DeleteDatabaseRequest], [ResultUnit], []),
+    delete_database: idl.Func([DatabaseIdRequest], [ResultUnit], []),
     delete_node: idl.Func([DeleteNodeRequest], [ResultDeleteNode], []),
     get_cycles_billing_config: idl.Func([], [ResultCyclesBillingConfig], ["query"]),
     grant_database_access: idl.Func([idl.Text, idl.Text, DatabaseRole], [ResultUnit], []),
@@ -504,7 +507,7 @@ export const idlFactory: ActorInterfaceFactory = ({ IDL: idl }) => {
     market_publish_listing: idl.Func([idl.Text], [ResultMarketListing], []),
     market_purchase_access: idl.Func([MarketPurchaseRequest], [ResultMarketOrder], []),
     market_update_listing: idl.Func([MarketUpdateListingRequest], [ResultMarketListing], []),
-    memory_manifest: idl.Func([], [MemoryManifest], ["query"]),
+    memory_manifest: idl.Func([DatabaseIdRequest], [ResultMemoryManifest], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [ResultMkdirNode], []),
     move_node: idl.Func([MoveNodeRequest], [ResultMoveNode], []),
     query_context: idl.Func([QueryContextRequest], [ResultQueryContext], ["query"]),

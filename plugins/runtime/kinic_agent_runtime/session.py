@@ -1,5 +1,5 @@
 """Where: plugins/runtime/kinic_agent_runtime/session.py
-What: Persist agent session transcripts as Kinic raw source nodes.
+What: Persist agent session transcripts as Kinic session evidence source nodes.
 Why: Agent conversations should be retained as source evidence without blocking session exit.
 """
 
@@ -218,7 +218,7 @@ def build_source(
     }
     content = source_content_with_cap(metadata, redacted_transcript, max_chars)
     return SourcePayload(
-        path=f"/Sources/raw/{source_provider}/{source_id}.md",
+        path=f"/Sources/sessions/{source_provider}/{source_id}.md",
         content=content,
         metadata=metadata,
     )
@@ -1047,10 +1047,22 @@ def unique_quarantine_path(path: Path, suffix: str) -> Path:
     return path.with_name(f"{path.name}.{millis}.{suffix}")
 
 
+def ensure_session_source_parent_folders(cli: str, remote_path: str) -> None:
+    if not remote_path.startswith("/Sources/sessions/"):
+        return
+    segments = [segment for segment in remote_path.split("/") if segment]
+    if len(segments) < 4:
+        return
+    provider = segments[2]
+    for folder_path in ["/Sources/sessions", f"/Sources/sessions/{provider}"]:
+        run_cli(cli, "mkdir-node", "--path", folder_path)
+
+
 def write_payload(cli: str, payload: dict[str, Any]) -> None:
     content = required_text(payload, "content")
     remote_path = required_text(payload, "path")
     metadata_json = required_text(payload, "metadata_json")
+    ensure_session_source_parent_folders(cli, remote_path)
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
         handle.write(content)
         temp_path = Path(handle.name)

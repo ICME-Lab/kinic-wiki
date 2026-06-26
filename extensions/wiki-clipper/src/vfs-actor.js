@@ -59,14 +59,6 @@ function idlFactory({ IDL: idl }) {
     etag: idl.Text,
     metadata_json: idl.Text
   });
-  const WriteNodeRequest = idl.Record({
-    database_id: idl.Text,
-    path: idl.Text,
-    kind: NodeKind,
-    content: idl.Text,
-    metadata_json: idl.Text,
-    expected_etag: idl.Opt(idl.Text)
-  });
   const WriteSourceForGenerationRequest = idl.Record({
     database_id: idl.Text,
     path: idl.Text,
@@ -77,10 +69,6 @@ function idlFactory({ IDL: idl }) {
   });
   const MkdirNodeRequest = idl.Record({ database_id: idl.Text, path: idl.Text });
   const MkdirNodeResult = idl.Record({ path: idl.Text, created: idl.Bool });
-  const UrlIngestTriggerSessionRequest = idl.Record({
-    database_id: idl.Text,
-    session_nonce: idl.Text
-  });
   const NodeMutationAck = idl.Record({
     updated_at: idl.Int64,
     etag: idl.Text,
@@ -93,13 +81,11 @@ function idlFactory({ IDL: idl }) {
     session_nonce: idl.Text
   });
   return idl.Service({
-    authorize_url_ingest_trigger_session: idl.Func([UrlIngestTriggerSessionRequest], [idl.Variant({ Ok: idl.Null, Err: idl.Text })], []),
     get_cycles_billing_config: idl.Func([], [idl.Variant({ Ok: CyclesBillingConfig, Err: idl.Text })], ["query"]),
     create_database: idl.Func([CreateDatabaseRequest], [idl.Variant({ Ok: CreateDatabaseResult, Err: idl.Text })], []),
     list_databases: idl.Func([], [idl.Variant({ Ok: idl.Vec(DatabaseSummary), Err: idl.Text })], ["query"]),
     mkdir_node: idl.Func([MkdirNodeRequest], [idl.Variant({ Ok: MkdirNodeResult, Err: idl.Text })], []),
     read_node: idl.Func([idl.Text, idl.Text], [idl.Variant({ Ok: idl.Opt(Node), Err: idl.Text })], ["query"]),
-    write_node: idl.Func([WriteNodeRequest], [idl.Variant({ Ok: WriteNodeResult, Err: idl.Text })], []),
     write_source_for_generation: idl.Func([WriteSourceForGenerationRequest], [idl.Variant({ Ok: WriteSourceForGenerationResult, Err: idl.Text })], [])
   });
 }

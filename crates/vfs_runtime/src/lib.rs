@@ -41,7 +41,7 @@ use vfs_types::{
     WikiMetricsPoint, WriteNodeRequest, WriteNodeResult, WriteNodesRequest,
     WriteSourceForGenerationRequest, WriteSourceForGenerationResult, kinic_base_units_per_token,
 };
-use wiki_domain::{RAW_SOURCES_PREFIX, validate_source_path_for_kind};
+use wiki_domain::{validate_knowledge_source_path, validate_source_path_for_kind};
 
 const INDEX_SCHEMA_VERSION_INITIAL: &str = "database_index:000_initial";
 const INDEX_SCHEMA_VERSION_LIFECYCLE: &str = "database_index:001_lifecycle";
@@ -85,6 +85,7 @@ const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
     "database_index:030_direct_market_purchase";
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
+const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -227,6 +228,12 @@ pub struct VfsService {
     database_handle: fn(u16) -> Result<DbHandle, String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IndexPostMigrationAction {
+    None,
+    SeedStoreRoots,
+}
+
 impl VfsService {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn new(index_path: PathBuf, databases_dir: PathBuf) -> Self {
@@ -249,30 +256,38 @@ impl VfsService {
         &self,
         config: CyclesBillingConfig,
     ) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut conn = self.open_index()?;
-            run_index_migrations(&mut conn, &config)
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.write_index(|conn| run_index_migrations_in_tx(conn, &config))
-        }
+        let action = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut conn = self.open_index()?;
+                run_index_migrations(&mut conn, &config)
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.write_index(|conn| run_index_migrations_in_tx(conn, &config))
+            }
+        }?;
+        self.apply_index_post_migration_action(action)
     }
 
     pub fn run_index_migrations_for_upgrade(
         &self,
         config: Option<CyclesBillingConfig>,
     ) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut conn = self.open_index()?;
-            run_index_migrations_for_upgrade(&mut conn, config.as_ref())
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.write_index(|conn| run_index_migrations_in_tx_for_upgrade(conn, config.as_ref()))
-        }
+        let action = {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let mut conn = self.open_index()?;
+                run_index_migrations_for_upgrade(&mut conn, config.as_ref())
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                self.write_index(|conn| {
+                    run_index_migrations_in_tx_for_upgrade(conn, config.as_ref())
+                })
+            }
+        }?;
+        self.apply_index_post_migration_action(action)
     }
 
     pub fn list_databases(&self) -> Result<Vec<DatabaseMeta>, String> {
@@ -281,6 +296,24 @@ impl VfsService {
 
     pub fn list_database_infos(&self) -> Result<Vec<DatabaseInfo>, String> {
         self.read_index(load_database_infos)
+    }
+
+    fn apply_index_post_migration_action(
+        &self,
+        action: IndexPostMigrationAction,
+    ) -> Result<(), String> {
+        match action {
+            IndexPostMigrationAction::None => Ok(()),
+            IndexPostMigrationAction::SeedStoreRoots => self.seed_active_database_store_roots(),
+        }
+    }
+
+    fn seed_active_database_store_roots(&self) -> Result<(), String> {
+        let metas = self.read_index(load_active_databases_for_store_root_seed)?;
+        for meta in metas {
+            self.seed_database_store_roots(&meta, 0)?;
+        }
+        self.write_index(|tx| insert_schema_migration_now(tx, INDEX_SCHEMA_VERSION_STORE_ROOTS))
     }
 
     pub fn query_index_sql_json(
@@ -494,7 +527,16 @@ impl VfsService {
         now: i64,
     ) -> Result<DatabaseMeta, String> {
         let meta = self.reserve_database(database_id, database_id, caller, now)?;
-        self.run_database_migrations(database_id)?;
+        if let Err(error) = self
+            .run_database_migrations(database_id)
+            .and_then(|_| self.seed_database_store_roots(&meta, now))
+        {
+            let cleanup_error = self.discard_database_reservation(&meta.database_id).err();
+            return Err(match cleanup_error {
+                Some(cleanup_error) => format!("{error}; cleanup failed: {cleanup_error}"),
+                None => error,
+            });
+        }
         Ok(meta)
     }
 
@@ -505,7 +547,10 @@ impl VfsService {
         now: i64,
     ) -> Result<DatabaseMeta, String> {
         let meta = self.reserve_generated_database(name, caller, now)?;
-        if let Err(error) = self.run_database_migrations(&meta.database_id) {
+        if let Err(error) = self
+            .run_database_migrations(&meta.database_id)
+            .and_then(|_| self.seed_database_store_roots(&meta, now))
+        {
             let cleanup_error = self.discard_database_reservation(&meta.database_id).err();
             return Err(match cleanup_error {
                 Some(cleanup_error) => format!("{error}; cleanup failed: {cleanup_error}"),
@@ -771,6 +816,7 @@ impl VfsService {
             .write_index(|tx| self.activate_pending_database_mount_for_tx(tx, database_id, now))?;
         if let Some(meta) = &activation {
             self.run_database_migrations_for_meta(database_id, meta)?;
+            self.seed_database_store_roots(meta, now)?;
         }
         Ok(activation)
     }
@@ -2105,6 +2151,29 @@ impl VfsService {
         result
     }
 
+    fn seed_database_store_roots(&self, meta: &DatabaseMeta, now: i64) -> Result<(), String> {
+        let store = self.database_store(meta)?;
+        for seed in database_store_seed_nodes() {
+            if let Some(existing) = store.read_node(seed.path)? {
+                if existing.kind != seed.kind {
+                    return Err(format!(
+                        "store seed path has kind {:?} but expected {:?}: {}",
+                        existing.kind, seed.kind, seed.path
+                    ));
+                }
+                continue;
+            }
+            store.mkdir_node(
+                MkdirNodeRequest {
+                    database_id: meta.database_id.clone(),
+                    path: seed.path.to_string(),
+                },
+                now,
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn delete_database(
         &self,
         request: DeleteDatabaseRequest,
@@ -3057,12 +3126,16 @@ impl VfsService {
     pub fn query_context(
         &self,
         caller: &str,
-        request: QueryContextRequest,
+        mut request: QueryContextRequest,
     ) -> Result<QueryContext, String> {
         let database_id = request.database_id.clone();
-        self.with_database_store(&database_id, caller, RequiredRole::Reader, |store| {
-            store.query_context(request)
-        })
+        self.require_role(&database_id, caller, RequiredRole::Reader)?;
+        let meta = self.database_meta(&database_id)?;
+        if request.namespace.is_none() {
+            request.namespace = Some("/Memory".to_string());
+        }
+        let store = self.database_store(&meta)?;
+        store.query_context(request)
     }
 
     pub fn source_evidence(
@@ -3533,12 +3606,15 @@ impl VfsService {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> Result<(), String> {
+fn run_index_migrations(
+    conn: &mut Connection,
+    config: &CyclesBillingConfig,
+) -> Result<IndexPostMigrationAction, String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        ensure_existing_index_schema_is_latest(&tx, Some(config))?;
+        let action = ensure_existing_index_schema_is_latest(&tx, Some(config))?;
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(());
+        return Ok(action);
     }
     for table in INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS {
         if sqlite_master_entry_exists(conn, "table", table)? {
@@ -3560,19 +3636,20 @@ fn run_index_migrations(conn: &mut Connection, config: &CyclesBillingConfig) -> 
     for &version in INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(&tx, version)?;
     }
-    tx.commit().map_err(|error| error.to_string())
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(IndexPostMigrationAction::None)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn run_index_migrations_for_upgrade(
     conn: &mut Connection,
     config: Option<&CyclesBillingConfig>,
-) -> Result<(), String> {
+) -> Result<IndexPostMigrationAction, String> {
     if sqlite_master_entry_exists(conn, "table", "schema_migrations")? {
         let tx = conn.transaction().map_err(|error| error.to_string())?;
-        ensure_existing_index_schema_is_latest(&tx, config)?;
+        let action = ensure_existing_index_schema_is_latest(&tx, config)?;
         tx.commit().map_err(|error| error.to_string())?;
-        return Ok(());
+        return Ok(action);
     }
     let config =
         config.ok_or_else(|| "cycles config required for fresh index upgrade".to_string())?;
@@ -3583,10 +3660,9 @@ fn run_index_migrations_for_upgrade(
 fn run_index_migrations_in_tx(
     conn: &Transaction<'_>,
     config: &CyclesBillingConfig,
-) -> Result<(), String> {
+) -> Result<IndexPostMigrationAction, String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        ensure_existing_index_schema_is_latest(conn, Some(config))?;
-        return Ok(());
+        return ensure_existing_index_schema_is_latest(conn, Some(config));
     }
     for table in INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS {
         if wasm_index_table_exists(conn, table)? {
@@ -3607,17 +3683,17 @@ fn run_index_migrations_in_tx(
     for &version in INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_zero(conn, version)?;
     }
-    validate_index_schema(conn)
+    validate_index_schema(conn)?;
+    Ok(IndexPostMigrationAction::None)
 }
 
 #[cfg(target_arch = "wasm32")]
 fn run_index_migrations_in_tx_for_upgrade(
     conn: &Transaction<'_>,
     config: Option<&CyclesBillingConfig>,
-) -> Result<(), String> {
+) -> Result<IndexPostMigrationAction, String> {
     if wasm_index_table_exists(conn, "schema_migrations")? {
-        ensure_existing_index_schema_is_latest(conn, config)?;
-        return Ok(());
+        return ensure_existing_index_schema_is_latest(conn, config);
     }
     let config =
         config.ok_or_else(|| "cycles config required for fresh index upgrade".to_string())?;
@@ -3629,29 +3705,40 @@ enum IndexSchemaState {
     Mainnet011,
     Mainnet026,
     Mainnet031,
+    Mainnet032,
 }
 
 fn ensure_existing_index_schema_is_latest(
     conn: &Transaction<'_>,
     config: Option<&CyclesBillingConfig>,
-) -> Result<(), String> {
+) -> Result<IndexPostMigrationAction, String> {
     match classify_existing_index_schema_state(conn)? {
-        IndexSchemaState::Latest => validate_index_schema(conn),
+        IndexSchemaState::Latest => {
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
         IndexSchemaState::Mainnet011 => {
             let config = config
                 .ok_or_else(|| "cycles config required for first cycles upgrade".to_string())?;
             validate_cycles_billing_config(config)?;
             validate_pre_billing_index_schema(conn)?;
             apply_mainnet_011_to_latest_index_migration(conn, config)?;
-            validate_index_schema(conn)
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet026 => {
             apply_mainnet_026_to_latest_index_migration(conn)?;
-            validate_index_schema(conn)
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
-            validate_index_schema(conn)
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
+        }
+        IndexSchemaState::Mainnet032 => {
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
     }
 }
@@ -3681,8 +3768,11 @@ fn classify_existing_index_schema_state(
             "unsupported partial index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)? {
         return Ok(IndexSchemaState::Latest);
+    }
+    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
+        return Ok(IndexSchemaState::Mainnet032);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DROP_APP_BALANCE)? {
         return Ok(IndexSchemaState::Mainnet031);
@@ -3956,6 +4046,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE,
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
+    INDEX_SCHEMA_VERSION_STORE_ROOTS,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -6894,7 +6985,7 @@ fn validate_source_for_generation_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_raw_source_run_path(&request.path)?;
+    validate_knowledge_source_run_path(&request.path)?;
     validate_session_nonce(&request.session_nonce)
 }
 
@@ -6904,19 +6995,15 @@ fn validate_source_run_session_check_request(
     if request.database_id.trim().is_empty() {
         return Err("database_id is required".to_string());
     }
-    validate_raw_source_run_path(&request.source_path)?;
+    validate_knowledge_source_run_path(&request.source_path)?;
     if request.source_etag.trim().is_empty() {
         return Err("source_etag is required".to_string());
     }
     validate_session_nonce(&request.session_nonce)
 }
 
-fn validate_raw_source_run_path(path: &str) -> Result<(), String> {
-    if !(path == RAW_SOURCES_PREFIX || path.starts_with(&format!("{RAW_SOURCES_PREFIX}/"))) {
-        return Err(format!(
-            "source_path must stay under {RAW_SOURCES_PREFIX}: {path}"
-        ));
-    }
+fn validate_knowledge_source_run_path(path: &str) -> Result<(), String> {
+    validate_knowledge_source_path(path)?;
     validate_source_path_for_kind(path, &NodeKind::Source)
 }
 
@@ -7529,6 +7616,21 @@ fn load_databases(conn: &Connection) -> Result<Vec<DatabaseMeta>, String> {
         .map_err(|error| error.to_string())
 }
 
+fn load_active_databases_for_store_root_seed(
+    conn: &Connection,
+) -> Result<Vec<DatabaseMeta>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT database_id, name, db_file_name, active_mount_id, schema_version, logical_size_bytes, status
+         FROM databases
+         WHERE status = 'active'
+           AND active_mount_id IS NOT NULL
+         ORDER BY mount_id ASC",
+    )
+    .map_err(|error| error.to_string())?;
+    crate::sqlite::query_map(&mut stmt, params![], map_database_meta)
+        .map_err(|error| error.to_string())
+}
+
 fn load_active_databases_for_storage_billing_batch(
     conn: &Connection,
     cursor_mount_id: u16,
@@ -7830,6 +7932,30 @@ fn role_to_db(role: DatabaseRole) -> &'static str {
     }
 }
 
+struct StoreSeedNode {
+    path: &'static str,
+    kind: NodeKind,
+}
+
+fn database_store_seed_nodes() -> Vec<StoreSeedNode> {
+    vec![
+        folder_seed("/Memory"),
+        folder_seed("/Knowledge"),
+        folder_seed("/Skills"),
+        folder_seed("/Sessions"),
+        folder_seed("/Sources"),
+        folder_seed("/Sources/sessions"),
+        folder_seed("/Sources/skill-runs"),
+    ]
+}
+
+fn folder_seed(path: &'static str) -> StoreSeedNode {
+    StoreSeedNode {
+        path,
+        kind: NodeKind::Folder,
+    }
+}
+
 fn status_from_db(status: &str) -> crate::sqlite::Result<DatabaseStatus> {
     match status {
         "pending" => Ok(DatabaseStatus::Pending),
@@ -7869,6 +7995,7 @@ mod tests {
     use std::path::Path;
 
     use tempfile::tempdir;
+    use vfs_store::FsStore;
 
     use super::*;
 
@@ -8149,6 +8276,80 @@ mod tests {
         tx.commit().expect("mainnet 031 schema should commit");
     }
 
+    fn write_mainnet_032_schema(index_path: &Path, config: &CyclesBillingConfig) {
+        write_mainnet_031_schema(index_path, config);
+        let mut conn = Connection::open(index_path).expect("index DB should reopen");
+        let tx = conn.transaction().expect("transaction should start");
+        apply_cycles_top_up_config_migration(&tx, None).expect("top-up config should migrate");
+        tx.commit().expect("mainnet 032 schema should commit");
+    }
+
+    fn create_active_database_fixture(
+        index_path: &Path,
+        databases_dir: &Path,
+        database_id: &str,
+        missing_paths: &[&str],
+    ) -> String {
+        let db_file_name = database_file_name(databases_dir, database_id)
+            .expect("database file name should build");
+        if let Some(parent) = Path::new(&db_file_name).parent() {
+            std::fs::create_dir_all(parent).expect("database dir should create");
+        }
+        let store = FsStore::new(PathBuf::from(&db_file_name));
+        store
+            .run_fs_migrations()
+            .expect("fixture FS migrations should run");
+        let fs_conn = Connection::open(&db_file_name).expect("fixture DB should open");
+        for path in missing_paths {
+            fs_conn
+                .execute("DELETE FROM fs_nodes WHERE path = ?1", params![path])
+                .expect("fixture path should delete");
+        }
+
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.execute(
+            "INSERT INTO databases
+             (database_id, name, db_file_name, mount_id, active_mount_id, status, schema_version,
+              logical_size_bytes, created_at_ms, updated_at_ms)
+             VALUES (?1, ?1, ?2, 11, 11, 'active', ?3, 0, 0, 0)",
+            params![database_id, db_file_name, DATABASE_SCHEMA_VERSION],
+        )
+        .expect("fixture database should insert");
+        conn.execute(
+            "INSERT INTO database_members
+             (database_id, principal, role, created_at_ms)
+             VALUES (?1, 'owner', 'owner', 0)",
+            params![database_id],
+        )
+        .expect("fixture owner should insert");
+        conn.execute(
+            "INSERT INTO database_mount_history
+             (database_id, mount_id, reason, created_at_ms)
+             VALUES (?1, 11, 'fixture', 0)",
+            params![database_id],
+        )
+        .expect("fixture mount history should insert");
+        conn.execute(
+            "INSERT INTO database_cycle_accounts
+             (database_id, balance_cycles, suspended_at_ms, storage_charged_at_ms,
+              created_at_ms, updated_at_ms)
+             VALUES (?1, 0, 0, NULL, 0, 0)",
+            params![database_id],
+        )
+        .expect("fixture cycle account should insert");
+        db_file_name
+    }
+
+    fn schema_marker_count(index_path: &Path, version: &str) -> i64 {
+        let conn = Connection::open(index_path).expect("index DB should reopen");
+        conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
+            params![version],
+            |row| row.get(0),
+        )
+        .expect("schema marker count should load")
+    }
+
     #[test]
     fn old_upgrade_migrations_require_config() {
         let dir = tempdir().expect("tempdir should create");
@@ -8242,7 +8443,7 @@ mod tests {
         let marker: String = conn
             .query_row(
                 "SELECT version FROM schema_migrations
-                 WHERE version = 'database_index:031_drop_app_balance'",
+                 WHERE version = 'database_index:033_store_roots'",
                 params![],
                 |row| row.get(0),
             )
@@ -8256,8 +8457,150 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("market table count should load");
-        assert_eq!(marker, "database_index:031_drop_app_balance");
+        assert_eq!(marker, "database_index:033_store_roots");
         assert_eq!(market_tables, 4);
+    }
+
+    #[test]
+    fn database_store_roots_seed_mainnet_032_active_databases() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        create_active_database_fixture(
+            &index_path,
+            &databases_dir,
+            "legacy_active",
+            &["/Memory", "/Sessions", "/Skills"],
+        );
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("mainnet 032 index should seed store roots");
+
+        for path in ["/Memory", "/Sessions", "/Skills"] {
+            assert!(
+                service
+                    .read_node("legacy_active", "owner", path)
+                    .expect("seeded root should read")
+                    .is_some(),
+                "{path} should exist"
+            );
+        }
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+    }
+
+    #[test]
+    fn database_store_roots_seed_retries_after_missing_marker() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        create_active_database_fixture(
+            &index_path,
+            &databases_dir,
+            "store_without_roots",
+            &["/Memory", "/Sessions", "/Skills"],
+        );
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("missing store root marker should seed roots");
+
+        assert!(
+            service
+                .read_node("store_without_roots", "owner", "/Memory")
+                .expect("memory root should read")
+                .is_some()
+        );
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+    }
+
+    #[test]
+    fn database_store_roots_seed_keeps_existing_folder_roots() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        create_active_database_fixture(
+            &index_path,
+            &databases_dir,
+            "partial_roots",
+            &["/Sessions", "/Skills"],
+        );
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        service
+            .run_index_migrations_for_upgrade(None)
+            .expect("existing folder roots should be kept");
+
+        for path in ["/Memory", "/Sessions", "/Skills"] {
+            assert!(
+                service
+                    .read_node("partial_roots", "owner", path)
+                    .expect("root should read")
+                    .is_some(),
+                "{path} should exist"
+            );
+        }
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            1
+        );
+    }
+
+    #[test]
+    fn database_store_roots_seed_rejects_non_folder_collision() {
+        let dir = tempdir().expect("tempdir should create");
+        let root = dir.path();
+        let index_path = root.join("index.sqlite3");
+        let databases_dir = root.join("databases");
+        write_mainnet_032_schema(&index_path, &test_cycles_billing_config());
+        let db_file_name = create_active_database_fixture(
+            &index_path,
+            &databases_dir,
+            "colliding_roots",
+            &["/Memory", "/Sessions", "/Skills"],
+        );
+        FsStore::new(PathBuf::from(&db_file_name))
+            .write_node(
+                WriteNodeRequest {
+                    database_id: "colliding_roots".to_string(),
+                    path: "/Memory".to_string(),
+                    kind: NodeKind::File,
+                    content: "not a folder".to_string(),
+                    metadata_json: "{}".to_string(),
+                    expected_etag: None,
+                },
+                0,
+            )
+            .expect("collision fixture should write");
+        let service = VfsService::new(index_path.clone(), databases_dir);
+
+        let error = service
+            .run_index_migrations_for_upgrade(None)
+            .expect_err("non-folder root collision should reject");
+
+        assert!(error.contains("/Memory"));
+        assert_eq!(
+            schema_marker_count(&index_path, INDEX_SCHEMA_VERSION_STORE_ROOTS),
+            0
+        );
     }
 
     #[test]
@@ -8879,7 +9222,7 @@ mod tests {
                         "INSERT INTO databases
                          (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, ?1, COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
+                         VALUES (?1, ?1, 'workspace', COALESCE(?3, 0), ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -8978,7 +9321,7 @@ mod tests {
                         "INSERT INTO databases
                          (database_id, name, db_file_name, mount_id, active_mount_id, status,
                           schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                         VALUES (?1, ?1, ?1, ?3, ?3, ?2, ?4, 0, 0, 0)",
+                         VALUES (?1, ?1, 'workspace', ?3, ?3, ?2, ?4, 0, 0, 0)",
                         params![database_id, status, mount_id, DATABASE_SCHEMA_VERSION],
                     )
                     .map_err(|error| error.to_string())?;
@@ -9441,7 +9784,7 @@ mod tests {
                 "owner",
                 WriteNodeRequest {
                     database_id: database_id.to_string(),
-                    path: "/Wiki/storage.md".to_string(),
+                    path: "/Knowledge/storage.md".to_string(),
                     kind: NodeKind::File,
                     content: format!("storage billing payload {index}"),
                     metadata_json: "{}".to_string(),
@@ -9465,7 +9808,7 @@ mod tests {
                     "INSERT INTO databases
                      (database_id, name, db_file_name, mount_id, active_mount_id, status,
                       schema_version, logical_size_bytes, created_at_ms, updated_at_ms)
-                     VALUES (?1, ?1, ?1, ?2, ?2, 'active', ?3, ?4, 0, 0)",
+                     VALUES (?1, ?1, 'workspace', ?2, ?2, 'active', ?3, ?4, 0, 0)",
                     params![
                         database_id,
                         i64::from(mount_id),

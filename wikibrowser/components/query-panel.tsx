@@ -99,7 +99,7 @@ export function QueryPanel({
   async function searchWiki(action: Extract<QueryAction, { kind: "search" }>) {
     setBusy(true);
     try {
-      const hits = await searchNodes(canisterId, databaseId, action.query, 10, action.targetPath, "light", readIdentity ?? undefined);
+      const hits = await searchNodes(canisterId, databaseId, action.query, 10, null, "light", readIdentity ?? undefined);
       setResult({ kind: "search", query: action.query, hits });
     } catch (cause) {
       setResult({ kind: "message", tone: "error", text: errorMessage(cause) });
@@ -147,7 +147,7 @@ export function QueryPanel({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ question: action.question, databaseId, selectedPath, sessionNonce, context })
       });
-      const body: unknown = await response.json();
+      const body = await readAnswerResponseBody(response);
       if (!response.ok) {
         const message = isRecord(body) && typeof body.error === "string" ? body.error : `answer failed: HTTP ${response.status}`;
         throw new Error(message);
@@ -337,6 +337,25 @@ function resultExcerpt(hit: SearchNodeHit): string | null {
 
 function isAnswerBody(value: unknown): value is { answer: string; citations: string[]; abstained: boolean } {
   return isRecord(value) && typeof value.answer === "string" && Array.isArray(value.citations) && value.citations.every((item) => typeof item === "string") && typeof value.abstained === "boolean";
+}
+
+async function readAnswerResponseBody(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.toLowerCase().includes("application/json")) {
+    try {
+      return await response.json();
+    } catch {
+      throw new Error(`answer failed: HTTP ${response.status} returned invalid JSON`);
+    }
+  }
+  let preview = "";
+  try {
+    preview = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 180);
+  } catch {
+    preview = "";
+  }
+  const responseKind = contentType.trim() || "non-JSON response";
+  throw new Error(`answer failed: HTTP ${response.status} returned ${responseKind}${preview ? `: ${preview}` : ""}`);
 }
 
 function formatSqlJsonRows(rows: string[]): string[] {

@@ -28,15 +28,15 @@ const connectionCommands = [
 ];
 
 const readCommands = [
-  'kinic-vfs-cli search-remote "query text" --prefix /Wiki --top-k 10 --json',
-  "kinic-vfs-cli read-node --path /Wiki/page.md --json",
-  "kinic-vfs-cli read-node-context --path /Wiki/page.md --json"
+  'kinic-vfs-cli search-remote "query text" --prefix /Knowledge --top-k 10 --json',
+  "kinic-vfs-cli read-node --path /Knowledge/page.md --json",
+  "kinic-vfs-cli read-node-context --path /Knowledge/page.md --json"
 ];
 
 const writeCommands = [
-  "kinic-vfs-cli read-node --path /Wiki/page.md --json",
-  "kinic-vfs-cli edit-node --path /Wiki/page.md --old-text before --new-text after --expected-etag <etag> --json",
-  "kinic-vfs-cli read-node --path /Wiki/page.md --json"
+  "kinic-vfs-cli read-node --path /Knowledge/page.md --json",
+  "kinic-vfs-cli edit-node --path /Knowledge/page.md --old-text before --new-text after --expected-etag <etag> --json",
+  "kinic-vfs-cli read-node --path /Knowledge/page.md --json"
 ];
 
 const skillCommands = [

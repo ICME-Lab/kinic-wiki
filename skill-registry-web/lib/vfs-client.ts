@@ -229,6 +229,7 @@ function normalizeDatabaseRole(role: Variant): DatabaseRole {
   return "Owner" in role ? "owner" : "Writer" in role ? "writer" : "reader";
 }
 
+
 function nodeKindVariant(kind: NodeKind): Variant {
   return kind === "folder" ? { Folder: null } : kind === "source" ? { Source: null } : { File: null };
 }

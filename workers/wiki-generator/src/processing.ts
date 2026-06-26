@@ -338,7 +338,21 @@ async function generateFromSource(
 async function loadContext(vfs: VfsClient, databaseId: string, source: WikiNode, config: WorkerConfig): Promise<SearchNodeHit[]> {
   const query = contextQuery(source.content, source.path);
   if (!query) return [];
-  return vfs.searchNodes(databaseId, query, config.maxContextHits, config.contextPrefix);
+  const hits = await vfs.searchNodes(databaseId, query, config.maxContextHits, config.contextPrefix);
+  return rankContextHits(hits);
+}
+
+export function rankContextHits(hits: SearchNodeHit[]): SearchNodeHit[] {
+  const primary: SearchNodeHit[] = [];
+  const sources: SearchNodeHit[] = [];
+  for (const hit of hits) {
+    if (hit.path === "/Sources" || hit.path.startsWith("/Sources/")) {
+      sources.push(hit);
+    } else {
+      primary.push(hit);
+    }
+  }
+  return [...primary, ...sources];
 }
 
 async function readRequiredSource(vfs: VfsClient, databaseId: string, sourcePath: string): Promise<WikiNode> {
