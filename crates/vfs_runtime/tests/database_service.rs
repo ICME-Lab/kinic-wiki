@@ -438,7 +438,7 @@ fn mainnet_011_index_upgrades_to_latest() {
         .expect("usage table count should load");
 
     assert_eq!(status, "active");
-    assert_eq!(profile_columns, 0);
+    assert_eq!(profile_columns, 1);
     assert_eq!(balance, 0);
     assert_eq!(suspended_at_ms, Some(0));
     assert_eq!(storage_columns, 1);

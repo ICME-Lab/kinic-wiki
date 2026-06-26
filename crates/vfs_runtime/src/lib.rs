@@ -89,6 +89,7 @@ const INDEX_SCHEMA_VERSION_DIRECT_MARKET_PURCHASE: &str =
 const INDEX_SCHEMA_VERSION_DROP_APP_BALANCE: &str = "database_index:031_drop_app_balance";
 const INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG: &str = "database_index:032_cycles_top_up_config";
 const INDEX_SCHEMA_VERSION_STORE_ROOTS: &str = "database_index:033_store_roots";
+const INDEX_SCHEMA_VERSION_DATABASE_PROFILE: &str = "database_index:034_database_profile";
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 const WIKI_METRICS_WINDOW_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const WIKI_METRICS_SERIES_LIMIT_MAX: u32 = 7;
@@ -3898,6 +3899,8 @@ enum IndexSchemaState {
     Mainnet026,
     Mainnet031,
     Mainnet032,
+    Mainnet033,
+    StoreRootsPending,
 }
 
 fn ensure_existing_index_schema_is_latest(
@@ -3925,10 +3928,21 @@ fn ensure_existing_index_schema_is_latest(
         }
         IndexSchemaState::Mainnet031 => {
             apply_cycles_top_up_config_migration(conn, config.map(|config| &config.top_up))?;
+            apply_database_profile_migration(conn)?;
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
         IndexSchemaState::Mainnet032 => {
+            apply_database_profile_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::SeedStoreRoots)
+        }
+        IndexSchemaState::Mainnet033 => {
+            apply_database_profile_migration(conn)?;
+            validate_index_schema(conn)?;
+            Ok(IndexPostMigrationAction::None)
+        }
+        IndexSchemaState::StoreRootsPending => {
             validate_index_schema(conn)?;
             Ok(IndexPostMigrationAction::SeedStoreRoots)
         }
@@ -3960,8 +3974,17 @@ fn classify_existing_index_schema_state(
             "unsupported partial index schema: table {table} already exists"
         ));
     }
-    if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)? {
+    let store_roots_applied = migration_applied_tx(conn, INDEX_SCHEMA_VERSION_STORE_ROOTS)?;
+    let database_profile_applied =
+        migration_applied_tx(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
+    if store_roots_applied && database_profile_applied {
         return Ok(IndexSchemaState::Latest);
+    }
+    if database_profile_applied {
+        return Ok(IndexSchemaState::StoreRootsPending);
+    }
+    if store_roots_applied {
+        return Ok(IndexSchemaState::Mainnet033);
     }
     if migration_applied_tx(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)? {
         return Ok(IndexSchemaState::Mainnet032);
@@ -4018,6 +4041,7 @@ fn apply_mainnet_011_to_latest_index_migration(
     for &version in POST_011_INDEX_SCHEMA_VERSIONS {
         insert_schema_migration_now(conn, version)?;
     }
+    apply_database_profile_migration(conn)?;
     Ok(())
 }
 
@@ -4031,6 +4055,7 @@ fn apply_mainnet_026_to_latest_index_migration(conn: &Transaction<'_>) -> Result
         insert_schema_migration_now(conn, version)?;
     }
     apply_cycles_top_up_config_migration(conn, None)?;
+    apply_database_profile_migration(conn)?;
     Ok(())
 }
 
@@ -4043,6 +4068,16 @@ fn apply_cycles_top_up_config_migration(
         None => insert_default_cycles_top_up_config(conn)?,
     }
     insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG)?;
+    Ok(())
+}
+
+fn apply_database_profile_migration(conn: &Transaction<'_>) -> Result<(), String> {
+    conn.execute(
+        "ALTER TABLE databases ADD COLUMN profile TEXT NOT NULL DEFAULT 'memory'",
+        params![],
+    )
+    .map_err(|error| error.to_string())?;
+    insert_schema_migration_now(conn, INDEX_SCHEMA_VERSION_DATABASE_PROFILE)?;
     Ok(())
 }
 
@@ -4239,6 +4274,7 @@ const INDEX_SCHEMA_VERSIONS: &[&str] = &[
     INDEX_SCHEMA_VERSION_DROP_APP_BALANCE,
     INDEX_SCHEMA_VERSION_CYCLES_TOP_UP_CONFIG,
     INDEX_SCHEMA_VERSION_STORE_ROOTS,
+    INDEX_SCHEMA_VERSION_DATABASE_PROFILE,
 ];
 
 const INDEX_SCHEMA_TABLES_WITHOUT_MIGRATIONS: &[&str] = &[
@@ -4474,6 +4510,7 @@ fn validate_index_schema(conn: &Transaction<'_>) -> Result<(), String> {
             &[
                 "database_id",
                 "name",
+                "profile",
                 "db_file_name",
                 "mount_id",
                 "active_mount_id",
